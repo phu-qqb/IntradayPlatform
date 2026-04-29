@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk.Worker">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <UserSecretsId>dotnet-QQ.Production.Intraday.Worker-25d1e9b3-14f2-40d7-8841-23e2236ef860</UserSecretsId>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.7" />
+    <PackageReference Include="Serilog.Extensions.Hosting" Version="10.0.0" />
+    <PackageReference Include="Serilog.Sinks.Console" Version="6.1.0" />
+    <ProjectReference Include="..\QQ.Production.Intraday.Application\QQ.Production.Intraday.Application.csproj" />
+    <ProjectReference Include="..\QQ.Production.Intraday.Domain\QQ.Production.Intraday.Domain.csproj" />
+    <ProjectReference Include="..\QQ.Production.Intraday.Infrastructure.Simulator\QQ.Production.Intraday.Infrastructure.Simulator.csproj" />
+  </ItemGroup>
+</Project>
