@@ -57,6 +57,37 @@ function Invoke-LocalApi {
   }
 }
 
+function Get-ApiId {
+  param(
+    [Parameter(Mandatory = $false)][AllowNull()][object]$Value
+  )
+
+  if ($null -eq $Value) { return $null }
+
+  if ($Value -is [string]) {
+    if ([string]::IsNullOrWhiteSpace($Value)) { return $null }
+    return $Value
+  }
+
+  if ($Value -is [Guid]) {
+    return $Value.ToString()
+  }
+
+  $valueProperty = $Value.PSObject.Properties["value"]
+  if ($null -ne $valueProperty -and $null -ne $valueProperty.Value) {
+    return Get-ApiId $valueProperty.Value
+  }
+
+  $idProperty = $Value.PSObject.Properties["id"]
+  if ($null -ne $idProperty -and $null -ne $idProperty.Value) {
+    return Get-ApiId $idProperty.Value
+  }
+
+  $text = [string]$Value
+  if ([string]::IsNullOrWhiteSpace($text)) { return $null }
+  return $text
+}
+
 $now = [DateTime]::UtcNow
 $floorMinute = [int]([Math]::Floor($now.Minute / 15) * 15)
 $barEnd = [DateTime]::new($now.Year, $now.Month, $now.Day, $now.Hour, $floorMinute, 0, [DateTimeKind]::Utc)
@@ -114,8 +145,9 @@ $modelRun = Invoke-LocalApi Post "/model-runs" @{
 $modelRun
 
 Invoke-LocalApi Get "/model-runs"
-if ($null -ne $modelRun.id.value) {
-  $processResult = Invoke-LocalApi Post "/model-runs/$($modelRun.id.value)/process"
+$modelRunId = Get-ApiId $modelRun.id
+if ($null -ne $modelRunId) {
+  $processResult = Invoke-LocalApi Post "/model-runs/$modelRunId/process"
   $processResult
 }
 

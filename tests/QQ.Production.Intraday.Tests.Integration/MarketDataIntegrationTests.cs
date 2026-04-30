@@ -129,7 +129,7 @@ public sealed class MarketDataIntegrationTests
         await CreateFakeSnapshotsAsync(client, now.AddMinutes(-1), 2);
         var run = await CreateModelRunAsync(client, now);
 
-        var response = await client.PostAsync($"/model-runs/{run.Id.Value}/process", null);
+        var response = await client.PostAsync($"/model-runs/{run.Id}/process", null);
 
         response.EnsureSuccessStatusCode();
         var result = await response.Content.ReadFromJsonAsync<ApiProcessResult>();
@@ -149,7 +149,7 @@ public sealed class MarketDataIntegrationTests
         var now = DateTimeOffset.UtcNow;
         await CreateFakeSnapshotsAsync(client, now.AddMinutes(-1), 2);
         var run = await CreateModelRunAsync(client, now);
-        (await client.PostAsync($"/model-runs/{run.Id.Value}/process", null)).EnsureSuccessStatusCode();
+        (await client.PostAsync($"/model-runs/{run.Id}/process", null)).EnsureSuccessStatusCode();
 
         var orders = await client.GetFromJsonAsync<ApiOrdersResponse>("/orders");
 
@@ -178,7 +178,7 @@ public sealed class MarketDataIntegrationTests
         await CreateFakeSnapshotsAsync(client, DateTimeOffset.UtcNow.AddMinutes(-1), 2);
         var run = await CreateModelRunAsync(client, DateTimeOffset.UtcNow.AddDays(-2));
 
-        var response = await client.PostAsync($"/model-runs/{run.Id.Value}/process", null);
+        var response = await client.PostAsync($"/model-runs/{run.Id}/process", null);
 
         response.EnsureSuccessStatusCode();
         var result = await response.Content.ReadFromJsonAsync<ApiProcessResult>();
@@ -199,7 +199,7 @@ public sealed class MarketDataIntegrationTests
         var client = factory.CreateClient();
         var run = await CreateModelRunAsync(client, now);
 
-        var response = await client.PostAsync($"/model-runs/{run.Id.Value}/process", null);
+        var response = await client.PostAsync($"/model-runs/{run.Id}/process", null);
 
         response.EnsureSuccessStatusCode();
         var result = await response.Content.ReadFromJsonAsync<ApiProcessResult>();
@@ -219,8 +219,8 @@ public sealed class MarketDataIntegrationTests
         await CreateFakeSnapshotsAsync(client, now.AddMinutes(-1), 2);
         var run = await CreateModelRunAsync(client, now);
 
-        (await client.PostAsync($"/model-runs/{run.Id.Value}/process", null)).EnsureSuccessStatusCode();
-        var response = await client.PostAsync($"/model-runs/{run.Id.Value}/process", null);
+        (await client.PostAsync($"/model-runs/{run.Id}/process", null)).EnsureSuccessStatusCode();
+        var response = await client.PostAsync($"/model-runs/{run.Id}/process", null);
 
         response.EnsureSuccessStatusCode();
         var result = await response.Content.ReadFromJsonAsync<ApiProcessResult>();
@@ -244,7 +244,7 @@ public sealed class MarketDataIntegrationTests
         await CreateFakeSnapshotsAsync(client, now.AddMinutes(-1), 2);
         var run = await CreateModelRunAsync(client, now);
 
-        var response = await client.PostAsync($"/model-runs/{run.Id.Value}/process", null);
+        var response = await client.PostAsync($"/model-runs/{run.Id}/process", null);
 
         response.EnsureSuccessStatusCode();
         var result = await response.Content.ReadFromJsonAsync<ApiProcessResult>();
@@ -262,6 +262,55 @@ public sealed class MarketDataIntegrationTests
 
         Assert.NotNull(result);
         Assert.Equal(0, result.BlockingIssueCount);
+    }
+
+    [Fact]
+    public async Task Api_health_and_admin_endpoints_report_local_fake_state()
+    {
+        await using var factory = CreateInMemoryFactory(Now);
+        var client = factory.CreateClient();
+
+        var health = await client.GetFromJsonAsync<ApiHealth>("/health");
+        var killSwitch = await client.GetFromJsonAsync<ApiKillSwitch>("/admin/kill-switch");
+        var instruments = await client.GetFromJsonAsync<List<ApiInstrument>>("/instruments");
+        var venues = await client.GetFromJsonAsync<List<ApiVenue>>("/venues");
+
+        Assert.NotNull(health);
+        Assert.Equal("FakeLmaxGateway", health.ExecutionGateway);
+        Assert.Equal("FakeMarketDataProvider", health.MarketDataMode);
+        Assert.False(health.LiveTradingEnabled);
+        Assert.False(health.ExternalConnectionsEnabled);
+        Assert.NotNull(killSwitch);
+        Assert.False(killSwitch.IsActive);
+        Assert.Contains(instruments!, x => x.Symbol == "EURUSD");
+        Assert.Contains(venues!, x => x.Name == "LMAX");
+    }
+
+    [Fact]
+    public async Task Api_ui_list_endpoints_return_plain_dtos()
+    {
+        await using var factory = CreateInMemoryFactory();
+        var client = factory.CreateClient();
+        var now = DateTimeOffset.UtcNow;
+        await CreateFakeSnapshotsAsync(client, now.AddMinutes(-1), 2);
+        var run = await CreateModelRunAsync(client, now);
+        (await client.PostAsync($"/model-runs/{run.Id}/process", null)).EnsureSuccessStatusCode();
+
+        var targets = await client.GetFromJsonAsync<List<ApiTargetPosition>>("/target-positions");
+        var drifts = await client.GetFromJsonAsync<List<ApiDriftSnapshot>>("/drift-snapshots");
+        var risk = await client.GetFromJsonAsync<List<ApiRiskDecision>>("/risk-decisions");
+        var fills = await client.GetFromJsonAsync<List<ApiFill>>("/fills");
+
+        Assert.NotNull(targets);
+        Assert.NotEmpty(targets);
+        Assert.DoesNotContain("{", targets[0].ModelRunId);
+        Assert.NotNull(drifts);
+        Assert.NotEmpty(drifts);
+        Assert.NotNull(risk);
+        Assert.NotEmpty(risk);
+        Assert.NotNull(fills);
+        Assert.NotEmpty(fills);
+        Assert.False(string.IsNullOrWhiteSpace(fills[0].BrokerExecutionId));
     }
 
     [Fact]
@@ -385,11 +434,18 @@ public sealed class MarketDataIntegrationTests
 
     private sealed record ApiSnapshot(decimal Bid, decimal Ask);
     private sealed record ApiBar(DateTimeOffset BarStartUtc, int ObservationCount);
-    private sealed record ApiModelRun(ApiId Id);
-    private sealed record ApiId(Guid Value);
+    private sealed record ApiModelRun(string Id);
     private sealed record ApiProcessResult(bool Processed, string Status, string? BlockedReason, int TradeIntentCount, int OrderCount, int FillCount, bool IsAlreadyProcessed);
     private sealed record ApiReferenceDataIntegrityCheck(int BlockingIssueCount, int WarningIssueCount);
     private sealed record ApiOrdersResponse(List<ApiParentOrder> ParentOrders, List<ApiChildOrder> ChildOrders);
     private sealed record ApiParentOrder(string Id, string TradeIntentId, string? InstrumentId, string ClientOrderId);
     private sealed record ApiChildOrder(string Id, string ParentOrderId, string VenueId, string? InstrumentId, string ClientOrderId, string? BrokerOrderId);
+    private sealed record ApiHealth(string ExecutionGateway, string MarketDataMode, bool LiveTradingEnabled, bool ExternalConnectionsEnabled);
+    private sealed record ApiKillSwitch(bool IsActive);
+    private sealed record ApiInstrument(string Symbol);
+    private sealed record ApiVenue(string Name);
+    private sealed record ApiTargetPosition(string ModelRunId);
+    private sealed record ApiDriftSnapshot(string ModelRunId);
+    private sealed record ApiRiskDecision(string Id);
+    private sealed record ApiFill(string BrokerExecutionId);
 }

@@ -125,6 +125,8 @@ The reference seed is idempotent and includes the fund, account, LMAX venue meta
 - `scripts/run-worker.ps1`
 - `scripts/check-reference-data.ps1`
 - `scripts/smoke-local.ps1`
+- `scripts/run-ui.ps1`
+- `scripts/run-local-stack.ps1`
 
 See [docs/LOCAL_RUNBOOK.md](docs/LOCAL_RUNBOOK.md) for the full local workflow.
 
@@ -158,6 +160,38 @@ Endpoints include:
 
 `POST /model-runs/{id}/process` returns a structured process result. Normal operational blocks such as stale model run, stale market data, position mismatch, kill switch active, trading window closed, risk rejection, no target weights, no market data, or no drift return HTTP 200 with a status such as `Blocked`, `AlreadyProcessed`, or `NoActionRequired`. HTTP 500 is reserved for real infrastructure or programming failures; inspect API logs in Development for the stack trace.
 
+## Run UI
+
+Prompt #5 adds a local-only React/TypeScript operator cockpit:
+
+```text
+src/QQ.Production.Intraday.Ui
+```
+
+The UI is a monitoring and local development control surface. The backend remains the source of truth; the UI does not calculate positions, risk, reconciliation, drift, orders, or fills.
+
+Default URLs:
+
+- API: `http://localhost:5050`
+- UI: `http://localhost:5173`
+
+Configure the API URL with `VITE_API_BASE_URL` if needed:
+
+```powershell
+$env:VITE_API_BASE_URL = "http://localhost:5050"
+```
+
+Run locally:
+
+```powershell
+.\scripts\run-api.ps1
+.\scripts\run-ui.ps1
+```
+
+The cockpit shows live trading status, external connection status, execution gateway, market data mode, persistence provider, database reachability, pending migrations, and reference data integrity. It shows critical warnings if anything violates the local-only FakeLmax safety boundary.
+
+Development CORS allows only `http://localhost:5173` and `http://127.0.0.1:5173`; wildcard CORS is not enabled for production-like environments.
+
 ## Run Worker
 
 ```powershell
@@ -189,6 +223,18 @@ cd C:\Users\phili\source\repos\QQ.Production.Intraday
 .\scripts\check-reference-data.ps1
 .\scripts\smoke-local.ps1
 ```
+
+Recommended local UI workflow:
+
+```powershell
+cd C:\Users\phili\source\repos\QQ.Production.Intraday
+.\scripts\reset-local-db.ps1 -SeedDemoData
+.\scripts\run-api.ps1
+.\scripts\check-reference-data.ps1
+.\scripts\run-ui.ps1
+```
+
+Then use the UI to create fake snapshots, build bars, create a model run, process it, and inspect positions, drift, risk decisions, orders, fills, and reconciliation breaks.
 
 ## Target Quantity Modes
 
@@ -280,6 +326,7 @@ curl "http://localhost:5050/market-data/bars?instrument=EURUSD&venue=LMAX&timefr
 - Only fake/local market data is implemented
 - Only 15-minute bar building is implemented
 - No historical market data import yet
+- UI is a local operator cockpit only; no authentication or production UI hardening yet
 - RDS is not configured
 - EOD LMAX report import is not implemented
 - Advanced execution algos are not implemented

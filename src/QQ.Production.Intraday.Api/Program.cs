@@ -17,6 +17,13 @@ builder.Services.AddSingleton(new BarBuilderOptions());
 builder.Services.AddScoped<ProcessModelRunService>();
 builder.Services.AddScoped<IReferenceDataIntegrityService, ReferenceDataIntegrityService>();
 builder.Services.ConfigureHttpJsonOptions(options => options.SerializerOptions.Converters.Add(new JsonStringEnumConverter()));
+builder.Services.AddCors(options =>
+{
+    options.AddPolicy("LocalUiDevelopment", policy =>
+        policy.WithOrigins("http://localhost:5173", "http://127.0.0.1:5173")
+            .AllowAnyHeader()
+            .AllowAnyMethod());
+});
 
 var persistenceProvider = builder.Environment.IsEnvironment("Testing")
     ? "InMemory"
@@ -52,6 +59,11 @@ else
 
 var app = builder.Build();
 
+if (app.Environment.IsDevelopment())
+{
+    app.UseCors("LocalUiDevelopment");
+}
+
 await InitializeDatabaseAsync(app, persistenceProvider);
 ValidateSafety(app, persistenceProvider);
 if (args.Contains("--init-db", StringComparer.OrdinalIgnoreCase))
@@ -75,40 +87,43 @@ app.MapGet("/health", async (IServiceProvider services, IWebHostEnvironment envi
     var provider = configuration.GetValue("Persistence:Provider", "SqlServerLocal") ?? "SqlServerLocal";
     var gateway = services.GetRequiredService<IVenueExecutionGateway>();
     var marketDataProvider = services.GetRequiredService<IMarketDataProvider>();
-    var health = new Dictionary<string, object?>
-    {
-        ["application"] = "QQ.Production.Intraday.Api",
-        ["environment"] = environment.EnvironmentName,
-        ["persistenceProvider"] = provider,
-        ["executionGateway"] = gateway.GetType().Name,
-        ["marketDataMode"] = marketDataProvider.GetType().Name,
-        ["liveTradingEnabled"] = configuration.GetValue("Safety:AllowLiveTrading", false),
-        ["externalConnectionsEnabled"] = configuration.GetValue("Safety:AllowExternalConnections", false),
-        ["utcServerTime"] = clock.UtcNow
-    };
+    var databaseReachable = true;
+    var pendingMigrationsCount = 0;
+    var databaseTarget = "InMemory";
 
     if (string.Equals(provider, "SqlServerLocal", StringComparison.OrdinalIgnoreCase))
     {
         await using var scope = services.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<IntradayDbContext>();
-        health["databaseReachable"] = await db.Database.CanConnectAsync();
-        health["pendingMigrationsCount"] = (await db.Database.GetPendingMigrationsAsync()).Count();
-        health["databaseTarget"] = "LocalDB";
-    }
-    else
-    {
-        health["databaseReachable"] = true;
-        health["pendingMigrationsCount"] = 0;
-        health["databaseTarget"] = "InMemory";
+        databaseReachable = await db.Database.CanConnectAsync();
+        pendingMigrationsCount = (await db.Database.GetPendingMigrationsAsync()).Count();
+        databaseTarget = "LocalDB";
     }
 
-    return Results.Ok(health);
+    return Results.Ok(new HealthDto(
+        "QQ.Production.Intraday.Api",
+        environment.EnvironmentName,
+        provider,
+        databaseReachable,
+        pendingMigrationsCount,
+        databaseTarget,
+        gateway.GetType().Name,
+        marketDataProvider.GetType().Name,
+        configuration.GetValue("Safety:AllowLiveTrading", false),
+        configuration.GetValue("Safety:AllowExternalConnections", false),
+        clock.UtcNow));
 });
 
-app.MapGet("/model-runs", async (IIntradayRepository repository, CancellationToken cancellationToken) =>
+app.MapGet("/model-runs", async (IIntradayRepository repository, int? limit, string? status, CancellationToken cancellationToken) =>
 {
     var state = await repository.LoadStateAsync(cancellationToken);
-    return state.ModelRuns.OrderByDescending(x => x.ReceivedAtUtc);
+    var query = state.ModelRuns.AsEnumerable();
+    if (!string.IsNullOrWhiteSpace(status))
+    {
+        query = query.Where(x => x.Status.ToString().Equals(status, StringComparison.OrdinalIgnoreCase));
+    }
+
+    return query.OrderByDescending(x => x.ReceivedAtUtc).Take(ClampLimit(limit)).Select(ToModelRunDto);
 });
 
 app.MapPost("/model-runs", async (CreateModelRunRequest request, IIntradayRepository repository, IClock clock, CancellationToken cancellationToken) =>
@@ -126,7 +141,7 @@ app.MapPost("/model-runs", async (CreateModelRunRequest request, IIntradayReposi
         return new TargetWeight(run.Id, instrument.Id, x.Weight, x.RawSecurityId ?? x.Symbol);
     }).ToList();
     await repository.AddModelRunAsync(run, targetWeights, cancellationToken);
-    return Results.Created($"/model-runs/{run.Id.Value}", run);
+    return Results.Created($"/model-runs/{run.Id.Value}", ToModelRunDto(run));
 });
 
 app.MapPost("/model-runs/{id:guid}/process", async (Guid id, ProcessModelRunService service, IIntradayRepository repository, CancellationToken cancellationToken) =>
@@ -154,15 +169,63 @@ app.MapPost("/model-runs/{id:guid}/process", async (Guid id, ProcessModelRunServ
 app.MapGet("/positions/internal", async (IIntradayRepository repository, CancellationToken cancellationToken) =>
 {
     var state = await repository.LoadStateAsync(cancellationToken);
-    return state.PositionLedger.GroupBy(x => x.InstrumentId).Select(x => new { InstrumentId = x.Key.Value, BaseQuantity = x.Sum(y => y.BaseQuantityDelta) });
+    var symbols = state.Instruments.ToDictionary(x => x.Id, x => x.Symbol);
+    return state.PositionLedger
+        .GroupBy(x => x.InstrumentId)
+        .Select(x => new PositionDto(x.Key.Value.ToString("D"), symbols.GetValueOrDefault(x.Key), x.Sum(y => y.BaseQuantityDelta), x.Max(y => y.CreatedAtUtc)));
 });
 app.MapGet("/positions/broker", async (IIntradayRepository repository, IBrokerPositionProvider provider, CancellationToken cancellationToken) =>
 {
     var state = await repository.LoadStateAsync(cancellationToken);
-    return await provider.GetPositionsAsync(state.BrokerAccounts.Single().Id, cancellationToken);
+    var symbols = state.Instruments.ToDictionary(x => x.Id, x => x.Symbol);
+    var positions = await provider.GetPositionsAsync(state.BrokerAccounts.Single().Id, cancellationToken);
+    return positions.Select(x => new PositionDto(x.InstrumentId.Value.ToString("D"), symbols.GetValueOrDefault(x.InstrumentId), x.BaseQuantity, x.AsOfUtc));
 });
-app.MapGet("/reconciliation/breaks", async (IIntradayRepository repository, CancellationToken cancellationToken) => (await repository.LoadStateAsync(cancellationToken)).ReconciliationBreaks);
-app.MapGet("/trade-intents", async (IIntradayRepository repository, CancellationToken cancellationToken) => (await repository.LoadStateAsync(cancellationToken)).TradeIntents);
+app.MapGet("/target-positions", async (IIntradayRepository repository, int? limit, Guid? modelRunId, CancellationToken cancellationToken) =>
+{
+    var state = await repository.LoadStateAsync(cancellationToken);
+    var symbols = state.Instruments.ToDictionary(x => x.Id, x => x.Symbol);
+    var query = state.TargetPositions.AsEnumerable();
+    if (modelRunId is not null) query = query.Where(x => x.ModelRunId.Value == modelRunId.Value);
+    return query.TakeLast(ClampLimit(limit)).Reverse().Select(x => new TargetPositionDto(x.ModelRunId.Value.ToString("D"), x.InstrumentId.Value.ToString("D"), symbols.GetValueOrDefault(x.InstrumentId), x.TargetNotionalUsd, x.TargetBaseQuantity, x.TargetVenueQuantity, x.TargetQuantityMode.ToString()));
+});
+app.MapGet("/drift-snapshots", async (IIntradayRepository repository, int? limit, Guid? modelRunId, CancellationToken cancellationToken) =>
+{
+    var state = await repository.LoadStateAsync(cancellationToken);
+    var symbols = state.Instruments.ToDictionary(x => x.Id, x => x.Symbol);
+    var query = state.DriftSnapshots.AsEnumerable();
+    if (modelRunId is not null) query = query.Where(x => x.ModelRunId.Value == modelRunId.Value);
+    return query.TakeLast(ClampLimit(limit)).Reverse().Select(x => new DriftSnapshotDto(x.ModelRunId.Value.ToString("D"), x.InstrumentId.Value.ToString("D"), symbols.GetValueOrDefault(x.InstrumentId), x.TargetBaseQuantity, x.CurrentBaseQuantity, x.DriftBaseQuantity, x.TargetVenueQuantity, x.CurrentVenueQuantity, x.DriftVenueQuantity));
+});
+app.MapGet("/reconciliation/breaks", async (IIntradayRepository repository, int? limit, string? severity, string? status, CancellationToken cancellationToken) =>
+{
+    var state = await repository.LoadStateAsync(cancellationToken);
+    var symbols = state.Instruments.ToDictionary(x => x.Id, x => x.Symbol);
+    var runs = state.ReconciliationRuns.ToDictionary(x => x.Id);
+    var query = state.ReconciliationBreaks.AsEnumerable();
+    if (!string.IsNullOrWhiteSpace(severity)) query = query.Where(x => x.Severity.ToString().Equals(severity, StringComparison.OrdinalIgnoreCase));
+    if (!string.IsNullOrWhiteSpace(status)) query = query.Where(x => x.Status.ToString().Equals(status, StringComparison.OrdinalIgnoreCase));
+    return query.TakeLast(ClampLimit(limit)).Reverse().Select(x => ToReconciliationBreakDto(x, runs, symbols));
+});
+app.MapGet("/trade-intents", async (IIntradayRepository repository, int? limit, string? status, Guid? modelRunId, CancellationToken cancellationToken) =>
+{
+    var state = await repository.LoadStateAsync(cancellationToken);
+    var symbols = state.Instruments.ToDictionary(x => x.Id, x => x.Symbol);
+    var query = state.TradeIntents.AsEnumerable();
+    if (!string.IsNullOrWhiteSpace(status)) query = query.Where(x => x.Status.ToString().Equals(status, StringComparison.OrdinalIgnoreCase));
+    if (modelRunId is not null) query = query.Where(x => x.ModelRunId.Value == modelRunId.Value);
+    return query.OrderByDescending(x => x.CreatedAtUtc).Take(ClampLimit(limit)).Select(x => ToTradeIntentDto(x, symbols));
+});
+app.MapGet("/risk-decisions", async (IIntradayRepository repository, int? limit, string? status, Guid? modelRunId, CancellationToken cancellationToken) =>
+{
+    var state = await repository.LoadStateAsync(cancellationToken);
+    var intents = state.TradeIntents.ToDictionary(x => x.Id);
+    var symbols = state.Instruments.ToDictionary(x => x.Id, x => x.Symbol);
+    var query = state.RiskDecisions.AsEnumerable();
+    if (!string.IsNullOrWhiteSpace(status)) query = query.Where(x => x.Status.ToString().Equals(status, StringComparison.OrdinalIgnoreCase));
+    if (modelRunId is not null) query = query.Where(x => intents.TryGetValue(x.TradeIntentId, out var intent) && intent.ModelRunId.Value == modelRunId.Value);
+    return query.OrderByDescending(x => x.CreatedAtUtc).Take(ClampLimit(limit)).Select(x => ToRiskDecisionDto(x, intents, symbols));
+});
 app.MapGet("/orders", async (IIntradayRepository repository, CancellationToken cancellationToken) =>
 {
     var state = await repository.LoadStateAsync(cancellationToken);
@@ -219,9 +282,34 @@ app.MapGet("/orders", async (IIntradayRepository repository, CancellationToken c
 
     return new OrdersResponse(parentDtos, childDtos);
 });
-app.MapGet("/fills", async (IIntradayRepository repository, CancellationToken cancellationToken) => (await repository.LoadStateAsync(cancellationToken)).Fills);
-app.MapGet("/admin/reference-data/integrity", async (IReferenceDataIntegrityService service, CancellationToken cancellationToken) => Results.Ok(await service.CheckAsync(cancellationToken)));
-app.MapGet("/market-data/snapshots", async (IIntradayRepository repository, string? instrument, string? venue, DateTimeOffset? fromUtc, DateTimeOffset? toUtc, CancellationToken cancellationToken) =>
+app.MapGet("/fills", async (IIntradayRepository repository, int? limit, Guid? modelRunId, CancellationToken cancellationToken) =>
+{
+    var state = await repository.LoadStateAsync(cancellationToken);
+    var parentById = state.ParentOrders.ToDictionary(x => x.Id);
+    var childById = state.ChildOrders.ToDictionary(x => x.Id);
+    var symbols = state.Instruments.ToDictionary(x => x.Id, x => x.Symbol);
+    var venues = state.Venues.ToDictionary(x => x.Id, x => x.Name);
+    var query = state.Fills.AsEnumerable();
+    if (modelRunId is not null)
+    {
+        var intentIds = state.TradeIntents.Where(x => x.ModelRunId.Value == modelRunId.Value).Select(x => x.Id).ToHashSet();
+        var parentIds = state.ParentOrders.Where(x => intentIds.Contains(x.TradeIntentId)).Select(x => x.Id).ToHashSet();
+        var childIds = state.ChildOrders.Where(x => parentIds.Contains(x.ParentOrderId)).Select(x => x.Id).ToHashSet();
+        query = query.Where(x => childIds.Contains(x.ChildOrderId));
+    }
+
+    return query.OrderByDescending(x => x.ReceivedAtUtc).Take(ClampLimit(limit)).Select(x => ToFillDto(x, symbols, venues));
+});
+app.MapGet("/admin/reference-data/integrity", async (IReferenceDataIntegrityService service, CancellationToken cancellationToken) =>
+{
+    var result = await service.CheckAsync(cancellationToken);
+    return Results.Ok(new ReferenceDataIntegrityDto(
+        result.CheckedAtUtc,
+        result.BlockingIssueCount,
+        result.WarningIssueCount,
+        result.Issues.Select(x => new ReferenceDataIntegrityIssueDto(x.Id.ToString("D"), x.Type.ToString(), x.Severity.ToString(), x.Status.ToString(), x.Key, x.Description, x.CreatedAtUtc)).ToList()));
+});
+app.MapGet("/market-data/snapshots", async (IIntradayRepository repository, string? instrument, string? venue, DateTimeOffset? fromUtc, DateTimeOffset? toUtc, int? limit, CancellationToken cancellationToken) =>
 {
     var state = await repository.LoadStateAsync(cancellationToken);
     var query = state.MarketData.AsEnumerable();
@@ -229,7 +317,9 @@ app.MapGet("/market-data/snapshots", async (IIntradayRepository repository, stri
     if (!string.IsNullOrWhiteSpace(venue)) query = query.Where(x => x.VenueId == state.Venues.Single(v => v.Name == venue).Id);
     if (fromUtc is not null) query = query.Where(x => x.SourceTimestampUtc >= fromUtc.Value);
     if (toUtc is not null) query = query.Where(x => x.SourceTimestampUtc < toUtc.Value);
-    return query.OrderBy(x => x.SourceTimestampUtc);
+    var symbols = state.Instruments.ToDictionary(x => x.Id, x => x.Symbol);
+    var venues = state.Venues.ToDictionary(x => x.Id, x => x.Name);
+    return query.OrderByDescending(x => x.SourceTimestampUtc).Take(ClampLimit(limit)).Select(x => ToMarketDataSnapshotDto(x, symbols, venues));
 });
 app.MapPost("/market-data/fake-snapshots", async (FakeSnapshotsRequest request, IIntradayRepository intradayRepository, IMarketDataProvider provider, IMarketDataSnapshotRepository repository, CancellationToken cancellationToken) =>
 {
@@ -240,7 +330,7 @@ app.MapPost("/market-data/fake-snapshots", async (FakeSnapshotsRequest request, 
     await repository.AddRangeAsync(snapshots, cancellationToken);
     return Results.Created("/market-data/snapshots", new { created = snapshots.Count });
 });
-app.MapGet("/market-data/bars", async (IIntradayRepository repository, string? instrument, string? venue, BarTimeframe? timeframe, DateTimeOffset? fromUtc, DateTimeOffset? toUtc, CancellationToken cancellationToken) =>
+app.MapGet("/market-data/bars", async (IIntradayRepository repository, string? instrument, string? venue, BarTimeframe? timeframe, DateTimeOffset? fromUtc, DateTimeOffset? toUtc, int? limit, CancellationToken cancellationToken) =>
 {
     var state = await repository.LoadStateAsync(cancellationToken);
     var selectedTimeframe = timeframe ?? BarTimeframe.FifteenMinutes;
@@ -249,7 +339,9 @@ app.MapGet("/market-data/bars", async (IIntradayRepository repository, string? i
     if (!string.IsNullOrWhiteSpace(venue)) query = query.Where(x => x.VenueId == state.Venues.Single(v => v.Name == venue).Id);
     if (fromUtc is not null) query = query.Where(x => x.BarStartUtc >= fromUtc.Value);
     if (toUtc is not null) query = query.Where(x => x.BarStartUtc < toUtc.Value);
-    return query.OrderBy(x => x.BarStartUtc);
+    var symbols = state.Instruments.ToDictionary(x => x.Id, x => x.Symbol);
+    var venues = state.Venues.ToDictionary(x => x.Id, x => x.Name);
+    return query.OrderByDescending(x => x.BarStartUtc).Take(ClampLimit(limit)).Select(x => ToMarketDataBarDto(x, symbols, venues));
 });
 app.MapPost("/market-data/build-bars", async (BuildBarsRequest request, IIntradayRepository repository, IBarBuilderService builderService, CancellationToken cancellationToken) =>
 {
@@ -262,10 +354,25 @@ app.MapPost("/admin/kill-switch", async (KillSwitchRequest request, IIntradayRep
     await repository.SetKillSwitchAsync(true, request.Reason, cancellationToken);
     return Results.Ok(new { active = true, request.Reason });
 });
+app.MapGet("/admin/kill-switch", async (IIntradayRepository repository, CancellationToken cancellationToken) =>
+{
+    var state = await repository.LoadStateAsync(cancellationToken);
+    return Results.Ok(ToKillSwitchDto(state.KillSwitch));
+});
 app.MapPost("/admin/kill-switch/clear", async (IIntradayRepository repository, CancellationToken cancellationToken) =>
 {
     await repository.SetKillSwitchAsync(false, null, cancellationToken);
     return Results.Ok(new { active = false });
+});
+app.MapGet("/instruments", async (IIntradayRepository repository, CancellationToken cancellationToken) =>
+{
+    var state = await repository.LoadStateAsync(cancellationToken);
+    return state.Instruments.OrderBy(x => x.Symbol).Select(ToInstrumentDto);
+});
+app.MapGet("/venues", async (IIntradayRepository repository, CancellationToken cancellationToken) =>
+{
+    var state = await repository.LoadStateAsync(cancellationToken);
+    return state.Venues.OrderBy(x => x.Name).Select(ToVenueDto);
 });
 
 app.Run();
@@ -351,6 +458,128 @@ static async Task ValidateReferenceDataAsync(WebApplication app)
     }
 }
 
+static int ClampLimit(int? limit) => Math.Clamp(limit ?? 100, 1, 500);
+
+static ModelRunDto ToModelRunDto(ModelRun x)
+    => new(
+        x.Id.Value.ToString("D"),
+        x.FundId.Value.ToString("D"),
+        x.ModelName,
+        x.AsOfUtc,
+        x.ReceivedAtUtc,
+        x.EffectiveAtUtc,
+        x.FrequencyMinutes,
+        x.NavUsd,
+        x.Status.ToString(),
+        x.InputHash,
+        x.SourceFileName,
+        x.IsProcessed,
+        x.TargetQuantityMode.ToString());
+
+static InstrumentDto ToInstrumentDto(Instrument x)
+    => new(x.Id.Value.ToString("D"), x.Symbol, x.AssetClass.ToString(), x.BaseCurrency.ToString(), x.QuoteCurrency.ToString(), x.PricePrecision, x.QuantityPrecision, x.IsEnabled);
+
+static VenueDto ToVenueDto(Venue x)
+    => new(x.Id.Value.ToString("D"), x.Name, x.VenueType.ToString(), x.IsEnabled);
+
+static KillSwitchDto ToKillSwitchDto(KillSwitchState x)
+    => new(x.Id.ToString("D"), x.IsActive, x.Reason, x.UpdatedAtUtc);
+
+static ReconciliationBreakDto ToReconciliationBreakDto(ReconciliationBreak x, IReadOnlyDictionary<Guid, ReconciliationRun> runs, IReadOnlyDictionary<InstrumentId, string> symbols)
+{
+    runs.TryGetValue(x.ReconciliationRunId, out var run);
+    var symbol = x.InstrumentId is null ? null : symbols.GetValueOrDefault(x.InstrumentId.Value);
+    return new ReconciliationBreakDto(
+        x.Id.ToString("D"),
+        x.ReconciliationRunId.ToString("D"),
+        run?.ModelRunId.Value.ToString("D"),
+        run?.Phase.ToString(),
+        x.Type.ToString(),
+        x.Severity.ToString(),
+        x.Status.ToString(),
+        x.InstrumentId?.Value.ToString("D"),
+        symbol,
+        x.Description,
+        run?.CreatedAtUtc);
+}
+
+static TradeIntentDto ToTradeIntentDto(TradeIntent x, IReadOnlyDictionary<InstrumentId, string> symbols)
+    => new(x.Id.Value.ToString("D"), x.ModelRunId.Value.ToString("D"), x.FundId.Value.ToString("D"), x.InstrumentId.Value.ToString("D"), symbols.GetValueOrDefault(x.InstrumentId), x.Side.ToString(), x.RequestedBaseQuantity, x.RequestedVenueQuantity, x.Reason, x.Status.ToString(), x.CreatedAtUtc);
+
+static RiskDecisionDto ToRiskDecisionDto(RiskDecision x, IReadOnlyDictionary<TradeIntentId, TradeIntent> intents, IReadOnlyDictionary<InstrumentId, string> symbols)
+{
+    intents.TryGetValue(x.TradeIntentId, out var intent);
+    return new RiskDecisionDto(
+        x.Id.ToString("D"),
+        x.TradeIntentId.Value.ToString("D"),
+        intent?.ModelRunId.Value.ToString("D"),
+        intent?.InstrumentId.Value.ToString("D"),
+        intent is null ? null : symbols.GetValueOrDefault(intent.InstrumentId),
+        x.Status.ToString(),
+        x.RejectReason.ToString(),
+        x.Explanation,
+        x.CreatedAtUtc);
+}
+
+static FillDto ToFillDto(Fill x, IReadOnlyDictionary<InstrumentId, string> symbols, IReadOnlyDictionary<VenueId, string> venues)
+    => new(x.Id.Value.ToString("D"), x.BrokerExecutionId, x.ChildOrderId.Value.ToString("D"), x.InstrumentId.Value.ToString("D"), symbols.GetValueOrDefault(x.InstrumentId), x.VenueId.Value.ToString("D"), venues.GetValueOrDefault(x.VenueId), x.Side.ToString(), x.BaseQuantity, x.VenueQuantity, x.Price, x.TradeDateUtc, x.ReceivedAtUtc);
+
+static MarketDataSnapshotDto ToMarketDataSnapshotDto(MarketDataSnapshot x, IReadOnlyDictionary<InstrumentId, string> symbols, IReadOnlyDictionary<VenueId, string> venues)
+    => new(x.Id.Value.ToString("D"), x.InstrumentId.Value.ToString("D"), symbols.GetValueOrDefault(x.InstrumentId), x.VenueId.Value.ToString("D"), venues.GetValueOrDefault(x.VenueId), x.Bid, x.Ask, x.Mid, x.Spread, x.Source, x.SourceTimestampUtc, x.ReceivedAtUtc, x.SequenceNumber, x.IsSynthetic, x.CreatedAtUtc);
+
+static MarketDataBarDto ToMarketDataBarDto(MarketDataBar x, IReadOnlyDictionary<InstrumentId, string> symbols, IReadOnlyDictionary<VenueId, string> venues)
+    => new(
+        x.Id.Value.ToString("D"),
+        x.InstrumentId.Value.ToString("D"),
+        symbols.GetValueOrDefault(x.InstrumentId),
+        x.VenueId.Value.ToString("D"),
+        venues.GetValueOrDefault(x.VenueId),
+        x.Timeframe.ToString(),
+        x.BarStartUtc,
+        x.BarEndUtc,
+        x.Source,
+        x.BidOpen,
+        x.BidHigh,
+        x.BidLow,
+        x.BidClose,
+        x.AskOpen,
+        x.AskHigh,
+        x.AskLow,
+        x.AskClose,
+        x.MidOpen,
+        x.MidHigh,
+        x.MidLow,
+        x.MidClose,
+        x.SpreadOpen,
+        x.SpreadHigh,
+        x.SpreadLow,
+        x.SpreadClose,
+        x.SpreadAverage,
+        x.ObservationCount,
+        x.FirstSnapshotUtc,
+        x.LastSnapshotUtc,
+        x.IsComplete,
+        x.QualityStatus.ToString(),
+        x.BuildRunId?.Value.ToString("D"),
+        x.BuilderVersion,
+        x.CreatedAtUtc);
+
+public sealed record HealthDto(string Application, string Environment, string PersistenceProvider, bool DatabaseReachable, int PendingMigrationsCount, string DatabaseTarget, string ExecutionGateway, string MarketDataMode, bool LiveTradingEnabled, bool ExternalConnectionsEnabled, DateTimeOffset UtcServerTime);
+public sealed record ReferenceDataIntegrityDto(DateTimeOffset CheckedAtUtc, int BlockingIssueCount, int WarningIssueCount, IReadOnlyList<ReferenceDataIntegrityIssueDto> Issues);
+public sealed record ReferenceDataIntegrityIssueDto(string Id, string Type, string Severity, string Status, string Key, string Description, DateTimeOffset CreatedAtUtc);
+public sealed record ModelRunDto(string Id, string FundId, string ModelName, DateTimeOffset AsOfUtc, DateTimeOffset ReceivedAtUtc, DateTimeOffset EffectiveAtUtc, int FrequencyMinutes, decimal NavUsd, string Status, string InputHash, string SourceFileName, bool IsProcessed, string TargetQuantityMode);
+public sealed record TargetPositionDto(string ModelRunId, string InstrumentId, string? Symbol, decimal TargetNotionalUsd, decimal TargetBaseQuantity, decimal TargetVenueQuantity, string TargetQuantityMode);
+public sealed record DriftSnapshotDto(string ModelRunId, string InstrumentId, string? Symbol, decimal TargetBaseQuantity, decimal CurrentBaseQuantity, decimal DriftBaseQuantity, decimal TargetVenueQuantity, decimal CurrentVenueQuantity, decimal DriftVenueQuantity);
+public sealed record PositionDto(string InstrumentId, string? Symbol, decimal BaseQuantity, DateTimeOffset? AsOfUtc);
+public sealed record ReconciliationBreakDto(string Id, string ReconciliationRunId, string? ModelRunId, string? Phase, string Type, string Severity, string Status, string? InstrumentId, string? Symbol, string Description, DateTimeOffset? CreatedAtUtc);
+public sealed record TradeIntentDto(string Id, string ModelRunId, string FundId, string InstrumentId, string? Symbol, string Side, decimal RequestedBaseQuantity, decimal RequestedVenueQuantity, string Reason, string Status, DateTimeOffset CreatedAtUtc);
+public sealed record RiskDecisionDto(string Id, string TradeIntentId, string? ModelRunId, string? InstrumentId, string? Symbol, string Status, string RejectReason, string Explanation, DateTimeOffset CreatedAtUtc);
+public sealed record FillDto(string Id, string BrokerExecutionId, string ChildOrderId, string InstrumentId, string? Symbol, string VenueId, string? VenueName, string Side, decimal BaseQuantity, decimal VenueQuantity, decimal Price, DateTimeOffset TradeDateUtc, DateTimeOffset ReceivedAtUtc);
+public sealed record MarketDataSnapshotDto(string Id, string InstrumentId, string? Symbol, string VenueId, string? VenueName, decimal Bid, decimal Ask, decimal Mid, decimal Spread, string Source, DateTimeOffset SourceTimestampUtc, DateTimeOffset ReceivedAtUtc, long? SequenceNumber, bool IsSynthetic, DateTimeOffset CreatedAtUtc);
+public sealed record MarketDataBarDto(string Id, string InstrumentId, string? Symbol, string VenueId, string? VenueName, string Timeframe, DateTimeOffset BarStartUtc, DateTimeOffset BarEndUtc, string Source, decimal BidOpen, decimal BidHigh, decimal BidLow, decimal BidClose, decimal AskOpen, decimal AskHigh, decimal AskLow, decimal AskClose, decimal MidOpen, decimal MidHigh, decimal MidLow, decimal MidClose, decimal SpreadOpen, decimal SpreadHigh, decimal SpreadLow, decimal SpreadClose, decimal SpreadAverage, int ObservationCount, DateTimeOffset? FirstSnapshotUtc, DateTimeOffset? LastSnapshotUtc, bool IsComplete, string QualityStatus, string? BuildRunId, string BuilderVersion, DateTimeOffset CreatedAtUtc);
+public sealed record KillSwitchDto(string Id, bool IsActive, string? Reason, DateTimeOffset UpdatedAtUtc);
+public sealed record InstrumentDto(string Id, string Symbol, string AssetClass, string BaseCurrency, string QuoteCurrency, int PricePrecision, int QuantityPrecision, bool IsEnabled);
+public sealed record VenueDto(string Id, string Name, string VenueType, bool IsEnabled);
 public sealed record CreateModelRunRequest(string? ModelName, string? Symbol, decimal? Weight, decimal NavUsd, TargetQuantityMode TargetQuantityMode, DateTimeOffset? AsOfUtc, DateTimeOffset? EffectiveAtUtc, int FrequencyMinutes, string? InputHash, string? SourceFileName, List<ModelRunWeightRequest>? Weights);
 public sealed record ModelRunWeightRequest(string Symbol, decimal Weight, string? RawSecurityId);
 public sealed record KillSwitchRequest(string? Reason);

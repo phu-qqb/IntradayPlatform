@@ -79,6 +79,30 @@ Then connect with SQL Server Management Studio or Azure Data Studio to `(localdb
 
 The API uses `Persistence:Provider = SqlServerLocal` by default and still registers only `FakeLmaxGateway`.
 
+## Run UI
+
+The local operator cockpit lives at:
+
+```text
+src/QQ.Production.Intraday.Ui
+```
+
+Run it with:
+
+```powershell
+.\scripts\run-ui.ps1
+```
+
+The UI listens on `http://localhost:5173` and calls the local API at `http://localhost:5050` by default. Override the API URL with:
+
+```powershell
+$env:VITE_API_BASE_URL = "http://localhost:5050"
+```
+
+The cockpit is local-only. It displays backend state and sends explicit local commands only: create fake snapshots, build bars, create a local model run, process a model run through FakeLmax, and activate or clear the kill switch. It has no controls for live trading, external connectivity, real LMAX settings, broker credentials, or production secrets.
+
+If the browser shows CORS errors, confirm the API is running in `Development` and the UI is using `http://localhost:5173` or `http://127.0.0.1:5173`.
+
 ## Reference Data Integrity
 
 Duplicate active reference data can make trading decisions ambiguous, especially venue mappings, risk limits, trading windows, instruments, venues, funds, and broker accounts. The API and Worker run a reference data integrity check on startup by default:
@@ -103,6 +127,18 @@ cd C:\Users\phili\source\repos\QQ.Production.Intraday
 .\scripts\check-reference-data.ps1
 .\scripts\smoke-local.ps1
 ```
+
+Recommended UI sequence:
+
+```powershell
+cd C:\Users\phili\source\repos\QQ.Production.Intraday
+.\scripts\reset-local-db.ps1 -SeedDemoData
+.\scripts\run-api.ps1
+.\scripts\check-reference-data.ps1
+.\scripts\run-ui.ps1
+```
+
+Then in the UI: create fake EURUSD snapshots, build 15-minute bars, create a local `IntradayFxModel` model run, process it, and inspect positions, drift, risk decisions, orders, fills, and reconciliation breaks.
 
 ## Run Worker
 
