@@ -107,3 +107,58 @@ public sealed class FakeBrokerPositionProvider(PlatformState state, IClock? cloc
         return Task.FromResult<IReadOnlyList<BrokerPositionSnapshot>>(positions);
     }
 }
+
+public sealed class FakeMarketDataProvider(IClock clock) : IMarketDataProvider
+{
+    public Task<IReadOnlyList<MarketDataSnapshot>> GetSnapshotsAsync(
+        Instrument instrument,
+        Venue venue,
+        DateTimeOffset startUtc,
+        TimeSpan interval,
+        int count,
+        decimal bid,
+        decimal ask,
+        decimal bidStep,
+        decimal askStep,
+        CancellationToken cancellationToken)
+    {
+        if (startUtc.Offset != TimeSpan.Zero)
+        {
+            throw new DomainRuleViolationException("Fake market data start time must be UTC.");
+        }
+
+        if (count < 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(count), "Snapshot count cannot be negative.");
+        }
+
+        var snapshots = Enumerable.Range(0, count)
+            .Select(i =>
+            {
+                var timestamp = startUtc.Add(TimeSpan.FromTicks(interval.Ticks * i));
+                return new MarketDataSnapshot(
+                    MarketDataSnapshotId.New(),
+                    instrument.Id,
+                    venue.Id,
+                    bid + bidStep * i,
+                    ask + askStep * i,
+                    null,
+                    "FakeMarketData",
+                    timestamp,
+                    clock.UtcNow)
+                {
+                    SequenceNumber = i + 1,
+                    IsSynthetic = true,
+                    CreatedAtUtc = clock.UtcNow
+                };
+            })
+            .ToList();
+
+        foreach (var snapshot in snapshots)
+        {
+            snapshot.Validate();
+        }
+
+        return Task.FromResult<IReadOnlyList<MarketDataSnapshot>>(snapshots);
+    }
+}

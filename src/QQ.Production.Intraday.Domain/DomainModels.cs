@@ -55,6 +55,21 @@ public readonly record struct FillId(Guid Value)
     public static FillId New() => new(Guid.NewGuid());
 }
 
+public readonly record struct MarketDataSnapshotId(Guid Value)
+{
+    public static MarketDataSnapshotId New() => new(Guid.NewGuid());
+}
+
+public readonly record struct MarketDataBarId(Guid Value)
+{
+    public static MarketDataBarId New() => new(Guid.NewGuid());
+}
+
+public readonly record struct BarBuildRunId(Guid Value)
+{
+    public static BarBuildRunId New() => new(Guid.NewGuid());
+}
+
 public readonly record struct ClientOrderId(string Value)
 {
     public override string ToString() => Value;
@@ -129,14 +144,33 @@ public sealed record TargetPosition(
     TargetQuantityMode TargetQuantityMode);
 
 public sealed record MarketDataSnapshot(
+    MarketDataSnapshotId Id,
     InstrumentId InstrumentId,
     VenueId VenueId,
     decimal Bid,
     decimal Ask,
     decimal? ExplicitMid,
+    string Source,
+    DateTimeOffset SourceTimestampUtc,
     DateTimeOffset ReceivedAtUtc)
 {
     public decimal Mid => ExplicitMid ?? (Bid + Ask) / 2m;
+    public decimal Spread => Ask - Bid;
+    public long? SequenceNumber { get; init; }
+    public bool IsSynthetic { get; init; }
+    public DateTimeOffset CreatedAtUtc { get; init; } = ReceivedAtUtc;
+
+    public MarketDataSnapshot(
+        InstrumentId instrumentId,
+        VenueId venueId,
+        decimal bid,
+        decimal ask,
+        decimal? explicitMid,
+        DateTimeOffset receivedAtUtc)
+        : this(MarketDataSnapshotId.New(), instrumentId, venueId, bid, ask, explicitMid, "Seed", receivedAtUtc, receivedAtUtc)
+    {
+        IsSynthetic = true;
+    }
 
     public void Validate()
     {
@@ -152,6 +186,118 @@ public sealed record MarketDataSnapshot(
     }
 
     public bool IsStale(TimeSpan maxAge, DateTimeOffset now) => now - ReceivedAtUtc > maxAge;
+}
+
+public enum BarTimeframe { OneMinute, FifteenMinutes, OneHour, OneDay }
+public enum BarQualityStatus { Complete, Incomplete, NoData, SparseData, StaleData, OutlierDetected, ManuallyCorrected }
+public enum BarBuildRunStatus { Started, Completed, Failed }
+
+public sealed record MarketDataBar(
+    MarketDataBarId Id,
+    InstrumentId InstrumentId,
+    VenueId VenueId,
+    BarTimeframe Timeframe,
+    DateTimeOffset BarStartUtc,
+    DateTimeOffset BarEndUtc,
+    string Source,
+    decimal BidOpen,
+    decimal BidHigh,
+    decimal BidLow,
+    decimal BidClose,
+    decimal AskOpen,
+    decimal AskHigh,
+    decimal AskLow,
+    decimal AskClose,
+    decimal MidOpen,
+    decimal MidHigh,
+    decimal MidLow,
+    decimal MidClose,
+    decimal SpreadOpen,
+    decimal SpreadHigh,
+    decimal SpreadLow,
+    decimal SpreadClose,
+    decimal SpreadAverage,
+    int ObservationCount,
+    DateTimeOffset? FirstSnapshotUtc,
+    DateTimeOffset? LastSnapshotUtc,
+    bool IsComplete,
+    BarQualityStatus QualityStatus,
+    BarBuildRunId? BuildRunId,
+    string BuilderVersion,
+    DateTimeOffset CreatedAtUtc)
+{
+    public void Validate()
+    {
+        if (BarStartUtc.Offset != TimeSpan.Zero || BarEndUtc.Offset != TimeSpan.Zero)
+        {
+            throw new DomainRuleViolationException("Market data bars must use UTC timestamps.");
+        }
+
+        if (BarEndUtc <= BarStartUtc)
+        {
+            throw new DomainRuleViolationException("BarEndUtc must be greater than BarStartUtc.");
+        }
+    }
+}
+
+public sealed record BarBuildRun(
+    BarBuildRunId Id,
+    BarTimeframe Timeframe,
+    DateTimeOffset StartedAtUtc,
+    DateTimeOffset? CompletedAtUtc,
+    string Source,
+    string BuilderVersion,
+    BarBuildRunStatus Status,
+    string? ErrorMessage,
+    int BarsCreated,
+    int BarsUpdated);
+
+public static class BarIntervalAlignment
+{
+    public static TimeSpan Duration(BarTimeframe timeframe) => timeframe switch
+    {
+        BarTimeframe.OneMinute => TimeSpan.FromMinutes(1),
+        BarTimeframe.FifteenMinutes => TimeSpan.FromMinutes(15),
+        BarTimeframe.OneHour => TimeSpan.FromHours(1),
+        BarTimeframe.OneDay => TimeSpan.FromDays(1),
+        _ => throw new ArgumentOutOfRangeException(nameof(timeframe), timeframe, "Unsupported timeframe.")
+    };
+
+    public static DateTimeOffset GetBarStart(DateTimeOffset timestampUtc, BarTimeframe timeframe)
+    {
+        EnsureUtc(timestampUtc);
+        var durationTicks = Duration(timeframe).Ticks;
+        var ticks = timestampUtc.UtcDateTime.Ticks - timestampUtc.UtcDateTime.Ticks % durationTicks;
+        return new DateTimeOffset(ticks, TimeSpan.Zero);
+    }
+
+    public static IReadOnlyList<(DateTimeOffset StartUtc, DateTimeOffset EndUtc)> EnumerateIntervals(DateTimeOffset startUtc, DateTimeOffset endUtc, BarTimeframe timeframe)
+    {
+        EnsureUtc(startUtc);
+        EnsureUtc(endUtc);
+        if (endUtc <= startUtc)
+        {
+            return [];
+        }
+
+        var alignedStart = GetBarStart(startUtc, timeframe);
+        var duration = Duration(timeframe);
+        var intervals = new List<(DateTimeOffset StartUtc, DateTimeOffset EndUtc)>();
+        for (var cursor = alignedStart; cursor < endUtc; cursor = cursor.Add(duration))
+        {
+            intervals.Add((cursor, cursor.Add(duration)));
+        }
+
+        return intervals;
+    }
+
+    private static void EnsureUtc(DateTimeOffset value)
+    {
+        if (value.Offset != TimeSpan.Zero)
+        {
+            throw new DomainRuleViolationException("Bar timestamps must be UTC.");
+        }
+    }
 }
 
 public sealed record InternalPositionSnapshot(FundId FundId, InstrumentId InstrumentId, decimal BaseQuantity, DateTimeOffset AsOfUtc);
