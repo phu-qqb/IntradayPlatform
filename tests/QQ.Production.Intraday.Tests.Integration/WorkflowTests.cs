@@ -176,10 +176,45 @@ public sealed class WorkflowTests
         var result = await service.ProcessNextAsync();
 
         Assert.True(result.Blocked);
-        Assert.Equal(ProcessModelRunBlockedReason.TradingWindowClosed, result.BlockedReason);
-        Assert.Single(state.TradeIntents);
-        Assert.Single(state.RiskDecisions);
+        Assert.Equal(ProcessModelRunBlockedReason.ReferenceDataInvalid, result.BlockedReason);
+        Assert.Empty(state.TradeIntents);
+        Assert.Empty(state.RiskDecisions);
         Assert.Empty(state.ParentOrders);
+    }
+
+    [Fact]
+    public async Task Ambiguous_venue_mapping_blocks_processing_without_trade_artifacts()
+    {
+        var state = SeedData.Create(Now);
+        var existing = state.VenueInstrumentMappings.Single();
+        state.VenueInstrumentMappings.Add(existing with { Id = VenueInstrumentId.New() });
+        var service = CreateService(state, FakeLmaxBehavior.FullFill);
+
+        var result = await service.ProcessNextAsync();
+
+        Assert.True(result.Blocked);
+        Assert.Equal(ProcessModelRunBlockedReason.ReferenceDataAmbiguous, result.BlockedReason);
+        Assert.Empty(state.TradeIntents);
+        Assert.Empty(state.ParentOrders);
+        Assert.Empty(state.Fills);
+        Assert.DoesNotContain(state.PositionLedger, x => x.Type == PositionLedgerEventType.Fill);
+    }
+
+    [Fact]
+    public async Task Ambiguous_risk_limit_blocks_processing_without_trade_artifacts()
+    {
+        var state = SeedData.Create(Now);
+        var existing = state.RiskLimitSets.Single();
+        state.RiskLimitSets.Add(existing with { Id = Guid.NewGuid() });
+        var service = CreateService(state, FakeLmaxBehavior.FullFill);
+
+        var result = await service.ProcessNextAsync();
+
+        Assert.True(result.Blocked);
+        Assert.Equal(ProcessModelRunBlockedReason.ReferenceDataAmbiguous, result.BlockedReason);
+        Assert.Empty(state.TradeIntents);
+        Assert.Empty(state.ParentOrders);
+        Assert.Empty(state.Fills);
     }
 
     [Fact]
@@ -247,7 +282,7 @@ public sealed class WorkflowTests
     {
         var repository = new InMemoryIntradayRepository(state);
         var gateway = new FakeLmaxGateway(new FakeLmaxOptions { Behavior = behavior }, Clock);
-        return new ProcessModelRunService(repository, gateway, brokerProvider ?? new FakeBrokerPositionProvider(state, Clock), Clock);
+        return new ProcessModelRunService(repository, gateway, brokerProvider ?? new FakeBrokerPositionProvider(state, Clock), Clock, new ReferenceDataIntegrityService(repository, Clock));
     }
 
     private static string FindRepoRoot()

@@ -19,6 +19,7 @@ Local simulator foundation for `QQ.Production.Intraday`, an institutional PMS/OM
 - No persisted fill = no position update
 - No duplicate broker execution id
 - No duplicate model run processing
+- No ambiguous active reference data = no trading
 - No live LMAX connectivity exists in the registered application path
 - API and Worker register only `FakeLmaxGateway`
 
@@ -68,16 +69,51 @@ Startup database settings:
 
 Normal startup never drops or resets the database.
 
+## Reference Data Integrity
+
+Prompt #4.2 adds a reference data integrity gate. Duplicate active reference rows are dangerous because they can change venue mapping, risk-limit, trading-window, or enabled reference selection. The platform now checks reference data before processing a model run and at startup by default.
+
+If a blocking integrity issue exists:
+
+- processing returns `Blocked` with `ReferenceDataAmbiguous` or `ReferenceDataInvalid`
+- no trade intents are created when ambiguity is detected before intent creation
+- no orders are created
+- no fills are created
+- no position ledger updates are made
+
+The read-only admin endpoint reports the current check:
+
+```powershell
+curl http://localhost:5050/admin/reference-data/integrity
+.\scripts\check-reference-data.ps1 -BaseUrl http://localhost:5050
+```
+
+Startup settings:
+
+- `ReferenceDataIntegrity:CheckOnStartup`
+- `ReferenceDataIntegrity:FailStartupOnBlockingIssues`
+
+Development defaults fail startup on blocking issues. If an old local database contains duplicate reference rows from early non-idempotent seed runs, apply the new migration to a clean database:
+
+```powershell
+.\scripts\reset-local-db.ps1 -SeedDemoData
+```
+
+Production/RDS remediation is not implemented yet. Future production migrations must use a controlled duplicate-detection and remediation plan, not blind deletion.
+
 ## EF Migrations
 
-The LocalDB schema migration is `InitialLocalSqlServerSchema`.
+The LocalDB schema migrations include:
+
+- `InitialLocalSqlServerSchema`
+- `EnforceReferenceDataUniqueness`
 
 ```powershell
 dotnet tool restore
 dotnet tool run dotnet-ef database update --project src/QQ.Production.Intraday.Infrastructure.SqlServer --startup-project src/QQ.Production.Intraday.Api
 ```
 
-The reference seed is idempotent and includes the fund, account, LMAX venue metadata, EURUSD, venue mapping, NAV, conservative risk configuration, trading window, kill switch, start-of-day position, and seed market data. Demo seed data is opt-in and adds fake snapshots plus a sample model run.
+The reference seed is idempotent and includes the fund, account, LMAX venue metadata, EURUSD, venue mapping, NAV, conservative risk configuration, trading window, kill switch, start-of-day position, and seed market data. Demo seed data is opt-in and adds deterministic fake snapshots only. Local model runs are created through `POST /model-runs` or `scripts/smoke-local.ps1`, not by persistent seed data.
 
 ## Scripts
 
@@ -87,6 +123,7 @@ The reference seed is idempotent and includes the fund, account, LMAX venue meta
 - `scripts/reset-local-db.ps1`
 - `scripts/run-api.ps1`
 - `scripts/run-worker.ps1`
+- `scripts/check-reference-data.ps1`
 - `scripts/smoke-local.ps1`
 
 See [docs/LOCAL_RUNBOOK.md](docs/LOCAL_RUNBOOK.md) for the full local workflow.
@@ -111,10 +148,13 @@ Endpoints include:
 - `GET /trade-intents`
 - `GET /orders`
 - `GET /fills`
+- `GET /admin/reference-data/integrity`
 - `POST /admin/kill-switch`
 - `POST /admin/kill-switch/clear`
 
 `GET /health` reports application name, environment, persistence provider, database reachability, pending migrations count, execution gateway, market data mode, live trading flag, external connections flag, and UTC server time. It does not expose secrets.
+
+`GET /orders` returns API DTOs with plain string IDs (`id`, `tradeIntentId`, `parentOrderId`, `venueId`, `instrumentId`, `clientOrderId`, `brokerOrderId`) rather than nested value-object shapes.
 
 `POST /model-runs/{id}/process` returns a structured process result. Normal operational blocks such as stale model run, stale market data, position mismatch, kill switch active, trading window closed, risk rejection, no target weights, no market data, or no drift return HTTP 200 with a status such as `Blocked`, `AlreadyProcessed`, or `NoActionRequired`. HTTP 500 is reserved for real infrastructure or programming failures; inspect API logs in Development for the stack trace.
 
@@ -138,6 +178,16 @@ Run EF migrations against LocalDB:
 
 ```powershell
 .\scripts\update-local-db.ps1
+```
+
+Recommended clean local sequence after Prompt #4.2:
+
+```powershell
+cd C:\Users\phili\source\repos\QQ.Production.Intraday
+.\scripts\reset-local-db.ps1 -SeedDemoData
+.\scripts\run-api.ps1
+.\scripts\check-reference-data.ps1
+.\scripts\smoke-local.ps1
 ```
 
 ## Target Quantity Modes
@@ -233,4 +283,6 @@ curl "http://localhost:5050/market-data/bars?instrument=EURUSD&venue=LMAX&timefr
 - RDS is not configured
 - EOD LMAX report import is not implemented
 - Advanced execution algos are not implemented
+- Production/RDS duplicate reference-data remediation is not implemented yet
+- Old local databases may contain stale demo model runs from earlier seed behavior; `scripts/reset-local-db.ps1 -SeedDemoData` recreates a clean local database where demo seed contains fake snapshots only.
 - NuGet advisory audit currently reports `System.Security.Cryptography.Xml` as a vulnerable transitive package through the SQL Server infrastructure dependency graph. Directly pinning available .NET 10 package versions did not clear the advisory, so this is documented rather than masked with an unstable package workaround.

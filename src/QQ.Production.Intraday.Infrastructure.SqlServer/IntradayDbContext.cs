@@ -69,6 +69,17 @@ public sealed class IntradayDbContext(DbContextOptions<IntradayDbContext> option
         modelBuilder.Entity<KillSwitchState>().HasKey(x => x.Id);
 
         modelBuilder.Entity<ModelRun>().HasIndex(x => x.Id).IsUnique();
+        modelBuilder.Entity<Fund>().HasIndex(x => x.Name).IsUnique().HasFilter("[IsEnabled] = 1");
+        modelBuilder.Entity<BrokerAccount>().HasIndex(x => new { x.FundId, x.AccountCode }).IsUnique().HasFilter("[IsEnabled] = 1");
+        modelBuilder.Entity<Instrument>().HasIndex(x => new { x.Symbol, x.AssetClass }).IsUnique().HasFilter("[IsEnabled] = 1");
+        modelBuilder.Entity<Venue>().HasIndex(x => x.Name).IsUnique().HasFilter("[IsEnabled] = 1");
+        modelBuilder.Entity<VenueInstrumentMapping>().HasIndex(x => new { x.VenueId, x.InstrumentId }).IsUnique().HasFilter("[IsEnabled] = 1");
+        modelBuilder.Entity<VenueInstrumentMapping>().HasIndex(x => new { x.VenueId, x.VenueSymbol }).IsUnique().HasFilter("[IsEnabled] = 1");
+        modelBuilder.Entity<RiskLimitSet>().HasIndex(x => x.FundId).IsUnique();
+        modelBuilder.Entity<RiskLimit>().HasIndex(x => new { x.RiskLimitSetId, x.Name }).IsUnique();
+        modelBuilder.Entity<InstrumentRiskLimit>().HasIndex(x => new { x.RiskLimitSetId, x.InstrumentId }).IsUnique().HasFilter("[IsEnabled] = 1");
+        modelBuilder.Entity<VenueRiskLimit>().HasIndex(x => new { x.RiskLimitSetId, x.VenueId }).IsUnique().HasFilter("[IsEnabled] = 1");
+        modelBuilder.Entity<TradingWindow>().HasIndex(x => new { x.FundId, x.ModelName, x.DayOfWeek }).IsUnique().HasFilter("[IsEnabled] = 1");
         modelBuilder.Entity<Fill>().HasIndex(x => new { x.VenueId, x.BrokerExecutionId }).IsUnique();
         modelBuilder.Entity<ParentOrder>().HasIndex(x => x.ClientOrderId).IsUnique();
         modelBuilder.Entity<ChildOrder>().HasIndex(x => x.ClientOrderId).IsUnique();
@@ -223,10 +234,12 @@ public sealed class SqlServerIntradayRepository(IntradayDbContext dbContext) : I
         state.ExecutionReports.AddRange(await dbContext.ExecutionReports.AsNoTracking().ToListAsync(cancellationToken));
         state.Fills.AddRange(await dbContext.Fills.AsNoTracking().ToListAsync(cancellationToken));
         state.RiskLimitSets.AddRange(await dbContext.RiskLimitSets.AsNoTracking().ToListAsync(cancellationToken));
+        state.RiskLimits.AddRange(await dbContext.RiskLimits.AsNoTracking().ToListAsync(cancellationToken));
         state.InstrumentRiskLimits.AddRange(await dbContext.InstrumentRiskLimits.AsNoTracking().ToListAsync(cancellationToken));
         state.VenueRiskLimits.AddRange(await dbContext.VenueRiskLimits.AsNoTracking().ToListAsync(cancellationToken));
         state.TradingWindows.AddRange(await dbContext.TradingWindows.AsNoTracking().ToListAsync(cancellationToken));
-        state.KillSwitch = await dbContext.KillSwitchStates.AsNoTracking().OrderByDescending(x => x.UpdatedAtUtc).FirstAsync(cancellationToken);
+        state.KillSwitchStates.AddRange(await dbContext.KillSwitchStates.AsNoTracking().ToListAsync(cancellationToken));
+        state.KillSwitch = state.KillSwitchStates.OrderByDescending(x => x.UpdatedAtUtc).FirstOrDefault() ?? state.KillSwitch;
         return state;
     }
 

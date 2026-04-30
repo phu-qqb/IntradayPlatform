@@ -142,6 +142,35 @@ public sealed class MarketDataIntegrationTests
     }
 
     [Fact]
+    public async Task Api_orders_endpoint_returns_plain_non_empty_string_ids_after_process()
+    {
+        await using var factory = CreateInMemoryFactory();
+        var client = factory.CreateClient();
+        var now = DateTimeOffset.UtcNow;
+        await CreateFakeSnapshotsAsync(client, now.AddMinutes(-1), 2);
+        var run = await CreateModelRunAsync(client, now);
+        (await client.PostAsync($"/model-runs/{run.Id.Value}/process", null)).EnsureSuccessStatusCode();
+
+        var orders = await client.GetFromJsonAsync<ApiOrdersResponse>("/orders");
+
+        Assert.NotNull(orders);
+        var parent = Assert.Single(orders.ParentOrders);
+        var child = Assert.Single(orders.ChildOrders);
+        Assert.False(string.IsNullOrWhiteSpace(parent.Id));
+        Assert.False(string.IsNullOrWhiteSpace(parent.TradeIntentId));
+        Assert.False(string.IsNullOrWhiteSpace(parent.InstrumentId));
+        Assert.False(string.IsNullOrWhiteSpace(parent.ClientOrderId));
+        Assert.False(string.IsNullOrWhiteSpace(child.Id));
+        Assert.False(string.IsNullOrWhiteSpace(child.ParentOrderId));
+        Assert.False(string.IsNullOrWhiteSpace(child.VenueId));
+        Assert.False(string.IsNullOrWhiteSpace(child.InstrumentId));
+        Assert.False(string.IsNullOrWhiteSpace(child.ClientOrderId));
+        Assert.False(string.IsNullOrWhiteSpace(child.BrokerOrderId));
+        Assert.DoesNotContain("{", parent.Id);
+        Assert.DoesNotContain("{", child.ClientOrderId);
+    }
+
+    [Fact]
     public async Task Api_process_endpoint_returns_blocked_json_for_stale_model_run()
     {
         await using var factory = CreateInMemoryFactory();
@@ -224,6 +253,18 @@ public sealed class MarketDataIntegrationTests
     }
 
     [Fact]
+    public async Task Api_reference_data_integrity_endpoint_returns_clean_state()
+    {
+        await using var factory = CreateInMemoryFactory(Now);
+        var client = factory.CreateClient();
+
+        var result = await client.GetFromJsonAsync<ApiReferenceDataIntegrityCheck>("/admin/reference-data/integrity");
+
+        Assert.NotNull(result);
+        Assert.Equal(0, result.BlockingIssueCount);
+    }
+
+    [Fact]
     public async Task Bar_building_does_not_change_execution_workflow_behavior()
     {
         var state = SeedData.Create(Now);
@@ -231,7 +272,9 @@ public sealed class MarketDataIntegrationTests
         await new InMemoryMarketDataSnapshotRepository(state).AddRangeAsync(snapshots, CancellationToken.None);
         var builder = CreateBuilder(state);
         await builder.BuildBarsAsync(state.Venues.Single().Id, BarTimeframe.FifteenMinutes, Now.AddMinutes(-15), Now, CancellationToken.None);
-        var service = new ProcessModelRunService(new InMemoryIntradayRepository(state), new FakeLmaxGateway(new FakeLmaxOptions(), new FixedClock(Now)), new FakeBrokerPositionProvider(state, new FixedClock(Now)), new FixedClock(Now));
+        var repository = new InMemoryIntradayRepository(state);
+        var clock = new FixedClock(Now);
+        var service = new ProcessModelRunService(repository, new FakeLmaxGateway(new FakeLmaxOptions(), clock), new FakeBrokerPositionProvider(state, clock), clock, new ReferenceDataIntegrityService(repository, clock));
 
         await service.ProcessNextAsync();
 
@@ -345,4 +388,8 @@ public sealed class MarketDataIntegrationTests
     private sealed record ApiModelRun(ApiId Id);
     private sealed record ApiId(Guid Value);
     private sealed record ApiProcessResult(bool Processed, string Status, string? BlockedReason, int TradeIntentCount, int OrderCount, int FillCount, bool IsAlreadyProcessed);
+    private sealed record ApiReferenceDataIntegrityCheck(int BlockingIssueCount, int WarningIssueCount);
+    private sealed record ApiOrdersResponse(List<ApiParentOrder> ParentOrders, List<ApiChildOrder> ChildOrders);
+    private sealed record ApiParentOrder(string Id, string TradeIntentId, string? InstrumentId, string ClientOrderId);
+    private sealed record ApiChildOrder(string Id, string ParentOrderId, string VenueId, string? InstrumentId, string ClientOrderId, string? BrokerOrderId);
 }

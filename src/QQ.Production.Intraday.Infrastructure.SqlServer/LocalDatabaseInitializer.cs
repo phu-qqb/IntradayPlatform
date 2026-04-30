@@ -13,17 +13,79 @@ public sealed class LocalDatabaseInitializer(IntradayDbContext dbContext, IClock
     public async Task SeedReferenceDataAsync(CancellationToken cancellationToken)
     {
         var seeded = SeedData.Create(new DateTimeOffset(2026, 04, 29, 09, 00, 00, TimeSpan.Zero));
-        await UpsertAsync(dbContext.Funds, seeded.Funds, x => x.Id, cancellationToken);
-        await UpsertAsync(dbContext.BrokerAccounts, seeded.BrokerAccounts, x => x.Id, cancellationToken);
-        await UpsertAsync(dbContext.Instruments, seeded.Instruments, x => x.Id, cancellationToken);
-        await UpsertAsync(dbContext.Venues, seeded.Venues, x => x.Id, cancellationToken);
-        await UpsertAsync(dbContext.VenueInstrumentMappings, seeded.VenueInstrumentMappings, x => x.Id, cancellationToken);
-        await UpsertAsync(dbContext.NavSnapshots, seeded.NavSnapshots, x => new { x.FundId, x.AsOfUtc }, cancellationToken);
-        await UpsertAsync(dbContext.RiskLimitSets, seeded.RiskLimitSets, x => x.Id, cancellationToken);
-        await UpsertAsync(dbContext.InstrumentRiskLimits, seeded.InstrumentRiskLimits, x => x.Id, cancellationToken);
-        await UpsertAsync(dbContext.VenueRiskLimits, seeded.VenueRiskLimits, x => x.Id, cancellationToken);
-        await UpsertAsync(dbContext.TradingWindows, seeded.TradingWindows, x => x.Id, cancellationToken);
-        await UpsertAsync(dbContext.TradingWindows, [CreateCurrentIntradayWindow(seeded.Funds.Single().Id)], x => x.Id, cancellationToken);
+        var seedFund = seeded.Funds.Single();
+        var fund = await dbContext.Funds.FirstOrDefaultAsync(x => x.Name == seedFund.Name, cancellationToken);
+        if (fund is null)
+        {
+            fund = seedFund;
+            dbContext.Funds.Add(fund);
+        }
+
+        var seedAccount = seeded.BrokerAccounts.Single();
+        if (!await dbContext.BrokerAccounts.AnyAsync(x => x.FundId == fund.Id && x.AccountCode == seedAccount.AccountCode, cancellationToken))
+        {
+            dbContext.BrokerAccounts.Add(seedAccount with { FundId = fund.Id });
+        }
+
+        var seedInstrument = seeded.Instruments.Single();
+        var instrument = await dbContext.Instruments.FirstOrDefaultAsync(x => x.Symbol == seedInstrument.Symbol && x.AssetClass == seedInstrument.AssetClass, cancellationToken);
+        if (instrument is null)
+        {
+            instrument = seedInstrument;
+            dbContext.Instruments.Add(instrument);
+        }
+
+        var seedVenue = seeded.Venues.Single();
+        var venue = await dbContext.Venues.FirstOrDefaultAsync(x => x.Name == seedVenue.Name, cancellationToken);
+        if (venue is null)
+        {
+            venue = seedVenue;
+            dbContext.Venues.Add(venue);
+        }
+
+        var seedMapping = seeded.VenueInstrumentMappings.Single();
+        if (!await dbContext.VenueInstrumentMappings.AnyAsync(x => x.VenueId == venue.Id && x.InstrumentId == instrument.Id, cancellationToken)
+            && !await dbContext.VenueInstrumentMappings.AnyAsync(x => x.VenueId == venue.Id && x.VenueSymbol == seedMapping.VenueSymbol, cancellationToken))
+        {
+            dbContext.VenueInstrumentMappings.Add(seedMapping with { VenueId = venue.Id, InstrumentId = instrument.Id });
+        }
+
+        if (!await dbContext.NavSnapshots.AnyAsync(x => x.FundId == fund.Id && x.Source == NavSource.Seed, cancellationToken))
+        {
+            dbContext.NavSnapshots.Add(seeded.NavSnapshots.Single() with { FundId = fund.Id });
+        }
+
+        var seedRiskLimitSet = seeded.RiskLimitSets.Single();
+        var riskLimitSet = await dbContext.RiskLimitSets.FirstOrDefaultAsync(x => x.FundId == fund.Id, cancellationToken);
+        if (riskLimitSet is null)
+        {
+            riskLimitSet = seedRiskLimitSet with { FundId = fund.Id };
+            dbContext.RiskLimitSets.Add(riskLimitSet);
+        }
+
+        var seedInstrumentRiskLimit = seeded.InstrumentRiskLimits.Single();
+        if (!await dbContext.InstrumentRiskLimits.AnyAsync(x => x.RiskLimitSetId == riskLimitSet.Id && x.InstrumentId == instrument.Id, cancellationToken))
+        {
+            dbContext.InstrumentRiskLimits.Add(seedInstrumentRiskLimit with { RiskLimitSetId = riskLimitSet.Id, InstrumentId = instrument.Id });
+        }
+
+        var seedVenueRiskLimit = seeded.VenueRiskLimits.Single();
+        if (!await dbContext.VenueRiskLimits.AnyAsync(x => x.RiskLimitSetId == riskLimitSet.Id && x.VenueId == venue.Id, cancellationToken))
+        {
+            dbContext.VenueRiskLimits.Add(seedVenueRiskLimit with { RiskLimitSetId = riskLimitSet.Id, VenueId = venue.Id });
+        }
+
+        var seedWindow = seeded.TradingWindows.Single(x => x.ModelName == "Sample FX Intraday");
+        if (!await dbContext.TradingWindows.AnyAsync(x => x.FundId == fund.Id && x.ModelName == seedWindow.ModelName && x.DayOfWeek == seedWindow.DayOfWeek, cancellationToken))
+        {
+            dbContext.TradingWindows.Add(seedWindow with { FundId = fund.Id });
+        }
+
+        var currentWindow = CreateCurrentIntradayWindow(fund.Id);
+        if (!await dbContext.TradingWindows.AnyAsync(x => x.FundId == currentWindow.FundId && x.ModelName == currentWindow.ModelName && x.DayOfWeek == currentWindow.DayOfWeek, cancellationToken))
+        {
+            dbContext.TradingWindows.Add(currentWindow);
+        }
 
         if (!await dbContext.KillSwitchStates.AnyAsync(cancellationToken))
         {
@@ -46,13 +108,6 @@ public sealed class LocalDatabaseInitializer(IntradayDbContext dbContext, IClock
     public async Task SeedDemoDataAsync(CancellationToken cancellationToken)
     {
         var seeded = SeedData.Create(new DateTimeOffset(2026, 04, 29, 09, 15, 00, TimeSpan.Zero));
-        var run = seeded.ModelRuns.Single();
-        if (!await dbContext.ModelRuns.AnyAsync(x => x.Id == run.Id, cancellationToken))
-        {
-            dbContext.ModelRuns.Add(run);
-            dbContext.TargetWeights.AddRange(seeded.TargetWeights);
-        }
-
         var instrument = seeded.Instruments.Single();
         var venue = seeded.Venues.Single();
         var start = new DateTimeOffset(2026, 04, 29, 09, 15, 00, TimeSpan.Zero);
@@ -92,20 +147,6 @@ public sealed class LocalDatabaseInitializer(IntradayDbContext dbContext, IClock
         if (seedDemoData)
         {
             await SeedDemoDataAsync(cancellationToken);
-        }
-    }
-
-    private static async Task UpsertAsync<TEntity, TKey>(DbSet<TEntity> dbSet, IEnumerable<TEntity> values, Func<TEntity, TKey> keySelector, CancellationToken cancellationToken)
-        where TEntity : class
-    {
-        var existing = await dbSet.AsNoTracking().ToListAsync(cancellationToken);
-        var keys = existing.Select(keySelector).ToHashSet();
-        foreach (var value in values)
-        {
-            if (!keys.Contains(keySelector(value)))
-            {
-                dbSet.Add(value);
-            }
         }
     }
 

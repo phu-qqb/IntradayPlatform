@@ -12,6 +12,7 @@ builder.Services.AddSingleton(new FakeLmaxOptions());
 builder.Services.AddSingleton<IVenueExecutionGateway, FakeLmaxGateway>();
 builder.Services.AddSingleton<IMarketDataProvider, FakeMarketDataProvider>();
 builder.Services.AddScoped<ProcessModelRunService>();
+builder.Services.AddScoped<IReferenceDataIntegrityService, ReferenceDataIntegrityService>();
 
 var persistenceProvider = builder.Configuration.GetValue("Persistence:Provider", "SqlServerLocal") ?? "SqlServerLocal";
 if (string.Equals(persistenceProvider, "SqlServerLocal", StringComparison.OrdinalIgnoreCase))
@@ -49,6 +50,7 @@ builder.Services.AddSerilog(new LoggerConfiguration().WriteTo.Console().CreateLo
 var host = builder.Build();
 await InitializeDatabaseAsync(host, persistenceProvider);
 ValidateSafety(host, persistenceProvider);
+await ValidateReferenceDataAsync(host);
 host.Run();
 
 static async Task InitializeDatabaseAsync(IHost host, string persistenceProvider)
@@ -114,4 +116,22 @@ static void ValidateSafety(IHost host, string persistenceProvider)
         scope.ServiceProvider.GetRequiredService<IMarketDataProvider>().GetType().Name,
         configuration.GetValue("Safety:AllowExternalConnections", false),
         configuration.GetValue("Safety:AllowLiveTrading", false));
+}
+
+static async Task ValidateReferenceDataAsync(IHost host)
+{
+    using var scope = host.Services.CreateScope();
+    var configuration = scope.ServiceProvider.GetRequiredService<IConfiguration>();
+    if (!configuration.GetValue("ReferenceDataIntegrity:CheckOnStartup", true))
+    {
+        return;
+    }
+
+    var check = await scope.ServiceProvider.GetRequiredService<IReferenceDataIntegrityService>().CheckAsync(CancellationToken.None);
+    var logger = scope.ServiceProvider.GetRequiredService<ILoggerFactory>().CreateLogger("ReferenceDataIntegrity");
+    logger.LogInformation("Reference data integrity checked: BlockingIssues={BlockingIssueCount} WarningIssues={WarningIssueCount}", check.BlockingIssueCount, check.WarningIssueCount);
+    if (check.BlockingIssueCount > 0 && configuration.GetValue("ReferenceDataIntegrity:FailStartupOnBlockingIssues", true))
+    {
+        throw new InvalidOperationException($"Reference data integrity check failed with {check.BlockingIssueCount} blocking issue(s). Run scripts/check-reference-data.ps1 for details or reset the local dev database if it contains old duplicate seed rows.");
+    }
 }

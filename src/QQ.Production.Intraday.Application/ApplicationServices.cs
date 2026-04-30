@@ -88,6 +88,47 @@ public interface IBarBuilderService
 public sealed record BarUpsertResult(bool Created);
 public sealed record BarBuildResult(BarBuildRunId RunId, int BarsCreated, int BarsUpdated, BarBuildRunStatus Status, string? ErrorMessage = null);
 
+public enum ReferenceDataIntegrityIssueType
+{
+    DuplicateFund,
+    DuplicateBrokerAccount,
+    DuplicateInstrument,
+    DuplicateVenue,
+    DuplicateVenueInstrumentMapping,
+    DuplicateRiskLimitSet,
+    DuplicateRiskLimit,
+    DuplicateInstrumentRiskLimit,
+    DuplicateVenueRiskLimit,
+    DuplicateTradingWindow,
+    DuplicateKillSwitchState,
+    MissingRequiredReferenceData,
+    AmbiguousReferenceData,
+    DisabledRequiredReferenceData
+}
+
+public enum ReferenceDataIntegritySeverity { Info, Warning, Blocking }
+public enum ReferenceDataIntegrityStatus { Open, Acknowledged, Resolved }
+
+public sealed record ReferenceDataIntegrityIssue(
+    Guid Id,
+    ReferenceDataIntegrityIssueType Type,
+    ReferenceDataIntegritySeverity Severity,
+    ReferenceDataIntegrityStatus Status,
+    string Key,
+    string Description,
+    DateTimeOffset CreatedAtUtc);
+
+public sealed record ReferenceDataIntegrityResult(
+    DateTimeOffset CheckedAtUtc,
+    int BlockingIssueCount,
+    int WarningIssueCount,
+    IReadOnlyList<ReferenceDataIntegrityIssue> Issues);
+
+public interface IReferenceDataIntegrityService
+{
+    Task<ReferenceDataIntegrityResult> CheckAsync(CancellationToken cancellationToken);
+}
+
 public sealed class BarBuilderOptions
 {
     public int FifteenMinuteMinimumObservationCount { get; set; } = 3;
@@ -121,9 +162,11 @@ public sealed class PlatformState
     public List<ExecutionReport> ExecutionReports { get; } = [];
     public List<Fill> Fills { get; } = [];
     public List<RiskLimitSet> RiskLimitSets { get; } = [];
+    public List<RiskLimit> RiskLimits { get; } = [];
     public List<InstrumentRiskLimit> InstrumentRiskLimits { get; } = [];
     public List<VenueRiskLimit> VenueRiskLimits { get; } = [];
     public List<TradingWindow> TradingWindows { get; } = [];
+    public List<KillSwitchState> KillSwitchStates { get; } = [];
     public KillSwitchState KillSwitch { get; set; } = new(Guid.NewGuid(), false, null, DateTimeOffset.UnixEpoch);
 }
 
@@ -558,6 +601,113 @@ public sealed class BarBuilderService(
     }
 }
 
+public sealed class ReferenceDataIntegrityService(IIntradayRepository repository, IClock clock) : IReferenceDataIntegrityService
+{
+    public async Task<ReferenceDataIntegrityResult> CheckAsync(CancellationToken cancellationToken)
+    {
+        var state = await repository.LoadStateAsync(cancellationToken);
+        var now = clock.UtcNow;
+        var issues = new List<ReferenceDataIntegrityIssue>();
+
+        AddDuplicateIssues(issues, state.Funds.Where(x => x.IsEnabled), x => x.Name, ReferenceDataIntegrityIssueType.DuplicateFund, "enabled fund", now);
+        AddDuplicateIssues(issues, state.BrokerAccounts.Where(x => x.IsEnabled), x => $"{x.FundId.Value:N}|{x.AccountCode}", ReferenceDataIntegrityIssueType.DuplicateBrokerAccount, "enabled broker account", now);
+        AddDuplicateIssues(issues, state.Instruments.Where(x => x.IsEnabled), x => $"{x.Symbol}|{x.AssetClass}", ReferenceDataIntegrityIssueType.DuplicateInstrument, "enabled instrument", now);
+        AddDuplicateIssues(issues, state.Venues.Where(x => x.IsEnabled), x => x.Name, ReferenceDataIntegrityIssueType.DuplicateVenue, "enabled venue", now);
+        AddDuplicateIssues(issues, state.VenueInstrumentMappings.Where(x => x.IsEnabled), x => $"{x.VenueId.Value:N}|{x.InstrumentId.Value:N}", ReferenceDataIntegrityIssueType.DuplicateVenueInstrumentMapping, "enabled venue/instrument mapping", now);
+        AddDuplicateIssues(issues, state.VenueInstrumentMappings.Where(x => x.IsEnabled), x => $"{x.VenueId.Value:N}|{x.VenueSymbol}", ReferenceDataIntegrityIssueType.DuplicateVenueInstrumentMapping, "enabled venue symbol mapping", now);
+        AddDuplicateIssues(issues, state.RiskLimitSets, x => x.FundId.Value.ToString("N"), ReferenceDataIntegrityIssueType.DuplicateRiskLimitSet, "risk limit set", now);
+        AddDuplicateIssues(issues, state.RiskLimits, x => $"{x.RiskLimitSetId:N}|{x.Name}", ReferenceDataIntegrityIssueType.DuplicateRiskLimit, "risk limit", now);
+        AddDuplicateIssues(issues, state.InstrumentRiskLimits.Where(x => x.IsEnabled), x => $"{x.RiskLimitSetId:N}|{x.InstrumentId.Value:N}", ReferenceDataIntegrityIssueType.DuplicateInstrumentRiskLimit, "enabled instrument risk limit", now);
+        AddDuplicateIssues(issues, state.VenueRiskLimits.Where(x => x.IsEnabled), x => $"{x.RiskLimitSetId:N}|{x.VenueId.Value:N}", ReferenceDataIntegrityIssueType.DuplicateVenueRiskLimit, "enabled venue risk limit", now);
+        AddDuplicateIssues(issues, state.TradingWindows.Where(x => x.IsEnabled), x => $"{x.FundId.Value:N}|{x.ModelName}|{x.DayOfWeek}", ReferenceDataIntegrityIssueType.DuplicateTradingWindow, "enabled trading window", now);
+        AddAmbiguousCurrentKillSwitchIssue(issues, state.KillSwitchStates, now);
+
+        var fund = RequireExactlyOne(issues, state.Funds.Where(x => x.Name == "QQ Intraday Fund").ToList(), x => x.IsEnabled, "QQ Intraday Fund", ReferenceDataIntegrityIssueType.DuplicateFund, now);
+        var instrument = RequireExactlyOne(issues, state.Instruments.Where(x => x.Symbol == "EURUSD" && x.AssetClass == AssetClass.FxSpot).ToList(), x => x.IsEnabled, "EURUSD/FxSpot", ReferenceDataIntegrityIssueType.DuplicateInstrument, now);
+        var venue = RequireExactlyOne(issues, state.Venues.Where(x => x.Name == "LMAX").ToList(), x => x.IsEnabled, "LMAX", ReferenceDataIntegrityIssueType.DuplicateVenue, now);
+
+        if (fund is not null)
+        {
+            RequireExactlyOne(issues, state.BrokerAccounts.Where(x => x.FundId == fund.Id).ToList(), x => x.IsEnabled, $"BrokerAccount:{fund.Id.Value:N}", ReferenceDataIntegrityIssueType.DuplicateBrokerAccount, now);
+            RequireExactlyOne(issues, state.RiskLimitSets.Where(x => x.FundId == fund.Id).ToList(), _ => true, $"RiskLimitSet:{fund.Id.Value:N}", ReferenceDataIntegrityIssueType.DuplicateRiskLimitSet, now);
+            RequireAtLeastOne(issues, state.TradingWindows.Where(x => x.FundId == fund.Id && x.ModelName == "IntradayFxModel" && x.IsEnabled), "TradingWindow:IntradayFxModel", now);
+        }
+
+        if (venue is not null && instrument is not null)
+        {
+            RequireExactlyOne(issues, state.VenueInstrumentMappings.Where(x => x.VenueId == venue.Id && x.InstrumentId == instrument.Id).ToList(), x => x.IsEnabled, "LMAX:EURUSD", ReferenceDataIntegrityIssueType.DuplicateVenueInstrumentMapping, now);
+        }
+
+        if (state.KillSwitchStates.Count == 0 && state.KillSwitch.UpdatedAtUtc == DateTimeOffset.UnixEpoch)
+        {
+            issues.Add(NewIssue(ReferenceDataIntegrityIssueType.MissingRequiredReferenceData, "KillSwitchState", "No kill-switch state exists.", now));
+        }
+
+        return new ReferenceDataIntegrityResult(
+            now,
+            issues.Count(x => x.Severity == ReferenceDataIntegritySeverity.Blocking),
+            issues.Count(x => x.Severity == ReferenceDataIntegritySeverity.Warning),
+            issues);
+    }
+
+    private static void AddDuplicateIssues<T>(List<ReferenceDataIntegrityIssue> issues, IEnumerable<T> values, Func<T, string> keySelector, ReferenceDataIntegrityIssueType type, string label, DateTimeOffset now)
+    {
+        foreach (var group in values.GroupBy(keySelector, StringComparer.OrdinalIgnoreCase).Where(x => x.Count() > 1))
+        {
+            issues.Add(NewIssue(type, group.Key, $"Duplicate {label} rows exist for key '{group.Key}'.", now));
+        }
+    }
+
+    private static T? RequireExactlyOne<T>(List<ReferenceDataIntegrityIssue> issues, IReadOnlyList<T> values, Func<T, bool> enabledSelector, string key, ReferenceDataIntegrityIssueType duplicateType, DateTimeOffset now)
+    {
+        if (values.Count == 0)
+        {
+            issues.Add(NewIssue(ReferenceDataIntegrityIssueType.MissingRequiredReferenceData, key, $"Required reference data is missing for '{key}'.", now));
+            return default;
+        }
+
+        var enabled = values.Where(enabledSelector).ToList();
+        if (enabled.Count == 0)
+        {
+            issues.Add(NewIssue(ReferenceDataIntegrityIssueType.DisabledRequiredReferenceData, key, $"Required reference data exists but is disabled for '{key}'.", now));
+            return default;
+        }
+
+        if (enabled.Count > 1)
+        {
+            issues.Add(NewIssue(duplicateType, key, $"Required reference data is ambiguous for '{key}'.", now));
+            return default;
+        }
+
+        return enabled[0];
+    }
+
+    private static void RequireAtLeastOne<T>(List<ReferenceDataIntegrityIssue> issues, IEnumerable<T> values, string key, DateTimeOffset now)
+    {
+        if (!values.Any())
+        {
+            issues.Add(NewIssue(ReferenceDataIntegrityIssueType.MissingRequiredReferenceData, key, $"Required reference data is missing for '{key}'.", now));
+        }
+    }
+
+    private static void AddAmbiguousCurrentKillSwitchIssue(List<ReferenceDataIntegrityIssue> issues, IReadOnlyList<KillSwitchState> states, DateTimeOffset now)
+    {
+        if (states.Count <= 1)
+        {
+            return;
+        }
+
+        var latestTimestamp = states.Max(x => x.UpdatedAtUtc);
+        if (states.Count(x => x.UpdatedAtUtc == latestTimestamp) > 1)
+        {
+            issues.Add(NewIssue(ReferenceDataIntegrityIssueType.DuplicateKillSwitchState, "KillSwitchState:Current", "Multiple kill-switch rows share the latest timestamp, so the current kill-switch state is ambiguous.", now));
+        }
+    }
+
+    private static ReferenceDataIntegrityIssue NewIssue(ReferenceDataIntegrityIssueType type, string key, string description, DateTimeOffset now)
+        => new(Guid.NewGuid(), type, ReferenceDataIntegritySeverity.Blocking, ReferenceDataIntegrityStatus.Open, key, description, now);
+}
+
 public sealed record RiskContext(Fund Fund, Venue Venue, Instrument Instrument, ModelRun ModelRun, MarketDataSnapshot MarketData, decimal CurrentBaseQuantity, bool PositionsMatch, decimal ExistingGrossExposureUsd, DateTimeOffset Now);
 
 public sealed class RiskEngine
@@ -617,6 +767,8 @@ public enum ProcessModelRunBlockedReason
     NoMarketData,
     NoTargetWeights,
     NoDrift,
+    ReferenceDataInvalid,
+    ReferenceDataAmbiguous,
     Other
 }
 
@@ -641,7 +793,7 @@ public sealed record ProcessModelRunResult(
         => new(null, false, ProcessModelRunStatus.NoActionRequired, null, "No unprocessed model runs.", 0, 0, 0, 0, 0, 0, false, now);
 }
 
-public sealed class ProcessModelRunService(IIntradayRepository repository, IVenueExecutionGateway venueGateway, IBrokerPositionProvider brokerPositionProvider, IClock clock)
+public sealed class ProcessModelRunService(IIntradayRepository repository, IVenueExecutionGateway venueGateway, IBrokerPositionProvider brokerPositionProvider, IClock clock, IReferenceDataIntegrityService referenceDataIntegrityService)
 {
     public async Task<ProcessModelRunResult> ProcessNextAsync(CancellationToken cancellationToken = default)
     {
@@ -669,16 +821,26 @@ public sealed class ProcessModelRunService(IIntradayRepository repository, IVenu
         }
 
         var now = clock.UtcNow;
+        var integrity = await referenceDataIntegrityService.CheckAsync(cancellationToken);
+        if (integrity.BlockingIssueCount > 0)
+        {
+            return BuildResult(state, run.Id, false, ProcessModelRunStatus.Blocked, DetermineIntegrityBlockedReason(integrity), $"Reference data integrity check failed with {integrity.BlockingIssueCount} blocking issue(s).", false, now);
+        }
+
         var previousBlock = GetExistingBlock(state, run.Id, now);
         if (previousBlock is not null)
         {
             return previousBlock;
         }
 
-        var fund = state.Funds.Single(x => x.Id == run.FundId);
-        var brokerAccount = state.BrokerAccounts.Single(x => x.FundId == fund.Id);
-        var venue = state.Venues.Single(x => x.Name == "LMAX");
-        var riskLimitSet = state.RiskLimitSets.Single(x => x.FundId == fund.Id);
+        var fund = state.Funds.SingleOrDefault(x => x.Id == run.FundId && x.IsEnabled);
+        var brokerAccount = fund is null ? null : state.BrokerAccounts.SingleOrDefault(x => x.FundId == fund.Id && x.IsEnabled);
+        var venue = state.Venues.SingleOrDefault(x => x.Name == "LMAX" && x.IsEnabled);
+        var riskLimitSet = fund is null ? null : state.RiskLimitSets.SingleOrDefault(x => x.FundId == fund.Id);
+        if (fund is null || brokerAccount is null || venue is null || riskLimitSet is null)
+        {
+            return BuildResult(state, run.Id, false, ProcessModelRunStatus.Blocked, ProcessModelRunBlockedReason.ReferenceDataInvalid, "Required enabled reference data is missing.", false, now);
+        }
         var tradingWindow = state.TradingWindows.FirstOrDefault(x => x.FundId == fund.Id && x.ModelName == run.ModelName && x.DayOfWeek == now.DayOfWeek)
             ?? state.TradingWindows.FirstOrDefault(x => x.FundId == fund.Id && x.ModelName == run.ModelName)
             ?? state.TradingWindows.FirstOrDefault(x => x.FundId == fund.Id)
@@ -853,6 +1015,23 @@ public sealed class ProcessModelRunService(IIntradayRepository repository, IVenu
         return null;
     }
 
+    private static ProcessModelRunBlockedReason DetermineIntegrityBlockedReason(ReferenceDataIntegrityResult check)
+        => check.Issues.Any(x => x.Severity == ReferenceDataIntegritySeverity.Blocking
+            && x.Type is ReferenceDataIntegrityIssueType.AmbiguousReferenceData
+                or ReferenceDataIntegrityIssueType.DuplicateFund
+                or ReferenceDataIntegrityIssueType.DuplicateBrokerAccount
+                or ReferenceDataIntegrityIssueType.DuplicateInstrument
+                or ReferenceDataIntegrityIssueType.DuplicateVenue
+                or ReferenceDataIntegrityIssueType.DuplicateVenueInstrumentMapping
+                or ReferenceDataIntegrityIssueType.DuplicateRiskLimitSet
+                or ReferenceDataIntegrityIssueType.DuplicateRiskLimit
+                or ReferenceDataIntegrityIssueType.DuplicateInstrumentRiskLimit
+                or ReferenceDataIntegrityIssueType.DuplicateVenueRiskLimit
+                or ReferenceDataIntegrityIssueType.DuplicateTradingWindow
+                or ReferenceDataIntegrityIssueType.DuplicateKillSwitchState)
+            ? ProcessModelRunBlockedReason.ReferenceDataAmbiguous
+            : ProcessModelRunBlockedReason.ReferenceDataInvalid;
+
     private static ProcessModelRunResult BuildResult(PlatformState state, ModelRunId? modelRunId, bool processed, ProcessModelRunStatus status, ProcessModelRunBlockedReason? blockedReason, string? message, bool alreadyProcessed, DateTimeOffset now)
     {
         if (modelRunId is null)
@@ -923,6 +1102,7 @@ public static class SeedData
         var instrumentRiskLimitId = Guid.Parse("22222222-2222-2222-2222-222222222222");
         var venueRiskLimitId = Guid.Parse("33333333-3333-3333-3333-333333333333");
         var tradingWindowId = Guid.Parse("44444444-4444-4444-4444-444444444444");
+        var intradayTradingWindowId = Guid.Parse("44444444-4444-4444-4444-444444444445");
         var killSwitchId = Guid.Parse("55555555-5555-5555-5555-555555555555");
         var startOfDayEventId = Guid.Parse("66666666-6666-6666-6666-666666666666");
         var seedMarketDataSnapshotId = new MarketDataSnapshotId(Guid.Parse("77777777-7777-7777-7777-777777777777"));
@@ -940,7 +1120,9 @@ public static class SeedData
         state.InstrumentRiskLimits.Add(new InstrumentRiskLimit(instrumentRiskLimitId, limitSetId, instrumentId, 500_000m, 1_500_000m));
         state.VenueRiskLimits.Add(new VenueRiskLimit(venueRiskLimitId, limitSetId, venueId, 500_000m));
         state.TradingWindows.Add(new TradingWindow(tradingWindowId, fundId, "Sample FX Intraday", "UTC", now.DayOfWeek, TimeOnly.MinValue, new TimeOnly(23, 59, 59), new TimeOnly(23, 59, 59), null));
+        state.TradingWindows.Add(new TradingWindow(intradayTradingWindowId, fundId, "IntradayFxModel", "UTC", now.DayOfWeek, TimeOnly.MinValue, new TimeOnly(23, 59, 59), new TimeOnly(23, 59, 59), null));
         state.KillSwitch = new KillSwitchState(killSwitchId, false, null, now);
+        state.KillSwitchStates.Add(state.KillSwitch);
         state.ModelRuns.Add(new ModelRun(runId, fundId, "Sample FX Intraday", now.AddMinutes(-1), now, now, 15, 1_000_000m, ModelRunStatus.Received, "sample", "sample.csv", false));
         state.TargetWeights.Add(new TargetWeight(runId, instrumentId, -0.10m, "EURUSD"));
         return state;

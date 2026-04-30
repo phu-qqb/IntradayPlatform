@@ -46,11 +46,21 @@ Add demo data:
 .\scripts\update-local-db.ps1 -SeedDemoData
 ```
 
+Demo seed creates deterministic fake market data snapshots only. It does not create a persistent sample model run; local model runs are created by `scripts/smoke-local.ps1` or `POST /model-runs`.
+
 Reset the local database:
 
 ```powershell
 .\scripts\reset-local-db.ps1 -SeedDemoData
 ```
+
+Prompt #4.2 adds unique reference-data constraints. If an old local database has duplicate reference rows from early seed runs, the new migration or startup integrity check may fail. For local development, reset the local database explicitly:
+
+```powershell
+.\scripts\reset-local-db.ps1 -SeedDemoData
+```
+
+Production/RDS remediation is not implemented yet and must use a controlled duplicate-remediation plan later.
 
 Inspect LocalDB:
 
@@ -68,6 +78,31 @@ Then connect with SQL Server Management Studio or Azure Data Studio to `(localdb
 ```
 
 The API uses `Persistence:Provider = SqlServerLocal` by default and still registers only `FakeLmaxGateway`.
+
+## Reference Data Integrity
+
+Duplicate active reference data can make trading decisions ambiguous, especially venue mappings, risk limits, trading windows, instruments, venues, funds, and broker accounts. The API and Worker run a reference data integrity check on startup by default:
+
+- `ReferenceDataIntegrity:CheckOnStartup = true`
+- `ReferenceDataIntegrity:FailStartupOnBlockingIssues = true`
+
+Check a running API:
+
+```powershell
+.\scripts\check-reference-data.ps1 -BaseUrl http://localhost:5050
+```
+
+The script calls `GET /admin/reference-data/integrity`, prints blocking and warning issues, and exits non-zero when blocking issues exist. A blocking reference-data issue also causes model-run processing to return `Blocked` with `ReferenceDataAmbiguous` or `ReferenceDataInvalid`; it does not create trade intents, orders, fills, or position ledger updates when detected before intent creation.
+
+Recommended clean local sequence:
+
+```powershell
+cd C:\Users\phili\source\repos\QQ.Production.Intraday
+.\scripts\reset-local-db.ps1 -SeedDemoData
+.\scripts\run-api.ps1
+.\scripts\check-reference-data.ps1
+.\scripts\smoke-local.ps1
+```
 
 ## Run Worker
 
@@ -92,6 +127,8 @@ powershell -ExecutionPolicy Bypass -File .\scripts\smoke-local.ps1 -BaseUrl http
 ```
 
 The smoke test calls local API endpoints only. It uses dynamic UTC timestamps, creates fake EURUSD snapshots for the previous completed 15-minute bar, builds bars, creates fresh fake snapshots for execution, creates a current local model run, processes it through FakeLmax, and queries orders, fills, positions, and reconciliation breaks. Request failures print the endpoint, safe request body, HTTP status, and response body.
+
+`GET /orders` returns plain string IDs for parent orders, child orders, trade intents, venues, instruments, client order IDs, and broker order IDs. It does not expose nested strongly typed ID value-object shapes.
 
 ## Process Results
 
@@ -126,6 +163,8 @@ Expected local values:
 - If database connection fails, run `sqllocaldb start MSSQLLocalDB`.
 - If schema is stale, run `.\scripts\update-local-db.ps1`.
 - For a clean development reset, run `.\scripts\reset-local-db.ps1`.
+- If startup fails with reference-data integrity errors after upgrading an old local database, run `.\scripts\reset-local-db.ps1 -SeedDemoData`.
+- If old stale demo model runs appear after upgrading from earlier seeds, run `.\scripts\reset-local-db.ps1 -SeedDemoData`.
 
 ## NuGet Advisory
 

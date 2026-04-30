@@ -116,7 +116,7 @@ public sealed class DomainAndRiskTests
         var limits = state.RiskLimitSets.Single();
         var instrumentLimit = state.InstrumentRiskLimits.Single();
         var venueLimit = state.VenueRiskLimits.Single();
-        var window = state.TradingWindows.Single();
+        var window = state.TradingWindows.Single(x => x.ModelName == "Sample FX Intraday");
         var killSwitch = state.KillSwitch;
 
         switch (reason)
@@ -146,8 +146,9 @@ public sealed class DomainAndRiskTests
         var context = NewRiskContext(state, Now);
         var engine = new RiskEngine();
 
-        var approved = engine.Evaluate(intent, context, state.RiskLimitSets.Single(), state.InstrumentRiskLimits.Single(), state.VenueRiskLimits.Single(), state.TradingWindows.Single(), state.KillSwitch);
-        var rejected = engine.Evaluate(intent, context, state.RiskLimitSets.Single(), state.InstrumentRiskLimits.Single() with { MaxTradeNotionalUsd = 1m }, state.VenueRiskLimits.Single(), state.TradingWindows.Single(), state.KillSwitch);
+        var window = state.TradingWindows.Single(x => x.ModelName == "Sample FX Intraday");
+        var approved = engine.Evaluate(intent, context, state.RiskLimitSets.Single(), state.InstrumentRiskLimits.Single(), state.VenueRiskLimits.Single(), window, state.KillSwitch);
+        var rejected = engine.Evaluate(intent, context, state.RiskLimitSets.Single(), state.InstrumentRiskLimits.Single() with { MaxTradeNotionalUsd = 1m }, state.VenueRiskLimits.Single(), window, state.KillSwitch);
 
         Assert.Equal(RiskDecisionStatus.Approved, approved.Status);
         Assert.Equal(RiskRejectReason.MaxTradeNotionalExceeded, rejected.RejectReason);

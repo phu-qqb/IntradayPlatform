@@ -15,6 +15,7 @@ builder.Services.AddSingleton<IVenueExecutionGateway, FakeLmaxGateway>();
 builder.Services.AddSingleton<IMarketDataProvider, FakeMarketDataProvider>();
 builder.Services.AddSingleton(new BarBuilderOptions());
 builder.Services.AddScoped<ProcessModelRunService>();
+builder.Services.AddScoped<IReferenceDataIntegrityService, ReferenceDataIntegrityService>();
 builder.Services.ConfigureHttpJsonOptions(options => options.SerializerOptions.Converters.Add(new JsonStringEnumConverter()));
 
 var persistenceProvider = builder.Environment.IsEnvironment("Testing")
@@ -66,6 +67,8 @@ if (args.Contains("--init-db", StringComparer.OrdinalIgnoreCase))
 
     return;
 }
+
+await ValidateReferenceDataAsync(app);
 
 app.MapGet("/health", async (IServiceProvider services, IWebHostEnvironment environment, IConfiguration configuration, IClock clock) =>
 {
@@ -163,9 +166,61 @@ app.MapGet("/trade-intents", async (IIntradayRepository repository, Cancellation
 app.MapGet("/orders", async (IIntradayRepository repository, CancellationToken cancellationToken) =>
 {
     var state = await repository.LoadStateAsync(cancellationToken);
-    return new { state.ParentOrders, state.ChildOrders };
+    var tradeIntents = state.TradeIntents.ToDictionary(x => x.Id);
+    var parentsById = state.ParentOrders.ToDictionary(x => x.Id);
+    var parentDtos = state.ParentOrders
+        .OrderBy(x => x.CreatedAtUtc)
+        .Select(x =>
+        {
+            tradeIntents.TryGetValue(x.TradeIntentId, out var intent);
+            return new ParentOrderDto(
+                x.Id.Value.ToString("D"),
+                x.TradeIntentId.Value.ToString("D"),
+                intent?.InstrumentId.Value.ToString("D"),
+                x.ClientOrderId.Value,
+                x.Side.ToString(),
+                x.BaseQuantity,
+                x.Algo.ToString(),
+                x.Status.ToString(),
+                x.CreatedAtUtc);
+        })
+        .ToList();
+
+    var childDtos = state.ChildOrders
+        .OrderBy(x => x.CreatedAtUtc)
+        .Select(x =>
+        {
+            parentsById.TryGetValue(x.ParentOrderId, out var parent);
+            var instrumentId = parent is not null && tradeIntents.TryGetValue(parent.TradeIntentId, out var intent)
+                ? intent.InstrumentId.Value.ToString("D")
+                : null;
+            var brokerOrderId = state.ExecutionReports
+                .Where(r => r.ChildOrderId == x.Id && !string.IsNullOrWhiteSpace(r.BrokerOrderId))
+                .OrderByDescending(r => r.ReceivedAtUtc)
+                .Select(r => r.BrokerOrderId)
+                .FirstOrDefault();
+
+            return new ChildOrderDto(
+                x.Id.Value.ToString("D"),
+                x.ParentOrderId.Value.ToString("D"),
+                x.VenueId.Value.ToString("D"),
+                instrumentId,
+                x.ClientOrderId.Value,
+                brokerOrderId,
+                x.Side.ToString(),
+                x.OrderType.ToString(),
+                x.TimeInForce.ToString(),
+                x.BaseQuantity,
+                x.VenueQuantity,
+                x.Status.ToString(),
+                x.CreatedAtUtc);
+        })
+        .ToList();
+
+    return new OrdersResponse(parentDtos, childDtos);
 });
 app.MapGet("/fills", async (IIntradayRepository repository, CancellationToken cancellationToken) => (await repository.LoadStateAsync(cancellationToken)).Fills);
+app.MapGet("/admin/reference-data/integrity", async (IReferenceDataIntegrityService service, CancellationToken cancellationToken) => Results.Ok(await service.CheckAsync(cancellationToken)));
 app.MapGet("/market-data/snapshots", async (IIntradayRepository repository, string? instrument, string? venue, DateTimeOffset? fromUtc, DateTimeOffset? toUtc, CancellationToken cancellationToken) =>
 {
     var state = await repository.LoadStateAsync(cancellationToken);
@@ -279,10 +334,30 @@ static void ValidateSafety(WebApplication app, string persistenceProvider)
         configuration.GetValue("Safety:AllowLiveTrading", false));
 }
 
+static async Task ValidateReferenceDataAsync(WebApplication app)
+{
+    using var scope = app.Services.CreateScope();
+    var configuration = scope.ServiceProvider.GetRequiredService<IConfiguration>();
+    if (!configuration.GetValue("ReferenceDataIntegrity:CheckOnStartup", true))
+    {
+        return;
+    }
+
+    var check = await scope.ServiceProvider.GetRequiredService<IReferenceDataIntegrityService>().CheckAsync(CancellationToken.None);
+    app.Logger.LogInformation("Reference data integrity checked: BlockingIssues={BlockingIssueCount} WarningIssues={WarningIssueCount}", check.BlockingIssueCount, check.WarningIssueCount);
+    if (check.BlockingIssueCount > 0 && configuration.GetValue("ReferenceDataIntegrity:FailStartupOnBlockingIssues", true))
+    {
+        throw new InvalidOperationException($"Reference data integrity check failed with {check.BlockingIssueCount} blocking issue(s). Run scripts/check-reference-data.ps1 for details or reset the local dev database if it contains old duplicate seed rows.");
+    }
+}
+
 public sealed record CreateModelRunRequest(string? ModelName, string? Symbol, decimal? Weight, decimal NavUsd, TargetQuantityMode TargetQuantityMode, DateTimeOffset? AsOfUtc, DateTimeOffset? EffectiveAtUtc, int FrequencyMinutes, string? InputHash, string? SourceFileName, List<ModelRunWeightRequest>? Weights);
 public sealed record ModelRunWeightRequest(string Symbol, decimal Weight, string? RawSecurityId);
 public sealed record KillSwitchRequest(string? Reason);
 public sealed record FakeSnapshotsRequest(string? InstrumentSymbol, string? VenueName, DateTimeOffset StartUtc, int IntervalSeconds, int Count, decimal Bid, decimal Ask, decimal? BidStep, decimal? AskStep);
 public sealed record BuildBarsRequest(string? VenueName, BarTimeframe Timeframe, DateTimeOffset StartUtc, DateTimeOffset EndUtc);
+public sealed record OrdersResponse(IReadOnlyList<ParentOrderDto> ParentOrders, IReadOnlyList<ChildOrderDto> ChildOrders);
+public sealed record ParentOrderDto(string Id, string TradeIntentId, string? InstrumentId, string ClientOrderId, string Side, decimal BaseQuantity, string Algo, string Status, DateTimeOffset CreatedAtUtc);
+public sealed record ChildOrderDto(string Id, string ParentOrderId, string VenueId, string? InstrumentId, string ClientOrderId, string? BrokerOrderId, string Side, string OrderType, string TimeInForce, decimal BaseQuantity, decimal VenueQuantity, string Status, DateTimeOffset CreatedAtUtc);
 
 public partial class Program;

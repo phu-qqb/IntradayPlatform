@@ -19,11 +19,12 @@ public sealed class SqlServerLocalDbTests
 
         await using var fixture = await LocalDbFixture.CreateAsync();
         await fixture.Initializer.SeedDemoDataAsync(CancellationToken.None);
+        await AddSampleModelRunAsync(fixture);
         var state = await fixture.IntradayRepository.LoadStateAsync(CancellationToken.None);
         Assert.NotEmpty(state.Funds);
         Assert.NotEmpty(state.MarketData);
 
-        var service = new ProcessModelRunService(fixture.IntradayRepository, new FakeLmaxGateway(new FakeLmaxOptions(), fixture.Clock), fixture.BrokerPositionProvider, fixture.Clock);
+        var service = new ProcessModelRunService(fixture.IntradayRepository, new FakeLmaxGateway(new FakeLmaxOptions(), fixture.Clock), fixture.BrokerPositionProvider, fixture.Clock, new ReferenceDataIntegrityService(fixture.IntradayRepository, fixture.Clock));
         var result = await service.ProcessNextAsync();
         state = await fixture.IntradayRepository.LoadStateAsync(CancellationToken.None);
 
@@ -62,6 +63,7 @@ public sealed class SqlServerLocalDbTests
 
         await using var fixture = await LocalDbFixture.CreateAsync();
         await fixture.Initializer.SeedDemoDataAsync(CancellationToken.None);
+        await AddSampleModelRunAsync(fixture);
         var state = await fixture.IntradayRepository.LoadStateAsync(CancellationToken.None);
         var intent = new TradeIntent(TradeIntentId.New(), state.ModelRuns.Single().Id, state.Funds.Single().Id, state.Instruments.Single().Id, TradeSide.Buy, 10_000m, 1m, "test", TradeIntentStatus.Created, Now);
         await fixture.IntradayRepository.AddTradeIntentAsync(intent, CancellationToken.None);
@@ -72,6 +74,39 @@ public sealed class SqlServerLocalDbTests
 
         Assert.True(await fixture.IntradayRepository.TryAddFillAsync(fill, CancellationToken.None));
         Assert.False(await fixture.IntradayRepository.TryAddFillAsync(fill with { Id = FillId.New() }, CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task LocalDb_demo_seed_does_not_create_stale_model_run()
+    {
+        if (!await IsLocalDbAvailableAsync()) return;
+
+        await using var fixture = await LocalDbFixture.CreateAsync();
+        await fixture.Initializer.SeedDemoDataAsync(CancellationToken.None);
+        await fixture.Initializer.SeedDemoDataAsync(CancellationToken.None);
+        var state = await fixture.IntradayRepository.LoadStateAsync(CancellationToken.None);
+
+        Assert.Empty(state.ModelRuns);
+        Assert.Empty(state.TargetWeights);
+    }
+
+    [Fact]
+    public async Task LocalDb_reference_seed_is_idempotent_by_business_keys()
+    {
+        if (!await IsLocalDbAvailableAsync()) return;
+
+        await using var fixture = await LocalDbFixture.CreateAsync();
+        await fixture.Initializer.SeedReferenceDataAsync(CancellationToken.None);
+        var state = await fixture.IntradayRepository.LoadStateAsync(CancellationToken.None);
+        var integrity = await new ReferenceDataIntegrityService(fixture.IntradayRepository, fixture.Clock).CheckAsync(CancellationToken.None);
+
+        Assert.Equal(0, integrity.BlockingIssueCount);
+        Assert.Single(state.Instruments, x => x.Symbol == "EURUSD" && x.AssetClass == AssetClass.FxSpot);
+        Assert.Single(state.Venues, x => x.Name == "LMAX");
+        Assert.Single(state.VenueInstrumentMappings, x => x.VenueId == state.Venues.Single().Id && x.InstrumentId == state.Instruments.Single().Id);
+        Assert.Single(state.RiskLimitSets, x => x.FundId == state.Funds.Single().Id);
+        Assert.Single(state.TradingWindows, x => x.FundId == state.Funds.Single().Id && x.ModelName == "IntradayFxModel" && x.DayOfWeek == Now.DayOfWeek);
+        Assert.Single(state.KillSwitchStates);
     }
 
     private static async Task<bool> IsLocalDbAvailableAsync()
@@ -93,6 +128,14 @@ public sealed class SqlServerLocalDbTests
         {
             return false;
         }
+    }
+
+    private static async Task AddSampleModelRunAsync(LocalDbFixture fixture)
+    {
+        var state = await fixture.IntradayRepository.LoadStateAsync(CancellationToken.None);
+        var run = new ModelRun(ModelRunId.New(), state.Funds.Single().Id, "IntradayFxModel", Now, Now, Now, 15, 1_000_000m, ModelRunStatus.Received, Guid.NewGuid().ToString("N"), "test", false);
+        var weight = new TargetWeight(run.Id, state.Instruments.Single().Id, -0.10m, "EURUSD");
+        await fixture.IntradayRepository.AddModelRunAsync(run, [weight], CancellationToken.None);
     }
 
     private sealed class LocalDbFixture : IAsyncDisposable
