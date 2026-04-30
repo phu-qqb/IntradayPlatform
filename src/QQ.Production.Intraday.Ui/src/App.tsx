@@ -9,6 +9,9 @@ import type {
   MarketDataBarDto,
   MarketDataSnapshotDto,
   ModelRunDto,
+  ModelWeightBatchDto,
+  ModelWeightRowDto,
+  ModelWeightValidationIssueDto,
   OrdersDto,
   PositionDto,
   ReconciliationBreakDto,
@@ -26,6 +29,7 @@ import { HealthPanel } from './components/HealthPanel';
 import { LoadingState } from './components/LoadingState';
 import { MarketDataPanel } from './components/MarketDataPanel';
 import { ModelRunsPanel } from './components/ModelRunsPanel';
+import { ModelWeightsPanel } from './components/ModelWeightsPanel';
 import { OrdersPanel } from './components/OrdersPanel';
 import { PositionsPanel } from './components/PositionsPanel';
 import { ReconciliationPanel } from './components/ReconciliationPanel';
@@ -36,6 +40,9 @@ import { StatusBanner } from './components/StatusBanner';
 
 type DashboardState = {
   modelRuns: ModelRunDto[];
+  modelWeightBatches: ModelWeightBatchDto[];
+  modelWeightRows: ModelWeightRowDto[];
+  modelWeightValidationIssues: ModelWeightValidationIssueDto[];
   targets: TargetPositionDto[];
   drifts: DriftSnapshotDto[];
   internalPositions: PositionDto[];
@@ -54,6 +61,9 @@ type DashboardState = {
 
 const emptyDashboard: DashboardState = {
   modelRuns: [],
+  modelWeightBatches: [],
+  modelWeightRows: [],
+  modelWeightValidationIssues: [],
   targets: [],
   drifts: [],
   internalPositions: [],
@@ -86,6 +96,7 @@ export default function App() {
   const loadDashboard = useCallback(async () => {
     const [
       modelRuns,
+      modelWeightBatches,
       targets,
       drifts,
       internalPositions,
@@ -102,6 +113,7 @@ export default function App() {
       venues
     ] = await Promise.all([
       apiClient.getModelRuns(),
+      apiClient.getModelWeightBatches(),
       apiClient.getTargetPositions(),
       apiClient.getDriftSnapshots(),
       apiClient.getInternalPositions(),
@@ -118,7 +130,7 @@ export default function App() {
       apiClient.getVenues()
     ]);
 
-    setDashboard({ modelRuns, targets, drifts, internalPositions, brokerPositions, reconciliationBreaks, tradeIntents, riskDecisions, orders, fills, snapshots, bars, killSwitch, instruments, venues });
+    setDashboard((current) => ({ ...current, modelRuns, modelWeightBatches, targets, drifts, internalPositions, brokerPositions, reconciliationBreaks, tradeIntents, riskDecisions, orders, fills, snapshots, bars, killSwitch, instruments, venues }));
   }, []);
 
   const refreshAll = useCallback(async () => {
@@ -165,6 +177,46 @@ export default function App() {
             const result = await apiClient.buildBars(request);
             await refreshAll();
             return `Bar build ${result.status}: created ${result.barsCreated}, updated ${result.barsUpdated}.`;
+          }}
+        />
+        <ModelWeightsPanel
+          batches={dashboard.modelWeightBatches}
+          rows={dashboard.modelWeightRows}
+          issues={dashboard.modelWeightValidationIssues}
+          onSelectBatch={async (id) => {
+            const [rows, issues] = await Promise.all([
+              apiClient.getModelWeightRows(id),
+              apiClient.getModelWeightValidationIssues(id)
+            ]);
+            setDashboard((current) => ({ ...current, modelWeightRows: rows, modelWeightValidationIssues: issues }));
+          }}
+          onCreateFake={async (request) => {
+            const batch = await apiClient.createFakeModelWeightBatch(request);
+            const [rows, issues] = await Promise.all([
+              apiClient.getModelWeightRows(batch.id),
+              apiClient.getModelWeightValidationIssues(batch.id)
+            ]);
+            await refreshAll();
+            setDashboard((current) => ({ ...current, modelWeightRows: rows, modelWeightValidationIssues: issues }));
+          }}
+          onValidate={async (id) => {
+            const result = await apiClient.validateModelWeightBatch(id);
+            const issues = await apiClient.getModelWeightValidationIssues(id);
+            await refreshAll();
+            setDashboard((current) => ({ ...current, modelWeightValidationIssues: issues }));
+            return result;
+          }}
+          onPromote={async (id) => {
+            const result = await apiClient.promoteModelWeightBatch(id);
+            const issues = await apiClient.getModelWeightValidationIssues(id);
+            await refreshAll();
+            setDashboard((current) => ({ ...current, modelWeightValidationIssues: issues }));
+            return result;
+          }}
+          onPromoteReady={async () => {
+            const result = await apiClient.promoteReadyModelWeightBatches();
+            await refreshAll();
+            return result;
           }}
         />
         <ModelRunsPanel

@@ -70,6 +70,16 @@ public readonly record struct BarBuildRunId(Guid Value)
     public static BarBuildRunId New() => new(Guid.NewGuid());
 }
 
+public readonly record struct ModelWeightBatchId(Guid Value)
+{
+    public static ModelWeightBatchId New() => new(Guid.NewGuid());
+}
+
+public readonly record struct ModelWeightRowId(Guid Value)
+{
+    public static ModelWeightRowId New() => new(Guid.NewGuid());
+}
+
 public readonly record struct ClientOrderId(string Value)
 {
     public override string ToString() => Value;
@@ -134,6 +144,75 @@ public sealed record ModelRun(
     TargetQuantityMode TargetQuantityMode = TargetQuantityMode.PortfolioBaseCurrencyNotional);
 
 public sealed record TargetWeight(ModelRunId ModelRunId, InstrumentId InstrumentId, decimal Weight, string RawSecurityId);
+
+public enum ModelWeightBatchStatus { Draft, Ready, Validating, Accepted, Rejected, Promoted }
+public enum ModelWeightSourceSystem { Fake, Qubes, GeneticAlgorithm, Manual, Other }
+public enum ModelWeightValidationIssueType
+{
+    MissingBatch,
+    BatchNotReady,
+    InvalidFund,
+    InvalidModelName,
+    InvalidTimestamp,
+    InvalidNav,
+    InvalidFrequency,
+    InvalidTargetQuantityMode,
+    MissingRows,
+    RowCountMismatch,
+    DuplicateSecurity,
+    UnknownInstrument,
+    DisabledInstrument,
+    InvalidWeight,
+    DuplicateExternalBatchId,
+    ConflictingExternalBatch,
+    AlreadyPromoted,
+    ReferenceDataInvalid,
+    Other
+}
+
+public enum ModelWeightValidationSeverity { Info, Warning, Blocking }
+
+public sealed record ModelWeightBatch(
+    ModelWeightBatchId Id,
+    string ExternalBatchId,
+    ModelWeightSourceSystem SourceSystem,
+    string FundCode,
+    FundId? FundId,
+    string ModelName,
+    DateTimeOffset AsOfUtc,
+    DateTimeOffset EffectiveAtUtc,
+    int FrequencyMinutes,
+    decimal NavUsd,
+    TargetQuantityMode TargetQuantityMode,
+    ModelWeightBatchStatus Status,
+    int? ExpectedRowCount,
+    string? ContentHash,
+    DateTimeOffset CreatedAtUtc,
+    DateTimeOffset? ReadyAtUtc,
+    DateTimeOffset? AcceptedAtUtc,
+    DateTimeOffset? PromotedAtUtc,
+    DateTimeOffset? RejectedAtUtc,
+    ModelRunId? PromotedModelRunId,
+    string? Message);
+
+public sealed record ModelWeightRow(
+    ModelWeightRowId Id,
+    ModelWeightBatchId BatchId,
+    string RawSecurityId,
+    string Symbol,
+    InstrumentId? InstrumentId,
+    decimal Weight,
+    DateTimeOffset CreatedAtUtc);
+
+public sealed record ModelWeightValidationIssue(
+    Guid Id,
+    ModelWeightBatchId BatchId,
+    ModelWeightValidationIssueType IssueType,
+    ModelWeightValidationSeverity Severity,
+    string Message,
+    ModelWeightRowId? RowId,
+    int? RowNumber,
+    DateTimeOffset CreatedAtUtc);
 
 public sealed record TargetPosition(
     ModelRunId ModelRunId,

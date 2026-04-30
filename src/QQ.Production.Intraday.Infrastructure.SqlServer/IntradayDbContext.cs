@@ -14,6 +14,9 @@ public sealed class IntradayDbContext(DbContextOptions<IntradayDbContext> option
     public DbSet<NavSnapshot> NavSnapshots => Set<NavSnapshot>();
     public DbSet<ModelRun> ModelRuns => Set<ModelRun>();
     public DbSet<TargetWeight> TargetWeights => Set<TargetWeight>();
+    public DbSet<ModelWeightBatch> ModelWeightBatches => Set<ModelWeightBatch>();
+    public DbSet<ModelWeightRow> ModelWeightRows => Set<ModelWeightRow>();
+    public DbSet<ModelWeightValidationIssue> ModelWeightValidationIssues => Set<ModelWeightValidationIssue>();
     public DbSet<TargetPosition> TargetPositions => Set<TargetPosition>();
     public DbSet<DriftSnapshot> DriftSnapshots => Set<DriftSnapshot>();
     public DbSet<MarketDataSnapshot> MarketDataSnapshots => Set<MarketDataSnapshot>();
@@ -47,6 +50,9 @@ public sealed class IntradayDbContext(DbContextOptions<IntradayDbContext> option
         modelBuilder.Entity<NavSnapshot>().HasKey(nameof(NavSnapshot.FundId), nameof(NavSnapshot.AsOfUtc));
         modelBuilder.Entity<ModelRun>().HasKey(x => x.Id);
         modelBuilder.Entity<TargetWeight>().HasKey(nameof(TargetWeight.ModelRunId), nameof(TargetWeight.InstrumentId));
+        modelBuilder.Entity<ModelWeightBatch>().HasKey(x => x.Id);
+        modelBuilder.Entity<ModelWeightRow>().HasKey(x => x.Id);
+        modelBuilder.Entity<ModelWeightValidationIssue>().HasKey(x => x.Id);
         modelBuilder.Entity<TargetPosition>().HasKey(nameof(TargetPosition.ModelRunId), nameof(TargetPosition.InstrumentId));
         modelBuilder.Entity<DriftSnapshot>().HasKey(nameof(DriftSnapshot.ModelRunId), nameof(DriftSnapshot.InstrumentId));
         modelBuilder.Entity<MarketDataSnapshot>().HasKey(x => x.Id);
@@ -90,12 +96,26 @@ public sealed class IntradayDbContext(DbContextOptions<IntradayDbContext> option
         modelBuilder.Entity<ReconciliationBreak>().HasIndex(x => new { x.ReconciliationRunId, x.Severity, x.Status });
         modelBuilder.Entity<TradeIntent>().HasIndex(x => new { x.ModelRunId, x.InstrumentId });
         modelBuilder.Entity<ExecutionReport>().HasIndex(x => new { x.ChildOrderId, x.ReceivedAtUtc });
+        modelBuilder.Entity<ModelWeightBatch>().HasIndex(x => new { x.SourceSystem, x.ExternalBatchId }).IsUnique();
+        modelBuilder.Entity<ModelWeightBatch>().HasIndex(x => new { x.Status, x.AsOfUtc, x.ModelName });
+        modelBuilder.Entity<ModelWeightBatch>().HasIndex(x => x.PromotedModelRunId);
+        modelBuilder.Entity<ModelWeightRow>().HasIndex(x => x.BatchId);
+        modelBuilder.Entity<ModelWeightRow>().HasIndex(x => new { x.BatchId, x.Symbol }).IsUnique();
+        modelBuilder.Entity<ModelWeightRow>().HasIndex(x => new { x.BatchId, x.RawSecurityId }).IsUnique();
+        modelBuilder.Entity<ModelWeightRow>().HasIndex(x => new { x.BatchId, x.InstrumentId }).IsUnique().HasFilter("[InstrumentId] IS NOT NULL");
+        modelBuilder.Entity<ModelWeightValidationIssue>().HasIndex(x => new { x.BatchId, x.Severity, x.IssueType });
 
         modelBuilder.Entity<BrokerAccount>().HasOne<Fund>().WithMany().HasForeignKey(x => x.FundId).OnDelete(DeleteBehavior.Restrict);
         modelBuilder.Entity<NavSnapshot>().HasOne<Fund>().WithMany().HasForeignKey(x => x.FundId).OnDelete(DeleteBehavior.Restrict);
         modelBuilder.Entity<ModelRun>().HasOne<Fund>().WithMany().HasForeignKey(x => x.FundId).OnDelete(DeleteBehavior.Restrict);
         modelBuilder.Entity<TargetWeight>().HasOne<ModelRun>().WithMany().HasForeignKey(x => x.ModelRunId).OnDelete(DeleteBehavior.Restrict);
         modelBuilder.Entity<TargetWeight>().HasOne<Instrument>().WithMany().HasForeignKey(x => x.InstrumentId).OnDelete(DeleteBehavior.Restrict);
+        modelBuilder.Entity<ModelWeightBatch>().HasOne<Fund>().WithMany().HasForeignKey(x => x.FundId).OnDelete(DeleteBehavior.Restrict);
+        modelBuilder.Entity<ModelWeightBatch>().HasOne<ModelRun>().WithMany().HasForeignKey(x => x.PromotedModelRunId).OnDelete(DeleteBehavior.Restrict);
+        modelBuilder.Entity<ModelWeightRow>().HasOne<ModelWeightBatch>().WithMany().HasForeignKey(x => x.BatchId).OnDelete(DeleteBehavior.Restrict);
+        modelBuilder.Entity<ModelWeightRow>().HasOne<Instrument>().WithMany().HasForeignKey(x => x.InstrumentId).OnDelete(DeleteBehavior.Restrict);
+        modelBuilder.Entity<ModelWeightValidationIssue>().HasOne<ModelWeightBatch>().WithMany().HasForeignKey(x => x.BatchId).OnDelete(DeleteBehavior.Restrict);
+        modelBuilder.Entity<ModelWeightValidationIssue>().HasOne<ModelWeightRow>().WithMany().HasForeignKey(x => x.RowId).OnDelete(DeleteBehavior.Restrict);
         modelBuilder.Entity<TargetPosition>().HasOne<ModelRun>().WithMany().HasForeignKey(x => x.ModelRunId).OnDelete(DeleteBehavior.Restrict);
         modelBuilder.Entity<TargetPosition>().HasOne<Instrument>().WithMany().HasForeignKey(x => x.InstrumentId).OnDelete(DeleteBehavior.Restrict);
         modelBuilder.Entity<DriftSnapshot>().HasOne<ModelRun>().WithMany().HasForeignKey(x => x.ModelRunId).OnDelete(DeleteBehavior.Restrict);
@@ -161,6 +181,14 @@ public sealed class IntradayDbContext(DbContextOptions<IntradayDbContext> option
         modelBuilder.Entity<ModelRun>().Property(x => x.FundId).HasConversion(x => x.Value, x => new FundId(x));
         modelBuilder.Entity<TargetWeight>().Property(x => x.ModelRunId).HasConversion(x => x.Value, x => new ModelRunId(x));
         modelBuilder.Entity<TargetWeight>().Property(x => x.InstrumentId).HasConversion(x => x.Value, x => new InstrumentId(x));
+        modelBuilder.Entity<ModelWeightBatch>().Property(x => x.Id).HasConversion(x => x.Value, x => new ModelWeightBatchId(x));
+        modelBuilder.Entity<ModelWeightBatch>().Property(x => x.FundId).HasConversion(x => x.HasValue ? x.Value.Value : (Guid?)null, x => x.HasValue ? new FundId(x.Value) : null);
+        modelBuilder.Entity<ModelWeightBatch>().Property(x => x.PromotedModelRunId).HasConversion(x => x.HasValue ? x.Value.Value : (Guid?)null, x => x.HasValue ? new ModelRunId(x.Value) : null);
+        modelBuilder.Entity<ModelWeightRow>().Property(x => x.Id).HasConversion(x => x.Value, x => new ModelWeightRowId(x));
+        modelBuilder.Entity<ModelWeightRow>().Property(x => x.BatchId).HasConversion(x => x.Value, x => new ModelWeightBatchId(x));
+        modelBuilder.Entity<ModelWeightRow>().Property(x => x.InstrumentId).HasConversion(x => x.HasValue ? x.Value.Value : (Guid?)null, x => x.HasValue ? new InstrumentId(x.Value) : null);
+        modelBuilder.Entity<ModelWeightValidationIssue>().Property(x => x.BatchId).HasConversion(x => x.Value, x => new ModelWeightBatchId(x));
+        modelBuilder.Entity<ModelWeightValidationIssue>().Property(x => x.RowId).HasConversion(x => x.HasValue ? x.Value.Value : (Guid?)null, x => x.HasValue ? new ModelWeightRowId(x.Value) : null);
         modelBuilder.Entity<TargetPosition>().Property(x => x.ModelRunId).HasConversion(x => x.Value, x => new ModelRunId(x));
         modelBuilder.Entity<TargetPosition>().Property(x => x.InstrumentId).HasConversion(x => x.Value, x => new InstrumentId(x));
         modelBuilder.Entity<DriftSnapshot>().Property(x => x.ModelRunId).HasConversion(x => x.Value, x => new ModelRunId(x));
@@ -219,6 +247,9 @@ public sealed class SqlServerIntradayRepository(IntradayDbContext dbContext) : I
         state.NavSnapshots.AddRange(await dbContext.Set<NavSnapshot>().AsNoTracking().ToListAsync(cancellationToken));
         state.ModelRuns.AddRange(await dbContext.ModelRuns.AsNoTracking().ToListAsync(cancellationToken));
         state.TargetWeights.AddRange(await dbContext.TargetWeights.AsNoTracking().ToListAsync(cancellationToken));
+        state.ModelWeightBatches.AddRange(await dbContext.ModelWeightBatches.AsNoTracking().ToListAsync(cancellationToken));
+        state.ModelWeightRows.AddRange(await dbContext.ModelWeightRows.AsNoTracking().ToListAsync(cancellationToken));
+        state.ModelWeightValidationIssues.AddRange(await dbContext.ModelWeightValidationIssues.AsNoTracking().ToListAsync(cancellationToken));
         state.TargetPositions.AddRange(await dbContext.TargetPositions.AsNoTracking().ToListAsync(cancellationToken));
         state.DriftSnapshots.AddRange(await dbContext.DriftSnapshots.AsNoTracking().ToListAsync(cancellationToken));
         state.MarketData.AddRange(await dbContext.MarketDataSnapshots.AsNoTracking().ToListAsync(cancellationToken));
@@ -454,6 +485,81 @@ public sealed class SqlServerBarBuildRunRepository(IntradayDbContext dbContext, 
     {
         var run = await dbContext.BarBuildRuns.FirstAsync(x => x.Id == runId, cancellationToken);
         dbContext.Entry(run).CurrentValues.SetValues(run with { Status = BarBuildRunStatus.Failed, CompletedAtUtc = clock.UtcNow, ErrorMessage = errorMessage });
+        await dbContext.SaveChangesAsync(cancellationToken);
+    }
+}
+
+public sealed class SqlServerModelWeightBatchRepository(IntradayDbContext dbContext) : IModelWeightBatchRepository
+{
+    public Task<ModelWeightBatch?> GetBatchAsync(ModelWeightBatchId batchId, CancellationToken cancellationToken)
+        => dbContext.ModelWeightBatches.AsNoTracking().FirstOrDefaultAsync(x => x.Id == batchId, cancellationToken);
+
+    public Task<ModelWeightBatch?> GetBatchByExternalIdAsync(ModelWeightSourceSystem sourceSystem, string externalBatchId, CancellationToken cancellationToken)
+        => dbContext.ModelWeightBatches.AsNoTracking().FirstOrDefaultAsync(x => x.SourceSystem == sourceSystem && x.ExternalBatchId == externalBatchId, cancellationToken);
+
+    public async Task<IReadOnlyList<ModelWeightBatch>> GetRecentBatchesAsync(int limit, ModelWeightBatchStatus? status, ModelWeightSourceSystem? sourceSystem, string? modelName, DateTimeOffset? fromUtc, DateTimeOffset? toUtc, CancellationToken cancellationToken)
+    {
+        var query = dbContext.ModelWeightBatches.AsNoTracking().AsQueryable();
+        if (status is not null) query = query.Where(x => x.Status == status);
+        if (sourceSystem is not null) query = query.Where(x => x.SourceSystem == sourceSystem);
+        if (!string.IsNullOrWhiteSpace(modelName)) query = query.Where(x => x.ModelName == modelName);
+        if (fromUtc is not null) query = query.Where(x => x.AsOfUtc >= fromUtc.Value);
+        if (toUtc is not null) query = query.Where(x => x.AsOfUtc < toUtc.Value);
+        return await query.OrderByDescending(x => x.CreatedAtUtc).Take(Math.Clamp(limit, 1, 500)).ToListAsync(cancellationToken);
+    }
+
+    public async Task<IReadOnlyList<ModelWeightBatch>> GetReadyBatchesAsync(int limit, CancellationToken cancellationToken)
+        => await dbContext.ModelWeightBatches.AsNoTracking()
+            .Where(x => x.Status == ModelWeightBatchStatus.Ready || x.Status == ModelWeightBatchStatus.Accepted)
+            .OrderBy(x => x.AsOfUtc)
+            .Take(Math.Clamp(limit, 1, 500))
+            .ToListAsync(cancellationToken);
+
+    public async Task<IReadOnlyList<ModelWeightRow>> GetRowsAsync(ModelWeightBatchId batchId, CancellationToken cancellationToken)
+        => await dbContext.ModelWeightRows.AsNoTracking().Where(x => x.BatchId == batchId).OrderBy(x => x.CreatedAtUtc).ToListAsync(cancellationToken);
+
+    public async Task<IReadOnlyList<ModelWeightValidationIssue>> GetValidationIssuesAsync(ModelWeightBatchId batchId, CancellationToken cancellationToken)
+        => await dbContext.ModelWeightValidationIssues.AsNoTracking().Where(x => x.BatchId == batchId).OrderBy(x => x.CreatedAtUtc).ToListAsync(cancellationToken);
+
+    public async Task AddBatchAsync(ModelWeightBatch batch, IReadOnlyList<ModelWeightRow> rows, CancellationToken cancellationToken)
+    {
+        if (await dbContext.ModelWeightBatches.AnyAsync(x => x.SourceSystem == batch.SourceSystem && x.ExternalBatchId == batch.ExternalBatchId, cancellationToken))
+        {
+            return;
+        }
+
+        dbContext.ModelWeightBatches.Add(batch);
+        dbContext.ModelWeightRows.AddRange(rows);
+        await dbContext.SaveChangesAsync(cancellationToken);
+    }
+
+    public async Task UpdateBatchAsync(ModelWeightBatch batch, CancellationToken cancellationToken)
+    {
+        var existing = await dbContext.ModelWeightBatches.FirstOrDefaultAsync(x => x.Id == batch.Id, cancellationToken);
+        if (existing is null)
+        {
+            return;
+        }
+
+        dbContext.Entry(existing).CurrentValues.SetValues(batch);
+        await dbContext.SaveChangesAsync(cancellationToken);
+    }
+
+    public async Task AddValidationIssuesAsync(ModelWeightBatchId batchId, IReadOnlyList<ModelWeightValidationIssue> issues, bool replaceExisting, CancellationToken cancellationToken)
+    {
+        if (replaceExisting)
+        {
+            dbContext.ModelWeightValidationIssues.RemoveRange(dbContext.ModelWeightValidationIssues.Where(x => x.BatchId == batchId));
+        }
+
+        dbContext.ModelWeightValidationIssues.AddRange(issues);
+        await dbContext.SaveChangesAsync(cancellationToken);
+    }
+
+    public async Task MarkPromotedAsync(ModelWeightBatchId batchId, ModelRunId modelRunId, DateTimeOffset promotedAtUtc, CancellationToken cancellationToken)
+    {
+        var batch = await dbContext.ModelWeightBatches.FirstAsync(x => x.Id == batchId, cancellationToken);
+        dbContext.Entry(batch).CurrentValues.SetValues(batch with { Status = ModelWeightBatchStatus.Promoted, PromotedAtUtc = promotedAtUtc, PromotedModelRunId = modelRunId, Message = "Promoted to model run." });
         await dbContext.SaveChangesAsync(cancellationToken);
     }
 }

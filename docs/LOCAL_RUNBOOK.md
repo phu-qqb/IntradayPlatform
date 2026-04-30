@@ -99,7 +99,7 @@ The UI listens on `http://localhost:5173` and calls the local API at `http://loc
 $env:VITE_API_BASE_URL = "http://localhost:5050"
 ```
 
-The cockpit is local-only. It displays backend state and sends explicit local commands only: create fake snapshots, build bars, create a local model run, process a model run through FakeLmax, and activate or clear the kill switch. It has no controls for live trading, external connectivity, real LMAX settings, broker credentials, or production secrets.
+The cockpit is local-only. It displays backend state and sends explicit local commands only: create fake snapshots, build bars, create/promote fake DB model weight batches, create a local model run, process a model run through FakeLmax, and activate or clear the kill switch. It has no controls for live trading, external connectivity, real LMAX settings, broker credentials, or production secrets.
 
 If the browser shows CORS errors, confirm the API is running in `Development` and the UI is using `http://localhost:5173` or `http://127.0.0.1:5173`.
 
@@ -140,6 +140,45 @@ cd C:\Users\phili\source\repos\QQ.Production.Intraday
 
 Then in the UI: create fake EURUSD snapshots, build 15-minute bars, create a local `IntradayFxModel` model run, process it, and inspect positions, drift, risk decisions, orders, fills, and reconciliation breaks.
 
+DB-weight UI sequence:
+
+```powershell
+cd C:\Users\phili\source\repos\QQ.Production.Intraday
+.\scripts\reset-local-db.ps1 -SeedDemoData
+.\scripts\run-api.ps1
+.\scripts\check-reference-data.ps1
+.\scripts\run-ui.ps1
+```
+
+Then in the UI: create a fake model weight batch, validate/promote it, process the generated model run from the Model Runs panel, and inspect downstream execution state. Promotion does not process the model run and does not send orders.
+
+## DB Model Weight Source
+
+Prompt #6 stages model-generated weights in LocalDB before they become canonical `ModelRun` and `TargetWeight` rows. This is the future Qubes/GA integration point. The real Qubes/GA database writer is not implemented yet, and file manifest/CSV ingestion is intentionally not implemented.
+
+Tables:
+
+- `ModelWeightBatches`
+- `ModelWeightRows`
+- `ModelWeightValidationIssues`
+
+Local scripts:
+
+```powershell
+.\scripts\create-fake-weight-batch.ps1
+.\scripts\promote-ready-weight-batches.ps1
+.\scripts\smoke-db-weights-local.ps1
+```
+
+Idempotency rules:
+
+- `SourceSystem + ExternalBatchId` is unique.
+- Same explicit external batch id plus same content returns the existing batch.
+- Same explicit external batch id plus different content is rejected.
+- Already promoted batches return the existing model run id and do not create duplicate model runs or target weights.
+
+Validation checks metadata, row counts, duplicate symbols/raw ids, enabled instrument resolution, and reference data integrity. Validation failures mark the batch rejected and do not create model runs.
+
 ## Run Worker
 
 ```powershell
@@ -147,6 +186,8 @@ Then in the UI: create fake EURUSD snapshots, build 15-minute bars, create a loc
 ```
 
 Worker bar building is configurable under `MarketDataBars`.
+
+Worker model-weight promotion is configurable under `ModelWeights`. `PromoteReadyBatches` defaults to `false`, so the Worker does not promote staged weights unless explicitly configured. Promotion still does not process model runs.
 
 ## Smoke Test
 
@@ -165,6 +206,14 @@ powershell -ExecutionPolicy Bypass -File .\scripts\smoke-local.ps1 -BaseUrl http
 The smoke test calls local API endpoints only. It uses dynamic UTC timestamps, creates fake EURUSD snapshots for the previous completed 15-minute bar, builds bars, creates fresh fake snapshots for execution, creates a current local model run, processes it through FakeLmax, and queries orders, fills, positions, and reconciliation breaks. Request failures print the endpoint, safe request body, HTTP status, and response body.
 
 `GET /orders` returns plain string IDs for parent orders, child orders, trade intents, venues, instruments, client order IDs, and broker order IDs. It does not expose nested strongly typed ID value-object shapes.
+
+For the DB-weight path:
+
+```powershell
+.\scripts\smoke-db-weights-local.ps1 -BaseUrl http://localhost:5050
+```
+
+This smoke creates fresh fake market data, creates a fake model weight batch, validates/promotes it to a model run, then explicitly processes that model run through the existing FakeLmax workflow.
 
 ## Process Results
 
@@ -201,6 +250,7 @@ Expected local values:
 - For a clean development reset, run `.\scripts\reset-local-db.ps1`.
 - If startup fails with reference-data integrity errors after upgrading an old local database, run `.\scripts\reset-local-db.ps1 -SeedDemoData`.
 - If old stale demo model runs appear after upgrading from earlier seeds, run `.\scripts\reset-local-db.ps1 -SeedDemoData`.
+- If the model weight source schema is missing, apply migrations with `.\scripts\update-local-db.ps1` or reset the local database.
 
 ## NuGet Advisory
 

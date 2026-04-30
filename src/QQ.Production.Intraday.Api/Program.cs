@@ -16,6 +16,8 @@ builder.Services.AddSingleton<IMarketDataProvider, FakeMarketDataProvider>();
 builder.Services.AddSingleton(new BarBuilderOptions());
 builder.Services.AddScoped<ProcessModelRunService>();
 builder.Services.AddScoped<IReferenceDataIntegrityService, ReferenceDataIntegrityService>();
+builder.Services.AddScoped<IModelWeightPromotionService, ModelWeightPromotionService>();
+builder.Services.AddScoped<IFakeModelWeightGenerator, FakeModelWeightGenerator>();
 builder.Services.ConfigureHttpJsonOptions(options => options.SerializerOptions.Converters.Add(new JsonStringEnumConverter()));
 builder.Services.AddCors(options =>
 {
@@ -37,6 +39,7 @@ if (string.Equals(persistenceProvider, "SqlServerLocal", StringComparison.Ordina
     builder.Services.AddScoped<IMarketDataSnapshotRepository, SqlServerMarketDataSnapshotRepository>();
     builder.Services.AddScoped<IMarketDataBarRepository, SqlServerMarketDataBarRepository>();
     builder.Services.AddScoped<IBarBuildRunRepository, SqlServerBarBuildRunRepository>();
+    builder.Services.AddScoped<IModelWeightBatchRepository, SqlServerModelWeightBatchRepository>();
     builder.Services.AddScoped<IBrokerPositionProvider, SqlServerFakeBrokerPositionProvider>();
     builder.Services.AddScoped<IBarBuilderService, BarBuilderService>();
     builder.Services.AddScoped<LocalDatabaseInitializer>();
@@ -49,6 +52,7 @@ else if (string.Equals(persistenceProvider, "InMemory", StringComparison.Ordinal
     builder.Services.AddSingleton<IMarketDataSnapshotRepository, InMemoryMarketDataSnapshotRepository>();
     builder.Services.AddSingleton<IMarketDataBarRepository, InMemoryMarketDataBarRepository>();
     builder.Services.AddSingleton<IBarBuildRunRepository, InMemoryBarBuildRunRepository>();
+    builder.Services.AddSingleton<IModelWeightBatchRepository, InMemoryModelWeightBatchRepository>();
     builder.Services.AddSingleton<IBrokerPositionProvider, FakeBrokerPositionProvider>();
     builder.Services.AddSingleton<IBarBuilderService, BarBuilderService>();
 }
@@ -124,6 +128,63 @@ app.MapGet("/model-runs", async (IIntradayRepository repository, int? limit, str
     }
 
     return query.OrderByDescending(x => x.ReceivedAtUtc).Take(ClampLimit(limit)).Select(ToModelRunDto);
+});
+
+app.MapGet("/model-weight-batches", async (IModelWeightBatchRepository repository, int? limit, string? status, string? sourceSystem, string? modelName, DateTimeOffset? fromUtc, DateTimeOffset? toUtc, CancellationToken cancellationToken) =>
+{
+    var selectedStatus = ParseEnum<ModelWeightBatchStatus>(status);
+    var selectedSource = ParseEnum<ModelWeightSourceSystem>(sourceSystem);
+    var batches = await repository.GetRecentBatchesAsync(ClampLimit(limit), selectedStatus, selectedSource, modelName, fromUtc, toUtc, cancellationToken);
+    return batches.Select(ToModelWeightBatchDto);
+});
+
+app.MapGet("/model-weight-batches/{id:guid}", async (Guid id, IModelWeightBatchRepository repository, CancellationToken cancellationToken) =>
+{
+    var batch = await repository.GetBatchAsync(new ModelWeightBatchId(id), cancellationToken);
+    return batch is null ? Results.NotFound() : Results.Ok(ToModelWeightBatchDto(batch));
+});
+
+app.MapGet("/model-weight-batches/{id:guid}/rows", async (Guid id, IModelWeightBatchRepository repository, CancellationToken cancellationToken) =>
+{
+    var rows = await repository.GetRowsAsync(new ModelWeightBatchId(id), cancellationToken);
+    return Results.Ok(rows.Select(ToModelWeightRowDto));
+});
+
+app.MapGet("/model-weight-batches/{id:guid}/validation-issues", async (Guid id, IModelWeightBatchRepository repository, CancellationToken cancellationToken) =>
+{
+    var issues = await repository.GetValidationIssuesAsync(new ModelWeightBatchId(id), cancellationToken);
+    return Results.Ok(issues.Select(ToModelWeightValidationIssueDto));
+});
+
+app.MapPost("/model-weight-batches/fake", async (CreateFakeModelWeightBatchApiRequest request, IFakeModelWeightGenerator generator, CancellationToken cancellationToken) =>
+{
+    try
+    {
+        var batch = await generator.CreateFakeBatchAsync(ToApplicationRequest(request), cancellationToken);
+        return Results.Created($"/model-weight-batches/{batch.Id.Value}", ToModelWeightBatchDto(batch));
+    }
+    catch (DomainRuleViolationException ex)
+    {
+        return Results.Conflict(new { message = ex.Message });
+    }
+});
+
+app.MapPost("/model-weight-batches/{id:guid}/validate", async (Guid id, IModelWeightPromotionService service, CancellationToken cancellationToken) =>
+{
+    var result = await service.ValidateBatchAsync(new ModelWeightBatchId(id), cancellationToken);
+    return Results.Ok(ToModelWeightPromotionResultDto(result));
+});
+
+app.MapPost("/model-weight-batches/{id:guid}/promote", async (Guid id, IModelWeightPromotionService service, CancellationToken cancellationToken) =>
+{
+    var result = await service.PromoteBatchAsync(new ModelWeightBatchId(id), cancellationToken);
+    return Results.Ok(ToModelWeightPromotionResultDto(result));
+});
+
+app.MapPost("/model-weight-batches/promote-ready", async (PromoteReadyModelWeightBatchesRequest request, IModelWeightPromotionService service, CancellationToken cancellationToken) =>
+{
+    var results = await service.PromoteReadyBatchesAsync(ClampLimit(request.Limit), cancellationToken);
+    return Results.Ok(results.Select(ToModelWeightPromotionResultDto));
 });
 
 app.MapPost("/model-runs", async (CreateModelRunRequest request, IIntradayRepository repository, IClock clock, CancellationToken cancellationToken) =>
@@ -460,6 +521,9 @@ static async Task ValidateReferenceDataAsync(WebApplication app)
 
 static int ClampLimit(int? limit) => Math.Clamp(limit ?? 100, 1, 500);
 
+static TEnum? ParseEnum<TEnum>(string? value) where TEnum : struct
+    => !string.IsNullOrWhiteSpace(value) && Enum.TryParse<TEnum>(value, true, out var parsed) ? parsed : null;
+
 static ModelRunDto ToModelRunDto(ModelRun x)
     => new(
         x.Id.Value.ToString("D"),
@@ -475,6 +539,64 @@ static ModelRunDto ToModelRunDto(ModelRun x)
         x.SourceFileName,
         x.IsProcessed,
         x.TargetQuantityMode.ToString());
+
+static ModelWeightBatchDto ToModelWeightBatchDto(ModelWeightBatch x)
+    => new(
+        x.Id.Value.ToString("D"),
+        x.ExternalBatchId,
+        x.SourceSystem.ToString(),
+        x.FundCode,
+        x.FundId?.Value.ToString("D"),
+        x.ModelName,
+        x.AsOfUtc,
+        x.EffectiveAtUtc,
+        x.FrequencyMinutes,
+        x.NavUsd,
+        x.TargetQuantityMode.ToString(),
+        x.Status.ToString(),
+        x.ExpectedRowCount,
+        x.ContentHash,
+        x.CreatedAtUtc,
+        x.ReadyAtUtc,
+        x.AcceptedAtUtc,
+        x.PromotedAtUtc,
+        x.RejectedAtUtc,
+        x.PromotedModelRunId?.Value.ToString("D"),
+        x.Message);
+
+static ModelWeightRowDto ToModelWeightRowDto(ModelWeightRow x)
+    => new(x.Id.Value.ToString("D"), x.BatchId.Value.ToString("D"), x.RawSecurityId, x.Symbol, x.InstrumentId?.Value.ToString("D"), x.Weight, x.CreatedAtUtc);
+
+static ModelWeightValidationIssueDto ToModelWeightValidationIssueDto(ModelWeightValidationIssue x)
+    => new(x.Id.ToString("D"), x.BatchId.Value.ToString("D"), x.IssueType.ToString(), x.Severity.ToString(), x.Message, x.RowId?.Value.ToString("D"), x.RowNumber, x.CreatedAtUtc);
+
+static ModelWeightPromotionResultDto ToModelWeightPromotionResultDto(ModelWeightPromotionResult x)
+    => new(
+        x.BatchId?.Value.ToString("D"),
+        x.Status?.ToString(),
+        x.PromotedModelRunId?.Value.ToString("D"),
+        x.ModelRunId?.Value.ToString("D"),
+        x.ValidationIssueCount,
+        x.Issues.Select(ToModelWeightValidationIssueDto).ToList(),
+        x.Message,
+        x.Succeeded,
+        x.AlreadyPromoted);
+
+static CreateFakeModelWeightBatchRequest ToApplicationRequest(CreateFakeModelWeightBatchApiRequest request)
+    => new(
+        request.ExternalBatchId,
+        request.SourceSystem,
+        string.IsNullOrWhiteSpace(request.FundCode) ? "QQ_MASTER" : request.FundCode,
+        string.IsNullOrWhiteSpace(request.ModelName) ? "IntradayFxModel" : request.ModelName,
+        request.AsOfUtc,
+        request.EffectiveAtUtc,
+        request.FrequencyMinutes <= 0 ? 15 : request.FrequencyMinutes,
+        request.NavUsd <= 0 ? 1_000_000m : request.NavUsd,
+        request.TargetQuantityMode,
+        request.Status == ModelWeightBatchStatus.Draft ? ModelWeightBatchStatus.Ready : request.Status,
+        request.Weights is { Count: > 0 }
+            ? request.Weights.Select(x => new CreateFakeModelWeightRowRequest(x.RawSecurityId, x.Symbol, x.Weight)).ToList()
+            : [new CreateFakeModelWeightRowRequest("EURUSD", "EURUSD", -0.10m)]);
 
 static InstrumentDto ToInstrumentDto(Instrument x)
     => new(x.Id.Value.ToString("D"), x.Symbol, x.AssetClass.ToString(), x.BaseCurrency.ToString(), x.QuoteCurrency.ToString(), x.PricePrecision, x.QuantityPrecision, x.IsEnabled);
@@ -568,6 +690,10 @@ public sealed record HealthDto(string Application, string Environment, string Pe
 public sealed record ReferenceDataIntegrityDto(DateTimeOffset CheckedAtUtc, int BlockingIssueCount, int WarningIssueCount, IReadOnlyList<ReferenceDataIntegrityIssueDto> Issues);
 public sealed record ReferenceDataIntegrityIssueDto(string Id, string Type, string Severity, string Status, string Key, string Description, DateTimeOffset CreatedAtUtc);
 public sealed record ModelRunDto(string Id, string FundId, string ModelName, DateTimeOffset AsOfUtc, DateTimeOffset ReceivedAtUtc, DateTimeOffset EffectiveAtUtc, int FrequencyMinutes, decimal NavUsd, string Status, string InputHash, string SourceFileName, bool IsProcessed, string TargetQuantityMode);
+public sealed record ModelWeightBatchDto(string Id, string ExternalBatchId, string SourceSystem, string FundCode, string? FundId, string ModelName, DateTimeOffset AsOfUtc, DateTimeOffset EffectiveAtUtc, int FrequencyMinutes, decimal NavUsd, string TargetQuantityMode, string Status, int? ExpectedRowCount, string? ContentHash, DateTimeOffset CreatedAtUtc, DateTimeOffset? ReadyAtUtc, DateTimeOffset? AcceptedAtUtc, DateTimeOffset? PromotedAtUtc, DateTimeOffset? RejectedAtUtc, string? PromotedModelRunId, string? Message);
+public sealed record ModelWeightRowDto(string Id, string BatchId, string RawSecurityId, string Symbol, string? InstrumentId, decimal Weight, DateTimeOffset CreatedAtUtc);
+public sealed record ModelWeightValidationIssueDto(string Id, string BatchId, string IssueType, string Severity, string Message, string? RowId, int? RowNumber, DateTimeOffset CreatedAtUtc);
+public sealed record ModelWeightPromotionResultDto(string? BatchId, string? Status, string? PromotedModelRunId, string? ModelRunId, int ValidationIssueCount, IReadOnlyList<ModelWeightValidationIssueDto> Issues, string Message, bool Succeeded, bool AlreadyPromoted);
 public sealed record TargetPositionDto(string ModelRunId, string InstrumentId, string? Symbol, decimal TargetNotionalUsd, decimal TargetBaseQuantity, decimal TargetVenueQuantity, string TargetQuantityMode);
 public sealed record DriftSnapshotDto(string ModelRunId, string InstrumentId, string? Symbol, decimal TargetBaseQuantity, decimal CurrentBaseQuantity, decimal DriftBaseQuantity, decimal TargetVenueQuantity, decimal CurrentVenueQuantity, decimal DriftVenueQuantity);
 public sealed record PositionDto(string InstrumentId, string? Symbol, decimal BaseQuantity, DateTimeOffset? AsOfUtc);
@@ -582,6 +708,9 @@ public sealed record InstrumentDto(string Id, string Symbol, string AssetClass, 
 public sealed record VenueDto(string Id, string Name, string VenueType, bool IsEnabled);
 public sealed record CreateModelRunRequest(string? ModelName, string? Symbol, decimal? Weight, decimal NavUsd, TargetQuantityMode TargetQuantityMode, DateTimeOffset? AsOfUtc, DateTimeOffset? EffectiveAtUtc, int FrequencyMinutes, string? InputHash, string? SourceFileName, List<ModelRunWeightRequest>? Weights);
 public sealed record ModelRunWeightRequest(string Symbol, decimal Weight, string? RawSecurityId);
+public sealed record CreateFakeModelWeightBatchApiRequest(string? ExternalBatchId, ModelWeightSourceSystem SourceSystem, string FundCode, string ModelName, DateTimeOffset? AsOfUtc, DateTimeOffset? EffectiveAtUtc, int FrequencyMinutes, decimal NavUsd, TargetQuantityMode TargetQuantityMode, ModelWeightBatchStatus Status, List<CreateFakeModelWeightRowApiRequest>? Weights);
+public sealed record CreateFakeModelWeightRowApiRequest(string RawSecurityId, string Symbol, decimal Weight);
+public sealed record PromoteReadyModelWeightBatchesRequest(int? Limit);
 public sealed record KillSwitchRequest(string? Reason);
 public sealed record FakeSnapshotsRequest(string? InstrumentSymbol, string? VenueName, DateTimeOffset StartUtc, int IntervalSeconds, int Count, decimal Bid, decimal Ask, decimal? BidStep, decimal? AskStep);
 public sealed record BuildBarsRequest(string? VenueName, BarTimeframe Timeframe, DateTimeOffset StartUtc, DateTimeOffset EndUtc);

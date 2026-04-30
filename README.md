@@ -115,6 +115,12 @@ dotnet tool run dotnet-ef database update --project src/QQ.Production.Intraday.I
 
 The reference seed is idempotent and includes the fund, account, LMAX venue metadata, EURUSD, venue mapping, NAV, conservative risk configuration, trading window, kill switch, start-of-day position, and seed market data. Demo seed data is opt-in and adds deterministic fake snapshots only. Local model runs are created through `POST /model-runs` or `scripts/smoke-local.ps1`, not by persistent seed data.
 
+Prompt #6 adds `AddModelWeightSourceTables` for DB-staged model weights:
+
+- `ModelWeightBatches`
+- `ModelWeightRows`
+- `ModelWeightValidationIssues`
+
 ## Scripts
 
 - `scripts/check-env.ps1`
@@ -125,6 +131,9 @@ The reference seed is idempotent and includes the fund, account, LMAX venue meta
 - `scripts/run-worker.ps1`
 - `scripts/check-reference-data.ps1`
 - `scripts/smoke-local.ps1`
+- `scripts/create-fake-weight-batch.ps1`
+- `scripts/promote-ready-weight-batches.ps1`
+- `scripts/smoke-db-weights-local.ps1`
 - `scripts/run-ui.ps1`
 - `scripts/run-local-stack.ps1`
 
@@ -144,6 +153,14 @@ Endpoints include:
 - `GET /model-runs`
 - `POST /model-runs`
 - `POST /model-runs/{id}/process`
+- `GET /model-weight-batches`
+- `GET /model-weight-batches/{id}`
+- `GET /model-weight-batches/{id}/rows`
+- `GET /model-weight-batches/{id}/validation-issues`
+- `POST /model-weight-batches/fake`
+- `POST /model-weight-batches/{id}/validate`
+- `POST /model-weight-batches/{id}/promote`
+- `POST /model-weight-batches/promote-ready`
 - `GET /positions/internal`
 - `GET /positions/broker`
 - `GET /reconciliation/breaks`
@@ -192,6 +209,35 @@ The cockpit shows live trading status, external connection status, execution gat
 
 Development CORS allows only `http://localhost:5173` and `http://127.0.0.1:5173`; wildcard CORS is not enabled for production-like environments.
 
+## DB Model Weight Source
+
+Model weights are now staged in the database before they become canonical `ModelRun` and `TargetWeight` records. This is the future integration point for Qubes/GA output, but no Qubes/GA writer is implemented yet.
+
+Current local flow:
+
+1. Fake/local generator creates a `ModelWeightBatch` and `ModelWeightRows`.
+2. Validation checks fund/model metadata, timestamps, NAV, frequency, row count, duplicate rows, enabled instruments, and reference-data integrity.
+3. Promotion creates one `ModelRun` plus `TargetWeights`.
+4. Promotion does not process the model run or send orders.
+5. Existing `POST /model-runs/{id}/process` remains the explicit execution workflow and still enforces reconciliation and risk.
+
+Idempotency:
+
+- `SourceSystem + ExternalBatchId` is unique.
+- Reusing the same explicit external batch id with identical content returns the existing batch.
+- Reusing the same external batch id with different content is rejected.
+- Re-promoting an already promoted batch returns the existing promoted model run id.
+
+Local examples:
+
+```powershell
+.\scripts\create-fake-weight-batch.ps1
+.\scripts\promote-ready-weight-batches.ps1
+.\scripts\smoke-db-weights-local.ps1
+```
+
+The cockpit includes a Model Weight Batches panel for creating fake batches, viewing rows/issues, validating, and promoting. Promotion is deliberately separate from model-run processing.
+
 ## Run Worker
 
 ```powershell
@@ -235,6 +281,18 @@ cd C:\Users\phili\source\repos\QQ.Production.Intraday
 ```
 
 Then use the UI to create fake snapshots, build bars, create a model run, process it, and inspect positions, drift, risk decisions, orders, fills, and reconciliation breaks.
+
+DB-weight local workflow:
+
+```powershell
+cd C:\Users\phili\source\repos\QQ.Production.Intraday
+.\scripts\reset-local-db.ps1 -SeedDemoData
+.\scripts\run-api.ps1
+.\scripts\check-reference-data.ps1
+.\scripts\smoke-db-weights-local.ps1
+```
+
+In the UI, create a fake model weight batch, validate/promote it, then process the generated model run from the Model Runs panel.
 
 ## Target Quantity Modes
 
@@ -319,13 +377,14 @@ curl "http://localhost:5050/market-data/bars?instrument=EURUSD&venue=LMAX&timefr
 - No live broker connectivity
 - No live market data connectivity
 - No external market data connectivity
-- No UI yet
 - Only FX spot `EURUSD` is seeded
 - Only one fund and one broker account are seeded
 - Only `MarketImmediate` is implemented
 - Only fake/local market data is implemented
 - Only 15-minute bar building is implemented
 - No historical market data import yet
+- No file manifest/CSV model-weight ingestion; weights are staged through local DB tables
+- Qubes/GA database writer is not implemented yet
 - UI is a local operator cockpit only; no authentication or production UI hardening yet
 - RDS is not configured
 - EOD LMAX report import is not implemented

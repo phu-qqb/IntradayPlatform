@@ -9,6 +9,7 @@ public sealed class Worker(IServiceScopeFactory scopeFactory, IConfiguration con
         var pollInterval = configuration.GetValue("Worker:PollInterval", TimeSpan.FromMinutes(15));
         if (configuration.GetValue("Worker:ProcessImmediatelyOnStartup", true))
         {
+            await PromoteWeightsIfEnabled(stoppingToken);
             await ProcessOnce(stoppingToken);
             await BuildBarsIfEnabled(stoppingToken);
         }
@@ -16,9 +17,24 @@ public sealed class Worker(IServiceScopeFactory scopeFactory, IConfiguration con
         using var timer = new PeriodicTimer(pollInterval);
         while (!stoppingToken.IsCancellationRequested && await timer.WaitForNextTickAsync(stoppingToken))
         {
+            await PromoteWeightsIfEnabled(stoppingToken);
             await ProcessOnce(stoppingToken);
             await BuildBarsIfEnabled(stoppingToken);
         }
+    }
+
+    private async Task PromoteWeightsIfEnabled(CancellationToken cancellationToken)
+    {
+        if (!configuration.GetValue("ModelWeights:Enabled", true) || !configuration.GetValue("ModelWeights:PromoteReadyBatches", false))
+        {
+            return;
+        }
+
+        using var scope = scopeFactory.CreateScope();
+        var service = scope.ServiceProvider.GetRequiredService<IModelWeightPromotionService>();
+        var limit = configuration.GetValue("ModelWeights:PromotionLimit", 10);
+        var results = await service.PromoteReadyBatchesAsync(limit, cancellationToken);
+        logger.LogInformation("Model weight promotion polling result: Count={Count} Promoted={Promoted}", results.Count, results.Count(x => x.Succeeded));
     }
 
     private async Task ProcessOnce(CancellationToken cancellationToken)

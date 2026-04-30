@@ -1,3 +1,5 @@
+using System.Security.Cryptography;
+using System.Text;
 using QQ.Production.Intraday.Domain;
 
 namespace QQ.Production.Intraday.Application;
@@ -85,8 +87,57 @@ public interface IBarBuilderService
     Task<BarBuildResult> BuildLatestFifteenMinuteBarsAsync(VenueId venueId, CancellationToken cancellationToken);
 }
 
+public interface IModelWeightBatchRepository
+{
+    Task<ModelWeightBatch?> GetBatchAsync(ModelWeightBatchId batchId, CancellationToken cancellationToken);
+    Task<ModelWeightBatch?> GetBatchByExternalIdAsync(ModelWeightSourceSystem sourceSystem, string externalBatchId, CancellationToken cancellationToken);
+    Task<IReadOnlyList<ModelWeightBatch>> GetRecentBatchesAsync(int limit, ModelWeightBatchStatus? status, ModelWeightSourceSystem? sourceSystem, string? modelName, DateTimeOffset? fromUtc, DateTimeOffset? toUtc, CancellationToken cancellationToken);
+    Task<IReadOnlyList<ModelWeightBatch>> GetReadyBatchesAsync(int limit, CancellationToken cancellationToken);
+    Task<IReadOnlyList<ModelWeightRow>> GetRowsAsync(ModelWeightBatchId batchId, CancellationToken cancellationToken);
+    Task<IReadOnlyList<ModelWeightValidationIssue>> GetValidationIssuesAsync(ModelWeightBatchId batchId, CancellationToken cancellationToken);
+    Task AddBatchAsync(ModelWeightBatch batch, IReadOnlyList<ModelWeightRow> rows, CancellationToken cancellationToken);
+    Task UpdateBatchAsync(ModelWeightBatch batch, CancellationToken cancellationToken);
+    Task AddValidationIssuesAsync(ModelWeightBatchId batchId, IReadOnlyList<ModelWeightValidationIssue> issues, bool replaceExisting, CancellationToken cancellationToken);
+    Task MarkPromotedAsync(ModelWeightBatchId batchId, ModelRunId modelRunId, DateTimeOffset promotedAtUtc, CancellationToken cancellationToken);
+}
+
+public interface IModelWeightPromotionService
+{
+    Task<ModelWeightPromotionResult> ValidateBatchAsync(ModelWeightBatchId batchId, CancellationToken cancellationToken);
+    Task<ModelWeightPromotionResult> PromoteBatchAsync(ModelWeightBatchId batchId, CancellationToken cancellationToken);
+    Task<IReadOnlyList<ModelWeightPromotionResult>> PromoteReadyBatchesAsync(int limit, CancellationToken cancellationToken);
+}
+
+public interface IFakeModelWeightGenerator
+{
+    Task<ModelWeightBatch> CreateFakeBatchAsync(CreateFakeModelWeightBatchRequest request, CancellationToken cancellationToken);
+}
+
 public sealed record BarUpsertResult(bool Created);
 public sealed record BarBuildResult(BarBuildRunId RunId, int BarsCreated, int BarsUpdated, BarBuildRunStatus Status, string? ErrorMessage = null);
+public sealed record CreateFakeModelWeightRowRequest(string RawSecurityId, string Symbol, decimal Weight);
+public sealed record CreateFakeModelWeightBatchRequest(
+    string? ExternalBatchId,
+    ModelWeightSourceSystem SourceSystem,
+    string FundCode,
+    string ModelName,
+    DateTimeOffset? AsOfUtc,
+    DateTimeOffset? EffectiveAtUtc,
+    int FrequencyMinutes,
+    decimal NavUsd,
+    TargetQuantityMode TargetQuantityMode,
+    ModelWeightBatchStatus Status,
+    IReadOnlyList<CreateFakeModelWeightRowRequest> Weights);
+public sealed record ModelWeightPromotionResult(
+    ModelWeightBatchId? BatchId,
+    ModelWeightBatchStatus? Status,
+    ModelRunId? PromotedModelRunId,
+    ModelRunId? ModelRunId,
+    int ValidationIssueCount,
+    IReadOnlyList<ModelWeightValidationIssue> Issues,
+    string Message,
+    bool Succeeded,
+    bool AlreadyPromoted);
 
 public enum ReferenceDataIntegrityIssueType
 {
@@ -147,6 +198,9 @@ public sealed class PlatformState
     public List<NavSnapshot> NavSnapshots { get; } = [];
     public List<ModelRun> ModelRuns { get; } = [];
     public List<TargetWeight> TargetWeights { get; } = [];
+    public List<ModelWeightBatch> ModelWeightBatches { get; } = [];
+    public List<ModelWeightRow> ModelWeightRows { get; } = [];
+    public List<ModelWeightValidationIssue> ModelWeightValidationIssues { get; } = [];
     public List<MarketDataSnapshot> MarketData { get; } = [];
     public List<TargetPosition> TargetPositions { get; } = [];
     public List<DriftSnapshot> DriftSnapshots { get; } = [];
@@ -505,6 +559,129 @@ public sealed class InMemoryBarBuildRunRepository(PlatformState state, IClock cl
     }
 }
 
+public sealed class InMemoryModelWeightBatchRepository(PlatformState state) : IModelWeightBatchRepository
+{
+    private readonly object _sync = new();
+
+    public Task<ModelWeightBatch?> GetBatchAsync(ModelWeightBatchId batchId, CancellationToken cancellationToken)
+    {
+        lock (_sync)
+        {
+            return Task.FromResult(state.ModelWeightBatches.FirstOrDefault(x => x.Id == batchId));
+        }
+    }
+
+    public Task<ModelWeightBatch?> GetBatchByExternalIdAsync(ModelWeightSourceSystem sourceSystem, string externalBatchId, CancellationToken cancellationToken)
+    {
+        lock (_sync)
+        {
+            return Task.FromResult(state.ModelWeightBatches.FirstOrDefault(x => x.SourceSystem == sourceSystem && x.ExternalBatchId == externalBatchId));
+        }
+    }
+
+    public Task<IReadOnlyList<ModelWeightBatch>> GetRecentBatchesAsync(int limit, ModelWeightBatchStatus? status, ModelWeightSourceSystem? sourceSystem, string? modelName, DateTimeOffset? fromUtc, DateTimeOffset? toUtc, CancellationToken cancellationToken)
+    {
+        lock (_sync)
+        {
+            var query = state.ModelWeightBatches.AsEnumerable();
+            if (status is not null) query = query.Where(x => x.Status == status);
+            if (sourceSystem is not null) query = query.Where(x => x.SourceSystem == sourceSystem);
+            if (!string.IsNullOrWhiteSpace(modelName)) query = query.Where(x => x.ModelName.Equals(modelName, StringComparison.OrdinalIgnoreCase));
+            if (fromUtc is not null) query = query.Where(x => x.AsOfUtc >= fromUtc.Value);
+            if (toUtc is not null) query = query.Where(x => x.AsOfUtc < toUtc.Value);
+            return Task.FromResult<IReadOnlyList<ModelWeightBatch>>(query.OrderByDescending(x => x.CreatedAtUtc).Take(Math.Clamp(limit, 1, 500)).ToList());
+        }
+    }
+
+    public Task<IReadOnlyList<ModelWeightBatch>> GetReadyBatchesAsync(int limit, CancellationToken cancellationToken)
+    {
+        lock (_sync)
+        {
+            return Task.FromResult<IReadOnlyList<ModelWeightBatch>>(state.ModelWeightBatches
+                .Where(x => x.Status is ModelWeightBatchStatus.Ready or ModelWeightBatchStatus.Accepted)
+                .OrderBy(x => x.AsOfUtc)
+                .Take(Math.Clamp(limit, 1, 500))
+                .ToList());
+        }
+    }
+
+    public Task<IReadOnlyList<ModelWeightRow>> GetRowsAsync(ModelWeightBatchId batchId, CancellationToken cancellationToken)
+    {
+        lock (_sync)
+        {
+            return Task.FromResult<IReadOnlyList<ModelWeightRow>>(state.ModelWeightRows.Where(x => x.BatchId == batchId).OrderBy(x => x.CreatedAtUtc).ToList());
+        }
+    }
+
+    public Task<IReadOnlyList<ModelWeightValidationIssue>> GetValidationIssuesAsync(ModelWeightBatchId batchId, CancellationToken cancellationToken)
+    {
+        lock (_sync)
+        {
+            return Task.FromResult<IReadOnlyList<ModelWeightValidationIssue>>(state.ModelWeightValidationIssues.Where(x => x.BatchId == batchId).OrderBy(x => x.CreatedAtUtc).ToList());
+        }
+    }
+
+    public Task AddBatchAsync(ModelWeightBatch batch, IReadOnlyList<ModelWeightRow> rows, CancellationToken cancellationToken)
+    {
+        lock (_sync)
+        {
+            if (state.ModelWeightBatches.Any(x => x.SourceSystem == batch.SourceSystem && x.ExternalBatchId == batch.ExternalBatchId))
+            {
+                return Task.CompletedTask;
+            }
+
+            state.ModelWeightBatches.Add(batch);
+            state.ModelWeightRows.AddRange(rows);
+        }
+
+        return Task.CompletedTask;
+    }
+
+    public Task UpdateBatchAsync(ModelWeightBatch batch, CancellationToken cancellationToken)
+    {
+        lock (_sync)
+        {
+            var index = state.ModelWeightBatches.FindIndex(x => x.Id == batch.Id);
+            if (index >= 0)
+            {
+                state.ModelWeightBatches[index] = batch;
+            }
+        }
+
+        return Task.CompletedTask;
+    }
+
+    public Task AddValidationIssuesAsync(ModelWeightBatchId batchId, IReadOnlyList<ModelWeightValidationIssue> issues, bool replaceExisting, CancellationToken cancellationToken)
+    {
+        lock (_sync)
+        {
+            if (replaceExisting)
+            {
+                state.ModelWeightValidationIssues.RemoveAll(x => x.BatchId == batchId);
+            }
+
+            state.ModelWeightValidationIssues.AddRange(issues);
+        }
+
+        return Task.CompletedTask;
+    }
+
+    public Task MarkPromotedAsync(ModelWeightBatchId batchId, ModelRunId modelRunId, DateTimeOffset promotedAtUtc, CancellationToken cancellationToken)
+    {
+        lock (_sync)
+        {
+            var index = state.ModelWeightBatches.FindIndex(x => x.Id == batchId);
+            if (index >= 0)
+            {
+                var batch = state.ModelWeightBatches[index];
+                state.ModelWeightBatches[index] = batch with { Status = ModelWeightBatchStatus.Promoted, PromotedAtUtc = promotedAtUtc, PromotedModelRunId = modelRunId, Message = "Promoted to model run." };
+            }
+        }
+
+        return Task.CompletedTask;
+    }
+}
+
 public sealed class BarBuilderService(
     PlatformState state,
     IMarketDataSnapshotRepository snapshotRepository,
@@ -706,6 +883,250 @@ public sealed class ReferenceDataIntegrityService(IIntradayRepository repository
 
     private static ReferenceDataIntegrityIssue NewIssue(ReferenceDataIntegrityIssueType type, string key, string description, DateTimeOffset now)
         => new(Guid.NewGuid(), type, ReferenceDataIntegritySeverity.Blocking, ReferenceDataIntegrityStatus.Open, key, description, now);
+}
+
+public sealed class FakeModelWeightGenerator(IModelWeightBatchRepository repository, IClock clock) : IFakeModelWeightGenerator
+{
+    public async Task<ModelWeightBatch> CreateFakeBatchAsync(CreateFakeModelWeightBatchRequest request, CancellationToken cancellationToken)
+    {
+        var now = clock.UtcNow;
+        var asOf = request.AsOfUtc ?? now;
+        var effective = request.EffectiveAtUtc ?? asOf;
+        var rows = request.Weights;
+        var externalBatchId = string.IsNullOrWhiteSpace(request.ExternalBatchId)
+            ? $"fake_intraday_fx_{asOf:yyyyMMdd_HHmmss}_{Guid.NewGuid():N}"[..42]
+            : request.ExternalBatchId.Trim();
+        var contentHash = ModelWeightHash.Compute(request.SourceSystem, externalBatchId, request.FundCode, request.ModelName, asOf, effective, request.FrequencyMinutes, request.NavUsd, request.TargetQuantityMode, rows);
+
+        var existing = await repository.GetBatchByExternalIdAsync(request.SourceSystem, externalBatchId, cancellationToken);
+        if (existing is not null)
+        {
+            if (!string.Equals(existing.ContentHash, contentHash, StringComparison.OrdinalIgnoreCase))
+            {
+                throw new DomainRuleViolationException("A model weight batch with the same source system and external batch id already exists with different content.");
+            }
+
+            return existing;
+        }
+
+        var status = request.Status == ModelWeightBatchStatus.Draft ? ModelWeightBatchStatus.Draft : ModelWeightBatchStatus.Ready;
+        var batch = new ModelWeightBatch(
+            ModelWeightBatchId.New(),
+            externalBatchId,
+            request.SourceSystem,
+            string.IsNullOrWhiteSpace(request.FundCode) ? "QQ_MASTER" : request.FundCode,
+            null,
+            string.IsNullOrWhiteSpace(request.ModelName) ? "IntradayFxModel" : request.ModelName,
+            asOf,
+            effective,
+            request.FrequencyMinutes,
+            request.NavUsd,
+            request.TargetQuantityMode,
+            status,
+            rows.Count,
+            contentHash,
+            now,
+            status == ModelWeightBatchStatus.Ready ? now : null,
+            null,
+            null,
+            null,
+            null,
+            "Local fake model weight batch.");
+        var modelRows = rows.Select(x => new ModelWeightRow(ModelWeightRowId.New(), batch.Id, x.RawSecurityId, x.Symbol, null, x.Weight, now)).ToList();
+        await repository.AddBatchAsync(batch, modelRows, cancellationToken);
+        return batch;
+    }
+}
+
+public sealed class ModelWeightPromotionService(
+    IModelWeightBatchRepository batchRepository,
+    IIntradayRepository intradayRepository,
+    IReferenceDataIntegrityService referenceDataIntegrityService,
+    IClock clock) : IModelWeightPromotionService
+{
+    public async Task<ModelWeightPromotionResult> ValidateBatchAsync(ModelWeightBatchId batchId, CancellationToken cancellationToken)
+    {
+        var now = clock.UtcNow;
+        var batch = await batchRepository.GetBatchAsync(batchId, cancellationToken);
+        if (batch is null)
+        {
+            return new ModelWeightPromotionResult(batchId, null, null, null, 1, [Issue(batchId, ModelWeightValidationIssueType.MissingBatch, "Model weight batch was not found.", now)], "Model weight batch was not found.", false, false);
+        }
+
+        if (batch.Status == ModelWeightBatchStatus.Promoted && batch.PromotedModelRunId is not null)
+        {
+            return new ModelWeightPromotionResult(batch.Id, batch.Status, batch.PromotedModelRunId, batch.PromotedModelRunId, 0, [], "Batch is already promoted.", true, true);
+        }
+
+        await batchRepository.UpdateBatchAsync(batch with { Status = ModelWeightBatchStatus.Validating, Message = "Validating model weight batch." }, cancellationToken);
+        var issues = await BuildValidationIssuesAsync(batch, now, cancellationToken);
+        await batchRepository.AddValidationIssuesAsync(batch.Id, issues, replaceExisting: true, cancellationToken);
+        var blocking = issues.Count(x => x.Severity == ModelWeightValidationSeverity.Blocking);
+        var finalStatus = blocking > 0 ? ModelWeightBatchStatus.Rejected : ModelWeightBatchStatus.Accepted;
+        var acceptedAt = blocking > 0 ? batch.AcceptedAtUtc : now;
+        var rejectedAt = blocking > 0 ? now : batch.RejectedAtUtc;
+        var message = blocking > 0 ? $"Validation failed with {blocking} blocking issue(s)." : "Validation accepted.";
+        await batchRepository.UpdateBatchAsync(batch with { Status = finalStatus, AcceptedAtUtc = acceptedAt, RejectedAtUtc = rejectedAt, Message = message }, cancellationToken);
+
+        return new ModelWeightPromotionResult(batch.Id, finalStatus, batch.PromotedModelRunId, batch.PromotedModelRunId, issues.Count, issues, message, blocking == 0, false);
+    }
+
+    public async Task<ModelWeightPromotionResult> PromoteBatchAsync(ModelWeightBatchId batchId, CancellationToken cancellationToken)
+    {
+        var now = clock.UtcNow;
+        var batch = await batchRepository.GetBatchAsync(batchId, cancellationToken);
+        if (batch is null)
+        {
+            return new ModelWeightPromotionResult(batchId, null, null, null, 1, [Issue(batchId, ModelWeightValidationIssueType.MissingBatch, "Model weight batch was not found.", now)], "Model weight batch was not found.", false, false);
+        }
+
+        if (batch.Status == ModelWeightBatchStatus.Promoted && batch.PromotedModelRunId is not null)
+        {
+            return new ModelWeightPromotionResult(batch.Id, batch.Status, batch.PromotedModelRunId, batch.PromotedModelRunId, 0, await batchRepository.GetValidationIssuesAsync(batch.Id, cancellationToken), "Batch is already promoted; returning existing model run id.", true, true);
+        }
+
+        var validation = await ValidateBatchAsync(batch.Id, cancellationToken);
+        if (!validation.Succeeded)
+        {
+            return validation;
+        }
+
+        batch = await batchRepository.GetBatchAsync(batchId, cancellationToken) ?? batch;
+        var rows = await batchRepository.GetRowsAsync(batch.Id, cancellationToken);
+        var state = await intradayRepository.LoadStateAsync(cancellationToken);
+        var fund = ResolveFund(state, batch.FundCode);
+        if (fund is null)
+        {
+            var issue = Issue(batch.Id, ModelWeightValidationIssueType.InvalidFund, $"Fund code '{batch.FundCode}' is not valid.", now);
+            await batchRepository.AddValidationIssuesAsync(batch.Id, [issue], replaceExisting: true, cancellationToken);
+            await batchRepository.UpdateBatchAsync(batch with { Status = ModelWeightBatchStatus.Rejected, RejectedAtUtc = now, Message = issue.Message }, cancellationToken);
+            return new ModelWeightPromotionResult(batch.Id, ModelWeightBatchStatus.Rejected, null, null, 1, [issue], issue.Message, false, false);
+        }
+
+        var run = new ModelRun(
+            ModelRunId.New(),
+            fund.Id,
+            batch.ModelName,
+            batch.AsOfUtc,
+            now,
+            batch.EffectiveAtUtc,
+            batch.FrequencyMinutes,
+            batch.NavUsd,
+            ModelRunStatus.Received,
+            batch.ContentHash ?? ModelWeightHash.Compute(batch.SourceSystem, batch.ExternalBatchId, batch.FundCode, batch.ModelName, batch.AsOfUtc, batch.EffectiveAtUtc, batch.FrequencyMinutes, batch.NavUsd, batch.TargetQuantityMode, rows.Select(x => new CreateFakeModelWeightRowRequest(x.RawSecurityId, x.Symbol, x.Weight)).ToList()),
+            "db-weight-source",
+            false,
+            batch.TargetQuantityMode);
+        var weights = rows.Select(row =>
+        {
+            var instrument = state.Instruments.Single(x => x.Symbol.Equals(row.Symbol, StringComparison.OrdinalIgnoreCase) && x.IsEnabled);
+            return new TargetWeight(run.Id, instrument.Id, row.Weight, row.RawSecurityId);
+        }).ToList();
+
+        await intradayRepository.AddModelRunAsync(run, weights, cancellationToken);
+        await batchRepository.MarkPromotedAsync(batch.Id, run.Id, now, cancellationToken);
+        return new ModelWeightPromotionResult(batch.Id, ModelWeightBatchStatus.Promoted, run.Id, run.Id, 0, [], "Promoted to model run. Processing remains explicit.", true, false);
+    }
+
+    public async Task<IReadOnlyList<ModelWeightPromotionResult>> PromoteReadyBatchesAsync(int limit, CancellationToken cancellationToken)
+    {
+        var batches = await batchRepository.GetReadyBatchesAsync(Math.Clamp(limit, 1, 500), cancellationToken);
+        var results = new List<ModelWeightPromotionResult>();
+        foreach (var batch in batches)
+        {
+            results.Add(await PromoteBatchAsync(batch.Id, cancellationToken));
+        }
+
+        return results;
+    }
+
+    private async Task<IReadOnlyList<ModelWeightValidationIssue>> BuildValidationIssuesAsync(ModelWeightBatch batch, DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        var issues = new List<ModelWeightValidationIssue>();
+        if (batch.Status is not (ModelWeightBatchStatus.Ready or ModelWeightBatchStatus.Accepted or ModelWeightBatchStatus.Validating))
+        {
+            issues.Add(Issue(batch.Id, ModelWeightValidationIssueType.BatchNotReady, $"Batch status {batch.Status} is not promotable.", now));
+        }
+
+        if (string.IsNullOrWhiteSpace(batch.ModelName)) issues.Add(Issue(batch.Id, ModelWeightValidationIssueType.InvalidModelName, "Model name is required.", now));
+        if (batch.AsOfUtc.Offset != TimeSpan.Zero || batch.EffectiveAtUtc.Offset != TimeSpan.Zero || batch.EffectiveAtUtc < batch.AsOfUtc) issues.Add(Issue(batch.Id, ModelWeightValidationIssueType.InvalidTimestamp, "As-of and effective timestamps must be UTC and effective must not precede as-of.", now));
+        if (batch.NavUsd <= 0) issues.Add(Issue(batch.Id, ModelWeightValidationIssueType.InvalidNav, "NAV must be positive.", now));
+        if (batch.FrequencyMinutes <= 0) issues.Add(Issue(batch.Id, ModelWeightValidationIssueType.InvalidFrequency, "Frequency minutes must be positive.", now));
+        if (!Enum.IsDefined(batch.TargetQuantityMode)) issues.Add(Issue(batch.Id, ModelWeightValidationIssueType.InvalidTargetQuantityMode, "Target quantity mode is invalid.", now));
+
+        var state = await intradayRepository.LoadStateAsync(cancellationToken);
+        if (ResolveFund(state, batch.FundCode) is null)
+        {
+            issues.Add(Issue(batch.Id, ModelWeightValidationIssueType.InvalidFund, $"Fund code '{batch.FundCode}' did not resolve to the local seeded fund.", now));
+        }
+
+        var integrity = await referenceDataIntegrityService.CheckAsync(cancellationToken);
+        if (integrity.BlockingIssueCount > 0)
+        {
+            issues.Add(Issue(batch.Id, ModelWeightValidationIssueType.ReferenceDataInvalid, $"Reference data integrity has {integrity.BlockingIssueCount} blocking issue(s).", now));
+        }
+
+        var rows = (await batchRepository.GetRowsAsync(batch.Id, cancellationToken)).ToList();
+        if (rows.Count == 0) issues.Add(Issue(batch.Id, ModelWeightValidationIssueType.MissingRows, "At least one model weight row is required.", now));
+        if (batch.ExpectedRowCount is not null && batch.ExpectedRowCount.Value != rows.Count) issues.Add(Issue(batch.Id, ModelWeightValidationIssueType.RowCountMismatch, $"Expected {batch.ExpectedRowCount.Value} row(s), found {rows.Count}.", now));
+
+        AddDuplicateRowIssues(issues, batch.Id, rows, x => x.Symbol, "symbol", now);
+        AddDuplicateRowIssues(issues, batch.Id, rows, x => x.RawSecurityId, "raw security id", now);
+
+        for (var index = 0; index < rows.Count; index++)
+        {
+            var row = rows[index];
+            if (string.IsNullOrWhiteSpace(row.RawSecurityId) || string.IsNullOrWhiteSpace(row.Symbol))
+            {
+                issues.Add(Issue(batch.Id, ModelWeightValidationIssueType.InvalidWeight, "Raw security id and symbol are required.", now, row.Id, index + 1));
+                continue;
+            }
+
+            var instruments = state.Instruments.Where(x => x.Symbol.Equals(row.Symbol, StringComparison.OrdinalIgnoreCase)).ToList();
+            if (instruments.Count == 0)
+            {
+                issues.Add(Issue(batch.Id, ModelWeightValidationIssueType.UnknownInstrument, $"Symbol '{row.Symbol}' does not resolve to an instrument.", now, row.Id, index + 1));
+            }
+            else if (!instruments.Any(x => x.IsEnabled))
+            {
+                issues.Add(Issue(batch.Id, ModelWeightValidationIssueType.DisabledInstrument, $"Symbol '{row.Symbol}' resolves only to disabled instruments.", now, row.Id, index + 1));
+            }
+        }
+
+        return issues;
+    }
+
+    private static Fund? ResolveFund(PlatformState state, string fundCode)
+        => state.Funds.FirstOrDefault(x => x.Name.Equals(fundCode, StringComparison.OrdinalIgnoreCase) && x.IsEnabled)
+            ?? (fundCode.Equals("QQ_MASTER", StringComparison.OrdinalIgnoreCase) ? state.Funds.FirstOrDefault(x => x.IsEnabled) : null);
+
+    private static void AddDuplicateRowIssues(List<ModelWeightValidationIssue> issues, ModelWeightBatchId batchId, IReadOnlyList<ModelWeightRow> rows, Func<ModelWeightRow, string> selector, string label, DateTimeOffset now)
+    {
+        foreach (var duplicate in rows.GroupBy(selector, StringComparer.OrdinalIgnoreCase).Where(x => !string.IsNullOrWhiteSpace(x.Key) && x.Count() > 1))
+        {
+            issues.Add(Issue(batchId, ModelWeightValidationIssueType.DuplicateSecurity, $"Duplicate {label} '{duplicate.Key}' exists in the batch.", now));
+        }
+    }
+
+    private static ModelWeightValidationIssue Issue(ModelWeightBatchId batchId, ModelWeightValidationIssueType type, string message, DateTimeOffset now, ModelWeightRowId? rowId = null, int? rowNumber = null)
+        => new(Guid.NewGuid(), batchId, type, ModelWeightValidationSeverity.Blocking, message, rowId, rowNumber, now);
+}
+
+public static class ModelWeightHash
+{
+    public static string Compute(ModelWeightSourceSystem sourceSystem, string externalBatchId, string fundCode, string modelName, DateTimeOffset asOfUtc, DateTimeOffset effectiveAtUtc, int frequencyMinutes, decimal navUsd, TargetQuantityMode targetQuantityMode, IReadOnlyList<CreateFakeModelWeightRowRequest> rows)
+    {
+        var builder = new StringBuilder();
+        builder.Append(sourceSystem).Append('|').Append(externalBatchId).Append('|').Append(fundCode).Append('|').Append(modelName).Append('|')
+            .Append(asOfUtc.ToUniversalTime().ToString("O")).Append('|').Append(effectiveAtUtc.ToUniversalTime().ToString("O")).Append('|')
+            .Append(frequencyMinutes).Append('|').Append(navUsd.ToString("0.##########")).Append('|').Append(targetQuantityMode);
+        foreach (var row in rows.OrderBy(x => x.Symbol, StringComparer.OrdinalIgnoreCase).ThenBy(x => x.RawSecurityId, StringComparer.OrdinalIgnoreCase))
+        {
+            builder.Append('|').Append(row.RawSecurityId).Append(':').Append(row.Symbol).Append(':').Append(row.Weight.ToString("0.##########"));
+        }
+
+        return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(builder.ToString()))).ToLowerInvariant();
+    }
 }
 
 public sealed record RiskContext(Fund Fund, Venue Venue, Instrument Instrument, ModelRun ModelRun, MarketDataSnapshot MarketData, decimal CurrentBaseQuantity, bool PositionsMatch, decimal ExistingGrossExposureUsd, DateTimeOffset Now);

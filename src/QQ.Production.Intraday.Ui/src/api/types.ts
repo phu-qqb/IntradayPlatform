@@ -71,6 +71,77 @@ export type ProcessModelRunResult = {
   completedAtUtc: string;
 };
 
+export type ModelWeightBatchDto = {
+  id: string;
+  externalBatchId: string;
+  sourceSystem: string;
+  fundCode: string;
+  fundId?: string | null;
+  modelName: string;
+  asOfUtc: string;
+  effectiveAtUtc: string;
+  frequencyMinutes: number;
+  navUsd: number;
+  targetQuantityMode: string;
+  status: string;
+  expectedRowCount?: number | null;
+  contentHash?: string | null;
+  createdAtUtc: string;
+  readyAtUtc?: string | null;
+  acceptedAtUtc?: string | null;
+  promotedAtUtc?: string | null;
+  rejectedAtUtc?: string | null;
+  promotedModelRunId?: string | null;
+  message?: string | null;
+};
+
+export type ModelWeightRowDto = {
+  id: string;
+  batchId: string;
+  rawSecurityId: string;
+  symbol: string;
+  instrumentId?: string | null;
+  weight: number;
+  createdAtUtc: string;
+};
+
+export type ModelWeightValidationIssueDto = {
+  id: string;
+  batchId: string;
+  issueType: string;
+  severity: string;
+  message: string;
+  rowId?: string | null;
+  rowNumber?: number | null;
+  createdAtUtc: string;
+};
+
+export type ModelWeightPromotionResultDto = {
+  batchId?: string | null;
+  status?: string | null;
+  promotedModelRunId?: string | null;
+  modelRunId?: string | null;
+  validationIssueCount: number;
+  issues: ModelWeightValidationIssueDto[];
+  message: string;
+  succeeded: boolean;
+  alreadyPromoted: boolean;
+};
+
+export type CreateFakeModelWeightBatchRequest = {
+  externalBatchId?: string;
+  sourceSystem: string;
+  fundCode: string;
+  modelName: string;
+  asOfUtc: string;
+  effectiveAtUtc: string;
+  frequencyMinutes: number;
+  navUsd: number;
+  targetQuantityMode: string;
+  status: string;
+  weights: Array<{ rawSecurityId: string; symbol: string; weight: number }>;
+};
+
 export type TargetPositionDto = {
   modelRunId: string;
   instrumentId: string;

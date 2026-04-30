@@ -13,6 +13,8 @@ builder.Services.AddSingleton<IVenueExecutionGateway, FakeLmaxGateway>();
 builder.Services.AddSingleton<IMarketDataProvider, FakeMarketDataProvider>();
 builder.Services.AddScoped<ProcessModelRunService>();
 builder.Services.AddScoped<IReferenceDataIntegrityService, ReferenceDataIntegrityService>();
+builder.Services.AddScoped<IModelWeightPromotionService, ModelWeightPromotionService>();
+builder.Services.AddScoped<IFakeModelWeightGenerator, FakeModelWeightGenerator>();
 
 var persistenceProvider = builder.Configuration.GetValue("Persistence:Provider", "SqlServerLocal") ?? "SqlServerLocal";
 if (string.Equals(persistenceProvider, "SqlServerLocal", StringComparison.OrdinalIgnoreCase))
@@ -24,6 +26,7 @@ if (string.Equals(persistenceProvider, "SqlServerLocal", StringComparison.Ordina
     builder.Services.AddScoped<IMarketDataSnapshotRepository, SqlServerMarketDataSnapshotRepository>();
     builder.Services.AddScoped<IMarketDataBarRepository, SqlServerMarketDataBarRepository>();
     builder.Services.AddScoped<IBarBuildRunRepository, SqlServerBarBuildRunRepository>();
+    builder.Services.AddScoped<IModelWeightBatchRepository, SqlServerModelWeightBatchRepository>();
     builder.Services.AddScoped<IBrokerPositionProvider, SqlServerFakeBrokerPositionProvider>();
     builder.Services.AddScoped<IBarBuilderService, BarBuilderService>();
     builder.Services.AddScoped<LocalDatabaseInitializer>();
@@ -36,6 +39,7 @@ else if (string.Equals(persistenceProvider, "InMemory", StringComparison.Ordinal
     builder.Services.AddSingleton<IMarketDataSnapshotRepository, InMemoryMarketDataSnapshotRepository>();
     builder.Services.AddSingleton<IMarketDataBarRepository, InMemoryMarketDataBarRepository>();
     builder.Services.AddSingleton<IBarBuildRunRepository, InMemoryBarBuildRunRepository>();
+    builder.Services.AddSingleton<IModelWeightBatchRepository, InMemoryModelWeightBatchRepository>();
     builder.Services.AddSingleton<IBrokerPositionProvider, FakeBrokerPositionProvider>();
     builder.Services.AddSingleton<IBarBuilderService, BarBuilderService>();
 }
