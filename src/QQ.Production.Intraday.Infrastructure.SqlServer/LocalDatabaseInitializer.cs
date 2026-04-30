@@ -23,6 +23,7 @@ public sealed class LocalDatabaseInitializer(IntradayDbContext dbContext, IClock
         await UpsertAsync(dbContext.InstrumentRiskLimits, seeded.InstrumentRiskLimits, x => x.Id, cancellationToken);
         await UpsertAsync(dbContext.VenueRiskLimits, seeded.VenueRiskLimits, x => x.Id, cancellationToken);
         await UpsertAsync(dbContext.TradingWindows, seeded.TradingWindows, x => x.Id, cancellationToken);
+        await UpsertAsync(dbContext.TradingWindows, [CreateCurrentIntradayWindow(seeded.Funds.Single().Id)], x => x.Id, cancellationToken);
 
         if (!await dbContext.KillSwitchStates.AnyAsync(cancellationToken))
         {
@@ -106,6 +107,13 @@ public sealed class LocalDatabaseInitializer(IntradayDbContext dbContext, IClock
                 dbSet.Add(value);
             }
         }
+    }
+
+    private TradingWindow CreateCurrentIntradayWindow(FundId fundId)
+    {
+        var day = clock.UtcNow.DayOfWeek;
+        var id = Guid.Parse($"88888888-8888-8888-8888-88888888888{(int)day:X}");
+        return new TradingWindow(id, fundId, "IntradayFxModel", "UTC", day, TimeOnly.MinValue, new TimeOnly(23, 59, 59), new TimeOnly(23, 59, 59), null);
     }
 }
 

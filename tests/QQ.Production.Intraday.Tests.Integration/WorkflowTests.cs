@@ -123,11 +123,79 @@ public sealed class WorkflowTests
 
         var result = await service.ProcessNextAsync();
 
-        Assert.True(result.Processed);
+        Assert.True(result.Blocked);
+        Assert.Equal(ProcessModelRunStatus.Blocked, result.Status);
+        Assert.Equal(ProcessModelRunBlockedReason.KillSwitchActive, result.BlockedReason);
         Assert.Single(state.TradeIntents);
         Assert.Single(state.RiskDecisions);
         Assert.Empty(state.ParentOrders);
         Assert.Empty(state.Fills);
+    }
+
+    [Fact]
+    public async Task Stale_market_data_blocks_without_throwing_or_creating_orders()
+    {
+        var state = SeedData.Create(Now);
+        state.MarketData[0] = state.MarketData[0] with { ReceivedAtUtc = Now.AddHours(-1) };
+        var service = CreateService(state, FakeLmaxBehavior.FullFill);
+
+        var result = await service.ProcessNextAsync();
+
+        Assert.True(result.Blocked);
+        Assert.Equal(ProcessModelRunBlockedReason.StaleMarketData, result.BlockedReason);
+        Assert.Single(state.TradeIntents);
+        Assert.Single(state.RiskDecisions);
+        Assert.Empty(state.ParentOrders);
+        Assert.Empty(state.Fills);
+        Assert.False(state.ModelRuns.Single().IsProcessed);
+    }
+
+    [Fact]
+    public async Task Missing_market_data_blocks_without_throwing()
+    {
+        var state = SeedData.Create(Now);
+        state.MarketData.Clear();
+        var service = CreateService(state, FakeLmaxBehavior.FullFill);
+
+        var result = await service.ProcessNextAsync();
+
+        Assert.True(result.Blocked);
+        Assert.Equal(ProcessModelRunBlockedReason.NoMarketData, result.BlockedReason);
+        Assert.Empty(state.TradeIntents);
+        Assert.Empty(state.ParentOrders);
+        Assert.False(state.ModelRuns.Single().IsProcessed);
+    }
+
+    [Fact]
+    public async Task Missing_trading_window_blocks_without_throwing()
+    {
+        var state = SeedData.Create(Now);
+        state.TradingWindows.Clear();
+        var service = CreateService(state, FakeLmaxBehavior.FullFill);
+
+        var result = await service.ProcessNextAsync();
+
+        Assert.True(result.Blocked);
+        Assert.Equal(ProcessModelRunBlockedReason.TradingWindowClosed, result.BlockedReason);
+        Assert.Single(state.TradeIntents);
+        Assert.Single(state.RiskDecisions);
+        Assert.Empty(state.ParentOrders);
+    }
+
+    [Fact]
+    public async Task Blocked_risk_retry_is_idempotent()
+    {
+        var state = SeedData.Create(Now);
+        state.KillSwitch = state.KillSwitch with { IsActive = true };
+        var service = CreateService(state, FakeLmaxBehavior.FullFill);
+
+        await service.ProcessNextAsync();
+        var retry = await service.ProcessNextAsync();
+
+        Assert.True(retry.Blocked);
+        Assert.Single(state.TradeIntents);
+        Assert.Single(state.RiskDecisions);
+        Assert.Empty(state.ParentOrders);
     }
 
     [Theory]

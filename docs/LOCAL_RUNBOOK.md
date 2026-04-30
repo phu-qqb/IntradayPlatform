@@ -82,10 +82,22 @@ Worker bar building is configurable under `MarketDataBars`.
 Start the API first, then run:
 
 ```powershell
-.\scripts\smoke-local.ps1 -BaseUrl http://localhost:5000
+.\scripts\smoke-local.ps1 -BaseUrl http://localhost:5050
 ```
 
-The smoke test calls local API endpoints only. It creates fake EURUSD snapshots, builds 15-minute bars, creates a local model run, processes it through FakeLmax, and queries orders, fills, positions, and reconciliation breaks.
+If PowerShell execution policy blocks local scripts, run:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\smoke-local.ps1 -BaseUrl http://localhost:5050
+```
+
+The smoke test calls local API endpoints only. It uses dynamic UTC timestamps, creates fake EURUSD snapshots for the previous completed 15-minute bar, builds bars, creates fresh fake snapshots for execution, creates a current local model run, processes it through FakeLmax, and queries orders, fills, positions, and reconciliation breaks. Request failures print the endpoint, safe request body, HTTP status, and response body.
+
+## Process Results
+
+`POST /model-runs/{modelRunId}/process` returns a process result. Risk, reconciliation, stale-data, kill-switch, trading-window, missing-data, no-drift, and already-processed outcomes are expected operational states and return HTTP 200 with statuses such as `Blocked`, `AlreadyProcessed`, or `NoActionRequired`.
+
+HTTP 500 is reserved for real infrastructure or programming failures. In Development, inspect the API console/log output for the exception and stack trace.
 
 ## Safety Confirmation
 

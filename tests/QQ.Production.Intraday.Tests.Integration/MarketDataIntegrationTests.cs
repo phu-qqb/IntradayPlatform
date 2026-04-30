@@ -2,6 +2,8 @@ using System.Net.Http.Json;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using QQ.Production.Intraday.Application;
 using QQ.Production.Intraday.Domain;
 using QQ.Production.Intraday.Infrastructure.Simulator;
@@ -119,6 +121,109 @@ public sealed class MarketDataIntegrationTests
     }
 
     [Fact]
+    public async Task Api_process_endpoint_returns_processed_json_for_clean_fake_lmax_path()
+    {
+        await using var factory = CreateInMemoryFactory();
+        var client = factory.CreateClient();
+        var now = DateTimeOffset.UtcNow;
+        await CreateFakeSnapshotsAsync(client, now.AddMinutes(-1), 2);
+        var run = await CreateModelRunAsync(client, now);
+
+        var response = await client.PostAsync($"/model-runs/{run.Id.Value}/process", null);
+
+        response.EnsureSuccessStatusCode();
+        var result = await response.Content.ReadFromJsonAsync<ApiProcessResult>();
+        Assert.NotNull(result);
+        Assert.Equal("Processed", result.Status);
+        Assert.True(result.Processed);
+        Assert.Equal(1, result.TradeIntentCount);
+        Assert.Equal(1, result.OrderCount);
+        Assert.Equal(1, result.FillCount);
+    }
+
+    [Fact]
+    public async Task Api_process_endpoint_returns_blocked_json_for_stale_model_run()
+    {
+        await using var factory = CreateInMemoryFactory();
+        var client = factory.CreateClient();
+        await CreateFakeSnapshotsAsync(client, DateTimeOffset.UtcNow.AddMinutes(-1), 2);
+        var run = await CreateModelRunAsync(client, DateTimeOffset.UtcNow.AddDays(-2));
+
+        var response = await client.PostAsync($"/model-runs/{run.Id.Value}/process", null);
+
+        response.EnsureSuccessStatusCode();
+        var result = await response.Content.ReadFromJsonAsync<ApiProcessResult>();
+        Assert.NotNull(result);
+        Assert.Equal("Blocked", result.Status);
+        Assert.Equal("StaleModelRun", result.BlockedReason);
+        Assert.Equal(0, result.OrderCount);
+        Assert.Equal(0, result.FillCount);
+    }
+
+    [Fact]
+    public async Task Api_process_endpoint_returns_blocked_json_for_stale_market_data()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var state = SeedData.Create(now);
+        state.MarketData[0] = state.MarketData[0] with { ReceivedAtUtc = now.AddHours(-2) };
+        await using var factory = CreateInMemoryFactory(now, state);
+        var client = factory.CreateClient();
+        var run = await CreateModelRunAsync(client, now);
+
+        var response = await client.PostAsync($"/model-runs/{run.Id.Value}/process", null);
+
+        response.EnsureSuccessStatusCode();
+        var result = await response.Content.ReadFromJsonAsync<ApiProcessResult>();
+        Assert.NotNull(result);
+        Assert.Equal("Blocked", result.Status);
+        Assert.Equal("StaleMarketData", result.BlockedReason);
+        Assert.Equal(0, result.OrderCount);
+        Assert.Equal(0, result.FillCount);
+    }
+
+    [Fact]
+    public async Task Api_process_endpoint_returns_already_processed_for_duplicate_processing()
+    {
+        await using var factory = CreateInMemoryFactory();
+        var client = factory.CreateClient();
+        var now = DateTimeOffset.UtcNow;
+        await CreateFakeSnapshotsAsync(client, now.AddMinutes(-1), 2);
+        var run = await CreateModelRunAsync(client, now);
+
+        (await client.PostAsync($"/model-runs/{run.Id.Value}/process", null)).EnsureSuccessStatusCode();
+        var response = await client.PostAsync($"/model-runs/{run.Id.Value}/process", null);
+
+        response.EnsureSuccessStatusCode();
+        var result = await response.Content.ReadFromJsonAsync<ApiProcessResult>();
+        Assert.NotNull(result);
+        Assert.Equal("AlreadyProcessed", result.Status);
+        Assert.True(result.IsAlreadyProcessed);
+    }
+
+    [Fact]
+    public async Task Api_smoke_like_dynamic_workflow_does_not_return_http_500()
+    {
+        await using var factory = CreateInMemoryFactory();
+        var client = factory.CreateClient();
+        var now = DateTimeOffset.UtcNow;
+        var floorMinute = now.Minute / 15 * 15;
+        var barEnd = new DateTimeOffset(now.Year, now.Month, now.Day, now.Hour, floorMinute, 0, TimeSpan.Zero);
+        var barStart = barEnd.AddMinutes(-15);
+
+        await CreateFakeSnapshotsAsync(client, barStart, 15);
+        (await client.PostAsJsonAsync("/market-data/build-bars", new { venueName = "LMAX", timeframe = "FifteenMinutes", startUtc = barStart, endUtc = barEnd })).EnsureSuccessStatusCode();
+        await CreateFakeSnapshotsAsync(client, now.AddMinutes(-1), 2);
+        var run = await CreateModelRunAsync(client, now);
+
+        var response = await client.PostAsync($"/model-runs/{run.Id.Value}/process", null);
+
+        response.EnsureSuccessStatusCode();
+        var result = await response.Content.ReadFromJsonAsync<ApiProcessResult>();
+        Assert.NotNull(result);
+        Assert.NotEqual("Failed", result.Status);
+    }
+
+    [Fact]
     public async Task Bar_building_does_not_change_execution_workflow_behavior()
     {
         var state = SeedData.Create(Now);
@@ -174,7 +279,7 @@ public sealed class MarketDataIntegrationTests
     private static BarBuilderService CreateBuilder(PlatformState state, FixedClock clock)
         => new(state, new InMemoryMarketDataSnapshotRepository(state), new InMemoryMarketDataBarRepository(state), new InMemoryBarBuildRunRepository(state, clock), clock, new BarBuilderOptions { FifteenMinuteMinimumObservationCount = 3 });
 
-    private static WebApplicationFactory<Program> CreateInMemoryFactory()
+    private static WebApplicationFactory<Program> CreateInMemoryFactory(DateTimeOffset? fixedNow = null, PlatformState? stateOverride = null)
         => new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
         {
             builder.UseEnvironment("Testing");
@@ -188,8 +293,56 @@ public sealed class MarketDataIntegrationTests
                     ["Safety:RequireFakeExecutionGateway"] = "true"
                 });
             });
+            builder.ConfigureServices(services =>
+            {
+                if (fixedNow is not null)
+                {
+                    services.RemoveAll<IClock>();
+                    services.AddSingleton<IClock>(new FixedClock(fixedNow.Value));
+                }
+
+                if (stateOverride is not null)
+                {
+                    services.RemoveAll<PlatformState>();
+                    services.AddSingleton(stateOverride);
+                }
+            });
         });
+
+    private static async Task CreateFakeSnapshotsAsync(HttpClient client, DateTimeOffset startUtc, int count)
+    {
+        var response = await client.PostAsJsonAsync("/market-data/fake-snapshots", new
+        {
+            startUtc,
+            intervalSeconds = 60,
+            count,
+            bid = 1.1000m,
+            ask = 1.1002m,
+            bidStep = 0.00001m,
+            askStep = 0.00001m
+        });
+        response.EnsureSuccessStatusCode();
+    }
+
+    private static async Task<ApiModelRun> CreateModelRunAsync(HttpClient client, DateTimeOffset asOfUtc)
+    {
+        var response = await client.PostAsJsonAsync("/model-runs", new
+        {
+            modelName = "IntradayFxModel",
+            asOfUtc,
+            effectiveAtUtc = asOfUtc,
+            navUsd = 1_000_000m,
+            frequencyMinutes = 15,
+            targetQuantityMode = "PortfolioBaseCurrencyNotional",
+            weights = new[] { new { symbol = "EURUSD", weight = -0.10m, rawSecurityId = "EURUSD" } }
+        });
+        response.EnsureSuccessStatusCode();
+        return (await response.Content.ReadFromJsonAsync<ApiModelRun>())!;
+    }
 
     private sealed record ApiSnapshot(decimal Bid, decimal Ask);
     private sealed record ApiBar(DateTimeOffset BarStartUtc, int ObservationCount);
+    private sealed record ApiModelRun(ApiId Id);
+    private sealed record ApiId(Guid Value);
+    private sealed record ApiProcessResult(bool Processed, string Status, string? BlockedReason, int TradeIntentCount, int OrderCount, int FillCount, bool IsAlreadyProcessed);
 }

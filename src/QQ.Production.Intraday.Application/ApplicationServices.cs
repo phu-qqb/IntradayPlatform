@@ -184,6 +184,11 @@ public sealed class InMemoryIntradayRepository(PlatformState state) : IIntradayR
     {
         lock (_sync)
         {
+            if (state.ReconciliationRuns.Any(x => x.ModelRunId == run.ModelRunId && x.Phase == run.Phase))
+            {
+                return Task.CompletedTask;
+            }
+
             state.ReconciliationRuns.Add(run);
             state.ReconciliationBreaks.AddRange(breaks);
         }
@@ -597,9 +602,43 @@ public sealed class RiskEngine
     }
 }
 
-public sealed record ProcessModelRunResult(ModelRunId? ModelRunId, bool Processed, bool Blocked, string Message)
+public enum ProcessModelRunStatus { Processed, Blocked, AlreadyProcessed, NoActionRequired, Failed }
+public enum ProcessModelRunBlockedReason
 {
-    public static ProcessModelRunResult NoWork() => new(null, false, false, "No unprocessed model runs.");
+    None,
+    StaleModelRun,
+    StaleMarketData,
+    PositionMismatch,
+    UnknownCurrentPosition,
+    RiskRejected,
+    RiskBlocked,
+    TradingWindowClosed,
+    KillSwitchActive,
+    NoMarketData,
+    NoTargetWeights,
+    NoDrift,
+    Other
+}
+
+public sealed record ProcessModelRunResult(
+    ModelRunId? ModelRunId,
+    bool Processed,
+    ProcessModelRunStatus Status,
+    ProcessModelRunBlockedReason? BlockedReason,
+    string? Message,
+    int TradeIntentCount,
+    int RiskDecisionCount,
+    int OrderCount,
+    int ExecutionReportCount,
+    int FillCount,
+    int ReconciliationBreakCount,
+    bool IsAlreadyProcessed,
+    DateTimeOffset CompletedAtUtc)
+{
+    public bool Blocked => Status == ProcessModelRunStatus.Blocked;
+
+    public static ProcessModelRunResult NoWork(DateTimeOffset now)
+        => new(null, false, ProcessModelRunStatus.NoActionRequired, null, "No unprocessed model runs.", 0, 0, 0, 0, 0, 0, false, now);
 }
 
 public sealed class ProcessModelRunService(IIntradayRepository repository, IVenueExecutionGateway venueGateway, IBrokerPositionProvider brokerPositionProvider, IClock clock)
@@ -609,7 +648,7 @@ public sealed class ProcessModelRunService(IIntradayRepository repository, IVenu
         var run = await repository.GetNextUnprocessedModelRunAsync(cancellationToken);
         if (run is null)
         {
-            return ProcessModelRunResult.NoWork();
+            return ProcessModelRunResult.NoWork(clock.UtcNow);
         }
 
         return await ProcessAsync(run.Id, cancellationToken);
@@ -621,30 +660,43 @@ public sealed class ProcessModelRunService(IIntradayRepository repository, IVenu
         var run = state.ModelRuns.FirstOrDefault(x => x.Id == modelRunId);
         if (run is null)
         {
-            return new ProcessModelRunResult(modelRunId, false, false, "Model run not found.");
+            return BuildResult(state, modelRunId, false, ProcessModelRunStatus.Failed, ProcessModelRunBlockedReason.Other, "Model run not found.", false, clock.UtcNow);
         }
 
         if (run.IsProcessed)
         {
-            return new ProcessModelRunResult(modelRunId, false, false, "Model run already processed.");
+            return BuildResult(state, modelRunId, false, ProcessModelRunStatus.AlreadyProcessed, null, "Model run already processed.", true, clock.UtcNow);
         }
 
         var now = clock.UtcNow;
+        var previousBlock = GetExistingBlock(state, run.Id, now);
+        if (previousBlock is not null)
+        {
+            return previousBlock;
+        }
+
         var fund = state.Funds.Single(x => x.Id == run.FundId);
         var brokerAccount = state.BrokerAccounts.Single(x => x.FundId == fund.Id);
         var venue = state.Venues.Single(x => x.Name == "LMAX");
         var riskLimitSet = state.RiskLimitSets.Single(x => x.FundId == fund.Id);
         var tradingWindow = state.TradingWindows.FirstOrDefault(x => x.FundId == fund.Id && x.ModelName == run.ModelName && x.DayOfWeek == now.DayOfWeek)
-            ?? state.TradingWindows.First(x => x.FundId == fund.Id && x.DayOfWeek == now.DayOfWeek);
+            ?? state.TradingWindows.FirstOrDefault(x => x.FundId == fund.Id && x.ModelName == run.ModelName)
+            ?? state.TradingWindows.FirstOrDefault(x => x.FundId == fund.Id)
+            ?? new TradingWindow(Guid.Empty, fund.Id, run.ModelName, "UTC", now.DayOfWeek, TimeOnly.MaxValue, TimeOnly.MinValue, TimeOnly.MinValue, null, false, false);
         var targetWeights = state.TargetWeights.Where(x => x.ModelRunId == run.Id).ToList();
+        if (targetWeights.Count == 0)
+        {
+            return BuildResult(state, run.Id, false, ProcessModelRunStatus.Blocked, ProcessModelRunBlockedReason.NoTargetWeights, "No target weights exist for the model run.", false, now);
+        }
+
         var brokerPositions = await brokerPositionProvider.GetPositionsAsync(brokerAccount.Id, cancellationToken);
         var internalPositions = BuildInternalPositions(state, fund.Id, now);
         var reconciliation = Reconcile(run.Id, ReconciliationPhase.PreTrade, targetWeights.Select(x => x.InstrumentId).ToList(), internalPositions, brokerPositions, riskLimitSet.PositionToleranceBaseQuantity, now);
         await repository.SaveReconciliationAsync(reconciliation.Run, reconciliation.Breaks, cancellationToken);
         if (reconciliation.Run.HasBlockingBreaks)
         {
-            await repository.MarkModelRunProcessedAsync(run.Id, ModelRunStatus.Blocked, cancellationToken);
-            return new ProcessModelRunResult(run.Id, false, true, "Trading blocked by reconciliation breaks.");
+            state = await repository.LoadStateAsync(cancellationToken);
+            return BuildResult(state, run.Id, false, ProcessModelRunStatus.Blocked, ProcessModelRunBlockedReason.PositionMismatch, "Trading blocked by pre-trade reconciliation breaks.", false, now);
         }
 
         var calculator = new TargetPositionCalculator();
@@ -653,8 +705,21 @@ public sealed class ProcessModelRunService(IIntradayRepository repository, IVenu
         foreach (var weight in targetWeights)
         {
             var instrument = state.Instruments.Single(x => x.Id == weight.InstrumentId);
-            var mapping = state.VenueInstrumentMappings.Single(x => x.InstrumentId == instrument.Id && x.VenueId == venue.Id);
-            var marketData = state.MarketData.Where(x => x.InstrumentId == instrument.Id && x.VenueId == venue.Id).MaxBy(x => x.ReceivedAtUtc)!;
+            var mapping = state.VenueInstrumentMappings
+                .Where(x => x.InstrumentId == instrument.Id && x.VenueId == venue.Id && x.IsEnabled)
+                .OrderBy(x => x.Id.Value)
+                .FirstOrDefault();
+            if (mapping is null)
+            {
+                return BuildResult(state, run.Id, false, ProcessModelRunStatus.Blocked, ProcessModelRunBlockedReason.Other, $"No enabled venue mapping exists for {instrument.Symbol}.", false, now);
+            }
+
+            var marketData = state.MarketData.Where(x => x.InstrumentId == instrument.Id && x.VenueId == venue.Id).MaxBy(x => x.ReceivedAtUtc);
+            if (marketData is null)
+            {
+                return BuildResult(state, run.Id, false, ProcessModelRunStatus.Blocked, ProcessModelRunBlockedReason.NoMarketData, $"No market data exists for {instrument.Symbol}.", false, now);
+            }
+
             var target = calculator.Calculate(run, weight, marketData, mapping);
             var currentBase = internalPositions.GetValueOrDefault(instrument.Id, 0m);
             var currentVenue = currentBase / mapping.ContractSize;
@@ -681,14 +746,27 @@ public sealed class ProcessModelRunService(IIntradayRepository repository, IVenu
                 now);
 
             await repository.AddTradeIntentAsync(intent, cancellationToken);
-            var instrumentLimit = state.InstrumentRiskLimits.Single(x => x.RiskLimitSetId == riskLimitSet.Id && x.InstrumentId == instrument.Id);
-            var venueLimit = state.VenueRiskLimits.Single(x => x.RiskLimitSetId == riskLimitSet.Id && x.VenueId == venue.Id);
+            var instrumentLimit = state.InstrumentRiskLimits
+                .Where(x => x.RiskLimitSetId == riskLimitSet.Id && x.InstrumentId == instrument.Id && x.IsEnabled)
+                .OrderBy(x => x.Id)
+                .FirstOrDefault();
+            var venueLimit = state.VenueRiskLimits
+                .Where(x => x.RiskLimitSetId == riskLimitSet.Id && x.VenueId == venue.Id && x.IsEnabled)
+                .OrderBy(x => x.Id)
+                .FirstOrDefault();
+            if (instrumentLimit is null || venueLimit is null)
+            {
+                state = await repository.LoadStateAsync(cancellationToken);
+                return BuildResult(state, run.Id, false, ProcessModelRunStatus.Blocked, ProcessModelRunBlockedReason.Other, "Risk configuration is missing for the requested instrument or venue.", false, now);
+            }
+
             var riskContext = new RiskContext(fund, venue, instrument, run, marketData, currentBase, true, CalculateGrossExposure(state, fund.Id, marketData.Mid), now);
             var decision = riskEngine.Evaluate(intent, riskContext, riskLimitSet, instrumentLimit, venueLimit, tradingWindow, state.KillSwitch);
             await repository.AddRiskDecisionAsync(decision, cancellationToken);
             if (decision.Status != RiskDecisionStatus.Approved)
             {
-                continue;
+                state = await repository.LoadStateAsync(cancellationToken);
+                return BuildResult(state, run.Id, false, ProcessModelRunStatus.Blocked, MapBlockedReason(decision.RejectReason), BuildRiskMessage(decision.RejectReason), false, now);
             }
 
             var parent = new ParentOrder(ParentOrderId.New(), intent.Id, new ClientOrderId($"P-{run.Id.Value:N}-{state.ParentOrders.Count + 1}"), intent.Side == TradeSide.Buy ? OrderSide.Buy : OrderSide.Sell, intent.RequestedBaseQuantity, ExecutionAlgo.MarketImmediate, OrderStatus.Created, now);
@@ -718,8 +796,16 @@ public sealed class ProcessModelRunService(IIntradayRepository repository, IVenu
         var postTrade = Reconcile(run.Id, ReconciliationPhase.PostTrade, targetWeights.Select(x => x.InstrumentId).ToList(), internalPositions, brokerPositions, riskLimitSet.PositionToleranceBaseQuantity, now);
         await repository.SaveReconciliationAsync(postTrade.Run, postTrade.Breaks, cancellationToken);
 
+        if (postTrade.Run.HasBlockingBreaks)
+        {
+            state = await repository.LoadStateAsync(cancellationToken);
+            return BuildResult(state, run.Id, false, ProcessModelRunStatus.Blocked, ProcessModelRunBlockedReason.PositionMismatch, "Trading completed but post-trade reconciliation has blocking breaks.", false, now);
+        }
+
         await repository.MarkModelRunProcessedAsync(run.Id, ModelRunStatus.Processed, cancellationToken);
-        return new ProcessModelRunResult(run.Id, true, false, "Processed.");
+        state = await repository.LoadStateAsync(cancellationToken);
+        var noDrift = state.TradeIntents.All(x => x.ModelRunId != run.Id);
+        return BuildResult(state, run.Id, true, noDrift ? ProcessModelRunStatus.NoActionRequired : ProcessModelRunStatus.Processed, noDrift ? ProcessModelRunBlockedReason.NoDrift : null, noDrift ? "No rebalance drift exceeded the configured threshold." : "Processed.", false, now);
     }
 
     private static Dictionary<InstrumentId, decimal> BuildInternalPositions(PlatformState state, FundId fundId, DateTimeOffset now)
@@ -747,6 +833,79 @@ public sealed class ProcessModelRunService(IIntradayRepository repository, IVenu
         var run = new ReconciliationRun(Guid.NewGuid(), modelRunId, phase, now, breaks.Any(x => x.Severity == ReconciliationBreakSeverity.Blocking));
         return (run, breaks.Select(x => x with { ReconciliationRunId = run.Id }).ToList());
     }
+
+    private static ProcessModelRunResult? GetExistingBlock(PlatformState state, ModelRunId modelRunId, DateTimeOffset now)
+    {
+        var riskDecision = state.RiskDecisions
+            .Where(x => state.TradeIntents.Any(t => t.Id == x.TradeIntentId && t.ModelRunId == modelRunId))
+            .OrderByDescending(x => x.CreatedAtUtc)
+            .FirstOrDefault(x => x.Status != RiskDecisionStatus.Approved);
+        if (riskDecision is not null)
+        {
+            return BuildResult(state, modelRunId, false, ProcessModelRunStatus.Blocked, MapBlockedReason(riskDecision.RejectReason), BuildRiskMessage(riskDecision.RejectReason), false, now);
+        }
+
+        if (state.ReconciliationRuns.Any(x => x.ModelRunId == modelRunId && x.Phase == ReconciliationPhase.PreTrade && x.HasBlockingBreaks))
+        {
+            return BuildResult(state, modelRunId, false, ProcessModelRunStatus.Blocked, ProcessModelRunBlockedReason.PositionMismatch, "Trading blocked by pre-trade reconciliation breaks.", false, now);
+        }
+
+        return null;
+    }
+
+    private static ProcessModelRunResult BuildResult(PlatformState state, ModelRunId? modelRunId, bool processed, ProcessModelRunStatus status, ProcessModelRunBlockedReason? blockedReason, string? message, bool alreadyProcessed, DateTimeOffset now)
+    {
+        if (modelRunId is null)
+        {
+            return new ProcessModelRunResult(null, processed, status, blockedReason, message, 0, 0, 0, 0, 0, 0, alreadyProcessed, now);
+        }
+
+        var intents = state.TradeIntents.Where(x => x.ModelRunId == modelRunId).ToList();
+        var intentIds = intents.Select(x => x.Id).ToHashSet();
+        var parentOrders = state.ParentOrders.Where(x => intentIds.Contains(x.TradeIntentId)).ToList();
+        var parentIds = parentOrders.Select(x => x.Id).ToHashSet();
+        var childOrders = state.ChildOrders.Where(x => parentIds.Contains(x.ParentOrderId)).ToList();
+        var childIds = childOrders.Select(x => x.Id).ToHashSet();
+        var reconciliationRunIds = state.ReconciliationRuns.Where(x => x.ModelRunId == modelRunId).Select(x => x.Id).ToHashSet();
+
+        return new ProcessModelRunResult(
+            modelRunId,
+            processed,
+            status,
+            blockedReason,
+            message,
+            intents.Count,
+            state.RiskDecisions.Count(x => intentIds.Contains(x.TradeIntentId)),
+            parentOrders.Count,
+            state.ExecutionReports.Count(x => childIds.Contains(x.ChildOrderId)),
+            state.Fills.Count(x => childIds.Contains(x.ChildOrderId)),
+            state.ReconciliationBreaks.Count(x => reconciliationRunIds.Contains(x.ReconciliationRunId)),
+            alreadyProcessed,
+            now);
+    }
+
+    private static ProcessModelRunBlockedReason MapBlockedReason(RiskRejectReason reason)
+        => reason switch
+        {
+            RiskRejectReason.StaleModelRun => ProcessModelRunBlockedReason.StaleModelRun,
+            RiskRejectReason.StaleMarketData => ProcessModelRunBlockedReason.StaleMarketData,
+            RiskRejectReason.PositionMismatch => ProcessModelRunBlockedReason.PositionMismatch,
+            RiskRejectReason.UnknownCurrentPosition => ProcessModelRunBlockedReason.UnknownCurrentPosition,
+            RiskRejectReason.TradingWindowClosed => ProcessModelRunBlockedReason.TradingWindowClosed,
+            RiskRejectReason.KillSwitchActive => ProcessModelRunBlockedReason.KillSwitchActive,
+            _ => ProcessModelRunBlockedReason.RiskRejected
+        };
+
+    private static string BuildRiskMessage(RiskRejectReason reason)
+        => reason switch
+        {
+            RiskRejectReason.StaleModelRun => "Model run is stale.",
+            RiskRejectReason.StaleMarketData => "Market data is stale.",
+            RiskRejectReason.TradingWindowClosed => "Trading window is closed.",
+            RiskRejectReason.KillSwitchActive => "Kill switch is active.",
+            RiskRejectReason.PositionMismatch => "Positions do not match.",
+            _ => $"Risk rejected the trade: {reason}."
+        };
 }
 
 public static class SeedData

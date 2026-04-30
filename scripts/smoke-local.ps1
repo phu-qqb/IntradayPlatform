@@ -1,63 +1,127 @@
 param(
-  [string]$BaseUrl = "http://localhost:5000"
+  [string]$BaseUrl = "http://localhost:5050"
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
-Write-Host "GET /health"
-Invoke-RestMethod "$BaseUrl/health"
+function ConvertTo-JsonBody($Body) {
+  if ($null -eq $Body) { return $null }
+  return ($Body | ConvertTo-Json -Depth 8)
+}
 
-$startUtc = "2026-04-29T09:15:00Z"
-Write-Host "POST /market-data/fake-snapshots"
-Invoke-RestMethod "$BaseUrl/market-data/fake-snapshots" -Method Post -ContentType "application/json" -Body (@{
+function Invoke-LocalApi {
+  param(
+    [Parameter(Mandatory = $true)][string]$Method,
+    [Parameter(Mandatory = $true)][string]$Path,
+    [object]$Body = $null
+  )
+
+  $uri = "$BaseUrl$Path"
+  $jsonBody = ConvertTo-JsonBody $Body
+  Write-Host "$Method $Path"
+  try {
+    if ($null -eq $jsonBody) {
+      return Invoke-RestMethod $uri -Method $Method
+    }
+
+    return Invoke-RestMethod $uri -Method $Method -ContentType "application/json" -Body $jsonBody
+  }
+  catch {
+    Write-Host "Local API call failed." -ForegroundColor Red
+    Write-Host "Endpoint: $Method $uri" -ForegroundColor Red
+    if ($null -ne $jsonBody) {
+      Write-Host "Request body:" -ForegroundColor Yellow
+      Write-Host $jsonBody
+    }
+
+    if ($_.Exception.Response) {
+      Write-Host "HTTP status: $([int]$_.Exception.Response.StatusCode) $($_.Exception.Response.StatusDescription)" -ForegroundColor Red
+      try {
+        $stream = $_.Exception.Response.GetResponseStream()
+        $reader = [System.IO.StreamReader]::new($stream)
+        $responseBody = $reader.ReadToEnd()
+        if ($responseBody) {
+          Write-Host "Response body:" -ForegroundColor Yellow
+          Write-Host $responseBody
+        }
+      }
+      catch {
+        Write-Host "Unable to read response body: $($_.Exception.Message)" -ForegroundColor Yellow
+      }
+    }
+    else {
+      Write-Host $_.Exception.Message -ForegroundColor Red
+    }
+
+    throw
+  }
+}
+
+$now = [DateTime]::UtcNow
+$floorMinute = [int]([Math]::Floor($now.Minute / 15) * 15)
+$barEnd = [DateTime]::new($now.Year, $now.Month, $now.Day, $now.Hour, $floorMinute, 0, [DateTimeKind]::Utc)
+$barStart = $barEnd.AddMinutes(-15)
+$freshStart = $now.AddMinutes(-1)
+
+$health = Invoke-LocalApi Get "/health"
+$health
+
+$barSnapshots = Invoke-LocalApi Post "/market-data/fake-snapshots" @{
   instrumentSymbol = "EURUSD"
   venueName = "LMAX"
-  startUtc = $startUtc
+  startUtc = $barStart.ToString("o")
   intervalSeconds = 60
   count = 15
   bid = 1.1000
   ask = 1.1002
   bidStep = 0.00001
   askStep = 0.00001
-} | ConvertTo-Json)
+}
+$barSnapshots
 
-Write-Host "POST /market-data/build-bars"
-Invoke-RestMethod "$BaseUrl/market-data/build-bars" -Method Post -ContentType "application/json" -Body (@{
+$barsBuilt = Invoke-LocalApi Post "/market-data/build-bars" @{
   venueName = "LMAX"
   timeframe = "FifteenMinutes"
-  startUtc = $startUtc
-  endUtc = "2026-04-29T09:30:00Z"
-} | ConvertTo-Json)
+  startUtc = $barStart.ToString("o")
+  endUtc = $barEnd.ToString("o")
+}
+$barsBuilt
 
-Write-Host "GET /market-data/bars"
-Invoke-RestMethod "$BaseUrl/market-data/bars?instrument=EURUSD&venue=LMAX&timeframe=FifteenMinutes"
+$freshSnapshots = Invoke-LocalApi Post "/market-data/fake-snapshots" @{
+  instrumentSymbol = "EURUSD"
+  venueName = "LMAX"
+  startUtc = $freshStart.ToString("o")
+  intervalSeconds = 60
+  count = 2
+  bid = 1.1000
+  ask = 1.1002
+  bidStep = 0.00001
+  askStep = 0.00001
+}
+$freshSnapshots
 
-Write-Host "POST /model-runs"
-$modelRun = Invoke-RestMethod "$BaseUrl/model-runs" -Method Post -ContentType "application/json" -Body (@{
+Invoke-LocalApi Get "/market-data/bars?instrument=EURUSD&venue=LMAX&timeframe=FifteenMinutes"
+
+$modelRun = Invoke-LocalApi Post "/model-runs" @{
   modelName = "IntradayFxModel"
-  asOfUtc = $startUtc
-  effectiveAtUtc = $startUtc
+  asOfUtc = $now.ToString("o")
+  effectiveAtUtc = $now.ToString("o")
   navUsd = 1000000
   frequencyMinutes = 15
   targetQuantityMode = "PortfolioBaseCurrencyNotional"
   weights = @(@{ symbol = "EURUSD"; weight = -0.10; rawSecurityId = "EURUSD" })
-} | ConvertTo-Json -Depth 5)
-
-Write-Host "GET /model-runs"
-Invoke-RestMethod "$BaseUrl/model-runs"
-if ($null -ne $modelRun.id.value) {
-  Write-Host "POST /model-runs/{id}/process"
-  Invoke-RestMethod "$BaseUrl/model-runs/$($modelRun.id.value)/process" -Method Post
 }
-Write-Host "GET /trade-intents"
-Invoke-RestMethod "$BaseUrl/trade-intents"
-Write-Host "GET /orders"
-Invoke-RestMethod "$BaseUrl/orders"
-Write-Host "GET /fills"
-Invoke-RestMethod "$BaseUrl/fills"
-Write-Host "GET /positions/internal"
-Invoke-RestMethod "$BaseUrl/positions/internal"
-Write-Host "GET /positions/broker"
-Invoke-RestMethod "$BaseUrl/positions/broker"
-Write-Host "GET /reconciliation/breaks"
-Invoke-RestMethod "$BaseUrl/reconciliation/breaks"
+$modelRun
+
+Invoke-LocalApi Get "/model-runs"
+if ($null -ne $modelRun.id.value) {
+  $processResult = Invoke-LocalApi Post "/model-runs/$($modelRun.id.value)/process"
+  $processResult
+}
+
+Invoke-LocalApi Get "/trade-intents"
+Invoke-LocalApi Get "/orders"
+Invoke-LocalApi Get "/fills"
+Invoke-LocalApi Get "/positions/internal"
+Invoke-LocalApi Get "/positions/broker"
+Invoke-LocalApi Get "/reconciliation/breaks"

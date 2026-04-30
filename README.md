@@ -91,6 +91,8 @@ The reference seed is idempotent and includes the fund, account, LMAX venue meta
 
 See [docs/LOCAL_RUNBOOK.md](docs/LOCAL_RUNBOOK.md) for the full local workflow.
 
+The smoke script uses dynamic UTC timestamps: it builds the previous completed 15-minute bar, adds fresh fake snapshots for execution freshness, creates a current model run, and processes it through `FakeLmaxGateway`. If a local API call fails, the script prints the endpoint, safe request body, HTTP status, and response body.
+
 ## Run API
 
 ```powershell
@@ -113,6 +115,8 @@ Endpoints include:
 - `POST /admin/kill-switch/clear`
 
 `GET /health` reports application name, environment, persistence provider, database reachability, pending migrations count, execution gateway, market data mode, live trading flag, external connections flag, and UTC server time. It does not expose secrets.
+
+`POST /model-runs/{id}/process` returns a structured process result. Normal operational blocks such as stale model run, stale market data, position mismatch, kill switch active, trading window closed, risk rejection, no target weights, no market data, or no drift return HTTP 200 with a status such as `Blocked`, `AlreadyProcessed`, or `NoActionRequired`. HTTP 500 is reserved for real infrastructure or programming failures; inspect API logs in Development for the stack trace.
 
 ## Run Worker
 
@@ -202,15 +206,15 @@ Fake/local market data only:
 API examples:
 
 ```powershell
-curl -X POST http://localhost:5000/market-data/fake-snapshots `
+curl -X POST http://localhost:5050/market-data/fake-snapshots `
   -H "Content-Type: application/json" `
   -d '{"instrumentSymbol":"EURUSD","venueName":"LMAX","startUtc":"2026-04-29T09:15:00Z","intervalSeconds":60,"count":15,"bid":1.1000,"ask":1.1002,"bidStep":0.00001,"askStep":0.00001}'
 
-curl -X POST http://localhost:5000/market-data/build-bars `
+curl -X POST http://localhost:5050/market-data/build-bars `
   -H "Content-Type: application/json" `
   -d '{"venueName":"LMAX","timeframe":1,"startUtc":"2026-04-29T09:15:00Z","endUtc":"2026-04-29T09:30:00Z"}'
 
-curl "http://localhost:5000/market-data/bars?instrument=EURUSD&venue=LMAX&timeframe=FifteenMinutes"
+curl "http://localhost:5050/market-data/bars?instrument=EURUSD&venue=LMAX&timeframe=FifteenMinutes"
 ```
 
 ## Known Limitations

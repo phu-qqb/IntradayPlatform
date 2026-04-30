@@ -257,6 +257,11 @@ public sealed class SqlServerIntradayRepository(IntradayDbContext dbContext) : I
 
     public async Task SaveReconciliationAsync(ReconciliationRun run, IReadOnlyList<ReconciliationBreak> breaks, CancellationToken cancellationToken)
     {
+        if (await dbContext.ReconciliationRuns.AnyAsync(x => x.ModelRunId == run.ModelRunId && x.Phase == run.Phase, cancellationToken))
+        {
+            return;
+        }
+
         dbContext.ReconciliationRuns.Add(run);
         dbContext.ReconciliationBreaks.AddRange(breaks);
         await dbContext.SaveChangesAsync(cancellationToken);

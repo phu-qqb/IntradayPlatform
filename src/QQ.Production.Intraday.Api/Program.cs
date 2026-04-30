@@ -130,17 +130,21 @@ app.MapPost("/model-runs/{id:guid}/process", async (Guid id, ProcessModelRunServ
 {
     var modelRunId = new ModelRunId(id);
     var result = await service.ProcessAsync(modelRunId, cancellationToken);
-    var state = await repository.LoadStateAsync(cancellationToken);
     return Results.Ok(new
     {
         modelRunId = id,
         result.Processed,
-        result.Blocked,
+        status = result.Status.ToString(),
+        blockedReason = result.BlockedReason?.ToString(),
         result.Message,
-        tradeIntentCount = state.TradeIntents.Count(x => x.ModelRunId == modelRunId),
-        orderCount = state.ParentOrders.Count(x => state.TradeIntents.Any(t => t.Id == x.TradeIntentId && t.ModelRunId == modelRunId)),
-        fillCount = state.Fills.Count,
-        reconciliationBreakCount = state.ReconciliationBreaks.Count(x => state.ReconciliationRuns.Any(r => r.Id == x.ReconciliationRunId && r.ModelRunId == modelRunId))
+        result.TradeIntentCount,
+        result.RiskDecisionCount,
+        result.OrderCount,
+        result.ExecutionReportCount,
+        result.FillCount,
+        result.ReconciliationBreakCount,
+        result.IsAlreadyProcessed,
+        result.CompletedAtUtc
     });
 });
 
