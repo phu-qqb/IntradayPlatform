@@ -108,6 +108,22 @@ h3 { font-size: 13px; margin: 16px 0 8px; color: #c7d1dc; }
   border-radius: 6px;
   padding: 10px;
 }
+.info-box {
+  margin: 10px 0;
+  border: 1px solid #388bfd;
+  background: rgba(56, 139, 253, 0.12);
+  color: #9ecbff;
+  border-radius: 6px;
+  padding: 10px;
+}
+.warning-box {
+  margin: 10px 0;
+  border: 1px solid #9e6a03;
+  background: rgba(158, 106, 3, 0.16);
+  color: #f2cc60;
+  border-radius: 6px;
+  padding: 10px;
+}
 .loading-state, .empty-state {
   color: #93a4b8;
   border: 1px dashed #303b49;

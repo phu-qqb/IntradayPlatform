@@ -4,6 +4,42 @@ import { DataTable } from './DataTable';
 
 type WeightRow = { symbol: string; weight: number; rawSecurityId: string };
 
+const criticalBlockedReasons = new Set([
+  'ReferenceDataAmbiguous',
+  'ReferenceDataInvalid',
+  'PositionMismatch',
+  'UnknownCurrentPosition',
+  'KillSwitchActive'
+]);
+
+function getProcessResultClass(result: ProcessModelRunResult) {
+  if (result.status === 'Processed') {
+    return 'notice';
+  }
+
+  if (result.status === 'NoActionRequired' || result.status === 'AlreadyProcessed') {
+    return 'info-box';
+  }
+
+  if (result.status === 'Blocked') {
+    return result.blockedReason && criticalBlockedReasons.has(result.blockedReason) ? 'critical-box' : 'warning-box';
+  }
+
+  if (result.status === 'Failed') {
+    return 'critical-box';
+  }
+
+  return 'info-box';
+}
+
+function getProcessResultMessage(result: ProcessModelRunResult) {
+  if (result.status === 'NoActionRequired' && result.blockedReason === 'NoDrift') {
+    return 'No order was created because target and current position are already within the configured rebalance threshold.';
+  }
+
+  return result.message ?? (result.status === 'Processed' ? 'Processed' : 'No further action required.');
+}
+
 export function ModelRunsPanel({
   modelRuns,
   onCreate,
@@ -25,7 +61,11 @@ export function ModelRunsPanel({
   return (
     <section className="panel wide">
       <h2>Model Runs</h2>
-      {result && <div className={result.status === 'Processed' ? 'notice' : 'critical-box'}>Process result: {result.status} {result.blockedReason ? `(${result.blockedReason})` : ''} - {result.message ?? 'Processed'}</div>}
+      {result && (
+        <div className={getProcessResultClass(result)}>
+          Process result: {result.status} {result.blockedReason ? `(${result.blockedReason})` : ''} - {getProcessResultMessage(result)}
+        </div>
+      )}
       <div className="form-grid">
         <label>Model<input value={form.modelName} onChange={(event) => setForm({ ...form, modelName: event.target.value })} /></label>
         <label>As Of UTC<input value={form.asOfUtc} onChange={(event) => setForm({ ...form, asOfUtc: event.target.value })} /></label>
