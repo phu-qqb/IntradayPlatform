@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Text;
+using System.Globalization;
 using QQ.Production.Intraday.Domain;
 
 namespace QQ.Production.Intraday.Application;
@@ -113,6 +114,52 @@ public interface IFakeModelWeightGenerator
     Task<ModelWeightBatch> CreateFakeBatchAsync(CreateFakeModelWeightBatchRequest request, CancellationToken cancellationToken);
 }
 
+public interface ILmaxEodReportRepository
+{
+    Task AddImportRunAsync(LmaxReportImportRun run, CancellationToken cancellationToken);
+    Task UpdateImportRunAsync(LmaxReportImportRun run, CancellationToken cancellationToken);
+    Task AddValidationIssuesAsync(IReadOnlyList<LmaxReportValidationIssue> issues, CancellationToken cancellationToken);
+    Task AddIndividualTradesAsync(IReadOnlyList<LmaxIndividualTrade> trades, CancellationToken cancellationToken);
+    Task AddTradeSummariesAsync(IReadOnlyList<LmaxTradeSummary> summaries, CancellationToken cancellationToken);
+    Task AddCurrencyWalletsAsync(IReadOnlyList<LmaxCurrencyWallet> wallets, CancellationToken cancellationToken);
+    Task<IReadOnlyList<LmaxReportImportRun>> GetImportRunsAsync(int limit, DateOnly? reportDate, LmaxReportType? reportType, CancellationToken cancellationToken);
+    Task<IReadOnlyList<LmaxReportValidationIssue>> GetValidationIssuesAsync(int limit, LmaxReportImportRunId? importRunId, CancellationToken cancellationToken);
+    Task<IReadOnlyList<LmaxIndividualTrade>> GetIndividualTradesAsync(DateOnly? reportDate, int limit, CancellationToken cancellationToken);
+    Task<IReadOnlyList<LmaxTradeSummary>> GetTradeSummariesAsync(DateOnly? reportDate, int limit, CancellationToken cancellationToken);
+    Task<IReadOnlyList<LmaxCurrencyWallet>> GetCurrencyWalletsAsync(DateOnly? reportDate, int limit, CancellationToken cancellationToken);
+    Task AddEodReconciliationAsync(EodReconciliationRun run, IReadOnlyList<EodReconciliationBreak> breaks, CancellationToken cancellationToken);
+    Task<IReadOnlyList<EodReconciliationRun>> GetEodReconciliationRunsAsync(DateOnly? reportDate, int limit, CancellationToken cancellationToken);
+    Task<IReadOnlyList<EodReconciliationBreak>> GetEodReconciliationBreaksAsync(DateOnly? reportDate, int limit, CancellationToken cancellationToken);
+}
+
+public interface ILmaxEodReportImportService
+{
+    Task<LmaxReportImportResult> ImportIndividualTradesAsync(string filePath, DateOnly reportDate, string venueName, string brokerAccountCode, CancellationToken cancellationToken);
+    Task<LmaxReportImportResult> ImportTradesSummaryAsync(string filePath, DateOnly reportDate, string venueName, string brokerAccountCode, CancellationToken cancellationToken);
+    Task<LmaxReportImportResult> ImportCurrencyWalletsAsync(string filePath, DateOnly reportDate, string venueName, string brokerAccountCode, CancellationToken cancellationToken);
+    Task<LmaxReportImportResult> ImportReportSetAsync(string individualTradesPath, string tradesSummaryPath, string currencyWalletsPath, DateOnly reportDate, string venueName, string brokerAccountCode, CancellationToken cancellationToken);
+}
+
+public interface ILmaxReportPairConsistencyService
+{
+    Task<IReadOnlyList<LmaxReportValidationIssue>> CheckAsync(LmaxReportImportRunId importRunId, DateOnly reportDate, VenueId venueId, BrokerAccountId brokerAccountId, CancellationToken cancellationToken);
+}
+
+public interface IEodReconciliationService
+{
+    Task<EodReconciliationResult> RunAsync(DateOnly reportDate, string venueName, string brokerAccountCode, CancellationToken cancellationToken);
+}
+
+public interface IEodPnlSummaryService
+{
+    Task<EodPnlSummary?> GetSummaryAsync(DateOnly reportDate, string venueName, string brokerAccountCode, CancellationToken cancellationToken);
+}
+
+public interface IFakeLmaxEodReportGenerator
+{
+    Task<FakeLmaxEodReportGenerationResult> GenerateAsync(DateOnly reportDate, string venueName, string brokerAccountCode, LmaxEodMutationMode mutationMode, CancellationToken cancellationToken);
+}
+
 public sealed record BarUpsertResult(bool Created);
 public sealed record BarBuildResult(BarBuildRunId RunId, int BarsCreated, int BarsUpdated, BarBuildRunStatus Status, string? ErrorMessage = null);
 public sealed record CreateFakeModelWeightRowRequest(string RawSecurityId, string Symbol, decimal Weight);
@@ -138,6 +185,9 @@ public sealed record ModelWeightPromotionResult(
     string Message,
     bool Succeeded,
     bool AlreadyPromoted);
+public sealed record LmaxReportImportResult(LmaxReportImportRunId ImportRunId, LmaxReportImportStatus Status, int RowCount, int BlockingIssueCount, IReadOnlyList<LmaxReportValidationIssue> Issues, string Message);
+public sealed record EodReconciliationResult(Guid RunId, DateOnly ReportDate, int BreakCount, int BlockingBreakCount, IReadOnlyList<EodReconciliationBreak> Breaks);
+public sealed record FakeLmaxEodReportGenerationResult(DateOnly ReportDate, string IndividualTradesPath, string TradesSummaryPath, string CurrencyWalletsPath, int IndividualTradeCount, int TradeSummaryCount, int CurrencyWalletCount, LmaxEodMutationMode MutationMode);
 
 public enum ReferenceDataIntegrityIssueType
 {
@@ -193,6 +243,7 @@ public sealed class PlatformState
     public List<Fund> Funds { get; } = [];
     public List<BrokerAccount> BrokerAccounts { get; } = [];
     public List<Instrument> Instruments { get; } = [];
+    public List<InstrumentAlias> InstrumentAliases { get; } = [];
     public List<Venue> Venues { get; } = [];
     public List<VenueInstrumentMapping> VenueInstrumentMappings { get; } = [];
     public List<NavSnapshot> NavSnapshots { get; } = [];
@@ -221,6 +272,13 @@ public sealed class PlatformState
     public List<VenueRiskLimit> VenueRiskLimits { get; } = [];
     public List<TradingWindow> TradingWindows { get; } = [];
     public List<KillSwitchState> KillSwitchStates { get; } = [];
+    public List<LmaxReportImportRun> LmaxReportImportRuns { get; } = [];
+    public List<LmaxReportValidationIssue> LmaxReportValidationIssues { get; } = [];
+    public List<LmaxIndividualTrade> LmaxIndividualTrades { get; } = [];
+    public List<LmaxTradeSummary> LmaxTradeSummaries { get; } = [];
+    public List<LmaxCurrencyWallet> LmaxCurrencyWallets { get; } = [];
+    public List<EodReconciliationRun> EodReconciliationRuns { get; } = [];
+    public List<EodReconciliationBreak> EodReconciliationBreaks { get; } = [];
     public KillSwitchState KillSwitch { get; set; } = new(Guid.NewGuid(), false, null, DateTimeOffset.UnixEpoch);
 }
 
@@ -1530,10 +1588,11 @@ public static class SeedData
         var state = new PlatformState();
 
         state.Funds.Add(new Fund(fundId, "QQ Intraday Fund", Currency.Usd));
-        state.BrokerAccounts.Add(new BrokerAccount(accountId, fundId, "QQ-LMAX-SIM"));
+        state.BrokerAccounts.Add(new BrokerAccount(accountId, fundId, "LMAX_DEMO_LOCAL", true, "LMAX_DEMO_LOCAL"));
         state.Instruments.Add(new Instrument(instrumentId, "EURUSD", AssetClass.FxSpot, Currency.Eur, Currency.Usd, 5, 1));
         state.Venues.Add(new Venue(venueId, "LMAX", VenueType.Simulator));
         state.VenueInstrumentMappings.Add(new VenueInstrumentMapping(venueInstrumentId, venueId, instrumentId, "EURUSD", "EUR/USD", 10000m, 0.1m, 0.1m, 0.00001m));
+        state.InstrumentAliases.Add(new InstrumentAlias(new InstrumentAliasId(Guid.Parse("12111111-1111-1111-1111-111111114001")), instrumentId, "LMAX_REPORT", "EUR/USD", "4001", true, now));
         state.NavSnapshots.Add(new NavSnapshot(fundId, 1_000_000m, NavSource.Seed, now));
         state.MarketData.Add(new MarketDataSnapshot(seedMarketDataSnapshotId, instrumentId, venueId, 1.09995m, 1.10005m, null, "Seed", now, now) { IsSynthetic = true, CreatedAtUtc = now });
         state.PositionLedger.Add(new PositionLedgerEvent(startOfDayEventId, fundId, instrumentId, PositionLedgerEventType.StartOfDay, 0m, "SOD", now.AddHours(-1)));

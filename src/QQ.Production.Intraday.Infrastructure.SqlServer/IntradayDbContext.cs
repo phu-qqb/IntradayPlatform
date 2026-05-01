@@ -9,6 +9,7 @@ public sealed class IntradayDbContext(DbContextOptions<IntradayDbContext> option
     public DbSet<Fund> Funds => Set<Fund>();
     public DbSet<BrokerAccount> BrokerAccounts => Set<BrokerAccount>();
     public DbSet<Instrument> Instruments => Set<Instrument>();
+    public DbSet<InstrumentAlias> InstrumentAliases => Set<InstrumentAlias>();
     public DbSet<Venue> Venues => Set<Venue>();
     public DbSet<VenueInstrumentMapping> VenueInstrumentMappings => Set<VenueInstrumentMapping>();
     public DbSet<NavSnapshot> NavSnapshots => Set<NavSnapshot>();
@@ -37,6 +38,13 @@ public sealed class IntradayDbContext(DbContextOptions<IntradayDbContext> option
     public DbSet<VenueRiskLimit> VenueRiskLimits => Set<VenueRiskLimit>();
     public DbSet<TradingWindow> TradingWindows => Set<TradingWindow>();
     public DbSet<KillSwitchState> KillSwitchStates => Set<KillSwitchState>();
+    public DbSet<LmaxReportImportRun> LmaxReportImportRuns => Set<LmaxReportImportRun>();
+    public DbSet<LmaxReportValidationIssue> LmaxReportValidationIssues => Set<LmaxReportValidationIssue>();
+    public DbSet<LmaxIndividualTrade> LmaxIndividualTrades => Set<LmaxIndividualTrade>();
+    public DbSet<LmaxTradeSummary> LmaxTradeSummaries => Set<LmaxTradeSummary>();
+    public DbSet<LmaxCurrencyWallet> LmaxCurrencyWallets => Set<LmaxCurrencyWallet>();
+    public DbSet<EodReconciliationRun> EodReconciliationRuns => Set<EodReconciliationRun>();
+    public DbSet<EodReconciliationBreak> EodReconciliationBreaks => Set<EodReconciliationBreak>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -45,6 +53,7 @@ public sealed class IntradayDbContext(DbContextOptions<IntradayDbContext> option
         modelBuilder.Entity<Fund>().HasKey(x => x.Id);
         modelBuilder.Entity<BrokerAccount>().HasKey(x => x.Id);
         modelBuilder.Entity<Instrument>().HasKey(x => x.Id);
+        modelBuilder.Entity<InstrumentAlias>().HasKey(x => x.Id);
         modelBuilder.Entity<Venue>().HasKey(x => x.Id);
         modelBuilder.Entity<VenueInstrumentMapping>().HasKey(x => x.Id);
         modelBuilder.Entity<NavSnapshot>().HasKey(nameof(NavSnapshot.FundId), nameof(NavSnapshot.AsOfUtc));
@@ -73,11 +82,20 @@ public sealed class IntradayDbContext(DbContextOptions<IntradayDbContext> option
         modelBuilder.Entity<VenueRiskLimit>().HasKey(x => x.Id);
         modelBuilder.Entity<TradingWindow>().HasKey(x => x.Id);
         modelBuilder.Entity<KillSwitchState>().HasKey(x => x.Id);
+        modelBuilder.Entity<LmaxReportImportRun>().HasKey(x => x.Id);
+        modelBuilder.Entity<LmaxReportValidationIssue>().HasKey(x => x.Id);
+        modelBuilder.Entity<LmaxIndividualTrade>().HasKey(x => x.Id);
+        modelBuilder.Entity<LmaxTradeSummary>().HasKey(x => x.Id);
+        modelBuilder.Entity<LmaxCurrencyWallet>().HasKey(x => x.Id);
+        modelBuilder.Entity<EodReconciliationRun>().HasKey(x => x.Id);
+        modelBuilder.Entity<EodReconciliationBreak>().HasKey(x => x.Id);
 
         modelBuilder.Entity<ModelRun>().HasIndex(x => x.Id).IsUnique();
         modelBuilder.Entity<Fund>().HasIndex(x => x.Name).IsUnique().HasFilter("[IsEnabled] = 1");
         modelBuilder.Entity<BrokerAccount>().HasIndex(x => new { x.FundId, x.AccountCode }).IsUnique().HasFilter("[IsEnabled] = 1");
         modelBuilder.Entity<Instrument>().HasIndex(x => new { x.Symbol, x.AssetClass }).IsUnique().HasFilter("[IsEnabled] = 1");
+        modelBuilder.Entity<InstrumentAlias>().HasIndex(x => new { x.Source, x.ExternalSymbol }).IsUnique().HasFilter("[IsEnabled] = 1");
+        modelBuilder.Entity<InstrumentAlias>().HasIndex(x => new { x.Source, x.ExternalInstrumentId }).IsUnique().HasFilter("[IsEnabled] = 1 AND [ExternalInstrumentId] IS NOT NULL");
         modelBuilder.Entity<Venue>().HasIndex(x => x.Name).IsUnique().HasFilter("[IsEnabled] = 1");
         modelBuilder.Entity<VenueInstrumentMapping>().HasIndex(x => new { x.VenueId, x.InstrumentId }).IsUnique().HasFilter("[IsEnabled] = 1");
         modelBuilder.Entity<VenueInstrumentMapping>().HasIndex(x => new { x.VenueId, x.VenueSymbol }).IsUnique().HasFilter("[IsEnabled] = 1");
@@ -104,10 +122,20 @@ public sealed class IntradayDbContext(DbContextOptions<IntradayDbContext> option
         modelBuilder.Entity<ModelWeightRow>().HasIndex(x => new { x.BatchId, x.RawSecurityId }).IsUnique();
         modelBuilder.Entity<ModelWeightRow>().HasIndex(x => new { x.BatchId, x.InstrumentId }).IsUnique().HasFilter("[InstrumentId] IS NOT NULL");
         modelBuilder.Entity<ModelWeightValidationIssue>().HasIndex(x => new { x.BatchId, x.Severity, x.IssueType });
+        modelBuilder.Entity<LmaxReportImportRun>().HasIndex(x => new { x.ReportDate, x.ReportType, x.VenueId, x.BrokerAccountId });
+        modelBuilder.Entity<LmaxIndividualTrade>().HasIndex(x => new { x.VenueId, x.AccountId, x.ExecutionId }).IsUnique();
+        modelBuilder.Entity<LmaxIndividualTrade>().HasIndex(x => new { x.VenueId, x.AccountId, x.TradeUti }).IsUnique();
+        modelBuilder.Entity<LmaxIndividualTrade>().HasIndex(x => x.OrderId);
+        modelBuilder.Entity<LmaxIndividualTrade>().HasIndex(x => x.InstructionId);
+        modelBuilder.Entity<LmaxIndividualTrade>().HasIndex(x => new { x.InstrumentId, x.ReportDate });
+        modelBuilder.Entity<LmaxTradeSummary>().HasIndex(x => new { x.InstrumentId, x.ReportDate });
+        modelBuilder.Entity<LmaxCurrencyWallet>().HasIndex(x => new { x.ReportDate, x.BrokerAccountId });
+        modelBuilder.Entity<LmaxCurrencyWallet>().HasIndex(x => new { x.ReportDate, x.VenueId, x.BrokerAccountId, x.Currency }).IsUnique();
 
         modelBuilder.Entity<BrokerAccount>().HasOne<Fund>().WithMany().HasForeignKey(x => x.FundId).OnDelete(DeleteBehavior.Restrict);
         modelBuilder.Entity<NavSnapshot>().HasOne<Fund>().WithMany().HasForeignKey(x => x.FundId).OnDelete(DeleteBehavior.Restrict);
         modelBuilder.Entity<ModelRun>().HasOne<Fund>().WithMany().HasForeignKey(x => x.FundId).OnDelete(DeleteBehavior.Restrict);
+        modelBuilder.Entity<InstrumentAlias>().HasOne<Instrument>().WithMany().HasForeignKey(x => x.InstrumentId).OnDelete(DeleteBehavior.Restrict);
         modelBuilder.Entity<TargetWeight>().HasOne<ModelRun>().WithMany().HasForeignKey(x => x.ModelRunId).OnDelete(DeleteBehavior.Restrict);
         modelBuilder.Entity<TargetWeight>().HasOne<Instrument>().WithMany().HasForeignKey(x => x.InstrumentId).OnDelete(DeleteBehavior.Restrict);
         modelBuilder.Entity<ModelWeightBatch>().HasOne<Fund>().WithMany().HasForeignKey(x => x.FundId).OnDelete(DeleteBehavior.Restrict);
@@ -146,6 +174,24 @@ public sealed class IntradayDbContext(DbContextOptions<IntradayDbContext> option
         modelBuilder.Entity<InstrumentRiskLimit>().HasOne<Instrument>().WithMany().HasForeignKey(x => x.InstrumentId).OnDelete(DeleteBehavior.Restrict);
         modelBuilder.Entity<VenueRiskLimit>().HasOne<Venue>().WithMany().HasForeignKey(x => x.VenueId).OnDelete(DeleteBehavior.Restrict);
         modelBuilder.Entity<TradingWindow>().HasOne<Fund>().WithMany().HasForeignKey(x => x.FundId).OnDelete(DeleteBehavior.Restrict);
+        modelBuilder.Entity<LmaxReportImportRun>().HasOne<Venue>().WithMany().HasForeignKey(x => x.VenueId).OnDelete(DeleteBehavior.Restrict);
+        modelBuilder.Entity<LmaxReportImportRun>().HasOne<BrokerAccount>().WithMany().HasForeignKey(x => x.BrokerAccountId).OnDelete(DeleteBehavior.Restrict);
+        modelBuilder.Entity<LmaxReportValidationIssue>().HasOne<LmaxReportImportRun>().WithMany().HasForeignKey(x => x.ImportRunId).OnDelete(DeleteBehavior.Restrict);
+        modelBuilder.Entity<LmaxIndividualTrade>().HasOne<LmaxReportImportRun>().WithMany().HasForeignKey(x => x.ImportRunId).OnDelete(DeleteBehavior.Restrict);
+        modelBuilder.Entity<LmaxIndividualTrade>().HasOne<Venue>().WithMany().HasForeignKey(x => x.VenueId).OnDelete(DeleteBehavior.Restrict);
+        modelBuilder.Entity<LmaxIndividualTrade>().HasOne<BrokerAccount>().WithMany().HasForeignKey(x => x.BrokerAccountId).OnDelete(DeleteBehavior.Restrict);
+        modelBuilder.Entity<LmaxIndividualTrade>().HasOne<Instrument>().WithMany().HasForeignKey(x => x.InstrumentId).OnDelete(DeleteBehavior.Restrict);
+        modelBuilder.Entity<LmaxTradeSummary>().HasOne<LmaxReportImportRun>().WithMany().HasForeignKey(x => x.ImportRunId).OnDelete(DeleteBehavior.Restrict);
+        modelBuilder.Entity<LmaxTradeSummary>().HasOne<Venue>().WithMany().HasForeignKey(x => x.VenueId).OnDelete(DeleteBehavior.Restrict);
+        modelBuilder.Entity<LmaxTradeSummary>().HasOne<BrokerAccount>().WithMany().HasForeignKey(x => x.BrokerAccountId).OnDelete(DeleteBehavior.Restrict);
+        modelBuilder.Entity<LmaxTradeSummary>().HasOne<Instrument>().WithMany().HasForeignKey(x => x.InstrumentId).OnDelete(DeleteBehavior.Restrict);
+        modelBuilder.Entity<LmaxCurrencyWallet>().HasOne<LmaxReportImportRun>().WithMany().HasForeignKey(x => x.ImportRunId).OnDelete(DeleteBehavior.Restrict);
+        modelBuilder.Entity<LmaxCurrencyWallet>().HasOne<Venue>().WithMany().HasForeignKey(x => x.VenueId).OnDelete(DeleteBehavior.Restrict);
+        modelBuilder.Entity<LmaxCurrencyWallet>().HasOne<BrokerAccount>().WithMany().HasForeignKey(x => x.BrokerAccountId).OnDelete(DeleteBehavior.Restrict);
+        modelBuilder.Entity<EodReconciliationRun>().HasOne<Venue>().WithMany().HasForeignKey(x => x.VenueId).OnDelete(DeleteBehavior.Restrict);
+        modelBuilder.Entity<EodReconciliationRun>().HasOne<BrokerAccount>().WithMany().HasForeignKey(x => x.BrokerAccountId).OnDelete(DeleteBehavior.Restrict);
+        modelBuilder.Entity<EodReconciliationBreak>().HasOne<EodReconciliationRun>().WithMany().HasForeignKey(x => x.RunId).OnDelete(DeleteBehavior.Restrict);
+        modelBuilder.Entity<EodReconciliationBreak>().HasOne<Instrument>().WithMany().HasForeignKey(x => x.InstrumentId).OnDelete(DeleteBehavior.Restrict);
 
         foreach (var entityType in modelBuilder.Model.GetEntityTypes())
         {
@@ -172,6 +218,8 @@ public sealed class IntradayDbContext(DbContextOptions<IntradayDbContext> option
         modelBuilder.Entity<BrokerAccount>().Property(x => x.Id).HasConversion(x => x.Value, x => new BrokerAccountId(x));
         modelBuilder.Entity<BrokerAccount>().Property(x => x.FundId).HasConversion(x => x.Value, x => new FundId(x));
         modelBuilder.Entity<Instrument>().Property(x => x.Id).HasConversion(x => x.Value, x => new InstrumentId(x));
+        modelBuilder.Entity<InstrumentAlias>().Property(x => x.Id).HasConversion(x => x.Value, x => new InstrumentAliasId(x));
+        modelBuilder.Entity<InstrumentAlias>().Property(x => x.InstrumentId).HasConversion(x => x.Value, x => new InstrumentId(x));
         modelBuilder.Entity<Venue>().Property(x => x.Id).HasConversion(x => x.Value, x => new VenueId(x));
         modelBuilder.Entity<VenueInstrumentMapping>().Property(x => x.Id).HasConversion(x => x.Value, x => new VenueInstrumentId(x));
         modelBuilder.Entity<VenueInstrumentMapping>().Property(x => x.VenueId).HasConversion(x => x.Value, x => new VenueId(x));
@@ -231,6 +279,27 @@ public sealed class IntradayDbContext(DbContextOptions<IntradayDbContext> option
         modelBuilder.Entity<InstrumentRiskLimit>().Property(x => x.InstrumentId).HasConversion(x => x.Value, x => new InstrumentId(x));
         modelBuilder.Entity<VenueRiskLimit>().Property(x => x.VenueId).HasConversion(x => x.Value, x => new VenueId(x));
         modelBuilder.Entity<TradingWindow>().Property(x => x.FundId).HasConversion(x => x.Value, x => new FundId(x));
+        modelBuilder.Entity<LmaxReportImportRun>().Property(x => x.Id).HasConversion(x => x.Value, x => new LmaxReportImportRunId(x));
+        modelBuilder.Entity<LmaxReportImportRun>().Property(x => x.VenueId).HasConversion(x => x.Value, x => new VenueId(x));
+        modelBuilder.Entity<LmaxReportImportRun>().Property(x => x.BrokerAccountId).HasConversion(x => x.Value, x => new BrokerAccountId(x));
+        modelBuilder.Entity<LmaxReportValidationIssue>().Property(x => x.ImportRunId).HasConversion(x => x.Value, x => new LmaxReportImportRunId(x));
+        modelBuilder.Entity<LmaxIndividualTrade>().Property(x => x.Id).HasConversion(x => x.Value, x => new LmaxIndividualTradeId(x));
+        modelBuilder.Entity<LmaxIndividualTrade>().Property(x => x.ImportRunId).HasConversion(x => x.Value, x => new LmaxReportImportRunId(x));
+        modelBuilder.Entity<LmaxIndividualTrade>().Property(x => x.VenueId).HasConversion(x => x.Value, x => new VenueId(x));
+        modelBuilder.Entity<LmaxIndividualTrade>().Property(x => x.BrokerAccountId).HasConversion(x => x.Value, x => new BrokerAccountId(x));
+        modelBuilder.Entity<LmaxIndividualTrade>().Property(x => x.InstrumentId).HasConversion(x => x.HasValue ? x.Value.Value : (Guid?)null, x => x.HasValue ? new InstrumentId(x.Value) : null);
+        modelBuilder.Entity<LmaxTradeSummary>().Property(x => x.Id).HasConversion(x => x.Value, x => new LmaxTradeSummaryId(x));
+        modelBuilder.Entity<LmaxTradeSummary>().Property(x => x.ImportRunId).HasConversion(x => x.Value, x => new LmaxReportImportRunId(x));
+        modelBuilder.Entity<LmaxTradeSummary>().Property(x => x.VenueId).HasConversion(x => x.Value, x => new VenueId(x));
+        modelBuilder.Entity<LmaxTradeSummary>().Property(x => x.BrokerAccountId).HasConversion(x => x.Value, x => new BrokerAccountId(x));
+        modelBuilder.Entity<LmaxTradeSummary>().Property(x => x.InstrumentId).HasConversion(x => x.HasValue ? x.Value.Value : (Guid?)null, x => x.HasValue ? new InstrumentId(x.Value) : null);
+        modelBuilder.Entity<LmaxCurrencyWallet>().Property(x => x.Id).HasConversion(x => x.Value, x => new LmaxCurrencyWalletId(x));
+        modelBuilder.Entity<LmaxCurrencyWallet>().Property(x => x.ImportRunId).HasConversion(x => x.Value, x => new LmaxReportImportRunId(x));
+        modelBuilder.Entity<LmaxCurrencyWallet>().Property(x => x.VenueId).HasConversion(x => x.Value, x => new VenueId(x));
+        modelBuilder.Entity<LmaxCurrencyWallet>().Property(x => x.BrokerAccountId).HasConversion(x => x.Value, x => new BrokerAccountId(x));
+        modelBuilder.Entity<EodReconciliationRun>().Property(x => x.VenueId).HasConversion(x => x.Value, x => new VenueId(x));
+        modelBuilder.Entity<EodReconciliationRun>().Property(x => x.BrokerAccountId).HasConversion(x => x.Value, x => new BrokerAccountId(x));
+        modelBuilder.Entity<EodReconciliationBreak>().Property(x => x.InstrumentId).HasConversion(x => x.HasValue ? x.Value.Value : (Guid?)null, x => x.HasValue ? new InstrumentId(x.Value) : null);
     }
 }
 
@@ -242,6 +311,7 @@ public sealed class SqlServerIntradayRepository(IntradayDbContext dbContext) : I
         state.Funds.AddRange(await dbContext.Funds.AsNoTracking().ToListAsync(cancellationToken));
         state.BrokerAccounts.AddRange(await dbContext.BrokerAccounts.AsNoTracking().ToListAsync(cancellationToken));
         state.Instruments.AddRange(await dbContext.Instruments.AsNoTracking().ToListAsync(cancellationToken));
+        state.InstrumentAliases.AddRange(await dbContext.InstrumentAliases.AsNoTracking().ToListAsync(cancellationToken));
         state.Venues.AddRange(await dbContext.Venues.AsNoTracking().ToListAsync(cancellationToken));
         state.VenueInstrumentMappings.AddRange(await dbContext.VenueInstrumentMappings.AsNoTracking().ToListAsync(cancellationToken));
         state.NavSnapshots.AddRange(await dbContext.Set<NavSnapshot>().AsNoTracking().ToListAsync(cancellationToken));
@@ -270,6 +340,13 @@ public sealed class SqlServerIntradayRepository(IntradayDbContext dbContext) : I
         state.VenueRiskLimits.AddRange(await dbContext.VenueRiskLimits.AsNoTracking().ToListAsync(cancellationToken));
         state.TradingWindows.AddRange(await dbContext.TradingWindows.AsNoTracking().ToListAsync(cancellationToken));
         state.KillSwitchStates.AddRange(await dbContext.KillSwitchStates.AsNoTracking().ToListAsync(cancellationToken));
+        state.LmaxReportImportRuns.AddRange(await dbContext.LmaxReportImportRuns.AsNoTracking().ToListAsync(cancellationToken));
+        state.LmaxReportValidationIssues.AddRange(await dbContext.LmaxReportValidationIssues.AsNoTracking().ToListAsync(cancellationToken));
+        state.LmaxIndividualTrades.AddRange(await dbContext.LmaxIndividualTrades.AsNoTracking().ToListAsync(cancellationToken));
+        state.LmaxTradeSummaries.AddRange(await dbContext.LmaxTradeSummaries.AsNoTracking().ToListAsync(cancellationToken));
+        state.LmaxCurrencyWallets.AddRange(await dbContext.LmaxCurrencyWallets.AsNoTracking().ToListAsync(cancellationToken));
+        state.EodReconciliationRuns.AddRange(await dbContext.EodReconciliationRuns.AsNoTracking().ToListAsync(cancellationToken));
+        state.EodReconciliationBreaks.AddRange(await dbContext.EodReconciliationBreaks.AsNoTracking().ToListAsync(cancellationToken));
         state.KillSwitch = state.KillSwitchStates.OrderByDescending(x => x.UpdatedAtUtc).FirstOrDefault() ?? state.KillSwitch;
         return state;
     }
@@ -561,6 +638,122 @@ public sealed class SqlServerModelWeightBatchRepository(IntradayDbContext dbCont
         var batch = await dbContext.ModelWeightBatches.FirstAsync(x => x.Id == batchId, cancellationToken);
         dbContext.Entry(batch).CurrentValues.SetValues(batch with { Status = ModelWeightBatchStatus.Promoted, PromotedAtUtc = promotedAtUtc, PromotedModelRunId = modelRunId, Message = "Promoted to model run." });
         await dbContext.SaveChangesAsync(cancellationToken);
+    }
+}
+
+public sealed class SqlServerLmaxEodReportRepository(IntradayDbContext dbContext) : ILmaxEodReportRepository
+{
+    public async Task AddImportRunAsync(LmaxReportImportRun run, CancellationToken cancellationToken)
+    {
+        dbContext.LmaxReportImportRuns.Add(run);
+        await dbContext.SaveChangesAsync(cancellationToken);
+    }
+
+    public async Task UpdateImportRunAsync(LmaxReportImportRun run, CancellationToken cancellationToken)
+    {
+        var existing = await dbContext.LmaxReportImportRuns.FirstOrDefaultAsync(x => x.Id == run.Id, cancellationToken);
+        if (existing is null) return;
+        dbContext.Entry(existing).CurrentValues.SetValues(run);
+        await dbContext.SaveChangesAsync(cancellationToken);
+    }
+
+    public async Task AddValidationIssuesAsync(IReadOnlyList<LmaxReportValidationIssue> issues, CancellationToken cancellationToken)
+    {
+        dbContext.LmaxReportValidationIssues.AddRange(issues);
+        await dbContext.SaveChangesAsync(cancellationToken);
+    }
+
+    public async Task AddIndividualTradesAsync(IReadOnlyList<LmaxIndividualTrade> trades, CancellationToken cancellationToken)
+    {
+        foreach (var trade in trades)
+        {
+            if (!await dbContext.LmaxIndividualTrades.AnyAsync(x => x.VenueId == trade.VenueId && x.AccountId == trade.AccountId && (x.ExecutionId == trade.ExecutionId || x.TradeUti == trade.TradeUti), cancellationToken))
+            {
+                dbContext.LmaxIndividualTrades.Add(trade);
+            }
+        }
+
+        await dbContext.SaveChangesAsync(cancellationToken);
+    }
+
+    public async Task AddTradeSummariesAsync(IReadOnlyList<LmaxTradeSummary> summaries, CancellationToken cancellationToken)
+    {
+        dbContext.LmaxTradeSummaries.AddRange(summaries);
+        await dbContext.SaveChangesAsync(cancellationToken);
+    }
+
+    public async Task AddCurrencyWalletsAsync(IReadOnlyList<LmaxCurrencyWallet> wallets, CancellationToken cancellationToken)
+    {
+        foreach (var wallet in wallets)
+        {
+            var existing = await dbContext.LmaxCurrencyWallets.FirstOrDefaultAsync(x => x.ReportDate == wallet.ReportDate && x.VenueId == wallet.VenueId && x.BrokerAccountId == wallet.BrokerAccountId && x.Currency == wallet.Currency, cancellationToken);
+            if (existing is null) dbContext.LmaxCurrencyWallets.Add(wallet);
+            else dbContext.Entry(existing).CurrentValues.SetValues(wallet with { Id = existing.Id });
+        }
+
+        await dbContext.SaveChangesAsync(cancellationToken);
+    }
+
+    public async Task<IReadOnlyList<LmaxReportImportRun>> GetImportRunsAsync(int limit, DateOnly? reportDate, LmaxReportType? reportType, CancellationToken cancellationToken)
+    {
+        var query = dbContext.LmaxReportImportRuns.AsNoTracking().AsQueryable();
+        if (reportDate is not null) query = query.Where(x => x.ReportDate == reportDate);
+        if (reportType is not null) query = query.Where(x => x.ReportType == reportType);
+        return await query.OrderByDescending(x => x.CreatedAtUtc).Take(Math.Clamp(limit, 1, 500)).ToListAsync(cancellationToken);
+    }
+
+    public async Task<IReadOnlyList<LmaxReportValidationIssue>> GetValidationIssuesAsync(int limit, LmaxReportImportRunId? importRunId, CancellationToken cancellationToken)
+    {
+        var query = dbContext.LmaxReportValidationIssues.AsNoTracking().AsQueryable();
+        if (importRunId is not null) query = query.Where(x => x.ImportRunId == importRunId);
+        return await query.OrderByDescending(x => x.CreatedAtUtc).Take(Math.Clamp(limit, 1, 500)).ToListAsync(cancellationToken);
+    }
+
+    public async Task<IReadOnlyList<LmaxIndividualTrade>> GetIndividualTradesAsync(DateOnly? reportDate, int limit, CancellationToken cancellationToken)
+    {
+        var query = dbContext.LmaxIndividualTrades.AsNoTracking().AsQueryable();
+        if (reportDate is not null) query = query.Where(x => x.ReportDate == reportDate);
+        return await query.OrderByDescending(x => x.TimestampUtc).Take(Math.Clamp(limit, 1, 500)).ToListAsync(cancellationToken);
+    }
+
+    public async Task<IReadOnlyList<LmaxTradeSummary>> GetTradeSummariesAsync(DateOnly? reportDate, int limit, CancellationToken cancellationToken)
+    {
+        var query = dbContext.LmaxTradeSummaries.AsNoTracking().AsQueryable();
+        if (reportDate is not null) query = query.Where(x => x.ReportDate == reportDate);
+        return await query.OrderByDescending(x => x.DateTimeUtc).Take(Math.Clamp(limit, 1, 500)).ToListAsync(cancellationToken);
+    }
+
+    public async Task<IReadOnlyList<LmaxCurrencyWallet>> GetCurrencyWalletsAsync(DateOnly? reportDate, int limit, CancellationToken cancellationToken)
+    {
+        var query = dbContext.LmaxCurrencyWallets.AsNoTracking().AsQueryable();
+        if (reportDate is not null) query = query.Where(x => x.ReportDate == reportDate);
+        return await query.OrderByDescending(x => x.CreatedAtUtc).Take(Math.Clamp(limit, 1, 500)).ToListAsync(cancellationToken);
+    }
+
+    public async Task AddEodReconciliationAsync(EodReconciliationRun run, IReadOnlyList<EodReconciliationBreak> breaks, CancellationToken cancellationToken)
+    {
+        dbContext.EodReconciliationRuns.Add(run);
+        dbContext.EodReconciliationBreaks.AddRange(breaks);
+        await dbContext.SaveChangesAsync(cancellationToken);
+    }
+
+    public async Task<IReadOnlyList<EodReconciliationRun>> GetEodReconciliationRunsAsync(DateOnly? reportDate, int limit, CancellationToken cancellationToken)
+    {
+        var query = dbContext.EodReconciliationRuns.AsNoTracking().AsQueryable();
+        if (reportDate is not null) query = query.Where(x => x.ReportDate == reportDate);
+        return await query.OrderByDescending(x => x.CreatedAtUtc).Take(Math.Clamp(limit, 1, 500)).ToListAsync(cancellationToken);
+    }
+
+    public async Task<IReadOnlyList<EodReconciliationBreak>> GetEodReconciliationBreaksAsync(DateOnly? reportDate, int limit, CancellationToken cancellationToken)
+    {
+        var query = dbContext.EodReconciliationBreaks.AsNoTracking().AsQueryable();
+        if (reportDate is not null)
+        {
+            var runIds = dbContext.EodReconciliationRuns.Where(x => x.ReportDate == reportDate).Select(x => x.Id);
+            query = query.Where(x => runIds.Contains(x.RunId));
+        }
+
+        return await query.OrderByDescending(x => x.CreatedAtUtc).Take(Math.Clamp(limit, 1, 500)).ToListAsync(cancellationToken);
     }
 }
 

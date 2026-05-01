@@ -18,6 +18,12 @@ builder.Services.AddScoped<ProcessModelRunService>();
 builder.Services.AddScoped<IReferenceDataIntegrityService, ReferenceDataIntegrityService>();
 builder.Services.AddScoped<IModelWeightPromotionService, ModelWeightPromotionService>();
 builder.Services.AddScoped<IFakeModelWeightGenerator, FakeModelWeightGenerator>();
+builder.Services.AddSingleton(new LmaxEodReportOptions());
+builder.Services.AddScoped<ILmaxEodReportImportService, LmaxEodReportImportService>();
+builder.Services.AddScoped<ILmaxReportPairConsistencyService, LmaxReportPairConsistencyService>();
+builder.Services.AddScoped<IEodReconciliationService, EodReconciliationService>();
+builder.Services.AddScoped<IEodPnlSummaryService, EodPnlSummaryService>();
+builder.Services.AddScoped<IFakeLmaxEodReportGenerator, FakeLmaxEodReportGenerator>();
 builder.Services.ConfigureHttpJsonOptions(options => options.SerializerOptions.Converters.Add(new JsonStringEnumConverter()));
 builder.Services.AddCors(options =>
 {
@@ -40,6 +46,7 @@ if (string.Equals(persistenceProvider, "SqlServerLocal", StringComparison.Ordina
     builder.Services.AddScoped<IMarketDataBarRepository, SqlServerMarketDataBarRepository>();
     builder.Services.AddScoped<IBarBuildRunRepository, SqlServerBarBuildRunRepository>();
     builder.Services.AddScoped<IModelWeightBatchRepository, SqlServerModelWeightBatchRepository>();
+    builder.Services.AddScoped<ILmaxEodReportRepository, SqlServerLmaxEodReportRepository>();
     builder.Services.AddScoped<IBrokerPositionProvider, SqlServerFakeBrokerPositionProvider>();
     builder.Services.AddScoped<IBarBuilderService, BarBuilderService>();
     builder.Services.AddScoped<LocalDatabaseInitializer>();
@@ -53,6 +60,7 @@ else if (string.Equals(persistenceProvider, "InMemory", StringComparison.Ordinal
     builder.Services.AddSingleton<IMarketDataBarRepository, InMemoryMarketDataBarRepository>();
     builder.Services.AddSingleton<IBarBuildRunRepository, InMemoryBarBuildRunRepository>();
     builder.Services.AddSingleton<IModelWeightBatchRepository, InMemoryModelWeightBatchRepository>();
+    builder.Services.AddSingleton<ILmaxEodReportRepository, InMemoryLmaxEodReportRepository>();
     builder.Services.AddSingleton<IBrokerPositionProvider, FakeBrokerPositionProvider>();
     builder.Services.AddSingleton<IBarBuilderService, BarBuilderService>();
 }
@@ -67,6 +75,19 @@ if (app.Environment.IsDevelopment())
 {
     app.UseCors("LocalUiDevelopment");
 }
+
+app.Use(async (context, next) =>
+{
+    try
+    {
+        await next();
+    }
+    catch (DomainRuleViolationException ex)
+    {
+        context.Response.StatusCode = StatusCodes.Status400BadRequest;
+        await context.Response.WriteAsJsonAsync(new { message = ex.Message });
+    }
+});
 
 await InitializeDatabaseAsync(app, persistenceProvider);
 ValidateSafety(app, persistenceProvider);
@@ -185,6 +206,114 @@ app.MapPost("/model-weight-batches/promote-ready", async (PromoteReadyModelWeigh
 {
     var results = await service.PromoteReadyBatchesAsync(ClampLimit(request.Limit), cancellationToken);
     return Results.Ok(results.Select(ToModelWeightPromotionResultDto));
+});
+
+app.MapGet("/lmax-eod/import-runs", async (ILmaxEodReportRepository repository, int? limit, DateOnly? reportDate, LmaxReportType? reportType, CancellationToken cancellationToken) =>
+{
+    var runs = await repository.GetImportRunsAsync(ClampLimit(limit), reportDate, reportType, cancellationToken);
+    return runs.Select(ToLmaxReportImportRunDto);
+});
+
+app.MapGet("/lmax-eod/import-runs/{id:guid}", async (Guid id, ILmaxEodReportRepository repository, CancellationToken cancellationToken) =>
+{
+    var runs = await repository.GetImportRunsAsync(500, null, null, cancellationToken);
+    var run = runs.FirstOrDefault(x => x.Id.Value == id);
+    return run is null ? Results.NotFound() : Results.Ok(ToLmaxReportImportRunDto(run));
+});
+
+app.MapGet("/lmax-eod/validation-issues", async (ILmaxEodReportRepository repository, int? limit, Guid? importRunId, CancellationToken cancellationToken) =>
+{
+    var issues = await repository.GetValidationIssuesAsync(ClampLimit(limit), importRunId is null ? null : new LmaxReportImportRunId(importRunId.Value), cancellationToken);
+    return issues.Select(ToLmaxReportValidationIssueDto);
+});
+
+app.MapGet("/lmax-eod/individual-trades", async (ILmaxEodReportRepository repository, DateOnly? reportDate, int? limit, CancellationToken cancellationToken) =>
+{
+    var trades = await repository.GetIndividualTradesAsync(reportDate, ClampLimit(limit), cancellationToken);
+    return trades.Select(ToLmaxIndividualTradeDto);
+});
+
+app.MapGet("/lmax-eod/trade-summaries", async (ILmaxEodReportRepository repository, DateOnly? reportDate, int? limit, CancellationToken cancellationToken) =>
+{
+    var summaries = await repository.GetTradeSummariesAsync(reportDate, ClampLimit(limit), cancellationToken);
+    return summaries.Select(ToLmaxTradeSummaryDto);
+});
+
+app.MapGet("/lmax-eod/currency-wallets", async (ILmaxEodReportRepository repository, DateOnly? reportDate, int? limit, CancellationToken cancellationToken) =>
+{
+    var wallets = await repository.GetCurrencyWalletsAsync(reportDate, ClampLimit(limit), cancellationToken);
+    return wallets.Select(ToLmaxCurrencyWalletDto);
+});
+
+app.MapPost("/lmax-eod/generate-fake", async (GenerateFakeLmaxEodRequest request, IFakeLmaxEodReportGenerator generator, CancellationToken cancellationToken) =>
+{
+    var result = await generator.GenerateAsync(request.ReportDate, request.VenueName ?? "LMAX", request.BrokerAccountCode ?? "LMAX_DEMO_LOCAL", request.MutationMode ?? LmaxEodMutationMode.None, cancellationToken);
+    return Results.Ok(ToFakeLmaxEodReportGenerationDto(result));
+});
+
+app.MapPost("/lmax-eod/import-generated", async (ImportGeneratedLmaxEodRequest request, ILmaxEodReportImportService importer, CancellationToken cancellationToken) =>
+{
+    var root = Path.GetFullPath(Path.Combine("data", "lmax-eod", "generated"));
+    var reportDate = request.ReportDate;
+    var stamp = reportDate.ToString("yyyyMMdd");
+    var individual = Directory.GetFiles(root, $"individual-trades-{stamp}_*.csv").OrderByDescending(File.GetLastWriteTimeUtc).FirstOrDefault();
+    var summary = Directory.GetFiles(root, $"trades-{stamp}_*.csv").OrderByDescending(File.GetLastWriteTimeUtc).FirstOrDefault();
+    var wallet = Directory.GetFiles(root, $"currency-wallets-{stamp}_*.csv").OrderByDescending(File.GetLastWriteTimeUtc).FirstOrDefault();
+    if (individual is null || summary is null || wallet is null)
+    {
+        return Results.NotFound(new { message = "Generated LMAX EOD report set was not found for the requested date." });
+    }
+
+    var result = await importer.ImportReportSetAsync(individual, summary, wallet, reportDate, request.VenueName ?? "LMAX", request.BrokerAccountCode ?? "LMAX_DEMO_LOCAL", cancellationToken);
+    return Results.Ok(ToLmaxReportImportResultDto(result));
+});
+
+app.MapPost("/lmax-eod/import-report-set", async (ImportLmaxReportSetRequest request, ILmaxEodReportImportService importer, CancellationToken cancellationToken) =>
+{
+    var result = await importer.ImportReportSetAsync(request.IndividualTradesPath, request.TradesSummaryPath, request.CurrencyWalletsPath, request.ReportDate, request.VenueName ?? "LMAX", request.BrokerAccountCode ?? "LMAX_DEMO_LOCAL", cancellationToken);
+    return Results.Ok(ToLmaxReportImportResultDto(result));
+});
+
+app.MapPost("/lmax-eod/import-individual-trades", async (ImportSingleLmaxReportRequest request, ILmaxEodReportImportService importer, CancellationToken cancellationToken) =>
+{
+    var result = await importer.ImportIndividualTradesAsync(request.FilePath, request.ReportDate, request.VenueName ?? "LMAX", request.BrokerAccountCode ?? "LMAX_DEMO_LOCAL", cancellationToken);
+    return Results.Ok(ToLmaxReportImportResultDto(result));
+});
+
+app.MapPost("/lmax-eod/import-trades-summary", async (ImportSingleLmaxReportRequest request, ILmaxEodReportImportService importer, CancellationToken cancellationToken) =>
+{
+    var result = await importer.ImportTradesSummaryAsync(request.FilePath, request.ReportDate, request.VenueName ?? "LMAX", request.BrokerAccountCode ?? "LMAX_DEMO_LOCAL", cancellationToken);
+    return Results.Ok(ToLmaxReportImportResultDto(result));
+});
+
+app.MapPost("/lmax-eod/import-currency-wallets", async (ImportSingleLmaxReportRequest request, ILmaxEodReportImportService importer, CancellationToken cancellationToken) =>
+{
+    var result = await importer.ImportCurrencyWalletsAsync(request.FilePath, request.ReportDate, request.VenueName ?? "LMAX", request.BrokerAccountCode ?? "LMAX_DEMO_LOCAL", cancellationToken);
+    return Results.Ok(ToLmaxReportImportResultDto(result));
+});
+
+app.MapPost("/eod-reconciliation/run", async (RunEodReconciliationRequest request, IEodReconciliationService service, CancellationToken cancellationToken) =>
+{
+    var result = await service.RunAsync(request.ReportDate, request.VenueName ?? "LMAX", request.BrokerAccountCode ?? "LMAX_DEMO_LOCAL", cancellationToken);
+    return Results.Ok(ToEodReconciliationResultDto(result));
+});
+
+app.MapGet("/eod-reconciliation/runs", async (ILmaxEodReportRepository repository, DateOnly? reportDate, int? limit, CancellationToken cancellationToken) =>
+{
+    var runs = await repository.GetEodReconciliationRunsAsync(reportDate, ClampLimit(limit), cancellationToken);
+    return runs.Select(ToEodReconciliationRunDto);
+});
+
+app.MapGet("/eod-reconciliation/breaks", async (ILmaxEodReportRepository repository, DateOnly? reportDate, int? limit, CancellationToken cancellationToken) =>
+{
+    var breaks = await repository.GetEodReconciliationBreaksAsync(reportDate, ClampLimit(limit), cancellationToken);
+    return breaks.Select(ToEodReconciliationBreakDto);
+});
+
+app.MapGet("/eod-pnl/summary", async (IEodPnlSummaryService service, DateOnly reportDate, string? venueName, string? brokerAccountCode, CancellationToken cancellationToken) =>
+{
+    var summary = await service.GetSummaryAsync(reportDate, venueName ?? "LMAX", brokerAccountCode ?? "LMAX_DEMO_LOCAL", cancellationToken);
+    return summary is null ? Results.NotFound() : Results.Ok(ToEodPnlSummaryDto(summary));
 });
 
 app.MapPost("/model-runs", async (CreateModelRunRequest request, IIntradayRepository repository, IClock clock, CancellationToken cancellationToken) =>
@@ -540,6 +669,39 @@ static ModelRunDto ToModelRunDto(ModelRun x)
         x.IsProcessed,
         x.TargetQuantityMode.ToString());
 
+static LmaxReportImportRunDto ToLmaxReportImportRunDto(LmaxReportImportRun x)
+    => new(x.Id.Value.ToString("D"), x.ReportType.ToString(), x.ReportDate, x.VenueId.Value.ToString("D"), x.BrokerAccountId.Value.ToString("D"), x.Status.ToString(), x.FileName, x.FilePath, x.FileHash, x.RowCount, x.CreatedAtUtc, x.StartedAtUtc, x.CompletedAtUtc, x.ArchivedPath, x.RejectedPath, x.Message);
+
+static LmaxReportValidationIssueDto ToLmaxReportValidationIssueDto(LmaxReportValidationIssue x)
+    => new(x.Id.ToString("D"), x.ImportRunId.Value.ToString("D"), x.IssueType.ToString(), x.Severity.ToString(), x.Message, x.RowNumber, x.RawLine, x.CreatedAtUtc);
+
+static LmaxReportImportResultDto ToLmaxReportImportResultDto(LmaxReportImportResult x)
+    => new(x.ImportRunId.Value.ToString("D"), x.Status.ToString(), x.RowCount, x.BlockingIssueCount, x.Issues.Select(ToLmaxReportValidationIssueDto).ToList(), x.Message);
+
+static LmaxIndividualTradeDto ToLmaxIndividualTradeDto(LmaxIndividualTrade x)
+    => new(x.Id.Value.ToString("D"), x.ImportRunId.Value.ToString("D"), x.ReportDate, x.VenueId.Value.ToString("D"), x.BrokerAccountId.Value.ToString("D"), x.ExecutionId, x.MtfExecutionId, x.TimestampUtc, x.TradeQuantity, x.TradePrice, x.TradeDate, x.LmaxInstrumentId, x.LmaxSymbol, x.InstrumentId?.Value.ToString("D"), x.InstructionId, x.OrderId, x.OrderType, x.TotalProfitLoss, x.TotalCommission, x.AccountId, x.UnitsBoughtSold, x.NotionalValue, x.TradeUti, x.CreatedAtUtc);
+
+static LmaxTradeSummaryDto ToLmaxTradeSummaryDto(LmaxTradeSummary x)
+    => new(x.Id.Value.ToString("D"), x.ImportRunId.Value.ToString("D"), x.ReportDate, x.VenueId.Value.ToString("D"), x.BrokerAccountId.Value.ToString("D"), x.DateTimeUtc, x.Instrument, x.InstrumentId?.Value.ToString("D"), x.Type, x.Currency, x.Contracts, x.AveragePrice, x.CommissionRounded, x.NotionalValue, x.LmaxSymbol, x.UserPlacingOrder, x.CommissionFullPrecision, x.AccountId, x.CreatedAtUtc);
+
+static LmaxCurrencyWalletDto ToLmaxCurrencyWalletDto(LmaxCurrencyWallet x)
+    => new(x.Id.Value.ToString("D"), x.ImportRunId.Value.ToString("D"), x.ReportDate, x.VenueId.Value.ToString("D"), x.BrokerAccountId.Value.ToString("D"), x.Currency, x.BalanceNetDeposits, x.Adjustments, x.InterAccountTransfers, x.ProfitLoss, x.Commission, x.Dividends, x.Financing, x.WalletBalance, x.RateToBaseCcy, x.BaseCurrency, x.BalanceNetDepositsBaseUsd, x.AdjustmentsBaseUsd, x.InterAccountTransfersBaseUsd, x.ProfitLossBaseUsd, x.CommissionBaseUsd, x.DividendsBaseUsd, x.FinancingBaseUsd, x.WalletBalanceBaseUsd, x.AccountId, x.CreatedAtUtc);
+
+static FakeLmaxEodReportGenerationDto ToFakeLmaxEodReportGenerationDto(FakeLmaxEodReportGenerationResult x)
+    => new(x.ReportDate, x.IndividualTradesPath, x.TradesSummaryPath, x.CurrencyWalletsPath, x.IndividualTradeCount, x.TradeSummaryCount, x.CurrencyWalletCount, x.MutationMode.ToString());
+
+static EodReconciliationResultDto ToEodReconciliationResultDto(EodReconciliationResult x)
+    => new(x.RunId.ToString("D"), x.ReportDate, x.BreakCount, x.BlockingBreakCount, x.Breaks.Select(ToEodReconciliationBreakDto).ToList());
+
+static EodReconciliationRunDto ToEodReconciliationRunDto(EodReconciliationRun x)
+    => new(x.Id.ToString("D"), x.ReportDate, x.VenueId.Value.ToString("D"), x.BrokerAccountId.Value.ToString("D"), x.CreatedAtUtc, x.HasBlockingBreaks);
+
+static EodReconciliationBreakDto ToEodReconciliationBreakDto(EodReconciliationBreak x)
+    => new(x.Id.ToString("D"), x.RunId.ToString("D"), x.Type.ToString(), x.Severity.ToString(), x.Status.ToString(), x.InstrumentId?.Value.ToString("D"), x.Description, x.BrokerExecutionId, x.InternalFillId, x.CreatedAtUtc);
+
+static EodPnlSummaryDto ToEodPnlSummaryDto(EodPnlSummary x)
+    => new(x.ReportDate, x.VenueName, x.BrokerAccountCode, x.TotalWalletBalanceUsd, x.TotalProfitLossUsd, x.TotalCommissionUsd, x.TotalDividendsUsd, x.TotalFinancingUsd, x.TotalNetPnlUsd, x.CurrencyRows.Select(row => new EodPnlCurrencyRowDto(row.Currency, row.WalletBalance, row.RateToBaseCcy, row.WalletBalanceBaseUsd, row.ProfitLoss, row.ProfitLossBaseUsd, row.Commission, row.CommissionBaseUsd, row.Dividends, row.DividendsBaseUsd, row.Financing, row.FinancingBaseUsd)).ToList());
+
 static ModelWeightBatchDto ToModelWeightBatchDto(ModelWeightBatch x)
     => new(
         x.Id.Value.ToString("D"),
@@ -690,6 +852,18 @@ public sealed record HealthDto(string Application, string Environment, string Pe
 public sealed record ReferenceDataIntegrityDto(DateTimeOffset CheckedAtUtc, int BlockingIssueCount, int WarningIssueCount, IReadOnlyList<ReferenceDataIntegrityIssueDto> Issues);
 public sealed record ReferenceDataIntegrityIssueDto(string Id, string Type, string Severity, string Status, string Key, string Description, DateTimeOffset CreatedAtUtc);
 public sealed record ModelRunDto(string Id, string FundId, string ModelName, DateTimeOffset AsOfUtc, DateTimeOffset ReceivedAtUtc, DateTimeOffset EffectiveAtUtc, int FrequencyMinutes, decimal NavUsd, string Status, string InputHash, string SourceFileName, bool IsProcessed, string TargetQuantityMode);
+public sealed record LmaxReportImportRunDto(string Id, string ReportType, DateOnly ReportDate, string VenueId, string BrokerAccountId, string Status, string? FileName, string? FilePath, string? FileHash, int? RowCount, DateTimeOffset CreatedAtUtc, DateTimeOffset? StartedAtUtc, DateTimeOffset? CompletedAtUtc, string? ArchivedPath, string? RejectedPath, string? Message);
+public sealed record LmaxReportValidationIssueDto(string Id, string ImportRunId, string IssueType, string Severity, string Message, int? RowNumber, string? RawLine, DateTimeOffset CreatedAtUtc);
+public sealed record LmaxReportImportResultDto(string ImportRunId, string Status, int RowCount, int BlockingIssueCount, IReadOnlyList<LmaxReportValidationIssueDto> Issues, string Message);
+public sealed record LmaxIndividualTradeDto(string Id, string ImportRunId, DateOnly ReportDate, string VenueId, string BrokerAccountId, string ExecutionId, string? MtfExecutionId, DateTimeOffset TimestampUtc, decimal TradeQuantity, decimal TradePrice, DateOnly TradeDate, string? LmaxInstrumentId, string LmaxSymbol, string? InstrumentId, string? InstructionId, string? OrderId, string OrderType, decimal? TotalProfitLoss, decimal TotalCommission, string AccountId, decimal UnitsBoughtSold, decimal NotionalValue, string TradeUti, DateTimeOffset CreatedAtUtc);
+public sealed record LmaxTradeSummaryDto(string Id, string ImportRunId, DateOnly ReportDate, string VenueId, string BrokerAccountId, DateTimeOffset DateTimeUtc, string Instrument, string? InstrumentId, string Type, string Currency, decimal Contracts, decimal AveragePrice, decimal CommissionRounded, decimal NotionalValue, string LmaxSymbol, string? UserPlacingOrder, decimal CommissionFullPrecision, string AccountId, DateTimeOffset CreatedAtUtc);
+public sealed record LmaxCurrencyWalletDto(string Id, string ImportRunId, DateOnly ReportDate, string VenueId, string BrokerAccountId, string Currency, decimal BalanceNetDeposits, decimal Adjustments, decimal InterAccountTransfers, decimal ProfitLoss, decimal Commission, decimal Dividends, decimal Financing, decimal WalletBalance, decimal RateToBaseCcy, string BaseCurrency, decimal BalanceNetDepositsBaseUsd, decimal AdjustmentsBaseUsd, decimal InterAccountTransfersBaseUsd, decimal ProfitLossBaseUsd, decimal CommissionBaseUsd, decimal DividendsBaseUsd, decimal FinancingBaseUsd, decimal WalletBalanceBaseUsd, string AccountId, DateTimeOffset CreatedAtUtc);
+public sealed record FakeLmaxEodReportGenerationDto(DateOnly ReportDate, string IndividualTradesPath, string TradesSummaryPath, string CurrencyWalletsPath, int IndividualTradeCount, int TradeSummaryCount, int CurrencyWalletCount, string MutationMode);
+public sealed record EodReconciliationRunDto(string Id, DateOnly ReportDate, string VenueId, string BrokerAccountId, DateTimeOffset CreatedAtUtc, bool HasBlockingBreaks);
+public sealed record EodReconciliationBreakDto(string Id, string RunId, string Type, string Severity, string Status, string? InstrumentId, string Description, string? BrokerExecutionId, string? InternalFillId, DateTimeOffset CreatedAtUtc);
+public sealed record EodReconciliationResultDto(string RunId, DateOnly ReportDate, int BreakCount, int BlockingBreakCount, IReadOnlyList<EodReconciliationBreakDto> Breaks);
+public sealed record EodPnlCurrencyRowDto(string Currency, decimal WalletBalance, decimal RateToBaseCcy, decimal WalletBalanceBaseUsd, decimal ProfitLoss, decimal ProfitLossBaseUsd, decimal Commission, decimal CommissionBaseUsd, decimal Dividends, decimal DividendsBaseUsd, decimal Financing, decimal FinancingBaseUsd);
+public sealed record EodPnlSummaryDto(DateOnly ReportDate, string VenueName, string BrokerAccountCode, decimal TotalWalletBalanceUsd, decimal TotalProfitLossUsd, decimal TotalCommissionUsd, decimal TotalDividendsUsd, decimal TotalFinancingUsd, decimal TotalNetPnlUsd, IReadOnlyList<EodPnlCurrencyRowDto> CurrencyRows);
 public sealed record ModelWeightBatchDto(string Id, string ExternalBatchId, string SourceSystem, string FundCode, string? FundId, string ModelName, DateTimeOffset AsOfUtc, DateTimeOffset EffectiveAtUtc, int FrequencyMinutes, decimal NavUsd, string TargetQuantityMode, string Status, int? ExpectedRowCount, string? ContentHash, DateTimeOffset CreatedAtUtc, DateTimeOffset? ReadyAtUtc, DateTimeOffset? AcceptedAtUtc, DateTimeOffset? PromotedAtUtc, DateTimeOffset? RejectedAtUtc, string? PromotedModelRunId, string? Message);
 public sealed record ModelWeightRowDto(string Id, string BatchId, string RawSecurityId, string Symbol, string? InstrumentId, decimal Weight, DateTimeOffset CreatedAtUtc);
 public sealed record ModelWeightValidationIssueDto(string Id, string BatchId, string IssueType, string Severity, string Message, string? RowId, int? RowNumber, DateTimeOffset CreatedAtUtc);
@@ -711,6 +885,11 @@ public sealed record ModelRunWeightRequest(string Symbol, decimal Weight, string
 public sealed record CreateFakeModelWeightBatchApiRequest(string? ExternalBatchId, ModelWeightSourceSystem SourceSystem, string FundCode, string ModelName, DateTimeOffset? AsOfUtc, DateTimeOffset? EffectiveAtUtc, int FrequencyMinutes, decimal NavUsd, TargetQuantityMode TargetQuantityMode, ModelWeightBatchStatus Status, List<CreateFakeModelWeightRowApiRequest>? Weights);
 public sealed record CreateFakeModelWeightRowApiRequest(string RawSecurityId, string Symbol, decimal Weight);
 public sealed record PromoteReadyModelWeightBatchesRequest(int? Limit);
+public sealed record GenerateFakeLmaxEodRequest(DateOnly ReportDate, string? VenueName, string? BrokerAccountCode, LmaxEodMutationMode? MutationMode);
+public sealed record ImportGeneratedLmaxEodRequest(DateOnly ReportDate, string? VenueName, string? BrokerAccountCode);
+public sealed record ImportLmaxReportSetRequest(string IndividualTradesPath, string TradesSummaryPath, string CurrencyWalletsPath, DateOnly ReportDate, string? VenueName, string? BrokerAccountCode);
+public sealed record ImportSingleLmaxReportRequest(string FilePath, DateOnly ReportDate, string? VenueName, string? BrokerAccountCode);
+public sealed record RunEodReconciliationRequest(DateOnly ReportDate, string? VenueName, string? BrokerAccountCode);
 public sealed record KillSwitchRequest(string? Reason);
 public sealed record FakeSnapshotsRequest(string? InstrumentSymbol, string? VenueName, DateTimeOffset StartUtc, int IntervalSeconds, int Count, decimal Bid, decimal Ask, decimal? BidStep, decimal? AskStep);
 public sealed record BuildBarsRequest(string? VenueName, BarTimeframe Timeframe, DateTimeOffset StartUtc, DateTimeOffset EndUtc);

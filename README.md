@@ -371,13 +371,43 @@ curl -X POST http://localhost:5050/market-data/build-bars `
 curl "http://localhost:5050/market-data/bars?instrument=EURUSD&venue=LMAX&timeframe=FifteenMinutes"
 ```
 
+## LMAX EOD Reports
+
+The platform can import the actual local LMAX EOD report schemas without connecting to LMAX:
+
+- `individual-trades.csv`: primary execution source of truth, including `Execution ID`, `Order ID`, `Instruction ID`, `Trade UTI`, quantities, price, commission, notional, and account id
+- `trades.csv`: order/trade rollup control report; it has no execution id, order id, instruction id, or UTI, so it is reconciled by conservative totals and per-symbol totals
+- `currency-wallets.csv`: wallet/cash/PnL by currency, not an instrument position report
+
+Parsing uses invariant-culture decimals. `individual-trades.csv` timestamps use `dd-MM-yyyy HH:mm:ss.fff`; trade dates use `dd-MM-yyyy`; `trades.csv` uses `M/d/yyyy HH:mm`. `LmaxEodReports:TimestampTimeZone` defaults to `UTC`; local machine timezone is not assumed.
+
+LMAX slash symbols are resolved through `InstrumentAlias` rows with source `LMAX_REPORT`. The local seed includes `EUR/USD -> EURUSD` with external instrument id `4001`; the model supports adding the other received LMAX aliases as reference data without changing execution behavior.
+
+Currency wallets convert every wallet/PnL component to USD as `value * Rate to Base CCY`. `TotalNetPnlUsd = TotalProfitLossUsd + TotalCommissionUsd + TotalDividendsUsd + TotalFinancingUsd`. This is broker wallet/PnL summary, not full strategy attribution.
+
+EOD reconciliation compares internal fills against `LmaxIndividualTrades` by `Fill.BrokerExecutionId = Execution ID`. A normal no-fill order is not a break just because it is absent from `individual-trades.csv`; only actual internal fills missing at LMAX, or LMAX executions missing internally, are blocking.
+
+Fake report generation writes actual LMAX-shaped CSVs under `data/lmax-eod/generated`. Mutation modes include dropped/unknown executions, quantity/price/side changes, summary changes, and wallet balance/rate changes for local validation.
+
+Useful local commands:
+
+```powershell
+.\scripts\generate-fake-lmax-eod-report.ps1
+.\scripts\import-generated-lmax-eod-report.ps1
+.\scripts\run-eod-reconciliation.ps1
+.\scripts\get-eod-pnl-summary.ps1
+.\scripts\smoke-lmax-eod-local.ps1
+```
+
+The API endpoints are under `/lmax-eod/*`, `/eod-reconciliation/*`, and `/eod-pnl/summary`. They are local-only and do not perform external calls.
+
 ## Known Limitations
 
 - No real LMAX connectivity
 - No live broker connectivity
 - No live market data connectivity
 - No external market data connectivity
-- Only FX spot `EURUSD` is seeded
+- Only FX spot `EURUSD` is actively seeded for local trading; EOD report alias support is currently local/reference-data oriented
 - Only one fund and one broker account are seeded
 - Only `MarketImmediate` is implemented
 - Only fake/local market data is implemented
@@ -387,7 +417,8 @@ curl "http://localhost:5050/market-data/bars?instrument=EURUSD&venue=LMAX&timefr
 - Qubes/GA database writer is not implemented yet
 - UI is a local operator cockpit only; no authentication or production UI hardening yet
 - RDS is not configured
-- EOD LMAX report import is not implemented
+- Real LMAX report acquisition is not implemented; only local file import/generation exists
+- No final official instrument position report is available yet; EOD position checks use execution-derived position deltas
 - Advanced execution algos are not implemented
 - Production/RDS duplicate reference-data remediation is not implemented yet
 - Old local databases may contain stale demo model runs from earlier seed behavior; `scripts/reset-local-db.ps1 -SeedDemoData` recreates a clean local database where demo seed contains fake snapshots only.

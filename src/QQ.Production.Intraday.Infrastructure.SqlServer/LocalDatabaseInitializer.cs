@@ -27,12 +27,9 @@ public sealed class LocalDatabaseInitializer(IntradayDbContext dbContext, IClock
             dbContext.BrokerAccounts.Add(seedAccount with { FundId = fund.Id });
         }
 
-        var seedInstrument = seeded.Instruments.Single();
-        var instrument = await dbContext.Instruments.FirstOrDefaultAsync(x => x.Symbol == seedInstrument.Symbol && x.AssetClass == seedInstrument.AssetClass, cancellationToken);
-        if (instrument is null)
+        foreach (var seedInstrument in seeded.Instruments)
         {
-            instrument = seedInstrument;
-            dbContext.Instruments.Add(instrument);
+            await UpsertInstrumentAsync(seedInstrument, cancellationToken);
         }
 
         var seedVenue = seeded.Venues.Single();
@@ -43,12 +40,20 @@ public sealed class LocalDatabaseInitializer(IntradayDbContext dbContext, IClock
             dbContext.Venues.Add(venue);
         }
 
-        var seedMapping = seeded.VenueInstrumentMappings.Single();
-        if (!await dbContext.VenueInstrumentMappings.AnyAsync(x => x.VenueId == venue.Id && x.InstrumentId == instrument.Id, cancellationToken)
-            && !await dbContext.VenueInstrumentMappings.AnyAsync(x => x.VenueId == venue.Id && x.VenueSymbol == seedMapping.VenueSymbol, cancellationToken))
+        await dbContext.SaveChangesAsync(cancellationToken);
+
+        foreach (var seedMapping in seeded.VenueInstrumentMappings)
         {
-            dbContext.VenueInstrumentMappings.Add(seedMapping with { VenueId = venue.Id, InstrumentId = instrument.Id });
+            var mappingInstrument = await GetInstrumentByIdAsync(seedMapping.InstrumentId, cancellationToken);
+            await UpsertVenueInstrumentMappingAsync(seedMapping with { VenueId = venue.Id, InstrumentId = mappingInstrument.Id }, cancellationToken);
         }
+
+        foreach (var seedAlias in seeded.InstrumentAliases)
+        {
+            await UpsertInstrumentAliasAsync(seedAlias, cancellationToken);
+        }
+
+        await SeedLmaxReportInstrumentUniverseAsync(venue, cancellationToken);
 
         if (!await dbContext.NavSnapshots.AnyAsync(x => x.FundId == fund.Id && x.Source == NavSource.Seed, cancellationToken))
         {
@@ -64,6 +69,7 @@ public sealed class LocalDatabaseInitializer(IntradayDbContext dbContext, IClock
         }
 
         var seedInstrumentRiskLimit = seeded.InstrumentRiskLimits.Single();
+        var instrument = await dbContext.Instruments.SingleAsync(x => x.Symbol == "EURUSD" && x.AssetClass == AssetClass.FxSpot, cancellationToken);
         if (!await dbContext.InstrumentRiskLimits.AnyAsync(x => x.RiskLimitSetId == riskLimitSet.Id && x.InstrumentId == instrument.Id, cancellationToken))
         {
             dbContext.InstrumentRiskLimits.Add(seedInstrumentRiskLimit with { RiskLimitSetId = riskLimitSet.Id, InstrumentId = instrument.Id });
@@ -156,6 +162,162 @@ public sealed class LocalDatabaseInitializer(IntradayDbContext dbContext, IClock
         var id = Guid.Parse($"88888888-8888-8888-8888-88888888888{(int)day:X}");
         return new TradingWindow(id, fundId, "IntradayFxModel", "UTC", day, TimeOnly.MinValue, new TimeOnly(23, 59, 59), new TimeOnly(23, 59, 59), null);
     }
+
+    private async Task SeedLmaxReportInstrumentUniverseAsync(Venue venue, CancellationToken cancellationToken)
+    {
+        var now = new DateTimeOffset(2026, 04, 29, 09, 00, 00, TimeSpan.Zero);
+        var instruments = new[]
+        {
+            new ReportInstrumentSeed("AUDUSD", "AUD/USD", "4007", "AUD", "USD"),
+            new ReportInstrumentSeed("EURUSD", "EUR/USD", "4001", "EUR", "USD"),
+            new ReportInstrumentSeed("GBPUSD", "GBP/USD", "4002", "GBP", "USD"),
+            new ReportInstrumentSeed("NZDUSD", "NZD/USD", "100613", "NZD", "USD"),
+            new ReportInstrumentSeed("USDCAD", "USD/CAD", "4013", "USD", "CAD"),
+            new ReportInstrumentSeed("USDCHF", "USD/CHF", "4010", "USD", "CHF"),
+            new ReportInstrumentSeed("USDJPY", "USD/JPY", "4004", "USD", "JPY")
+        };
+
+        foreach (var seed in instruments)
+        {
+            var instrument = await FindInstrumentAsync(seed.InternalSymbol, AssetClass.FxSpot, cancellationToken);
+
+            if (instrument is null)
+            {
+                instrument = new Instrument(
+                    StableInstrumentId(seed.ExternalInstrumentId),
+                    seed.InternalSymbol,
+                    AssetClass.FxSpot,
+                    new Currency(seed.BaseCurrency),
+                    new Currency(seed.QuoteCurrency),
+                    seed.QuoteCurrency == "JPY" ? 3 : 5,
+                    2,
+                    IsEnabled: seed.InternalSymbol == "EURUSD");
+                dbContext.Instruments.Add(instrument);
+            }
+
+            await UpsertVenueInstrumentMappingAsync(new VenueInstrumentMapping(
+                StableVenueInstrumentId(seed.ExternalInstrumentId),
+                venue.Id,
+                instrument.Id,
+                seed.InternalSymbol,
+                seed.ExternalSymbol,
+                10000m,
+                0.1m,
+                0.1m,
+                seed.QuoteCurrency == "JPY" ? 0.001m : 0.00001m,
+                IsEnabled: seed.InternalSymbol == "EURUSD"), cancellationToken);
+
+            await UpsertInstrumentAliasAsync(new InstrumentAlias(
+                StableInstrumentAliasId(seed.ExternalInstrumentId),
+                instrument.Id,
+                "LMAX_REPORT",
+                seed.ExternalSymbol,
+                seed.ExternalInstrumentId,
+                true,
+                now), cancellationToken);
+        }
+    }
+
+    private async Task<Instrument> UpsertInstrumentAsync(Instrument seedInstrument, CancellationToken cancellationToken)
+    {
+        var existing = await FindInstrumentAsync(seedInstrument.Symbol, seedInstrument.AssetClass, cancellationToken);
+        if (existing is not null)
+        {
+            return existing;
+        }
+
+        dbContext.Instruments.Add(seedInstrument);
+        return seedInstrument;
+    }
+
+    private async Task<Instrument?> FindInstrumentAsync(string symbol, AssetClass assetClass, CancellationToken cancellationToken)
+    {
+        var local = dbContext.Instruments.Local.FirstOrDefault(x => x.Symbol == symbol && x.AssetClass == assetClass);
+        return local ?? await dbContext.Instruments.FirstOrDefaultAsync(x => x.Symbol == symbol && x.AssetClass == assetClass, cancellationToken);
+    }
+
+    private async Task<Instrument> GetInstrumentByIdAsync(InstrumentId instrumentId, CancellationToken cancellationToken)
+    {
+        var local = dbContext.Instruments.Local.FirstOrDefault(x => x.Id == instrumentId);
+        return local ?? await dbContext.Instruments.SingleAsync(x => x.Id == instrumentId, cancellationToken);
+    }
+
+    private async Task UpsertVenueInstrumentMappingAsync(VenueInstrumentMapping candidate, CancellationToken cancellationToken)
+    {
+        var byInstrument = await FindVenueInstrumentMappingByInstrumentAsync(candidate.VenueId, candidate.InstrumentId, cancellationToken);
+        var bySymbol = await FindVenueInstrumentMappingBySymbolAsync(candidate.VenueId, candidate.VenueSymbol, cancellationToken);
+        var existing = ResolveReferenceRow(byInstrument, bySymbol, "venue instrument mapping", candidate.VenueSymbol);
+
+        if (existing is null)
+        {
+            dbContext.VenueInstrumentMappings.Add(candidate);
+        }
+    }
+
+    private async Task<VenueInstrumentMapping?> FindVenueInstrumentMappingByInstrumentAsync(VenueId venueId, InstrumentId instrumentId, CancellationToken cancellationToken)
+    {
+        var local = dbContext.VenueInstrumentMappings.Local.FirstOrDefault(x => x.VenueId == venueId && x.InstrumentId == instrumentId);
+        return local ?? await dbContext.VenueInstrumentMappings.FirstOrDefaultAsync(x => x.VenueId == venueId && x.InstrumentId == instrumentId, cancellationToken);
+    }
+
+    private async Task<VenueInstrumentMapping?> FindVenueInstrumentMappingBySymbolAsync(VenueId venueId, string venueSymbol, CancellationToken cancellationToken)
+    {
+        var local = dbContext.VenueInstrumentMappings.Local.FirstOrDefault(x => x.VenueId == venueId && x.VenueSymbol == venueSymbol);
+        return local ?? await dbContext.VenueInstrumentMappings.FirstOrDefaultAsync(x => x.VenueId == venueId && x.VenueSymbol == venueSymbol, cancellationToken);
+    }
+
+    private async Task UpsertInstrumentAliasAsync(InstrumentAlias candidate, CancellationToken cancellationToken)
+    {
+        var bySymbol = await FindInstrumentAliasBySymbolAsync(candidate.Source, candidate.ExternalSymbol, cancellationToken);
+        var byInstrumentId = string.IsNullOrWhiteSpace(candidate.ExternalInstrumentId)
+            ? null
+            : await FindInstrumentAliasByExternalInstrumentIdAsync(candidate.Source, candidate.ExternalInstrumentId, cancellationToken);
+        var existing = ResolveReferenceRow(bySymbol, byInstrumentId, "instrument alias", $"{candidate.Source}:{candidate.ExternalSymbol}/{candidate.ExternalInstrumentId}");
+
+        if (existing is null)
+        {
+            dbContext.InstrumentAliases.Add(candidate);
+        }
+    }
+
+    private async Task<InstrumentAlias?> FindInstrumentAliasBySymbolAsync(string source, string externalSymbol, CancellationToken cancellationToken)
+    {
+        var local = dbContext.InstrumentAliases.Local.FirstOrDefault(x => x.Source == source && x.ExternalSymbol == externalSymbol);
+        return local ?? await dbContext.InstrumentAliases.FirstOrDefaultAsync(x => x.Source == source && x.ExternalSymbol == externalSymbol, cancellationToken);
+    }
+
+    private async Task<InstrumentAlias?> FindInstrumentAliasByExternalInstrumentIdAsync(string source, string externalInstrumentId, CancellationToken cancellationToken)
+    {
+        var local = dbContext.InstrumentAliases.Local.FirstOrDefault(x => x.Source == source && x.ExternalInstrumentId == externalInstrumentId);
+        return local ?? await dbContext.InstrumentAliases.FirstOrDefaultAsync(x => x.Source == source && x.ExternalInstrumentId == externalInstrumentId, cancellationToken);
+    }
+
+    private static T? ResolveReferenceRow<T>(T? first, T? second, string referenceType, string key)
+        where T : class
+    {
+        if (first is not null && second is not null && !ReferenceEquals(first, second) && !Equals(first, second))
+        {
+            throw new DomainRuleViolationException($"Ambiguous seeded {referenceType} for {key}.");
+        }
+
+        return first ?? second;
+    }
+
+    private static InstrumentId StableInstrumentId(string externalInstrumentId)
+        => new(Guid.Parse($"11111111-1111-1111-1111-{int.Parse(externalInstrumentId):D12}"));
+
+    private static VenueInstrumentId StableVenueInstrumentId(string externalInstrumentId)
+        => new(Guid.Parse($"22222222-2222-2222-2222-{int.Parse(externalInstrumentId):D12}"));
+
+    private static InstrumentAliasId StableInstrumentAliasId(string externalInstrumentId)
+        => new(Guid.Parse($"33333333-3333-3333-3333-{int.Parse(externalInstrumentId):D12}"));
+
+    private sealed record ReportInstrumentSeed(
+        string InternalSymbol,
+        string ExternalSymbol,
+        string ExternalInstrumentId,
+        string BaseCurrency,
+        string QuoteCurrency);
 }
 
 public sealed class IntradayDbContextFactory : IDesignTimeDbContextFactory<IntradayDbContext>

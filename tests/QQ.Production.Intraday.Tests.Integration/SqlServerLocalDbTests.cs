@@ -41,15 +41,17 @@ public sealed class SqlServerLocalDbTests
         await using var fixture = await LocalDbFixture.CreateAsync();
         var state = await fixture.IntradayRepository.LoadStateAsync(CancellationToken.None);
         var provider = new FakeMarketDataProvider(fixture.Clock);
-        var snapshots = await provider.GetSnapshotsAsync(state.Instruments.Single(), state.Venues.Single(), Now.AddMinutes(-15), TimeSpan.FromMinutes(1), 3, 1.1m, 1.1002m, 0.0001m, 0.0001m, CancellationToken.None);
+        var instrument = EurUsd(state);
+        var venue = Lmax(state);
+        var snapshots = await provider.GetSnapshotsAsync(instrument, venue, Now.AddMinutes(-15), TimeSpan.FromMinutes(1), 3, 1.1m, 1.1002m, 0.0001m, 0.0001m, CancellationToken.None);
         await fixture.SnapshotRepository.AddRangeAsync(snapshots, CancellationToken.None);
 
-        var latest = await fixture.SnapshotRepository.GetLatestAsync(state.Instruments.Single().Id, state.Venues.Single().Id, CancellationToken.None);
+        var latest = await fixture.SnapshotRepository.GetLatestAsync(instrument.Id, venue.Id, CancellationToken.None);
         Assert.NotNull(latest);
 
-        var first = await fixture.BarBuilder.BuildBarsAsync(state.Venues.Single().Id, BarTimeframe.FifteenMinutes, Now.AddMinutes(-15), Now, CancellationToken.None);
-        var second = await fixture.BarBuilder.BuildBarsAsync(state.Venues.Single().Id, BarTimeframe.FifteenMinutes, Now.AddMinutes(-15), Now, CancellationToken.None);
-        var bars = await fixture.BarRepository.GetRangeAsync(state.Instruments.Single().Id, state.Venues.Single().Id, BarTimeframe.FifteenMinutes, Now.AddMinutes(-15), Now, CancellationToken.None);
+        var first = await fixture.BarBuilder.BuildBarsAsync(venue.Id, BarTimeframe.FifteenMinutes, Now.AddMinutes(-15), Now, CancellationToken.None);
+        var second = await fixture.BarBuilder.BuildBarsAsync(venue.Id, BarTimeframe.FifteenMinutes, Now.AddMinutes(-15), Now, CancellationToken.None);
+        var bars = await fixture.BarRepository.GetRangeAsync(instrument.Id, venue.Id, BarTimeframe.FifteenMinutes, Now.AddMinutes(-15), Now, CancellationToken.None);
 
         Assert.Equal(1, first.BarsCreated);
         Assert.Equal(1, second.BarsUpdated);
@@ -65,12 +67,14 @@ public sealed class SqlServerLocalDbTests
         await fixture.Initializer.SeedDemoDataAsync(CancellationToken.None);
         await AddSampleModelRunAsync(fixture);
         var state = await fixture.IntradayRepository.LoadStateAsync(CancellationToken.None);
-        var intent = new TradeIntent(TradeIntentId.New(), state.ModelRuns.Single().Id, state.Funds.Single().Id, state.Instruments.Single().Id, TradeSide.Buy, 10_000m, 1m, "test", TradeIntentStatus.Created, Now);
+        var instrument = EurUsd(state);
+        var venue = Lmax(state);
+        var intent = new TradeIntent(TradeIntentId.New(), state.ModelRuns.Single().Id, state.Funds.Single().Id, instrument.Id, TradeSide.Buy, 10_000m, 1m, "test", TradeIntentStatus.Created, Now);
         await fixture.IntradayRepository.AddTradeIntentAsync(intent, CancellationToken.None);
         var parent = new ParentOrder(ParentOrderId.New(), intent.Id, new ClientOrderId("SQL-P-1"), OrderSide.Buy, 10_000m, ExecutionAlgo.MarketImmediate, OrderStatus.Created, Now);
-        var child = new ChildOrder(ChildOrderId.New(), parent.Id, state.Venues.Single().Id, new ClientOrderId("SQL-C-1"), OrderSide.Buy, OrderType.Market, TimeInForce.IOC, 10_000m, 1m, OrderStatus.PendingNew, Now);
+        var child = new ChildOrder(ChildOrderId.New(), parent.Id, venue.Id, new ClientOrderId("SQL-C-1"), OrderSide.Buy, OrderType.Market, TimeInForce.IOC, 10_000m, 1m, OrderStatus.PendingNew, Now);
         await fixture.IntradayRepository.AddOrdersAsync(parent, child, CancellationToken.None);
-        var fill = new Fill(FillId.New(), "SQL-DUP-1", child.Id, state.Instruments.Single().Id, state.Venues.Single().Id, TradeSide.Buy, 10_000m, 1m, 1.1m, Now, Now);
+        var fill = new Fill(FillId.New(), "SQL-DUP-1", child.Id, instrument.Id, venue.Id, TradeSide.Buy, 10_000m, 1m, 1.1m, Now, Now);
 
         Assert.True(await fixture.IntradayRepository.TryAddFillAsync(fill, CancellationToken.None));
         Assert.False(await fixture.IntradayRepository.TryAddFillAsync(fill with { Id = FillId.New() }, CancellationToken.None));
@@ -101,9 +105,16 @@ public sealed class SqlServerLocalDbTests
         var integrity = await new ReferenceDataIntegrityService(fixture.IntradayRepository, fixture.Clock).CheckAsync(CancellationToken.None);
 
         Assert.Equal(0, integrity.BlockingIssueCount);
+        var eurUsd = EurUsd(state);
+        var usdJpy = state.Instruments.Single(x => x.Symbol == "USDJPY" && x.AssetClass == AssetClass.FxSpot);
+        var venue = Lmax(state);
         Assert.Single(state.Instruments, x => x.Symbol == "EURUSD" && x.AssetClass == AssetClass.FxSpot);
         Assert.Single(state.Venues, x => x.Name == "LMAX");
-        Assert.Single(state.VenueInstrumentMappings, x => x.VenueId == state.Venues.Single().Id && x.InstrumentId == state.Instruments.Single().Id);
+        Assert.Single(state.VenueInstrumentMappings, x => x.VenueId == venue.Id && x.InstrumentId == eurUsd.Id && x.IsEnabled);
+        Assert.Single(state.InstrumentAliases, x => x.Source == "LMAX_REPORT" && x.ExternalSymbol == "EUR/USD" && x.IsEnabled);
+        Assert.Single(state.InstrumentAliases, x => x.Source == "LMAX_REPORT" && x.ExternalInstrumentId == "4001" && x.IsEnabled);
+        Assert.Equal(eurUsd.Id, state.InstrumentAliases.Single(x => x.Source == "LMAX_REPORT" && x.ExternalSymbol == "EUR/USD").InstrumentId);
+        Assert.Equal(usdJpy.Id, state.InstrumentAliases.Single(x => x.Source == "LMAX_REPORT" && x.ExternalSymbol == "USD/JPY").InstrumentId);
         Assert.Single(state.RiskLimitSets, x => x.FundId == state.Funds.Single().Id);
         Assert.Single(state.TradingWindows, x => x.FundId == state.Funds.Single().Id && x.ModelName == "IntradayFxModel" && x.DayOfWeek == Now.DayOfWeek);
         Assert.Single(state.KillSwitchStates);
@@ -134,9 +145,15 @@ public sealed class SqlServerLocalDbTests
     {
         var state = await fixture.IntradayRepository.LoadStateAsync(CancellationToken.None);
         var run = new ModelRun(ModelRunId.New(), state.Funds.Single().Id, "IntradayFxModel", Now, Now, Now, 15, 1_000_000m, ModelRunStatus.Received, Guid.NewGuid().ToString("N"), "test", false);
-        var weight = new TargetWeight(run.Id, state.Instruments.Single().Id, -0.10m, "EURUSD");
+        var weight = new TargetWeight(run.Id, EurUsd(state).Id, -0.10m, "EURUSD");
         await fixture.IntradayRepository.AddModelRunAsync(run, [weight], CancellationToken.None);
     }
+
+    private static Instrument EurUsd(PlatformState state)
+        => state.Instruments.Single(x => x.Symbol == "EURUSD" && x.AssetClass == AssetClass.FxSpot);
+
+    private static Venue Lmax(PlatformState state)
+        => state.Venues.Single(x => x.Name == "LMAX");
 
     private sealed class LocalDbFixture : IAsyncDisposable
     {

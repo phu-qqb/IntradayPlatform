@@ -2,6 +2,9 @@ import { useCallback, useEffect, useState } from 'react';
 import { apiClient } from './api/apiClient';
 import type {
   DriftSnapshotDto,
+  EodPnlSummaryDto,
+  EodReconciliationBreakDto,
+  EodReconciliationRunDto,
   FillDto,
   HealthDto,
   InstrumentDto,
@@ -12,6 +15,11 @@ import type {
   ModelWeightBatchDto,
   ModelWeightRowDto,
   ModelWeightValidationIssueDto,
+  LmaxCurrencyWalletDto,
+  LmaxIndividualTradeDto,
+  LmaxReportImportRunDto,
+  LmaxReportValidationIssueDto,
+  LmaxTradeSummaryDto,
   OrdersDto,
   PositionDto,
   ReconciliationBreakDto,
@@ -27,6 +35,7 @@ import { ErrorState } from './components/ErrorState';
 import { FillsPanel } from './components/FillsPanel';
 import { HealthPanel } from './components/HealthPanel';
 import { LoadingState } from './components/LoadingState';
+import { LmaxEodReportsPanel } from './components/LmaxEodReportsPanel';
 import { MarketDataPanel } from './components/MarketDataPanel';
 import { ModelRunsPanel } from './components/ModelRunsPanel';
 import { ModelWeightsPanel } from './components/ModelWeightsPanel';
@@ -57,6 +66,14 @@ type DashboardState = {
   killSwitch?: KillSwitchDto;
   instruments: InstrumentDto[];
   venues: VenueDto[];
+  lmaxImportRuns: LmaxReportImportRunDto[];
+  lmaxValidationIssues: LmaxReportValidationIssueDto[];
+  lmaxIndividualTrades: LmaxIndividualTradeDto[];
+  lmaxTradeSummaries: LmaxTradeSummaryDto[];
+  lmaxCurrencyWallets: LmaxCurrencyWalletDto[];
+  eodReconciliationRuns: EodReconciliationRunDto[];
+  eodReconciliationBreaks: EodReconciliationBreakDto[];
+  eodPnlSummary?: EodPnlSummaryDto;
 };
 
 const emptyDashboard: DashboardState = {
@@ -75,7 +92,14 @@ const emptyDashboard: DashboardState = {
   snapshots: [],
   bars: [],
   instruments: [],
-  venues: []
+  venues: [],
+  lmaxImportRuns: [],
+  lmaxValidationIssues: [],
+  lmaxIndividualTrades: [],
+  lmaxTradeSummaries: [],
+  lmaxCurrencyWallets: [],
+  eodReconciliationRuns: [],
+  eodReconciliationBreaks: []
 };
 
 export default function App() {
@@ -110,7 +134,14 @@ export default function App() {
       bars,
       killSwitch,
       instruments,
-      venues
+      venues,
+      lmaxImportRuns,
+      lmaxValidationIssues,
+      lmaxIndividualTrades,
+      lmaxTradeSummaries,
+      lmaxCurrencyWallets,
+      eodReconciliationRuns,
+      eodReconciliationBreaks
     ] = await Promise.all([
       apiClient.getModelRuns(),
       apiClient.getModelWeightBatches(),
@@ -127,10 +158,17 @@ export default function App() {
       apiClient.getMarketDataBars({ instrument: 'EURUSD', venue: 'LMAX' }),
       apiClient.getKillSwitch(),
       apiClient.getInstruments(),
-      apiClient.getVenues()
+      apiClient.getVenues(),
+      apiClient.getLmaxEodImportRuns(),
+      apiClient.getLmaxEodValidationIssues(),
+      apiClient.getLmaxIndividualTrades(),
+      apiClient.getLmaxTradeSummaries(),
+      apiClient.getLmaxCurrencyWallets(),
+      apiClient.getEodReconciliationRuns(),
+      apiClient.getEodReconciliationBreaks()
     ]);
 
-    setDashboard((current) => ({ ...current, modelRuns, modelWeightBatches, targets, drifts, internalPositions, brokerPositions, reconciliationBreaks, tradeIntents, riskDecisions, orders, fills, snapshots, bars, killSwitch, instruments, venues }));
+    setDashboard((current) => ({ ...current, modelRuns, modelWeightBatches, targets, drifts, internalPositions, brokerPositions, reconciliationBreaks, tradeIntents, riskDecisions, orders, fills, snapshots, bars, killSwitch, instruments, venues, lmaxImportRuns, lmaxValidationIssues, lmaxIndividualTrades, lmaxTradeSummaries, lmaxCurrencyWallets, eodReconciliationRuns, eodReconciliationBreaks }));
   }, []);
 
   const refreshAll = useCallback(async () => {
@@ -237,6 +275,35 @@ export default function App() {
         <OrdersPanel orders={dashboard.orders} />
         <FillsPanel fills={dashboard.fills} />
         <ReconciliationPanel breaks={dashboard.reconciliationBreaks} />
+        <LmaxEodReportsPanel
+          importRuns={dashboard.lmaxImportRuns}
+          validationIssues={dashboard.lmaxValidationIssues}
+          individualTrades={dashboard.lmaxIndividualTrades}
+          tradeSummaries={dashboard.lmaxTradeSummaries}
+          currencyWallets={dashboard.lmaxCurrencyWallets}
+          pnlSummary={dashboard.eodPnlSummary}
+          reconciliationRuns={dashboard.eodReconciliationRuns}
+          eodBreaks={dashboard.eodReconciliationBreaks}
+          onGenerateFake={async (request) => {
+            const result = await apiClient.generateFakeLmaxEod(request);
+            await refreshAll();
+            return result;
+          }}
+          onImportGenerated={async (request) => {
+            const result = await apiClient.importGeneratedLmaxEod(request);
+            await refreshAll();
+            return result;
+          }}
+          onRunReconciliation={async (request) => {
+            const result = await apiClient.runEodReconciliation(request);
+            await refreshAll();
+            return result;
+          }}
+          onLoadPnl={async (reportDate, venueName, brokerAccountCode) => {
+            const eodPnlSummary = await apiClient.getEodPnlSummary(reportDate, venueName, brokerAccountCode);
+            setDashboard((current) => ({ ...current, eodPnlSummary }));
+          }}
+        />
         <AdminPanel
           killSwitch={dashboard.killSwitch}
           instruments={dashboard.instruments}

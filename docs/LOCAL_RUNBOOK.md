@@ -215,6 +215,45 @@ For the DB-weight path:
 
 This smoke creates fresh fake market data, creates a fake model weight batch, validates/promotes it to a model run, then explicitly processes that model run through the existing FakeLmax workflow.
 
+For the LMAX EOD local path:
+
+```powershell
+.\scripts\smoke-lmax-eod-local.ps1 -BaseUrl http://localhost:5050
+```
+
+This smoke creates/promotes a fake DB weight batch, creates fresh fake market data, processes the generated model run through FakeLmax, generates actual-schema fake LMAX EOD reports, imports `individual-trades.csv`, `trades.csv`, and `currency-wallets.csv`, runs EOD reconciliation, loads USD wallet/PnL summary, then imports a mutated report to confirm a blocking EOD break appears.
+
+## LMAX EOD Reports
+
+The local EOD importer uses the actual report headers received by the fund:
+
+- `individual-trades.csv` is the execution source of truth.
+- `trades.csv` is a summary/rollup control report.
+- `currency-wallets.csv` is a wallet/cash/PnL report, not an instrument position report.
+
+Import paths are constrained to `data/lmax-eod`. Raw files in `incoming`, `processing`, `archive`, `rejected`, and `generated` are ignored by git; do not commit real broker reports. Commit only `.gitkeep` files or synthetic fixtures under `data/lmax-eod/samples`.
+
+Timestamp parsing defaults to UTC via `LmaxEodReports:TimestampTimeZone = "UTC"`. Do not rely on the workstation timezone.
+
+`currency-wallets.csv` USD conversion uses `value * Rate to Base CCY`. `TotalNetPnlUsd` is defined as:
+
+```text
+TotalProfitLossUsd + TotalCommissionUsd + TotalDividendsUsd + TotalFinancingUsd
+```
+
+EOD reconciliation only claims execution-derived position delta checks. It does not claim a final official LMAX open-position check until a real LMAX positions report/API is added.
+
+Recommended full local EOD workflow:
+
+```powershell
+.\scripts\reset-local-db.ps1 -SeedDemoData
+.\scripts\run-api.ps1
+.\scripts\check-reference-data.ps1
+.\scripts\smoke-db-weights-local.ps1
+.\scripts\smoke-lmax-eod-local.ps1
+.\scripts\run-ui.ps1
+```
+
 ## Process Results
 
 `POST /model-runs/{modelRunId}/process` returns a process result. Risk, reconciliation, stale-data, kill-switch, trading-window, missing-data, no-drift, and already-processed outcomes are expected operational states and return HTTP 200 with statuses such as `Blocked`, `AlreadyProcessed`, or `NoActionRequired`.

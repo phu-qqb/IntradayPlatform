@@ -80,6 +80,31 @@ public readonly record struct ModelWeightRowId(Guid Value)
     public static ModelWeightRowId New() => new(Guid.NewGuid());
 }
 
+public readonly record struct InstrumentAliasId(Guid Value)
+{
+    public static InstrumentAliasId New() => new(Guid.NewGuid());
+}
+
+public readonly record struct LmaxReportImportRunId(Guid Value)
+{
+    public static LmaxReportImportRunId New() => new(Guid.NewGuid());
+}
+
+public readonly record struct LmaxIndividualTradeId(Guid Value)
+{
+    public static LmaxIndividualTradeId New() => new(Guid.NewGuid());
+}
+
+public readonly record struct LmaxTradeSummaryId(Guid Value)
+{
+    public static LmaxTradeSummaryId New() => new(Guid.NewGuid());
+}
+
+public readonly record struct LmaxCurrencyWalletId(Guid Value)
+{
+    public static LmaxCurrencyWalletId New() => new(Guid.NewGuid());
+}
+
 public readonly record struct ClientOrderId(string Value)
 {
     public override string ToString() => Value;
@@ -92,7 +117,7 @@ public sealed record Currency(string Code)
 }
 
 public sealed record Fund(FundId Id, string Name, Currency BaseCurrency, bool IsEnabled = true);
-public sealed record BrokerAccount(BrokerAccountId Id, FundId FundId, string AccountCode, bool IsEnabled = true);
+public sealed record BrokerAccount(BrokerAccountId Id, FundId FundId, string AccountCode, bool IsEnabled = true, string? ExternalAccountId = null);
 public sealed record NavSnapshot(FundId FundId, decimal NavUsd, NavSource Source, DateTimeOffset AsOfUtc);
 
 public enum NavSource { Manual, ModelRun, Seed }
@@ -124,6 +149,15 @@ public sealed record VenueInstrumentMapping(
     decimal QuantityStep,
     decimal PriceTickSize,
     bool IsEnabled = true);
+
+public sealed record InstrumentAlias(
+    InstrumentAliasId Id,
+    InstrumentId InstrumentId,
+    string Source,
+    string ExternalSymbol,
+    string? ExternalInstrumentId,
+    bool IsEnabled,
+    DateTimeOffset CreatedAtUtc);
 
 public enum ModelRunStatus { Received, Processing, Processed, Blocked, Failed }
 public enum TargetQuantityMode { PortfolioBaseCurrencyNotional, FxBaseCurrencyQuantity }
@@ -213,6 +247,193 @@ public sealed record ModelWeightValidationIssue(
     ModelWeightRowId? RowId,
     int? RowNumber,
     DateTimeOffset CreatedAtUtc);
+
+public enum LmaxReportType { IndividualTrades, TradesSummary, CurrencyWallets, ReportSet }
+public enum LmaxReportImportStatus { Created, Validating, Imported, Rejected, Failed, Archived }
+public enum LmaxReportValidationSeverity { Info, Warning, Blocking }
+public enum LmaxReportValidationIssueType
+{
+    MissingFile,
+    InvalidHeader,
+    InvalidRow,
+    InvalidTimestamp,
+    InvalidDate,
+    InvalidSymbol,
+    UnknownInstrument,
+    DisabledInstrument,
+    DuplicateExecutionId,
+    DuplicateTradeUti,
+    DuplicateSummaryRow,
+    DuplicateCurrencyWallet,
+    InvalidQuantity,
+    InvalidPrice,
+    InvalidCommission,
+    InvalidNotional,
+    InvalidCurrency,
+    InvalidRateToBaseCcy,
+    WalletBalanceMismatch,
+    AccountIdMismatch,
+    ReportDateMismatch,
+    ReferenceDataInvalid,
+    SummaryMismatch,
+    Other
+}
+
+public enum LmaxEodMutationMode
+{
+    None,
+    DropOneExecution,
+    AddUnknownExecution,
+    ChangeExecutionQuantity,
+    ChangeExecutionPrice,
+    ChangeExecutionSide,
+    DropOneSummaryRow,
+    ChangeSummaryCommission,
+    ChangeSummaryNotional,
+    ChangeWalletBalance,
+    ChangeWalletRate,
+    DropCurrencyWallet
+}
+
+public sealed record LmaxReportImportRun(
+    LmaxReportImportRunId Id,
+    LmaxReportType ReportType,
+    DateOnly ReportDate,
+    VenueId VenueId,
+    BrokerAccountId BrokerAccountId,
+    LmaxReportImportStatus Status,
+    string? FileName,
+    string? FilePath,
+    string? FileHash,
+    int? RowCount,
+    DateTimeOffset CreatedAtUtc,
+    DateTimeOffset? StartedAtUtc,
+    DateTimeOffset? CompletedAtUtc,
+    string? ArchivedPath,
+    string? RejectedPath,
+    string? Message);
+
+public sealed record LmaxReportValidationIssue(
+    Guid Id,
+    LmaxReportImportRunId ImportRunId,
+    LmaxReportValidationIssueType IssueType,
+    LmaxReportValidationSeverity Severity,
+    string Message,
+    int? RowNumber,
+    string? RawLine,
+    DateTimeOffset CreatedAtUtc);
+
+public sealed record LmaxIndividualTrade(
+    LmaxIndividualTradeId Id,
+    LmaxReportImportRunId ImportRunId,
+    DateOnly ReportDate,
+    VenueId VenueId,
+    BrokerAccountId BrokerAccountId,
+    string ExecutionId,
+    string? MtfExecutionId,
+    DateTimeOffset TimestampUtc,
+    decimal TradeQuantity,
+    decimal TradePrice,
+    DateOnly TradeDate,
+    string? LmaxInstrumentId,
+    string LmaxSymbol,
+    InstrumentId? InstrumentId,
+    string? InstructionId,
+    string? OrderId,
+    decimal? StopPrice,
+    decimal? LimitPrice,
+    DateTimeOffset? OrderPlacementTimestampUtc,
+    string OrderType,
+    string? RemoteVenue,
+    string? UserPlacingOrder,
+    decimal? TotalProfitLoss,
+    decimal TotalCommission,
+    string AccountId,
+    decimal UnitsBoughtSold,
+    decimal NotionalValue,
+    string TradeUti,
+    string? RawLine,
+    DateTimeOffset CreatedAtUtc);
+
+public sealed record LmaxTradeSummary(
+    LmaxTradeSummaryId Id,
+    LmaxReportImportRunId ImportRunId,
+    DateOnly ReportDate,
+    VenueId VenueId,
+    BrokerAccountId BrokerAccountId,
+    DateTimeOffset DateTimeUtc,
+    string Instrument,
+    InstrumentId? InstrumentId,
+    string Type,
+    string Currency,
+    decimal Contracts,
+    decimal AveragePrice,
+    decimal CommissionRounded,
+    decimal NotionalValue,
+    string LmaxSymbol,
+    string? UserPlacingOrder,
+    decimal CommissionFullPrecision,
+    string AccountId,
+    string? RawLine,
+    DateTimeOffset CreatedAtUtc);
+
+public sealed record LmaxCurrencyWallet(
+    LmaxCurrencyWalletId Id,
+    LmaxReportImportRunId ImportRunId,
+    DateOnly ReportDate,
+    VenueId VenueId,
+    BrokerAccountId BrokerAccountId,
+    string Currency,
+    decimal BalanceNetDeposits,
+    decimal Adjustments,
+    decimal InterAccountTransfers,
+    decimal ProfitLoss,
+    decimal Commission,
+    decimal Dividends,
+    decimal Financing,
+    decimal WalletBalance,
+    decimal RateToBaseCcy,
+    string BaseCurrency,
+    decimal BalanceNetDepositsBaseUsd,
+    decimal AdjustmentsBaseUsd,
+    decimal InterAccountTransfersBaseUsd,
+    decimal ProfitLossBaseUsd,
+    decimal CommissionBaseUsd,
+    decimal DividendsBaseUsd,
+    decimal FinancingBaseUsd,
+    decimal WalletBalanceBaseUsd,
+    string AccountId,
+    string? RawLine,
+    DateTimeOffset CreatedAtUtc);
+
+public sealed record EodReconciliationRun(Guid Id, DateOnly ReportDate, VenueId VenueId, BrokerAccountId BrokerAccountId, DateTimeOffset CreatedAtUtc, bool HasBlockingBreaks);
+public sealed record EodReconciliationBreak(Guid Id, Guid RunId, ReconciliationBreakType Type, ReconciliationBreakSeverity Severity, ReconciliationBreakStatus Status, InstrumentId? InstrumentId, string Description, string? BrokerExecutionId, string? InternalFillId, DateTimeOffset CreatedAtUtc);
+
+public sealed record EodPnlCurrencyRow(
+    string Currency,
+    decimal WalletBalance,
+    decimal RateToBaseCcy,
+    decimal WalletBalanceBaseUsd,
+    decimal ProfitLoss,
+    decimal ProfitLossBaseUsd,
+    decimal Commission,
+    decimal CommissionBaseUsd,
+    decimal Dividends,
+    decimal DividendsBaseUsd,
+    decimal Financing,
+    decimal FinancingBaseUsd);
+
+public sealed record EodPnlSummary(
+    DateOnly ReportDate,
+    string VenueName,
+    string BrokerAccountCode,
+    decimal TotalWalletBalanceUsd,
+    decimal TotalProfitLossUsd,
+    decimal TotalCommissionUsd,
+    decimal TotalDividendsUsd,
+    decimal TotalFinancingUsd,
+    decimal TotalNetPnlUsd,
+    IReadOnlyList<EodPnlCurrencyRow> CurrencyRows);
 
 public sealed record TargetPosition(
     ModelRunId ModelRunId,
@@ -396,6 +617,13 @@ public enum ReconciliationBreakType
     ChildOrderNoFill,
     QuantityMismatch,
     PriceMismatch,
+    SideMismatch,
+    InstrumentMismatch,
+    ClientOrderIdMismatch,
+    BrokerOrderIdMismatch,
+    CommissionMismatch,
+    NotionalMismatch,
+    PositionDeltaMismatch,
     UnknownBrokerExecution,
     CommissionOrFeeMismatch
 }

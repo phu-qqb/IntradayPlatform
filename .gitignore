@@ -482,3 +482,19 @@ $RECYCLE.BIN/
 
 # Vim temporary swap files
 *.swp
+
+# Local-only LMAX EOD report files. Real/raw broker reports must never be committed.
+data/lmax-eod/incoming/*
+data/lmax-eod/processing/*
+data/lmax-eod/archive/*
+data/lmax-eod/rejected/*
+data/lmax-eod/generated/*
+!data/lmax-eod/incoming/.gitkeep
+!data/lmax-eod/processing/.gitkeep
+!data/lmax-eod/archive/.gitkeep
+!data/lmax-eod/rejected/.gitkeep
+!data/lmax-eod/generated/.gitkeep
+!data/lmax-eod/samples/
+docs/individual-trades.csv
+docs/trades.csv
+docs/currency-wallets.csv

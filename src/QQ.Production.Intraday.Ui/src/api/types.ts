@@ -128,6 +128,159 @@ export type ModelWeightPromotionResultDto = {
   alreadyPromoted: boolean;
 };
 
+export type LmaxReportImportRunDto = {
+  id: string;
+  reportType: string;
+  reportDate: string;
+  venueId: string;
+  brokerAccountId: string;
+  status: string;
+  fileName?: string | null;
+  rowCount?: number | null;
+  createdAtUtc: string;
+  completedAtUtc?: string | null;
+  message?: string | null;
+};
+
+export type LmaxReportValidationIssueDto = {
+  id: string;
+  importRunId: string;
+  issueType: string;
+  severity: string;
+  message: string;
+  rowNumber?: number | null;
+  rawLine?: string | null;
+  createdAtUtc: string;
+};
+
+export type LmaxIndividualTradeDto = {
+  id: string;
+  executionId: string;
+  timestampUtc: string;
+  tradeQuantity: number;
+  tradePrice: number;
+  tradeDate: string;
+  lmaxSymbol: string;
+  instrumentId?: string | null;
+  instructionId?: string | null;
+  orderId?: string | null;
+  totalCommission: number;
+  accountId: string;
+  unitsBoughtSold: number;
+  notionalValue: number;
+  tradeUti: string;
+};
+
+export type LmaxTradeSummaryDto = {
+  id: string;
+  dateTimeUtc: string;
+  instrument: string;
+  type: string;
+  currency: string;
+  contracts: number;
+  averagePrice: number;
+  commissionRounded: number;
+  notionalValue: number;
+  lmaxSymbol: string;
+  commissionFullPrecision: number;
+  accountId: string;
+};
+
+export type LmaxCurrencyWalletDto = {
+  id: string;
+  reportDate: string;
+  currency: string;
+  walletBalance: number;
+  rateToBaseCcy: number;
+  walletBalanceBaseUsd: number;
+  profitLoss: number;
+  profitLossBaseUsd: number;
+  commission: number;
+  commissionBaseUsd: number;
+  dividends: number;
+  dividendsBaseUsd: number;
+  financing: number;
+  financingBaseUsd: number;
+  accountId: string;
+};
+
+export type GenerateFakeLmaxEodRequest = {
+  reportDate: string;
+  venueName?: string;
+  brokerAccountCode?: string;
+  mutationMode?: string;
+};
+
+export type FakeLmaxEodReportGenerationDto = {
+  reportDate: string;
+  individualTradesPath: string;
+  tradesSummaryPath: string;
+  currencyWalletsPath: string;
+  individualTradeCount: number;
+  tradeSummaryCount: number;
+  currencyWalletCount: number;
+  mutationMode: string;
+};
+
+export type LmaxReportImportResultDto = {
+  importRunId: string;
+  status: string;
+  rowCount: number;
+  blockingIssueCount: number;
+  issues: LmaxReportValidationIssueDto[];
+  message: string;
+};
+
+export type EodReconciliationRunDto = {
+  id: string;
+  reportDate: string;
+  venueId: string;
+  brokerAccountId: string;
+  createdAtUtc: string;
+  hasBlockingBreaks: boolean;
+};
+
+export type EodReconciliationBreakDto = {
+  id: string;
+  runId: string;
+  type: string;
+  severity: string;
+  status: string;
+  instrumentId?: string | null;
+  description: string;
+  brokerExecutionId?: string | null;
+  internalFillId?: string | null;
+  createdAtUtc: string;
+};
+
+export type EodPnlCurrencyRowDto = {
+  currency: string;
+  walletBalance: number;
+  rateToBaseCcy: number;
+  walletBalanceBaseUsd: number;
+  profitLoss: number;
+  profitLossBaseUsd: number;
+  commission: number;
+  commissionBaseUsd: number;
+  dividends: number;
+  dividendsBaseUsd: number;
+  financing: number;
+  financingBaseUsd: number;
+};
+
+export type EodPnlSummaryDto = {
+  reportDate: string;
+  venueName: string;
+  brokerAccountCode: string;
+  totalWalletBalanceUsd: number;
+  totalProfitLossUsd: number;
+  totalCommissionUsd: number;
+  totalDividendsUsd: number;
+  totalFinancingUsd: number;
+  totalNetPnlUsd: number;
+  currencyRows: EodPnlCurrencyRowDto[];
+};
+
 export type CreateFakeModelWeightBatchRequest = {
   externalBatchId?: string;
   sourceSystem: string;

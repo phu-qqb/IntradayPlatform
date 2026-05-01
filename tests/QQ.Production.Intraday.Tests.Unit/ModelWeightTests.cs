@@ -48,7 +48,7 @@ public sealed class ModelWeightTests
     public async Task Unknown_symbol_rejects()
     {
         var services = CreateServices();
-        var batch = await services.Generator.CreateFakeBatchAsync(DefaultRequest("batch-unknown") with { Weights = [new("GBPUSD", "GBPUSD", 0.1m)] }, CancellationToken.None);
+        var batch = await services.Generator.CreateFakeBatchAsync(DefaultRequest("batch-unknown") with { Weights = [new("UNKNOWN", "UNKNOWN", 0.1m)] }, CancellationToken.None);
 
         var result = await services.Promotion.ValidateBatchAsync(batch.Id, CancellationToken.None);
 
