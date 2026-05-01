@@ -1,2 +1,2 @@
 Execution ID,Mtf Execution ID,Timestamp,Trade Quantity,Trade Price,Trade Date,Instrument ID,Symbol,Instruction ID,Order ID,Stop Price,Limit Price,Order Placement Timestamp,Type,Remote Venue,User Placing Order,Total Profit Loss,Total Commission,Account Id,Units Bought/Sold,Notional Value,Trade UTI
-BRK-EXEC-1,MTF-BRK-EXEC-1,30-04-2026 16:00:00.000,-1,1.10000,30-04-2026,4001,EUR/USD,INST-f10b56c0cb43401887bdbfe71c30bc7e,BO-1,,,30-04-2026 16:00:00.000,Market,LMAX,LOCAL_SIM,0,-0.220000,LMAX_DEMO_LOCAL,-10000,11000.00000,UTI-BRK-EXEC-1
+EX1,MTF1,30-04-2026 16:00:00.000,1,bad-price,30-04-2026,4001,EUR/USD,INST1,ORD1,,,30-04-2026 16:00:00.000,Market,LMAX,test-user,0,-1,LMAX_DEMO_LOCAL,10000,-11000,UTI1
