@@ -1,0 +1,4 @@
+Execution ID,Mtf Execution ID,Timestamp,Trade Quantity,Trade Price,Trade Date,Instrument ID,Symbol,Instruction ID,Order ID,Stop Price,Limit Price,Order Placement Timestamp,Type,Remote Venue,User Placing Order,Total Profit Loss,Total Commission,Account Id,Units Bought/Sold,Notional Value,Trade UTI
+EX-EUR-1,MTF-EX-EUR-1,30-04-2026 16:00:00.000,-1,1.10000,30-04-2026,4001,EUR/USD,INST-EUR-1,ORD-EUR-1,,,30-04-2026 16:00:00.000,Market,LMAX,test-user,0,-0.220000,LMAX_DEMO_LOCAL,-10000,11000,UTI-EUR-1
+EX-JPY-1,MTF-EX-JPY-1,30-04-2026 16:01:00.000,2,155.000,30-04-2026,4004,USD/JPY,INST-JPY-1,ORD-JPY-1,,,30-04-2026 16:01:00.000,Market,LMAX,test-user,0,-62.000000,LMAX_DEMO_LOCAL,20000,-3100000,UTI-JPY-1
+EX-GBP-1,MTF-EX-GBP-1,30-04-2026 16:02:00.000,1.5,1.25000,30-04-2026,4002,GBP/USD,INST-GBP-1,ORD-GBP-1,,,30-04-2026 16:02:00.000,Market,LMAX,test-user,0,-0.375000,LMAX_DEMO_LOCAL,15000,-18750,UTI-GBP-1

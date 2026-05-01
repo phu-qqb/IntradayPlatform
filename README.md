@@ -381,13 +381,15 @@ The platform can import the actual local LMAX EOD report schemas without connect
 
 Parsing uses invariant-culture decimals. `individual-trades.csv` timestamps use `dd-MM-yyyy HH:mm:ss.fff`; trade dates use `dd-MM-yyyy`; `trades.csv` uses `M/d/yyyy HH:mm`. `LmaxEodReports:TimestampTimeZone` defaults to `UTC`; local machine timezone is not assumed.
 
-LMAX slash symbols are resolved through `InstrumentAlias` rows with source `LMAX_REPORT`. The local seed includes `EUR/USD -> EURUSD` with external instrument id `4001`; the model supports adding the other received LMAX aliases as reference data without changing execution behavior.
+LMAX slash symbols are resolved through `InstrumentAlias` rows with source `LMAX_REPORT`. The LocalDB reference seed includes the received report aliases for `AUD/USD`, `EUR/USD`, `GBP/USD`, `NZD/USD`, `USD/CAD`, `USD/CHF`, and `USD/JPY`. An instrument can be disabled for trading and still be valid for EOD report import; trading enablement is an execution permission, not a historical-report permission.
 
 Currency wallets convert every wallet/PnL component to USD as `value * Rate to Base CCY`. `TotalNetPnlUsd = TotalProfitLossUsd + TotalCommissionUsd + TotalDividendsUsd + TotalFinancingUsd`. This is broker wallet/PnL summary, not full strategy attribution.
 
 EOD reconciliation compares internal fills against `LmaxIndividualTrades` by `Fill.BrokerExecutionId = Execution ID`. A normal no-fill order is not a break just because it is absent from `individual-trades.csv`; only actual internal fills missing at LMAX, or LMAX executions missing internally, are blocking.
 
 Fake report generation writes actual LMAX-shaped CSVs under `data/lmax-eod/generated`. Mutation modes include dropped/unknown executions, quantity/price/side changes, summary changes, and wallet balance/rate changes for local validation.
+
+Synthetic anonymized parser fixtures live under `tests/fixtures/lmax-eod`. Real LMAX report files should be placed only in ignored local folders such as `data/lmax-eod/incoming` and passed explicitly to import scripts; they must not be committed.
 
 Useful local commands:
 

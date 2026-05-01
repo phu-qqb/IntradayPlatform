@@ -314,6 +314,48 @@ public sealed class MarketDataIntegrationTests
     }
 
     [Fact]
+    public async Task Api_lmax_eod_endpoints_return_plain_dtos_and_pnl_totals()
+    {
+        var state = SeedData.Create(Now);
+        var instrument = state.Instruments.Single(x => x.Symbol == "EURUSD");
+        var venue = state.Venues.Single(x => x.Name == "LMAX");
+        state.Fills.Add(new Fill(FillId.New(), "API-EOD-EXEC-1", ChildOrderId.New(), instrument.Id, venue.Id, TradeSide.Sell, 10_000m, 1m, 1.10000m, Now, Now));
+        await using var factory = CreateInMemoryFactory(Now, state);
+        var client = factory.CreateClient();
+
+        var reportDate = Now.ToString("yyyy-MM-dd");
+        (await client.PostAsJsonAsync("/lmax-eod/generate-fake", new { reportDate, venueName = "LMAX", brokerAccountCode = "LMAX_DEMO_LOCAL", mutationMode = "None" })).EnsureSuccessStatusCode();
+        (await client.PostAsJsonAsync("/lmax-eod/import-generated", new { reportDate, venueName = "LMAX", brokerAccountCode = "LMAX_DEMO_LOCAL" })).EnsureSuccessStatusCode();
+        (await client.PostAsJsonAsync("/eod-reconciliation/run", new { reportDate, venueName = "LMAX", brokerAccountCode = "LMAX_DEMO_LOCAL" })).EnsureSuccessStatusCode();
+
+        var importRuns = await client.GetFromJsonAsync<List<ApiLmaxImportRun>>("/lmax-eod/import-runs");
+        var individualTrades = await client.GetFromJsonAsync<List<ApiLmaxIndividualTrade>>("/lmax-eod/individual-trades");
+        var summaries = await client.GetFromJsonAsync<List<ApiLmaxTradeSummary>>("/lmax-eod/trade-summaries");
+        var wallets = await client.GetFromJsonAsync<List<ApiLmaxCurrencyWallet>>("/lmax-eod/currency-wallets");
+        var pnl = await client.GetFromJsonAsync<ApiEodPnlSummary>($"/eod-pnl/summary?reportDate={reportDate}&venueName=LMAX&brokerAccountCode=LMAX_DEMO_LOCAL");
+        var breaks = await client.GetFromJsonAsync<List<ApiEodBreak>>("/eod-reconciliation/breaks");
+
+        Assert.NotNull(importRuns);
+        Assert.NotEmpty(importRuns);
+        Assert.False(string.IsNullOrWhiteSpace(importRuns[0].Id));
+        Assert.NotNull(individualTrades);
+        Assert.NotEmpty(individualTrades);
+        Assert.False(string.IsNullOrWhiteSpace(individualTrades[0].Id));
+        Assert.False(string.IsNullOrWhiteSpace(individualTrades[0].ExecutionId));
+        Assert.False(string.IsNullOrWhiteSpace(individualTrades[0].LmaxSymbol));
+        Assert.True(individualTrades[0].TradePrice > 0m);
+        Assert.NotNull(summaries);
+        Assert.NotEmpty(summaries);
+        Assert.False(string.IsNullOrWhiteSpace(summaries[0].Id));
+        Assert.NotNull(wallets);
+        Assert.NotEmpty(wallets);
+        Assert.True(wallets[0].RateToBaseCcy > 0m);
+        Assert.NotNull(pnl);
+        Assert.Equal(pnl.TotalProfitLossUsd + pnl.TotalCommissionUsd + pnl.TotalDividendsUsd + pnl.TotalFinancingUsd, pnl.TotalNetPnlUsd);
+        Assert.NotNull(breaks);
+    }
+
+    [Fact]
     public async Task Bar_building_does_not_change_execution_workflow_behavior()
     {
         var state = SeedData.Create(Now);
@@ -448,4 +490,10 @@ public sealed class MarketDataIntegrationTests
     private sealed record ApiDriftSnapshot(string ModelRunId);
     private sealed record ApiRiskDecision(string Id);
     private sealed record ApiFill(string BrokerExecutionId);
+    private sealed record ApiLmaxImportRun(string Id);
+    private sealed record ApiLmaxIndividualTrade(string Id, string ExecutionId, string LmaxSymbol, string? InstrumentId, decimal TradeQuantity, decimal TradePrice);
+    private sealed record ApiLmaxTradeSummary(string Id);
+    private sealed record ApiLmaxCurrencyWallet(string Id, string Currency, decimal WalletBalance, decimal RateToBaseCcy, decimal WalletBalanceBaseUsd);
+    private sealed record ApiEodPnlSummary(decimal TotalProfitLossUsd, decimal TotalCommissionUsd, decimal TotalDividendsUsd, decimal TotalFinancingUsd, decimal TotalNetPnlUsd);
+    private sealed record ApiEodBreak(string Id);
 }

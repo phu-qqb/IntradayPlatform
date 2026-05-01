@@ -5,5 +5,15 @@ param(
     [string]$BrokerAccountCode = "LMAX_DEMO_LOCAL"
 )
 
+$ErrorActionPreference = "Stop"
+
 $query = "reportDate=$ReportDate&venueName=$VenueName&brokerAccountCode=$BrokerAccountCode"
-Invoke-RestMethod -Method Get -Uri "$BaseUrl/eod-pnl/summary?$query"
+try {
+    Invoke-RestMethod -Method Get -Uri "$BaseUrl/eod-pnl/summary?$query"
+}
+catch {
+    Write-Host "Request failed: GET $BaseUrl/eod-pnl/summary?$query" -ForegroundColor Red
+    if ($_.Exception.Response) { Write-Host "HTTP status: $([int]$_.Exception.Response.StatusCode)" }
+    Write-Host $_.Exception.Message
+    throw
+}

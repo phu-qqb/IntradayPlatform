@@ -1,0 +1,2 @@
+Execution Id,Mtf Execution ID,Timestamp,Trade Quantity,Trade Price,Trade Date,Instrument ID,Symbol,Instruction ID,Order ID,Stop Price,Limit Price,Order Placement Timestamp,Type,Remote Venue,User Placing Order,Total Profit Loss,Total Commission,Account Id,Units Bought/Sold,Notional Value,Trade UTI
+EX-BAD-1,MTF-EX-BAD-1,30-04-2026 16:00:00.000,1,1.10000,30-04-2026,4001,EUR/USD,INST-BAD-1,ORD-BAD-1,,,30-04-2026 16:00:00.000,Market,LMAX,test-user,0,-0.22,LMAX_DEMO_LOCAL,10000,-11000,UTI-BAD-1

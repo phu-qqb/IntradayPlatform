@@ -233,7 +233,11 @@ The local EOD importer uses the actual report headers received by the fund:
 
 Import paths are constrained to `data/lmax-eod`. Raw files in `incoming`, `processing`, `archive`, `rejected`, and `generated` are ignored by git; do not commit real broker reports. Commit only `.gitkeep` files or synthetic fixtures under `data/lmax-eod/samples`.
 
+Parser test fixtures use tiny anonymized files under `tests/fixtures/lmax-eod`. To test real local files, copy them into an ignored `data/lmax-eod` folder and pass the paths explicitly to the import scripts.
+
 Timestamp parsing defaults to UTC via `LmaxEodReports:TimestampTimeZone = "UTC"`. Do not rely on the workstation timezone.
+
+LMAX slash symbols resolve through `InstrumentAlias` rows with source `LMAX_REPORT`. The LocalDB reference seed includes `AUD/USD`, `EUR/USD`, `GBP/USD`, `NZD/USD`, `USD/CAD`, `USD/CHF`, and `USD/JPY`. Disabled-for-trading instruments are still valid for EOD report import when the alias and instrument are known; disabled trading blocks order generation, not historical report import.
 
 `currency-wallets.csv` USD conversion uses `value * Rate to Base CCY`. `TotalNetPnlUsd` is defined as:
 
