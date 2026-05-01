@@ -298,10 +298,21 @@ dotnet build .\QQ.Production.Intraday.sln --no-restore -m:1 /p:BuildInParallel=f
 .\scripts\lmax-lab-public-data-smoke.ps1
 .\scripts\lmax-lab-account-smoke.ps1
 .\scripts\lmax-lab-fix-dry-run.ps1
+.\scripts\lmax-lab-fix-order-logon-smoke.ps1
+.\scripts\lmax-lab-fix-marketdata-logon-smoke.ps1
 .\scripts\lmax-lab-order-dry-run.ps1
 ```
 
-The lab defaults to `AllowExternalConnections=false`, `AllowOrderSubmission=false`, `AllowLiveTrading=false`, and `DryRun=true`. Scripts do not contain secrets and do not make external calls by default. Configure future demo/UAT credentials through environment variables or user-secrets only; do not put credentials in appsettings files or commit them.
+The lab defaults to `AllowExternalConnections=false`, `AllowOrderSubmission=false`, `AllowLiveTrading=false`, and `DryRun=true`. Scripts do not contain secrets and do not make external calls by default. Configure demo/UAT credentials through environment variables or user-secrets only; do not put credentials in appsettings files or commit them.
+
+After credentials are configured, manual Demo FIX logon checks are explicit:
+
+```powershell
+.\scripts\lmax-lab-fix-order-logon-smoke.ps1 -AllowExternalConnections
+.\scripts\lmax-lab-fix-marketdata-logon-smoke.ps1 -AllowExternalConnections
+```
+
+These commands send only FIX Logon and Logout. They do not submit orders, do not subscribe to market data, and are not connected to the main execution workflow.
 
 See [LMAX_CONNECTIVITY_LAB.md](LMAX_CONNECTIVITY_LAB.md) for command details, safety gates, and questions to resolve with LMAX before any real demo/UAT connectivity work.
 

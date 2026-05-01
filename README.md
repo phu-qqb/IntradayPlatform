@@ -409,11 +409,15 @@ An isolated CLI lab lives at `tools/QQ.Production.Intraday.Lmax.ConnectivityLab`
 
 The lab defaults to disabled, dry-run, no external connections, no order submission, and no live trading. It can print masked configuration, validate public-data/account/FIX settings, and run dry-run command paths without network calls. Real external calls remain skipped unless `AllowExternalConnections=true` is explicitly provided, and order submission remains blocked unless demo/UAT-only gates and explicit confirmation are satisfied. No real LMAX adapter is registered in the main platform.
 
+The lab also has gated Demo FIX logon/logoff smoke commands for Broker FIX Trading and Broker FIX Market Data. Credentials must be supplied through user-secrets or environment variables and are never stored in source-controlled appsettings.
+
 Useful dry-run commands:
 
 ```powershell
 .\scripts\lmax-lab-print-config.ps1
 .\scripts\lmax-lab-fix-dry-run.ps1
+.\scripts\lmax-lab-fix-order-logon-smoke.ps1
+.\scripts\lmax-lab-fix-marketdata-logon-smoke.ps1
 .\scripts\lmax-lab-order-dry-run.ps1
 ```
 

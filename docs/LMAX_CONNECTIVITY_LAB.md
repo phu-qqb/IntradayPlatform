@@ -43,6 +43,28 @@ Even if those gates pass, this version does not include a real LMAX order submis
 
 Use environment variables, user-secrets, or command-line arguments. Do not put secrets in `appsettings.json`.
 
+The source-controlled `appsettings.json` contains only non-secret Demo defaults:
+
+```text
+FixOrderHost = fix-order.london-demo.lmax.com
+FixOrderPort = 443
+FixOrderTargetCompId = LMXBD
+FixMarketDataHost = fix-marketdata.london-demo.lmax.com
+FixMarketDataPort = 443
+FixMarketDataTargetCompId = LMXBDM
+UseTls = true
+```
+
+Store credentials outside the repo:
+
+```powershell
+dotnet user-secrets set "LmaxConnectivityLab:FixSenderCompId" "<demo-sender-comp-id>" --project .\tools\QQ.Production.Intraday.Lmax.ConnectivityLab
+dotnet user-secrets set "LmaxConnectivityLab:FixUsername" "<demo-username>" --project .\tools\QQ.Production.Intraday.Lmax.ConnectivityLab
+dotnet user-secrets set "LmaxConnectivityLab:FixPassword" "<demo-password>" --project .\tools\QQ.Production.Intraday.Lmax.ConnectivityLab
+```
+
+Equivalent environment variables are also supported. `FixPassword`, `FixUsername`, `FixSenderCompId`, and API keys are masked by `print-config`.
+
 Environment variables:
 
 ```text
@@ -58,8 +80,11 @@ QQ_LMAX_FIX_ORDER_PORT
 QQ_LMAX_FIX_MARKET_DATA_HOST
 QQ_LMAX_FIX_MARKET_DATA_PORT
 QQ_LMAX_FIX_SENDER_COMP_ID
+QQ_LMAX_FIX_ORDER_TARGET_COMP_ID
+QQ_LMAX_FIX_MARKET_DATA_TARGET_COMP_ID
 QQ_LMAX_FIX_TARGET_COMP_ID
 QQ_LMAX_FIX_USERNAME
+QQ_LMAX_FIX_PASSWORD
 QQ_LMAX_ACCOUNT_API_KEY
 QQ_LMAX_INSTRUMENT_SYMBOL
 QQ_LMAX_INSTRUMENT_ID
@@ -76,11 +101,16 @@ dotnet run --project .\tools\QQ.Production.Intraday.Lmax.ConnectivityLab -- publ
 dotnet run --project .\tools\QQ.Production.Intraday.Lmax.ConnectivityLab -- account-api-smoke
 dotnet run --project .\tools\QQ.Production.Intraday.Lmax.ConnectivityLab -- fix-session-dry-run
 dotnet run --project .\tools\QQ.Production.Intraday.Lmax.ConnectivityLab -- fix-market-data-smoke
+dotnet run --project .\tools\QQ.Production.Intraday.Lmax.ConnectivityLab -- fix-order-logon-smoke
+dotnet run --project .\tools\QQ.Production.Intraday.Lmax.ConnectivityLab -- fix-marketdata-logon-smoke
+dotnet run --project .\tools\QQ.Production.Intraday.Lmax.ConnectivityLab -- fix-marketdata-snapshot-smoke
 dotnet run --project .\tools\QQ.Production.Intraday.Lmax.ConnectivityLab -- order-lifecycle-demo-dry-run
 dotnet run --project .\tools\QQ.Production.Intraday.Lmax.ConnectivityLab -- order-lifecycle-demo
 ```
 
 The smoke commands skip safely unless `AllowExternalConnections=true` and required config exists. No external calls are made by default.
+
+`fix-order-logon-smoke` and `fix-marketdata-logon-smoke` use a minimal raw FIX 4.4 logon/logoff implementation over TLS. They send only Logon and Logout. They do not submit orders and do not subscribe to market data. QuickFIX/n is not currently added; this keeps the lab dependency-free while still allowing a controlled Demo/UAT logon check.
 
 ## Scripts
 
@@ -91,10 +121,30 @@ Run `dotnet restore` and `dotnet build` first; the scripts execute the already-b
 .\scripts\lmax-lab-public-data-smoke.ps1
 .\scripts\lmax-lab-account-smoke.ps1
 .\scripts\lmax-lab-fix-dry-run.ps1
+.\scripts\lmax-lab-fix-order-logon-smoke.ps1
+.\scripts\lmax-lab-fix-marketdata-logon-smoke.ps1
+.\scripts\lmax-lab-fix-marketdata-snapshot-smoke.ps1
 .\scripts\lmax-lab-order-dry-run.ps1
 ```
 
 These scripts do not contain secrets and default to no external network calls.
+
+Manual Demo FIX logon smoke, after credentials are configured:
+
+```powershell
+.\scripts\lmax-lab-fix-order-logon-smoke.ps1 -AllowExternalConnections
+.\scripts\lmax-lab-fix-marketdata-logon-smoke.ps1 -AllowExternalConnections
+```
+
+Required safety conditions:
+
+- `AllowExternalConnections=true`
+- `EnvironmentName=Demo` or `UAT`
+- `AllowLiveTrading=false`
+- `AllowOrderSubmission=false`
+- required host/port/target/sender/username/password are configured
+
+The commands return `Ok`, `Skipped`, or `Failed` with `SessionType`, `Connected`, `LoggedOn`, `StartedAtUtc`, and `CompletedAtUtc`.
 
 ## Instrument Mapping
 
@@ -124,10 +174,22 @@ Before real connectivity work:
 - EOD report acquisition method
 - certification/conformance requirements before live
 
+## Troubleshooting FIX Logon
+
+- TLS/SSL: Demo endpoints use port 443 with TLS enabled.
+- SenderCompID: must match the LMAX Demo value supplied for the account.
+- TargetCompID: use `LMXBD` for Broker FIX Trading and `LMXBDM` for Broker FIX Market Data.
+- Username/password: keep them in user-secrets or environment variables only.
+- Firewall/proxy: outbound TLS to the Demo hosts must be allowed.
+- Sequence numbers: the lab sends sequence number `1` with `141=Y` for reset on logon.
+- Timeout: increase `LmaxConnectivityLab:RequestTimeoutSeconds` if the session is slow to respond.
+
+After logon works, next safe steps are read-only market data snapshot investigation, account/position API discovery, and only later a demo order lifecycle under a separate explicit approval.
+
 ## Current Limitations
 
 - No official LMAX client library is wired in.
-- No QuickFIX/n session is wired in.
+- QuickFIX/n is not wired in; FIX logon smoke uses a minimal raw Logon/Logout client.
 - Public data smoke returns `Skipped` unless a future client is implemented.
 - Account API smoke returns `Skipped` unless a future client is implemented.
 - Demo order command is gated and returns `Skipped`; it does not submit orders.

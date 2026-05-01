@@ -77,7 +77,8 @@ public sealed class LmaxConnectivityLabTests
         {
             AccountApiKey = "secret-api-key",
             FixUsername = "fix-user",
-            FixSenderCompId = "sender"
+            FixSenderCompId = "sender",
+            FixPassword = "fix-password"
         };
 
         var safe = options.ToSafeDictionary();
@@ -85,7 +86,10 @@ public sealed class LmaxConnectivityLabTests
         Assert.Equal("********", safe["AccountApiKey"]);
         Assert.Equal("********", safe["FixUsername"]);
         Assert.Equal("********", safe["FixSenderCompId"]);
-        Assert.DoesNotContain("secret-api-key", string.Join("|", safe.Values), StringComparison.Ordinal);
+        Assert.Equal("********", safe["FixPassword"]);
+        var safeValues = string.Join("|", safe.Values);
+        Assert.DoesNotContain("secret-api-key", safeValues, StringComparison.Ordinal);
+        Assert.DoesNotContain("fix-password", safeValues, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -103,6 +107,80 @@ public sealed class LmaxConnectivityLabTests
         Assert.Equal("Skipped", publicResult.Status);
         Assert.Equal("Skipped", accountResult.Status);
         Assert.Equal("Skipped", fixResult.Status);
+    }
+
+    [Fact]
+    public async Task Fix_logon_smoke_is_skipped_when_external_connections_are_disabled()
+    {
+        var fix = new RawLmaxFixSessionClient(new LmaxConnectivityLabSafetyValidator());
+        var options = CompleteFixOptions();
+
+        var result = await fix.LogonSmokeAsync(options, marketData: false, CancellationToken.None);
+
+        Assert.Equal("Skipped", result.Status);
+        Assert.False(result.Connected);
+        Assert.False(result.LoggedOn);
+        Assert.Contains("AllowExternalConnections=false", result.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Fix_logon_smoke_is_skipped_when_password_is_missing()
+    {
+        var fix = new RawLmaxFixSessionClient(new LmaxConnectivityLabSafetyValidator());
+        var options = CompleteFixOptions();
+        options.AllowExternalConnections = true;
+        options.FixPassword = null;
+
+        var result = await fix.LogonSmokeAsync(options, marketData: false, CancellationToken.None);
+
+        Assert.Equal("Skipped", result.Status);
+        Assert.Contains("Missing FixPassword", result.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Fix_logon_smoke_is_skipped_when_host_or_port_is_missing()
+    {
+        var fix = new RawLmaxFixSessionClient(new LmaxConnectivityLabSafetyValidator());
+        var options = CompleteFixOptions();
+        options.AllowExternalConnections = true;
+        options.FixOrderHost = null;
+        options.FixOrderPort = null;
+
+        var result = await fix.LogonSmokeAsync(options, marketData: false, CancellationToken.None);
+
+        Assert.Equal("Skipped", result.Status);
+        Assert.Contains("Missing FixOrderHost", result.Message, StringComparison.Ordinal);
+        Assert.Contains("Missing FixOrderPort", result.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Fix_logon_safety_blocks_local_live_trading_and_order_submission()
+    {
+        var validator = new LmaxConnectivityLabSafetyValidator();
+        var local = CompleteFixOptions();
+        local.EnvironmentName = "Local";
+        local.AllowExternalConnections = true;
+
+        var live = CompleteFixOptions(liveTrading: true);
+        live.AllowExternalConnections = true;
+
+        var orderSubmission = CompleteFixOptions(orderSubmission: true);
+        orderSubmission.AllowExternalConnections = true;
+
+        Assert.Contains("Demo or UAT", string.Join(" ", validator.ValidateForFixLogon(local, marketData: false)), StringComparison.Ordinal);
+        Assert.Contains("AllowLiveTrading=true", string.Join(" ", validator.ValidateForFixLogon(live, marketData: false)), StringComparison.Ordinal);
+        Assert.Contains("AllowOrderSubmission=false", string.Join(" ", validator.ValidateForFixLogon(orderSubmission, marketData: false)), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Demo_external_fix_config_can_reach_attempt_gate_without_network_in_unit_test()
+    {
+        var options = CompleteFixOptions();
+        options.AllowExternalConnections = true;
+
+        var issues = new LmaxConnectivityLabSafetyValidator().ValidateForFixLogon(options, marketData: false);
+
+        Assert.Empty(issues);
     }
 
     [Fact]
@@ -131,6 +209,25 @@ public sealed class LmaxConnectivityLabTests
 
     private static LmaxConnectivityLabRunner CreateRunner()
         => new(new PlaceholderLmaxPublicDataClient(), new PlaceholderLmaxAccountClient(), new PlaceholderLmaxFixSessionClient(), new LmaxConnectivityLabSafetyValidator());
+
+    private static LmaxConnectivityLabOptions CompleteFixOptions(bool liveTrading = false, bool orderSubmission = false)
+        => new()
+        {
+            EnvironmentName = "Demo",
+            AllowExternalConnections = false,
+            AllowLiveTrading = liveTrading,
+            AllowOrderSubmission = orderSubmission,
+            DryRun = true,
+            FixOrderHost = "fix-order.london-demo.lmax.com",
+            FixOrderPort = 443,
+            FixOrderTargetCompId = "LMXBD",
+            FixMarketDataHost = "fix-marketdata.london-demo.lmax.com",
+            FixMarketDataPort = 443,
+            FixMarketDataTargetCompId = "LMXBDM",
+            FixSenderCompId = "sender",
+            FixUsername = "username",
+            FixPassword = "password"
+        };
 
     private static string FindRepoRoot()
     {

@@ -21,6 +21,11 @@ public sealed class LmaxConnectivityLabRunner(
             "account-api-smoke" => await accountClient.SmokeAsync(options, cancellationToken),
             "fix-session-dry-run" => fixClient.Validate(options, marketData: false),
             "fix-market-data-smoke" => await fixClient.SmokeAsync(options, marketData: true, cancellationToken),
+            "fix-order-logon-smoke" => await fixClient.LogonSmokeAsync(options, marketData: false, cancellationToken),
+            "fix-marketdata-logon-smoke" => await fixClient.LogonSmokeAsync(options, marketData: true, cancellationToken),
+            "fix-market-data-logon-smoke" => await fixClient.LogonSmokeAsync(options, marketData: true, cancellationToken),
+            "fix-marketdata-snapshot-smoke" => fixClient.SnapshotSmoke(options),
+            "fix-market-data-snapshot-smoke" => fixClient.SnapshotSmoke(options),
             "order-lifecycle-demo-dry-run" => OrderLifecycleDryRun(options),
             "order-lifecycle-demo" => OrderLifecycleDemo(options, explicitConfirm),
             _ => LabCommandResult.Blocked(command, $"Unknown command '{command}'.", [])
@@ -69,6 +74,11 @@ public sealed class LmaxConnectivityLabRunner(
     {
         Console.WriteLine($"Command: {result.Command}");
         Console.WriteLine($"Status: {result.Status}");
+        if (result.SessionType is not null) Console.WriteLine($"SessionType: {result.SessionType}");
+        if (result.Connected is not null) Console.WriteLine($"Connected: {result.Connected}");
+        if (result.LoggedOn is not null) Console.WriteLine($"LoggedOn: {result.LoggedOn}");
+        if (result.StartedAtUtc is not null) Console.WriteLine($"StartedAtUtc: {result.StartedAtUtc:O}");
+        if (result.CompletedAtUtc is not null) Console.WriteLine($"CompletedAtUtc: {result.CompletedAtUtc:O}");
         Console.WriteLine($"Message: {result.Message}");
         foreach (var decision in result.SafetyDecisions)
         {
