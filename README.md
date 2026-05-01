@@ -403,6 +403,22 @@ Useful local commands:
 
 The API endpoints are under `/lmax-eod/*`, `/eod-reconciliation/*`, and `/eod-pnl/summary`. They are local-only and do not perform external calls.
 
+## LMAX Connectivity Lab
+
+An isolated CLI lab lives at `tools/QQ.Production.Intraday.Lmax.ConnectivityLab`. It is for manual/demo/UAT connectivity exploration only and is not referenced by the API, Worker, Domain, or Application projects.
+
+The lab defaults to disabled, dry-run, no external connections, no order submission, and no live trading. It can print masked configuration, validate public-data/account/FIX settings, and run dry-run command paths without network calls. Real external calls remain skipped unless `AllowExternalConnections=true` is explicitly provided, and order submission remains blocked unless demo/UAT-only gates and explicit confirmation are satisfied. No real LMAX adapter is registered in the main platform.
+
+Useful dry-run commands:
+
+```powershell
+.\scripts\lmax-lab-print-config.ps1
+.\scripts\lmax-lab-fix-dry-run.ps1
+.\scripts\lmax-lab-order-dry-run.ps1
+```
+
+See [docs/LMAX_CONNECTIVITY_LAB.md](docs/LMAX_CONNECTIVITY_LAB.md) for configuration, safety gates, credential guidance, and open questions for LMAX.
+
 ## Known Limitations
 
 - No real LMAX connectivity

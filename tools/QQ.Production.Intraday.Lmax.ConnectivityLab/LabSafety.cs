@@ -1,0 +1,42 @@
+namespace QQ.Production.Intraday.Lmax.ConnectivityLab;
+
+public sealed class LmaxConnectivityLabSafetyValidator
+{
+    public IReadOnlyList<string> ValidateForExternalCall(LmaxConnectivityLabOptions options)
+    {
+        var issues = new List<string>();
+        if (options.AllowLiveTrading) issues.Add("AllowLiveTrading=true is forbidden in the connectivity lab.");
+        if (!options.AllowExternalConnections) issues.Add("External calls are blocked because AllowExternalConnections=false.");
+        return issues;
+    }
+
+    public IReadOnlyList<string> ValidateForOrderSubmission(LmaxConnectivityLabOptions options, bool explicitConfirmation)
+    {
+        var issues = ValidateForExternalCall(options).ToList();
+        if (!options.AllowOrderSubmission) issues.Add("Order submission is blocked because AllowOrderSubmission=false.");
+        if (options.DryRun) issues.Add("Order submission is blocked because DryRun=true.");
+        if (!explicitConfirmation) issues.Add("Order submission requires explicit command-line confirmation.");
+        if (!IsDemoOrUat(options.EnvironmentName)) issues.Add("Order submission is allowed only in Demo or UAT environments.");
+        if (options.EnvironmentName.Equals("Production", StringComparison.OrdinalIgnoreCase)) issues.Add("Order submission is blocked in Production.");
+        return issues;
+    }
+
+    public static IReadOnlyList<string> DecisionsForExternalCommand(LmaxConnectivityLabOptions options)
+    {
+        var decisions = new List<string>
+        {
+            $"EnvironmentName={options.EnvironmentName}",
+            $"AllowExternalConnections={options.AllowExternalConnections}",
+            $"AllowOrderSubmission={options.AllowOrderSubmission}",
+            $"AllowLiveTrading={options.AllowLiveTrading}",
+            $"DryRun={options.DryRun}"
+        };
+
+        if (!options.AllowExternalConnections) decisions.Add("No external network call will be made.");
+        if (options.AllowLiveTrading) decisions.Add("Blocked: live trading is forbidden.");
+        return decisions;
+    }
+
+    public static bool IsDemoOrUat(string environmentName)
+        => environmentName.Equals("Demo", StringComparison.OrdinalIgnoreCase) || environmentName.Equals("UAT", StringComparison.OrdinalIgnoreCase);
+}

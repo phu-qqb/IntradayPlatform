@@ -285,6 +285,26 @@ Expected local values:
 
 `LmaxVenueGateway` remains an unregistered placeholder. No live broker, live LMAX, or live market data connectivity is present.
 
+## LMAX Connectivity Lab
+
+The isolated LMAX Connectivity Lab is a command-line project under `tools/QQ.Production.Intraday.Lmax.ConnectivityLab`. It is not referenced by the API or Worker and does not participate in the production execution workflow.
+
+Dry-run checks:
+
+```powershell
+dotnet restore .\QQ.Production.Intraday.sln --configfile .\NuGet.Config
+dotnet build .\QQ.Production.Intraday.sln --no-restore -m:1 /p:BuildInParallel=false
+.\scripts\lmax-lab-print-config.ps1
+.\scripts\lmax-lab-public-data-smoke.ps1
+.\scripts\lmax-lab-account-smoke.ps1
+.\scripts\lmax-lab-fix-dry-run.ps1
+.\scripts\lmax-lab-order-dry-run.ps1
+```
+
+The lab defaults to `AllowExternalConnections=false`, `AllowOrderSubmission=false`, `AllowLiveTrading=false`, and `DryRun=true`. Scripts do not contain secrets and do not make external calls by default. Configure future demo/UAT credentials through environment variables or user-secrets only; do not put credentials in appsettings files or commit them.
+
+See [LMAX_CONNECTIVITY_LAB.md](LMAX_CONNECTIVITY_LAB.md) for command details, safety gates, and questions to resolve with LMAX before any real demo/UAT connectivity work.
+
 ## Troubleshooting LocalDB
 
 - If `sqllocaldb` is not found, install SQL Server Express LocalDB.
