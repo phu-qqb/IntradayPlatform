@@ -401,6 +401,35 @@ public sealed class MarketDataIntegrationTests
         Assert.Single(state.MarketDataBars);
     }
 
+    [Fact]
+    public async Task Api_model_run_actions_create_audit_events_with_plain_string_ids_and_correlation()
+    {
+        await using var factory = CreateInMemoryFactory();
+        var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Add("X-Correlation-Id", "test-correlation-123");
+        client.DefaultRequestHeaders.Add("X-Operator-Id", "operator-test");
+        client.DefaultRequestHeaders.Add("X-Operator-Name", "Operator Test");
+        var now = DateTimeOffset.UtcNow;
+        await CreateFakeSnapshotsAsync(client, now.AddMinutes(-1), 2);
+
+        var run = await CreateModelRunAsync(client, now);
+        (await client.PostAsync($"/model-runs/{run.Id}/process", null)).EnsureSuccessStatusCode();
+
+        var events = await client.GetFromJsonAsync<List<ApiAuditEvent>>("/audit/events?limit=20");
+        var byEntity = await client.GetFromJsonAsync<List<ApiAuditEvent>>($"/audit/events/by-entity?entityType=ModelRun&entityId={run.Id}");
+        var byCorrelation = await client.GetFromJsonAsync<List<ApiAuditEvent>>("/audit/events/by-correlation/test-correlation-123");
+
+        Assert.NotNull(events);
+        Assert.Contains(events, x => x.EventType == "ModelRunCreated" && x.EntityId == run.Id);
+        Assert.Contains(events, x => x.EventType == "ModelRunProcessed" && x.CorrelationId == "test-correlation-123");
+        Assert.NotNull(byEntity);
+        Assert.NotEmpty(byEntity);
+        Assert.DoesNotContain("{", byEntity[0].Id);
+        Assert.NotNull(byCorrelation);
+        Assert.NotEmpty(byCorrelation);
+        Assert.All(byCorrelation, x => Assert.Equal("operator-test", x.ActorId));
+    }
+
     private static MarketDataSnapshot Snapshot(PlatformState state, DateTimeOffset timestamp, decimal bid, decimal ask)
         => new(MarketDataSnapshotId.New(), state.Instruments.Single().Id, state.Venues.Single().Id, bid, ask, null, "Test", timestamp, Now) { IsSynthetic = true, CreatedAtUtc = Now };
 
@@ -496,4 +525,5 @@ public sealed class MarketDataIntegrationTests
     private sealed record ApiLmaxCurrencyWallet(string Id, string Currency, decimal WalletBalance, decimal RateToBaseCcy, decimal WalletBalanceBaseUsd);
     private sealed record ApiEodPnlSummary(decimal TotalProfitLossUsd, decimal TotalCommissionUsd, decimal TotalDividendsUsd, decimal TotalFinancingUsd, decimal TotalNetPnlUsd);
     private sealed record ApiEodBreak(string Id);
+    private sealed record ApiAuditEvent(string Id, string EventType, string Severity, string Result, string ActorId, string? EntityType, string? EntityId, string? CorrelationId, string Description, string? MetadataJson);
 }

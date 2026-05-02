@@ -10,6 +10,9 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Host.UseSerilog((context, configuration) => configuration.ReadFrom.Configuration(context.Configuration).WriteTo.Console());
 
 builder.Services.AddSingleton<IClock, SystemClock>();
+builder.Services.AddHttpContextAccessor();
+builder.Services.AddScoped<IOperatorContext, HttpOperatorContext>();
+builder.Services.AddScoped<IOperatorAuditService, OperatorAuditService>();
 builder.Services.AddSingleton(new FakeLmaxOptions());
 builder.Services.AddSingleton<IVenueExecutionGateway, FakeLmaxGateway>();
 builder.Services.AddSingleton<IMarketDataProvider, FakeMarketDataProvider>();
@@ -47,6 +50,7 @@ if (string.Equals(persistenceProvider, "SqlServerLocal", StringComparison.Ordina
     builder.Services.AddScoped<IBarBuildRunRepository, SqlServerBarBuildRunRepository>();
     builder.Services.AddScoped<IModelWeightBatchRepository, SqlServerModelWeightBatchRepository>();
     builder.Services.AddScoped<ILmaxEodReportRepository, SqlServerLmaxEodReportRepository>();
+    builder.Services.AddScoped<IOperatorAuditRepository, SqlServerOperatorAuditRepository>();
     builder.Services.AddScoped<IBrokerPositionProvider, SqlServerFakeBrokerPositionProvider>();
     builder.Services.AddScoped<IBarBuilderService, BarBuilderService>();
     builder.Services.AddScoped<LocalDatabaseInitializer>();
@@ -61,6 +65,7 @@ else if (string.Equals(persistenceProvider, "InMemory", StringComparison.Ordinal
     builder.Services.AddSingleton<IBarBuildRunRepository, InMemoryBarBuildRunRepository>();
     builder.Services.AddSingleton<IModelWeightBatchRepository, InMemoryModelWeightBatchRepository>();
     builder.Services.AddSingleton<ILmaxEodReportRepository, InMemoryLmaxEodReportRepository>();
+    builder.Services.AddSingleton<IOperatorAuditRepository, InMemoryOperatorAuditRepository>();
     builder.Services.AddSingleton<IBrokerPositionProvider, FakeBrokerPositionProvider>();
     builder.Services.AddSingleton<IBarBuilderService, BarBuilderService>();
 }
@@ -78,6 +83,11 @@ if (app.Environment.IsDevelopment())
 
 app.Use(async (context, next) =>
 {
+    var correlationId = context.Request.Headers.TryGetValue("X-Correlation-Id", out var incoming) && !string.IsNullOrWhiteSpace(incoming)
+        ? incoming.ToString()
+        : Guid.NewGuid().ToString("N");
+    context.Items["CorrelationId"] = correlationId;
+    context.Response.Headers["X-Correlation-Id"] = correlationId;
     try
     {
         await next();
@@ -106,6 +116,7 @@ if (args.Contains("--init-db", StringComparer.OrdinalIgnoreCase))
 }
 
 await ValidateReferenceDataAsync(app);
+await RecordStartupAuditAsync(app, persistenceProvider);
 
 app.MapGet("/health", async (IServiceProvider services, IWebHostEnvironment environment, IConfiguration configuration, IClock clock) =>
 {
@@ -177,34 +188,59 @@ app.MapGet("/model-weight-batches/{id:guid}/validation-issues", async (Guid id, 
     return Results.Ok(issues.Select(ToModelWeightValidationIssueDto));
 });
 
-app.MapPost("/model-weight-batches/fake", async (CreateFakeModelWeightBatchApiRequest request, IFakeModelWeightGenerator generator, CancellationToken cancellationToken) =>
+app.MapPost("/model-weight-batches/fake", async (CreateFakeModelWeightBatchApiRequest request, IFakeModelWeightGenerator generator, IOperatorAuditService audit, CancellationToken cancellationToken) =>
 {
     try
     {
         var batch = await generator.CreateFakeBatchAsync(ToApplicationRequest(request), cancellationToken);
+        await audit.RecordSucceededAsync(OperatorAuditEventType.ModelWeightBatchCreated, "Api", "Created local fake model weight batch.", "ModelWeightBatch", batch.Id.Value.ToString("D"), new { batch.ExternalBatchId, batch.ModelName, batch.Status }, cancellationToken);
         return Results.Created($"/model-weight-batches/{batch.Id.Value}", ToModelWeightBatchDto(batch));
     }
     catch (DomainRuleViolationException ex)
     {
+        await audit.RecordFailedAsync(OperatorAuditEventType.ModelWeightBatchCreated, "Api", "Failed to create local fake model weight batch.", ex.Message, metadata: new { request.ExternalBatchId, request.ModelName }, cancellationToken: cancellationToken);
         return Results.Conflict(new { message = ex.Message });
     }
 });
 
-app.MapPost("/model-weight-batches/{id:guid}/validate", async (Guid id, IModelWeightPromotionService service, CancellationToken cancellationToken) =>
+app.MapPost("/model-weight-batches/{id:guid}/validate", async (Guid id, IModelWeightPromotionService service, IOperatorAuditService audit, CancellationToken cancellationToken) =>
 {
     var result = await service.ValidateBatchAsync(new ModelWeightBatchId(id), cancellationToken);
+    await audit.RecordAsync(new OperatorAuditRecordRequest(
+        OperatorAuditEventType.ModelWeightBatchValidated,
+        result.Succeeded ? OperatorAuditSeverity.Info : OperatorAuditSeverity.Warning,
+        result.Succeeded ? OperatorAuditResult.Succeeded : OperatorAuditResult.Blocked,
+        "Api",
+        result.Succeeded ? "Model weight batch validated." : "Model weight batch validation produced blocking issues.",
+        "ModelWeightBatch",
+        id.ToString("D"),
+        result.Succeeded ? null : result.Message,
+        Metadata: new { result.ValidationIssueCount, result.Status }),
+        cancellationToken);
     return Results.Ok(ToModelWeightPromotionResultDto(result));
 });
 
-app.MapPost("/model-weight-batches/{id:guid}/promote", async (Guid id, IModelWeightPromotionService service, CancellationToken cancellationToken) =>
+app.MapPost("/model-weight-batches/{id:guid}/promote", async (Guid id, IModelWeightPromotionService service, IOperatorAuditService audit, CancellationToken cancellationToken) =>
 {
     var result = await service.PromoteBatchAsync(new ModelWeightBatchId(id), cancellationToken);
+    await audit.RecordAsync(new OperatorAuditRecordRequest(
+        OperatorAuditEventType.ModelWeightBatchPromoted,
+        result.Succeeded ? OperatorAuditSeverity.Info : OperatorAuditSeverity.Warning,
+        result.Succeeded ? OperatorAuditResult.Succeeded : OperatorAuditResult.Blocked,
+        "Api",
+        result.Succeeded ? "Model weight batch promoted to model run." : "Model weight batch promotion blocked.",
+        "ModelWeightBatch",
+        id.ToString("D"),
+        result.Succeeded ? null : result.Message,
+        Metadata: new { result.ModelRunId, result.ValidationIssueCount, result.AlreadyPromoted }),
+        cancellationToken);
     return Results.Ok(ToModelWeightPromotionResultDto(result));
 });
 
-app.MapPost("/model-weight-batches/promote-ready", async (PromoteReadyModelWeightBatchesRequest request, IModelWeightPromotionService service, CancellationToken cancellationToken) =>
+app.MapPost("/model-weight-batches/promote-ready", async (PromoteReadyModelWeightBatchesRequest request, IModelWeightPromotionService service, IOperatorAuditService audit, CancellationToken cancellationToken) =>
 {
     var results = await service.PromoteReadyBatchesAsync(ClampLimit(request.Limit), cancellationToken);
+    await audit.RecordSucceededAsync(OperatorAuditEventType.ModelWeightBatchPromoted, "Api", "Promote-ready model weight batch command completed.", metadata: new { count = results.Count, succeeded = results.Count(x => x.Succeeded), blocked = results.Count(x => !x.Succeeded) }, cancellationToken: cancellationToken);
     return Results.Ok(results.Select(ToModelWeightPromotionResultDto));
 });
 
@@ -245,13 +281,14 @@ app.MapGet("/lmax-eod/currency-wallets", async (ILmaxEodReportRepository reposit
     return wallets.Select(ToLmaxCurrencyWalletDto);
 });
 
-app.MapPost("/lmax-eod/generate-fake", async (GenerateFakeLmaxEodRequest request, IFakeLmaxEodReportGenerator generator, CancellationToken cancellationToken) =>
+app.MapPost("/lmax-eod/generate-fake", async (GenerateFakeLmaxEodRequest request, IFakeLmaxEodReportGenerator generator, IOperatorAuditService audit, CancellationToken cancellationToken) =>
 {
     var result = await generator.GenerateAsync(request.ReportDate, request.VenueName ?? "LMAX", request.BrokerAccountCode ?? "LMAX_DEMO_LOCAL", request.MutationMode ?? LmaxEodMutationMode.None, cancellationToken);
+    await audit.RecordSucceededAsync(OperatorAuditEventType.EodReportGenerated, "Api", "Generated fake local LMAX EOD report set.", "LmaxEodReportSet", request.ReportDate.ToString("yyyy-MM-dd"), new { request.ReportDate, result.MutationMode, result.IndividualTradeCount, result.TradeSummaryCount, result.CurrencyWalletCount }, cancellationToken);
     return Results.Ok(ToFakeLmaxEodReportGenerationDto(result));
 });
 
-app.MapPost("/lmax-eod/import-generated", async (ImportGeneratedLmaxEodRequest request, ILmaxEodReportImportService importer, CancellationToken cancellationToken) =>
+app.MapPost("/lmax-eod/import-generated", async (ImportGeneratedLmaxEodRequest request, ILmaxEodReportImportService importer, IOperatorAuditService audit, CancellationToken cancellationToken) =>
 {
     var root = Path.GetFullPath(Path.Combine("data", "lmax-eod", "generated"));
     var reportDate = request.ReportDate;
@@ -265,12 +302,14 @@ app.MapPost("/lmax-eod/import-generated", async (ImportGeneratedLmaxEodRequest r
     }
 
     var result = await importer.ImportReportSetAsync(individual, summary, wallet, reportDate, request.VenueName ?? "LMAX", request.BrokerAccountCode ?? "LMAX_DEMO_LOCAL", cancellationToken);
+    await audit.RecordAsync(new OperatorAuditRecordRequest(OperatorAuditEventType.EodReportImported, result.BlockingIssueCount == 0 ? OperatorAuditSeverity.Info : OperatorAuditSeverity.Warning, result.BlockingIssueCount == 0 ? OperatorAuditResult.Succeeded : OperatorAuditResult.Blocked, "Api", result.BlockingIssueCount == 0 ? "Imported generated LMAX EOD report set." : "Generated LMAX EOD report set import had blocking validation issues.", "LmaxReportImportRun", result.ImportRunId.Value.ToString("D"), result.BlockingIssueCount == 0 ? null : result.Message, Metadata: new { result.RowCount, result.BlockingIssueCount }), cancellationToken);
     return Results.Ok(ToLmaxReportImportResultDto(result));
 });
 
-app.MapPost("/lmax-eod/import-report-set", async (ImportLmaxReportSetRequest request, ILmaxEodReportImportService importer, CancellationToken cancellationToken) =>
+app.MapPost("/lmax-eod/import-report-set", async (ImportLmaxReportSetRequest request, ILmaxEodReportImportService importer, IOperatorAuditService audit, CancellationToken cancellationToken) =>
 {
     var result = await importer.ImportReportSetAsync(request.IndividualTradesPath, request.TradesSummaryPath, request.CurrencyWalletsPath, request.ReportDate, request.VenueName ?? "LMAX", request.BrokerAccountCode ?? "LMAX_DEMO_LOCAL", cancellationToken);
+    await audit.RecordAsync(new OperatorAuditRecordRequest(OperatorAuditEventType.EodReportImported, result.BlockingIssueCount == 0 ? OperatorAuditSeverity.Info : OperatorAuditSeverity.Warning, result.BlockingIssueCount == 0 ? OperatorAuditResult.Succeeded : OperatorAuditResult.Blocked, "Api", result.BlockingIssueCount == 0 ? "Imported LMAX EOD report set." : "LMAX EOD report set import had blocking validation issues.", "LmaxReportImportRun", result.ImportRunId.Value.ToString("D"), result.BlockingIssueCount == 0 ? null : result.Message, Metadata: new { request.ReportDate, result.RowCount, result.BlockingIssueCount }), cancellationToken);
     return Results.Ok(ToLmaxReportImportResultDto(result));
 });
 
@@ -292,9 +331,10 @@ app.MapPost("/lmax-eod/import-currency-wallets", async (ImportSingleLmaxReportRe
     return Results.Ok(ToLmaxReportImportResultDto(result));
 });
 
-app.MapPost("/eod-reconciliation/run", async (RunEodReconciliationRequest request, IEodReconciliationService service, CancellationToken cancellationToken) =>
+app.MapPost("/eod-reconciliation/run", async (RunEodReconciliationRequest request, IEodReconciliationService service, IOperatorAuditService audit, CancellationToken cancellationToken) =>
 {
     var result = await service.RunAsync(request.ReportDate, request.VenueName ?? "LMAX", request.BrokerAccountCode ?? "LMAX_DEMO_LOCAL", cancellationToken);
+    await audit.RecordAsync(new OperatorAuditRecordRequest(OperatorAuditEventType.EodReconciliationRun, result.BlockingBreakCount == 0 ? OperatorAuditSeverity.Info : OperatorAuditSeverity.Critical, result.BlockingBreakCount == 0 ? OperatorAuditResult.Succeeded : OperatorAuditResult.Blocked, "Api", result.BlockingBreakCount == 0 ? "EOD reconciliation completed without blocking breaks." : "EOD reconciliation created blocking breaks.", "EodReconciliationRun", result.RunId.ToString("D"), result.BlockingBreakCount == 0 ? null : "Blocking EOD reconciliation breaks exist.", Metadata: new { result.ReportDate, result.BreakCount, result.BlockingBreakCount }), cancellationToken);
     return Results.Ok(ToEodReconciliationResultDto(result));
 });
 
@@ -316,7 +356,7 @@ app.MapGet("/eod-pnl/summary", async (IEodPnlSummaryService service, DateOnly re
     return summary is null ? Results.NotFound() : Results.Ok(ToEodPnlSummaryDto(summary));
 });
 
-app.MapPost("/model-runs", async (CreateModelRunRequest request, IIntradayRepository repository, IClock clock, CancellationToken cancellationToken) =>
+app.MapPost("/model-runs", async (CreateModelRunRequest request, IIntradayRepository repository, IClock clock, IOperatorAuditService audit, CancellationToken cancellationToken) =>
 {
     var state = await repository.LoadStateAsync(cancellationToken);
     var fund = state.Funds.Single();
@@ -331,13 +371,29 @@ app.MapPost("/model-runs", async (CreateModelRunRequest request, IIntradayReposi
         return new TargetWeight(run.Id, instrument.Id, x.Weight, x.RawSecurityId ?? x.Symbol);
     }).ToList();
     await repository.AddModelRunAsync(run, targetWeights, cancellationToken);
+    await audit.RecordSucceededAsync(OperatorAuditEventType.ModelRunCreated, "Api", "Created local model run and target weights.", "ModelRun", run.Id.Value.ToString("D"), new { run.ModelName, run.AsOfUtc, run.EffectiveAtUtc, targetWeightCount = targetWeights.Count }, cancellationToken);
     return Results.Created($"/model-runs/{run.Id.Value}", ToModelRunDto(run));
 });
 
-app.MapPost("/model-runs/{id:guid}/process", async (Guid id, ProcessModelRunService service, IIntradayRepository repository, CancellationToken cancellationToken) =>
+app.MapPost("/model-runs/{id:guid}/process", async (Guid id, ProcessModelRunService service, IOperatorAuditService audit, CancellationToken cancellationToken) =>
 {
     var modelRunId = new ModelRunId(id);
     var result = await service.ProcessAsync(modelRunId, cancellationToken);
+    var eventType = result.Status == ProcessModelRunStatus.Blocked ? OperatorAuditEventType.ModelRunBlocked : OperatorAuditEventType.ModelRunProcessed;
+    var severity = result.Status switch
+    {
+        ProcessModelRunStatus.Failed => OperatorAuditSeverity.Critical,
+        ProcessModelRunStatus.Blocked => OperatorAuditSeverity.Warning,
+        _ => OperatorAuditSeverity.Info
+    };
+    var auditResult = result.Status switch
+    {
+        ProcessModelRunStatus.Failed => OperatorAuditResult.Failed,
+        ProcessModelRunStatus.Blocked => OperatorAuditResult.Blocked,
+        ProcessModelRunStatus.NoActionRequired => OperatorAuditResult.NoActionRequired,
+        _ => OperatorAuditResult.Succeeded
+    };
+    await audit.RecordAsync(new OperatorAuditRecordRequest(eventType, severity, auditResult, "Api", result.Message ?? $"Model run process result: {result.Status}.", "ModelRun", id.ToString("D"), result.BlockedReason?.ToString(), Metadata: new { result.Status, result.TradeIntentCount, result.RiskDecisionCount, result.OrderCount, result.ExecutionReportCount, result.FillCount, result.ReconciliationBreakCount, result.IsAlreadyProcessed }), cancellationToken);
     return Results.Ok(new
     {
         modelRunId = id,
@@ -490,9 +546,22 @@ app.MapGet("/fills", async (IIntradayRepository repository, int? limit, Guid? mo
 
     return query.OrderByDescending(x => x.ReceivedAtUtc).Take(ClampLimit(limit)).Select(x => ToFillDto(x, symbols, venues));
 });
-app.MapGet("/admin/reference-data/integrity", async (IReferenceDataIntegrityService service, CancellationToken cancellationToken) =>
+app.MapGet("/admin/reference-data/integrity", async (IReferenceDataIntegrityService service, IOperatorAuditService audit, CancellationToken cancellationToken) =>
 {
     var result = await service.CheckAsync(cancellationToken);
+    if (result.BlockingIssueCount > 0)
+    {
+        await audit.RecordBlockedAsync(
+            OperatorAuditEventType.ReferenceDataIntegrityChecked,
+            "Api",
+            "Reference data integrity check found blocking issues.",
+            $"{result.BlockingIssueCount} blocking issue(s).",
+            "ReferenceDataIntegrity",
+            result.CheckedAtUtc.ToString("O"),
+            new { result.BlockingIssueCount, result.WarningIssueCount },
+            cancellationToken);
+    }
+
     return Results.Ok(new ReferenceDataIntegrityDto(
         result.CheckedAtUtc,
         result.BlockingIssueCount,
@@ -539,9 +608,10 @@ app.MapPost("/market-data/build-bars", async (BuildBarsRequest request, IIntrada
     var venue = state.Venues.Single(x => x.Name == (request.VenueName ?? "LMAX"));
     return Results.Ok(await builderService.BuildBarsAsync(venue.Id, request.Timeframe, request.StartUtc, request.EndUtc, cancellationToken));
 });
-app.MapPost("/admin/kill-switch", async (KillSwitchRequest request, IIntradayRepository repository, CancellationToken cancellationToken) =>
+app.MapPost("/admin/kill-switch", async (KillSwitchRequest request, IIntradayRepository repository, IOperatorAuditService audit, CancellationToken cancellationToken) =>
 {
     await repository.SetKillSwitchAsync(true, request.Reason, cancellationToken);
+    await audit.RecordSucceededAsync(OperatorAuditEventType.KillSwitchActivated, "Api", "Kill switch activated.", "KillSwitch", "global", new { request.Reason }, cancellationToken);
     return Results.Ok(new { active = true, request.Reason });
 });
 app.MapGet("/admin/kill-switch", async (IIntradayRepository repository, CancellationToken cancellationToken) =>
@@ -549,11 +619,46 @@ app.MapGet("/admin/kill-switch", async (IIntradayRepository repository, Cancella
     var state = await repository.LoadStateAsync(cancellationToken);
     return Results.Ok(ToKillSwitchDto(state.KillSwitch));
 });
-app.MapPost("/admin/kill-switch/clear", async (IIntradayRepository repository, CancellationToken cancellationToken) =>
+app.MapPost("/admin/kill-switch/clear", async (IIntradayRepository repository, IOperatorAuditService audit, CancellationToken cancellationToken) =>
 {
     await repository.SetKillSwitchAsync(false, null, cancellationToken);
+    await audit.RecordSucceededAsync(OperatorAuditEventType.KillSwitchCleared, "Api", "Kill switch cleared.", "KillSwitch", "global", cancellationToken: cancellationToken);
     return Results.Ok(new { active = false });
 });
+
+app.MapGet("/audit/events", async (IOperatorAuditService audit, int? limit, string? severity, string? eventType, string? entityType, string? entityId, string? correlationId, DateTimeOffset? fromUtc, DateTimeOffset? toUtc, CancellationToken cancellationToken) =>
+{
+    var filter = new OperatorAuditEventFilter(
+        ClampLimit(limit),
+        ParseEnum<OperatorAuditSeverity>(severity),
+        ParseEnum<OperatorAuditEventType>(eventType),
+        entityType,
+        entityId,
+        correlationId,
+        fromUtc,
+        toUtc);
+    var events = await audit.GetRecentAsync(filter, cancellationToken);
+    return Results.Ok(events.Select(ToOperatorAuditEventDto));
+});
+
+app.MapGet("/audit/events/{id:guid}", async (Guid id, IOperatorAuditService audit, CancellationToken cancellationToken) =>
+{
+    var auditEvent = await audit.GetAsync(new OperatorAuditEventId(id), cancellationToken);
+    return auditEvent is null ? Results.NotFound() : Results.Ok(ToOperatorAuditEventDto(auditEvent));
+});
+
+app.MapGet("/audit/events/by-entity", async (string entityType, string entityId, int? limit, IOperatorAuditService audit, CancellationToken cancellationToken) =>
+{
+    var events = await audit.GetByEntityAsync(entityType, entityId, ClampLimit(limit), cancellationToken);
+    return Results.Ok(events.Select(ToOperatorAuditEventDto));
+});
+
+app.MapGet("/audit/events/by-correlation/{correlationId}", async (string correlationId, int? limit, IOperatorAuditService audit, CancellationToken cancellationToken) =>
+{
+    var events = await audit.GetByCorrelationIdAsync(correlationId, ClampLimit(limit), cancellationToken);
+    return Results.Ok(events.Select(ToOperatorAuditEventDto));
+});
+
 app.MapGet("/instruments", async (IIntradayRepository repository, CancellationToken cancellationToken) =>
 {
     var state = await repository.LoadStateAsync(cancellationToken);
@@ -646,6 +751,34 @@ static async Task ValidateReferenceDataAsync(WebApplication app)
     {
         throw new InvalidOperationException($"Reference data integrity check failed with {check.BlockingIssueCount} blocking issue(s). Run scripts/check-reference-data.ps1 for details or reset the local dev database if it contains old duplicate seed rows.");
     }
+}
+
+static async Task RecordStartupAuditAsync(WebApplication app, string persistenceProvider)
+{
+    await using var scope = app.Services.CreateAsyncScope();
+    var configuration = scope.ServiceProvider.GetRequiredService<IConfiguration>();
+    var gateway = scope.ServiceProvider.GetRequiredService<IVenueExecutionGateway>();
+    var marketDataProvider = scope.ServiceProvider.GetRequiredService<IMarketDataProvider>();
+    var audit = scope.ServiceProvider.GetRequiredService<IOperatorAuditService>();
+    await audit.RecordAsync(new OperatorAuditRecordRequest(
+        OperatorAuditEventType.SafetyStartupValidation,
+        OperatorAuditSeverity.Info,
+        OperatorAuditResult.Succeeded,
+        "Api",
+        "Startup safety validation completed.",
+        "Startup",
+        app.Environment.EnvironmentName,
+        Metadata: new
+        {
+            environment = app.Environment.EnvironmentName,
+            persistenceProvider,
+            executionGateway = gateway.GetType().Name,
+            marketDataProvider = marketDataProvider.GetType().Name,
+            allowExternalConnections = configuration.GetValue("Safety:AllowExternalConnections", false),
+            allowLiveTrading = configuration.GetValue("Safety:AllowLiveTrading", false)
+        },
+        Actor: new OperatorIdentity(OperatorAuditActorType.Api, "api", "QQ.Production.Intraday.Api")),
+        CancellationToken.None);
 }
 
 static int ClampLimit(int? limit) => Math.Clamp(limit ?? 100, 1, 500);
@@ -848,6 +981,28 @@ static MarketDataBarDto ToMarketDataBarDto(MarketDataBar x, IReadOnlyDictionary<
         x.BuilderVersion,
         x.CreatedAtUtc);
 
+static OperatorAuditEventDto ToOperatorAuditEventDto(OperatorAuditEvent x)
+    => new(
+        x.Id.Value.ToString("D"),
+        x.OccurredAtUtc,
+        x.ActorType.ToString(),
+        x.ActorId,
+        x.ActorDisplayName,
+        x.EventType.ToString(),
+        x.Severity.ToString(),
+        x.Result.ToString(),
+        x.EntityType,
+        x.EntityId,
+        x.CorrelationId,
+        x.CausationId,
+        x.RequestId,
+        x.Source,
+        x.Description,
+        x.Reason,
+        x.BeforeJson,
+        x.AfterJson,
+        x.MetadataJson);
+
 public sealed record HealthDto(string Application, string Environment, string PersistenceProvider, bool DatabaseReachable, int PendingMigrationsCount, string DatabaseTarget, string ExecutionGateway, string MarketDataMode, bool LiveTradingEnabled, bool ExternalConnectionsEnabled, DateTimeOffset UtcServerTime);
 public sealed record ReferenceDataIntegrityDto(DateTimeOffset CheckedAtUtc, int BlockingIssueCount, int WarningIssueCount, IReadOnlyList<ReferenceDataIntegrityIssueDto> Issues);
 public sealed record ReferenceDataIntegrityIssueDto(string Id, string Type, string Severity, string Status, string Key, string Description, DateTimeOffset CreatedAtUtc);
@@ -877,6 +1032,7 @@ public sealed record RiskDecisionDto(string Id, string TradeIntentId, string? Mo
 public sealed record FillDto(string Id, string BrokerExecutionId, string ChildOrderId, string InstrumentId, string? Symbol, string VenueId, string? VenueName, string Side, decimal BaseQuantity, decimal VenueQuantity, decimal Price, DateTimeOffset TradeDateUtc, DateTimeOffset ReceivedAtUtc);
 public sealed record MarketDataSnapshotDto(string Id, string InstrumentId, string? Symbol, string VenueId, string? VenueName, decimal Bid, decimal Ask, decimal Mid, decimal Spread, string Source, DateTimeOffset SourceTimestampUtc, DateTimeOffset ReceivedAtUtc, long? SequenceNumber, bool IsSynthetic, DateTimeOffset CreatedAtUtc);
 public sealed record MarketDataBarDto(string Id, string InstrumentId, string? Symbol, string VenueId, string? VenueName, string Timeframe, DateTimeOffset BarStartUtc, DateTimeOffset BarEndUtc, string Source, decimal BidOpen, decimal BidHigh, decimal BidLow, decimal BidClose, decimal AskOpen, decimal AskHigh, decimal AskLow, decimal AskClose, decimal MidOpen, decimal MidHigh, decimal MidLow, decimal MidClose, decimal SpreadOpen, decimal SpreadHigh, decimal SpreadLow, decimal SpreadClose, decimal SpreadAverage, int ObservationCount, DateTimeOffset? FirstSnapshotUtc, DateTimeOffset? LastSnapshotUtc, bool IsComplete, string QualityStatus, string? BuildRunId, string BuilderVersion, DateTimeOffset CreatedAtUtc);
+public sealed record OperatorAuditEventDto(string Id, DateTimeOffset OccurredAtUtc, string ActorType, string ActorId, string ActorDisplayName, string EventType, string Severity, string Result, string? EntityType, string? EntityId, string? CorrelationId, string? CausationId, string? RequestId, string Source, string Description, string? Reason, string? BeforeJson, string? AfterJson, string? MetadataJson);
 public sealed record KillSwitchDto(string Id, bool IsActive, string? Reason, DateTimeOffset UpdatedAtUtc);
 public sealed record InstrumentDto(string Id, string Symbol, string AssetClass, string BaseCurrency, string QuoteCurrency, int PricePrecision, int QuantityPrecision, bool IsEnabled);
 public sealed record VenueDto(string Id, string Name, string VenueType, bool IsEnabled);
@@ -896,5 +1052,26 @@ public sealed record BuildBarsRequest(string? VenueName, BarTimeframe Timeframe,
 public sealed record OrdersResponse(IReadOnlyList<ParentOrderDto> ParentOrders, IReadOnlyList<ChildOrderDto> ChildOrders);
 public sealed record ParentOrderDto(string Id, string TradeIntentId, string? InstrumentId, string ClientOrderId, string Side, decimal BaseQuantity, string Algo, string Status, DateTimeOffset CreatedAtUtc);
 public sealed record ChildOrderDto(string Id, string ParentOrderId, string VenueId, string? InstrumentId, string ClientOrderId, string? BrokerOrderId, string Side, string OrderType, string TimeInForce, decimal BaseQuantity, decimal VenueQuantity, string Status, DateTimeOffset CreatedAtUtc);
+
+public sealed class HttpOperatorContext(IHttpContextAccessor accessor) : IOperatorContext
+{
+    public OperatorIdentity Current
+    {
+        get
+        {
+            var context = accessor.HttpContext;
+            var actorId = context?.Request.Headers["X-Operator-Id"].FirstOrDefault();
+            var actorName = context?.Request.Headers["X-Operator-Name"].FirstOrDefault();
+            actorId = string.IsNullOrWhiteSpace(actorId) ? "local-dev" : actorId;
+            actorName = string.IsNullOrWhiteSpace(actorName)
+                ? Environment.UserName is { Length: > 0 } userName ? userName : "local-dev"
+                : actorName;
+            return new OperatorIdentity(OperatorAuditActorType.Operator, actorId, actorName);
+        }
+    }
+
+    public string? CorrelationId => accessor.HttpContext?.Items["CorrelationId"]?.ToString();
+    public string? RequestId => accessor.HttpContext?.TraceIdentifier;
+}
 
 public partial class Program;

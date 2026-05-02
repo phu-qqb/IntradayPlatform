@@ -110,11 +110,37 @@ The UI shell is organized for operator workflows:
 - EMS for execution state, local market data, fills, and future execution-quality views
 - Reconciliation and LMAX EOD for intraday breaks, EOD reports, wallet/PnL, and audit
 - Risk & Admin for kill switch and reference data
+- Audit Journal for append-only operator/system action history and correlation IDs
 - Connectivity Lab for read-only script guidance only
 
 The top status bar is always visible and must show `FakeLmaxGateway`, `FakeMarketDataProvider`, `liveTradingEnabled=false`, and `externalConnectionsEnabled=false` during normal local operation.
 
 If the browser shows CORS errors, confirm the API is running in `Development` and the UI is using `http://localhost:5173` or `http://127.0.0.1:5173`.
+
+## Operator Audit Trail
+
+The local API writes append-only `OperatorAuditEvents` for important operator/system actions: model weight batch creation, validation, promotion, model-run creation and processing, blocked process results, kill-switch activation/clear, blocking reference-data checks, fake LMAX EOD generation/import, and EOD reconciliation runs.
+
+Each API request gets a correlation ID. Pass one explicitly when you want to stitch together a local workflow:
+
+```powershell
+$headers = @{
+  "X-Correlation-Id" = "local-run-001"
+  "X-Operator-Id" = "local-dev"
+  "X-Operator-Name" = "Local Developer"
+}
+Invoke-RestMethod -Headers $headers -Uri "http://localhost:5050/audit/events?limit=20"
+```
+
+Operator headers are local attribution only and are not authentication. Audit metadata is sanitized before storage for keys containing `password`, `secret`, `token`, or `apiKey`; do not put credentials into request metadata. There are no audit update/delete endpoints.
+
+Useful audit queries:
+
+```powershell
+Invoke-RestMethod "http://localhost:5050/audit/events?limit=100"
+Invoke-RestMethod "http://localhost:5050/audit/events/by-entity?entityType=ModelRun&entityId=<id>"
+Invoke-RestMethod "http://localhost:5050/audit/events/by-correlation/<correlationId>"
+```
 
 ## Reference Data Integrity
 

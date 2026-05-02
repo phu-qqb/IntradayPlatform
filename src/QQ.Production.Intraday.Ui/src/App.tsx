@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Activity, Archive, BarChart3, Database, FileSearch, Gauge, GitBranch, Landmark, RadioTower, ShieldAlert, WalletCards } from 'lucide-react';
+import { Activity, Archive, BarChart3, ClipboardList, Database, FileSearch, Gauge, GitBranch, Landmark, RadioTower, ShieldAlert, WalletCards } from 'lucide-react';
 import { apiClient } from './api/apiClient';
 import type {
   DriftSnapshotDto,
@@ -22,6 +22,7 @@ import type {
   LmaxReportValidationIssueDto,
   LmaxTradeSummaryDto,
   OrdersDto,
+  OperatorAuditEventDto,
   PositionDto,
   ReconciliationBreakDto,
   ReferenceDataIntegrityDto,
@@ -49,6 +50,7 @@ import { RiskPanel } from './components/RiskPanel';
 import { SafetyPanel } from './components/SafetyPanel';
 import { TopStatusBar } from './components/TopStatusBar';
 import { CommandButton, DetailDrawer, MetricCard, SectionHeader, SeverityBadge, StatusChip, Timeline, toneForStatus } from './components/primitives';
+import type { Tone } from './components/primitives';
 import { formatDate, formatIdShort, formatPrice, formatQuantity, formatStatus, formatUsd, formatUtc } from './utils/format';
 
 type DashboardState = {
@@ -78,9 +80,10 @@ type DashboardState = {
   eodReconciliationRuns: EodReconciliationRunDto[];
   eodReconciliationBreaks: EodReconciliationBreakDto[];
   eodPnlSummary?: EodPnlSummaryDto;
+  auditEvents: OperatorAuditEventDto[];
 };
 
-type PageId = 'command' | 'pms' | 'weights' | 'oms' | 'ems' | 'market' | 'recon' | 'lmax-eod' | 'risk-admin' | 'connectivity';
+type PageId = 'command' | 'pms' | 'weights' | 'oms' | 'ems' | 'market' | 'recon' | 'lmax-eod' | 'risk-admin' | 'audit' | 'connectivity';
 
 const emptyDashboard: DashboardState = {
   modelRuns: [],
@@ -105,7 +108,8 @@ const emptyDashboard: DashboardState = {
   lmaxTradeSummaries: [],
   lmaxCurrencyWallets: [],
   eodReconciliationRuns: [],
-  eodReconciliationBreaks: []
+  eodReconciliationBreaks: [],
+  auditEvents: []
 };
 
 const navItems: Array<{ id: PageId; label: string; icon: typeof Activity }> = [
@@ -118,6 +122,7 @@ const navItems: Array<{ id: PageId; label: string; icon: typeof Activity }> = [
   { id: 'recon', label: 'Reconciliation', icon: FileSearch },
   { id: 'lmax-eod', label: 'LMAX EOD', icon: WalletCards },
   { id: 'risk-admin', label: 'Risk & Admin', icon: ShieldAlert },
+  { id: 'audit', label: 'Audit Journal', icon: ClipboardList },
   { id: 'connectivity', label: 'Connectivity Lab', icon: RadioTower }
 ];
 
@@ -134,7 +139,7 @@ export default function App() {
   const loadIntegrity = useCallback(async () => setIntegrity(await apiClient.getReferenceDataIntegrity()), []);
 
   const loadDashboard = useCallback(async () => {
-    const [modelRuns, modelWeightBatches, targets, drifts, internalPositions, brokerPositions, reconciliationBreaks, tradeIntents, riskDecisions, orders, fills, snapshots, bars, killSwitch, instruments, venues, lmaxImportRuns, lmaxValidationIssues, lmaxIndividualTrades, lmaxTradeSummaries, lmaxCurrencyWallets, eodReconciliationRuns, eodReconciliationBreaks] = await Promise.all([
+    const [modelRuns, modelWeightBatches, targets, drifts, internalPositions, brokerPositions, reconciliationBreaks, tradeIntents, riskDecisions, orders, fills, snapshots, bars, killSwitch, instruments, venues, lmaxImportRuns, lmaxValidationIssues, lmaxIndividualTrades, lmaxTradeSummaries, lmaxCurrencyWallets, eodReconciliationRuns, eodReconciliationBreaks, auditEvents] = await Promise.all([
       apiClient.getModelRuns(),
       apiClient.getModelWeightBatches(),
       apiClient.getTargetPositions(),
@@ -157,10 +162,11 @@ export default function App() {
       apiClient.getLmaxTradeSummaries(),
       apiClient.getLmaxCurrencyWallets(),
       apiClient.getEodReconciliationRuns(),
-      apiClient.getEodReconciliationBreaks()
+      apiClient.getEodReconciliationBreaks(),
+      apiClient.getAuditEvents({ limit: 100 })
     ]);
 
-    setDashboard((current) => ({ ...current, modelRuns, modelWeightBatches, targets, drifts, internalPositions, brokerPositions, reconciliationBreaks, tradeIntents, riskDecisions, orders, fills, snapshots, bars, killSwitch, instruments, venues, lmaxImportRuns, lmaxValidationIssues, lmaxIndividualTrades, lmaxTradeSummaries, lmaxCurrencyWallets, eodReconciliationRuns, eodReconciliationBreaks }));
+    setDashboard((current) => ({ ...current, modelRuns, modelWeightBatches, targets, drifts, internalPositions, brokerPositions, reconciliationBreaks, tradeIntents, riskDecisions, orders, fills, snapshots, bars, killSwitch, instruments, venues, lmaxImportRuns, lmaxValidationIssues, lmaxIndividualTrades, lmaxTradeSummaries, lmaxCurrencyWallets, eodReconciliationRuns, eodReconciliationBreaks, auditEvents }));
   }, []);
 
   const refreshAll = useCallback(async () => {
@@ -253,6 +259,8 @@ function renderPage(page: PageId, dashboard: DashboardState, health: HealthDto |
       return <LmaxEodPage dashboard={dashboard} actions={actions} />;
     case 'risk-admin':
       return <RiskAdminPage dashboard={dashboard} health={health} integrity={integrity} actions={actions} />;
+    case 'audit':
+      return <AuditJournalPage events={dashboard.auditEvents} onSelect={actions.setSelected} />;
     case 'connectivity':
       return <ConnectivityLabPage />;
     case 'command':
@@ -484,6 +492,55 @@ function ConnectivityLabPage() {
   );
 }
 
+function AuditJournalPage({ events, onSelect }: { events: OperatorAuditEventDto[]; onSelect: (item: unknown) => void }) {
+  const [severity, setSeverity] = useState('');
+  const [eventType, setEventType] = useState('');
+  const [entityType, setEntityType] = useState('');
+  const [correlationId, setCorrelationId] = useState('');
+  const [text, setText] = useState('');
+
+  const filtered = events.filter((event) => {
+    if (severity && event.severity !== severity) return false;
+    if (eventType && !event.eventType.toLowerCase().includes(eventType.toLowerCase())) return false;
+    if (entityType && !String(event.entityType ?? '').toLowerCase().includes(entityType.toLowerCase())) return false;
+    if (correlationId && !String(event.correlationId ?? '').toLowerCase().includes(correlationId.toLowerCase())) return false;
+    if (text) {
+      const haystack = `${event.description} ${event.reason ?? ''} ${event.actorDisplayName} ${event.entityId ?? ''} ${event.metadataJson ?? ''}`.toLowerCase();
+      if (!haystack.includes(text.toLowerCase())) return false;
+    }
+    return true;
+  });
+
+  return (
+    <section className="workspace-page">
+      <SectionHeader title="Audit Journal" eyebrow="Append-only operator and system event trail" />
+      <div className="info-box">Local operator headers provide attribution only; this is not authentication. Metadata is sanitized before persistence.</div>
+      <div className="filter-row">
+        <select value={severity} onChange={(event) => setSeverity(event.target.value)} aria-label="Severity filter">
+          <option value="">All severities</option>
+          <option value="Info">Info</option>
+          <option value="Warning">Warning</option>
+          <option value="Critical">Critical</option>
+        </select>
+        <input value={eventType} onChange={(event) => setEventType(event.target.value)} placeholder="Event type" />
+        <input value={entityType} onChange={(event) => setEntityType(event.target.value)} placeholder="Entity type" />
+        <input value={correlationId} onChange={(event) => setCorrelationId(event.target.value)} placeholder="Correlation ID" />
+        <input value={text} onChange={(event) => setText(event.target.value)} placeholder="Search" />
+      </div>
+      <DataTable rows={filtered} getRowKey={(row) => row.id} onRowClick={onSelect} columns={[
+        { key: 'time', header: 'Occurred UTC', render: (row) => formatUtc(row.occurredAtUtc), sortValue: (row) => row.occurredAtUtc },
+        { key: 'severity', header: 'Severity', render: (row) => <SeverityBadge value={row.severity} />, sortValue: (row) => row.severity },
+        { key: 'event', header: 'Event', render: (row) => formatStatus(row.eventType), sortValue: (row) => row.eventType },
+        { key: 'actor', header: 'Actor', render: (row) => `${row.actorDisplayName} (${row.actorType})`, sortValue: (row) => row.actorDisplayName },
+        { key: 'entity', header: 'Entity', render: (row) => row.entityType ? `${row.entityType} ${formatIdShort(row.entityId)}` : '-', sortValue: (row) => row.entityType ?? '' },
+        { key: 'result', header: 'Result', render: (row) => <StatusChip label={formatStatus(row.result)} tone={toneForStatus(row.result)} />, sortValue: (row) => row.result },
+        { key: 'description', header: 'Description', render: (row) => row.description },
+        { key: 'correlation', header: 'Correlation', render: (row) => formatIdShort(row.correlationId), sortValue: (row) => row.correlationId ?? '' }
+      ]} />
+    </section>
+  );
+}
+
 function RecentModelRuns({ rows, onSelect }: { rows: ModelRunDto[]; onSelect: (row: unknown) => void }) {
   return (
     <div className="panel wide">
@@ -552,9 +609,15 @@ function EodBreakTable({ rows }: { rows: EodReconciliationBreakDto[] }) {
 }
 
 function AuditStrip({ health, dashboard }: { health?: HealthDto; dashboard: DashboardState }) {
+  const latestAudit = dashboard.auditEvents.slice(0, 10).map((event) => ({
+    label: `${formatStatus(event.eventType)}: ${event.description}`,
+    time: event.occurredAtUtc,
+    tone: (event.severity === 'Critical' ? 'danger' : event.severity === 'Warning' ? 'warning' : 'info') as Tone
+  }));
   return (
     <footer className="audit-strip">
       <Timeline items={[
+        ...latestAudit,
         { label: `Server ${health?.environment ?? 'unknown'}`, time: health?.utcServerTime, tone: 'info' },
         { label: `${dashboard.modelRuns.length} model runs`, tone: 'neutral' },
         { label: `${dashboard.fills.length} fills`, tone: 'neutral' },

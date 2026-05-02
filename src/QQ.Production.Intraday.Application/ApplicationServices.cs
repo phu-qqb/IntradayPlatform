@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 using System.Globalization;
 using QQ.Production.Intraday.Domain;
 
@@ -35,6 +36,75 @@ public sealed class SystemClock : IClock
 public sealed class FixedClock(DateTimeOffset utcNow) : IClock
 {
     public DateTimeOffset UtcNow { get; set; } = utcNow;
+}
+
+public sealed record OperatorIdentity(OperatorAuditActorType ActorType, string ActorId, string ActorDisplayName);
+
+public interface IOperatorContext
+{
+    OperatorIdentity Current { get; }
+    string? CorrelationId { get; }
+    string? RequestId { get; }
+}
+
+public sealed class StaticOperatorContext(
+    OperatorAuditActorType actorType = OperatorAuditActorType.System,
+    string actorId = "system",
+    string actorDisplayName = "System",
+    string? correlationId = null,
+    string? requestId = null) : IOperatorContext
+{
+    public OperatorIdentity Current { get; } = new(actorType, actorId, actorDisplayName);
+    public string? CorrelationId { get; } = correlationId;
+    public string? RequestId { get; } = requestId;
+}
+
+public sealed record OperatorAuditEventFilter(
+    int Limit,
+    OperatorAuditSeverity? Severity = null,
+    OperatorAuditEventType? EventType = null,
+    string? EntityType = null,
+    string? EntityId = null,
+    string? CorrelationId = null,
+    DateTimeOffset? FromUtc = null,
+    DateTimeOffset? ToUtc = null);
+
+public sealed record OperatorAuditRecordRequest(
+    OperatorAuditEventType EventType,
+    OperatorAuditSeverity Severity,
+    OperatorAuditResult Result,
+    string Source,
+    string Description,
+    string? EntityType = null,
+    string? EntityId = null,
+    string? Reason = null,
+    object? Before = null,
+    object? After = null,
+    object? Metadata = null,
+    string? CorrelationId = null,
+    string? CausationId = null,
+    string? RequestId = null,
+    OperatorIdentity? Actor = null);
+
+public interface IOperatorAuditRepository
+{
+    Task AddAsync(OperatorAuditEvent auditEvent, CancellationToken cancellationToken);
+    Task<OperatorAuditEvent?> GetAsync(OperatorAuditEventId id, CancellationToken cancellationToken);
+    Task<IReadOnlyList<OperatorAuditEvent>> GetRecentAsync(OperatorAuditEventFilter filter, CancellationToken cancellationToken);
+    Task<IReadOnlyList<OperatorAuditEvent>> GetByEntityAsync(string entityType, string entityId, int limit, CancellationToken cancellationToken);
+    Task<IReadOnlyList<OperatorAuditEvent>> GetByCorrelationIdAsync(string correlationId, int limit, CancellationToken cancellationToken);
+}
+
+public interface IOperatorAuditService
+{
+    Task<OperatorAuditEvent?> RecordAsync(OperatorAuditRecordRequest request, CancellationToken cancellationToken);
+    Task<OperatorAuditEvent?> RecordSucceededAsync(OperatorAuditEventType eventType, string source, string description, string? entityType = null, string? entityId = null, object? metadata = null, CancellationToken cancellationToken = default);
+    Task<OperatorAuditEvent?> RecordFailedAsync(OperatorAuditEventType eventType, string source, string description, string? reason = null, string? entityType = null, string? entityId = null, object? metadata = null, CancellationToken cancellationToken = default);
+    Task<OperatorAuditEvent?> RecordBlockedAsync(OperatorAuditEventType eventType, string source, string description, string? reason = null, string? entityType = null, string? entityId = null, object? metadata = null, CancellationToken cancellationToken = default);
+    Task<OperatorAuditEvent?> GetAsync(OperatorAuditEventId id, CancellationToken cancellationToken);
+    Task<IReadOnlyList<OperatorAuditEvent>> GetRecentAsync(OperatorAuditEventFilter filter, CancellationToken cancellationToken);
+    Task<IReadOnlyList<OperatorAuditEvent>> GetByEntityAsync(string entityType, string entityId, int limit, CancellationToken cancellationToken);
+    Task<IReadOnlyList<OperatorAuditEvent>> GetByCorrelationIdAsync(string correlationId, int limit, CancellationToken cancellationToken);
 }
 
 public interface IIntradayRepository
@@ -279,7 +349,172 @@ public sealed class PlatformState
     public List<LmaxCurrencyWallet> LmaxCurrencyWallets { get; } = [];
     public List<EodReconciliationRun> EodReconciliationRuns { get; } = [];
     public List<EodReconciliationBreak> EodReconciliationBreaks { get; } = [];
+    public List<OperatorAuditEvent> OperatorAuditEvents { get; } = [];
     public KillSwitchState KillSwitch { get; set; } = new(Guid.NewGuid(), false, null, DateTimeOffset.UnixEpoch);
+}
+
+public sealed class OperatorAuditService(IOperatorAuditRepository repository, IOperatorContext context, IClock clock) : IOperatorAuditService
+{
+    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web) { WriteIndented = false };
+    private static readonly string[] SecretKeyFragments = ["password", "secret", "token", "apikey", "api_key", "fixpassword"];
+
+    public async Task<OperatorAuditEvent?> RecordAsync(OperatorAuditRecordRequest request, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var actor = request.Actor ?? context.Current;
+            var auditEvent = new OperatorAuditEvent(
+                OperatorAuditEventId.New(),
+                clock.UtcNow,
+                actor.ActorType,
+                actor.ActorId,
+                actor.ActorDisplayName,
+                request.EventType,
+                request.Severity,
+                request.Result,
+                request.EntityType,
+                request.EntityId,
+                request.CorrelationId ?? context.CorrelationId,
+                request.CausationId,
+                request.RequestId ?? context.RequestId,
+                request.Source,
+                request.Description,
+                request.Reason,
+                SerializeSanitized(request.Before),
+                SerializeSanitized(request.After),
+                SerializeSanitized(request.Metadata));
+
+            await repository.AddAsync(auditEvent, cancellationToken);
+            return auditEvent;
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"Operator audit write failed: {ex.Message}");
+            return null;
+        }
+    }
+
+    public Task<OperatorAuditEvent?> RecordSucceededAsync(OperatorAuditEventType eventType, string source, string description, string? entityType = null, string? entityId = null, object? metadata = null, CancellationToken cancellationToken = default)
+        => RecordAsync(new(eventType, OperatorAuditSeverity.Info, OperatorAuditResult.Succeeded, source, description, entityType, entityId, Metadata: metadata), cancellationToken);
+
+    public Task<OperatorAuditEvent?> RecordFailedAsync(OperatorAuditEventType eventType, string source, string description, string? reason = null, string? entityType = null, string? entityId = null, object? metadata = null, CancellationToken cancellationToken = default)
+        => RecordAsync(new(eventType, OperatorAuditSeverity.Critical, OperatorAuditResult.Failed, source, description, entityType, entityId, reason, Metadata: metadata), cancellationToken);
+
+    public Task<OperatorAuditEvent?> RecordBlockedAsync(OperatorAuditEventType eventType, string source, string description, string? reason = null, string? entityType = null, string? entityId = null, object? metadata = null, CancellationToken cancellationToken = default)
+        => RecordAsync(new(eventType, OperatorAuditSeverity.Warning, OperatorAuditResult.Blocked, source, description, entityType, entityId, reason, Metadata: metadata), cancellationToken);
+
+    public Task<IReadOnlyList<OperatorAuditEvent>> GetRecentAsync(OperatorAuditEventFilter filter, CancellationToken cancellationToken)
+        => repository.GetRecentAsync(filter, cancellationToken);
+
+    public Task<OperatorAuditEvent?> GetAsync(OperatorAuditEventId id, CancellationToken cancellationToken)
+        => repository.GetAsync(id, cancellationToken);
+
+    public Task<IReadOnlyList<OperatorAuditEvent>> GetByEntityAsync(string entityType, string entityId, int limit, CancellationToken cancellationToken)
+        => repository.GetByEntityAsync(entityType, entityId, limit, cancellationToken);
+
+    public Task<IReadOnlyList<OperatorAuditEvent>> GetByCorrelationIdAsync(string correlationId, int limit, CancellationToken cancellationToken)
+        => repository.GetByCorrelationIdAsync(correlationId, limit, cancellationToken);
+
+    public static string? SerializeSanitized(object? value)
+    {
+        if (value is null) return null;
+        var sanitized = Sanitize(value);
+        return sanitized is null ? null : JsonSerializer.Serialize(sanitized, JsonOptions);
+    }
+
+    public static object? Sanitize(object? value)
+    {
+        if (value is null) return null;
+        var json = JsonSerializer.SerializeToNode(value, JsonOptions);
+        SanitizeNode(json);
+        return json;
+    }
+
+    private static void SanitizeNode(System.Text.Json.Nodes.JsonNode? node)
+    {
+        if (node is System.Text.Json.Nodes.JsonObject obj)
+        {
+            foreach (var property in obj.ToList())
+            {
+                if (IsSecretKey(property.Key))
+                {
+                    obj[property.Key] = "***";
+                }
+                else
+                {
+                    SanitizeNode(property.Value);
+                }
+            }
+        }
+        else if (node is System.Text.Json.Nodes.JsonArray array)
+        {
+            foreach (var item in array)
+            {
+                SanitizeNode(item);
+            }
+        }
+    }
+
+    private static bool IsSecretKey(string key)
+        => SecretKeyFragments.Any(fragment => key.Replace("-", "", StringComparison.Ordinal).Contains(fragment, StringComparison.OrdinalIgnoreCase));
+}
+
+public sealed class InMemoryOperatorAuditRepository(PlatformState state) : IOperatorAuditRepository
+{
+    private readonly object _sync = new();
+
+    public Task AddAsync(OperatorAuditEvent auditEvent, CancellationToken cancellationToken)
+    {
+        lock (_sync) state.OperatorAuditEvents.Add(auditEvent);
+        return Task.CompletedTask;
+    }
+
+    public Task<OperatorAuditEvent?> GetAsync(OperatorAuditEventId id, CancellationToken cancellationToken)
+    {
+        lock (_sync) return Task.FromResult(state.OperatorAuditEvents.FirstOrDefault(x => x.Id == id));
+    }
+
+    public Task<IReadOnlyList<OperatorAuditEvent>> GetRecentAsync(OperatorAuditEventFilter filter, CancellationToken cancellationToken)
+    {
+        lock (_sync) return Task.FromResult<IReadOnlyList<OperatorAuditEvent>>(ApplyFilter(state.OperatorAuditEvents, filter).ToList());
+    }
+
+    public Task<IReadOnlyList<OperatorAuditEvent>> GetByEntityAsync(string entityType, string entityId, int limit, CancellationToken cancellationToken)
+    {
+        lock (_sync)
+        {
+            return Task.FromResult<IReadOnlyList<OperatorAuditEvent>>(state.OperatorAuditEvents
+                .Where(x => string.Equals(x.EntityType, entityType, StringComparison.OrdinalIgnoreCase) && string.Equals(x.EntityId, entityId, StringComparison.OrdinalIgnoreCase))
+                .OrderByDescending(x => x.OccurredAtUtc)
+                .Take(Math.Clamp(limit, 1, 500))
+                .ToList());
+        }
+    }
+
+    public Task<IReadOnlyList<OperatorAuditEvent>> GetByCorrelationIdAsync(string correlationId, int limit, CancellationToken cancellationToken)
+    {
+        lock (_sync)
+        {
+            return Task.FromResult<IReadOnlyList<OperatorAuditEvent>>(state.OperatorAuditEvents
+                .Where(x => string.Equals(x.CorrelationId, correlationId, StringComparison.OrdinalIgnoreCase))
+                .OrderByDescending(x => x.OccurredAtUtc)
+                .Take(Math.Clamp(limit, 1, 500))
+                .ToList());
+        }
+    }
+
+    private static IEnumerable<OperatorAuditEvent> ApplyFilter(IEnumerable<OperatorAuditEvent> events, OperatorAuditEventFilter filter)
+    {
+        var query = events;
+        if (filter.Severity is not null) query = query.Where(x => x.Severity == filter.Severity.Value);
+        if (filter.EventType is not null) query = query.Where(x => x.EventType == filter.EventType.Value);
+        if (!string.IsNullOrWhiteSpace(filter.EntityType)) query = query.Where(x => string.Equals(x.EntityType, filter.EntityType, StringComparison.OrdinalIgnoreCase));
+        if (!string.IsNullOrWhiteSpace(filter.EntityId)) query = query.Where(x => string.Equals(x.EntityId, filter.EntityId, StringComparison.OrdinalIgnoreCase));
+        if (!string.IsNullOrWhiteSpace(filter.CorrelationId)) query = query.Where(x => string.Equals(x.CorrelationId, filter.CorrelationId, StringComparison.OrdinalIgnoreCase));
+        if (filter.FromUtc is not null) query = query.Where(x => x.OccurredAtUtc >= filter.FromUtc);
+        if (filter.ToUtc is not null) query = query.Where(x => x.OccurredAtUtc <= filter.ToUtc);
+        return query.OrderByDescending(x => x.OccurredAtUtc).Take(Math.Clamp(filter.Limit, 1, 500));
+    }
 }
 
 public sealed class InMemoryIntradayRepository(PlatformState state) : IIntradayRepository

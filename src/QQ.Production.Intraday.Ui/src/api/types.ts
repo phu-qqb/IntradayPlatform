@@ -511,3 +511,25 @@ export type BuildBarsRequest = {
   startUtc: string;
   endUtc: string;
 };
+
+export type OperatorAuditEventDto = {
+  id: string;
+  occurredAtUtc: string;
+  actorType: string;
+  actorId: string;
+  actorDisplayName: string;
+  eventType: string;
+  severity: string;
+  result: string;
+  entityType?: string | null;
+  entityId?: string | null;
+  correlationId?: string | null;
+  causationId?: string | null;
+  requestId?: string | null;
+  source: string;
+  description: string;
+  reason?: string | null;
+  beforeJson?: string | null;
+  afterJson?: string | null;
+  metadataJson?: string | null;
+};

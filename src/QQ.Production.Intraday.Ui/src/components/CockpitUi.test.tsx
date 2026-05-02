@@ -35,4 +35,22 @@ describe('cockpit UI primitives', () => {
 
     expect(screen.getByText(/wallet\/cash\/PnL, not instrument positions/i)).toBeTruthy();
   });
+
+  it('renders audit journal severity without exposing secret metadata', () => {
+    render(
+      <DataTable
+        rows={[{ id: 'audit-1', severity: 'Critical', eventType: 'KillSwitchActivated', metadataJson: '{"password":"***"}' }]}
+        getRowKey={(row) => row.id}
+        columns={[
+          { key: 'severity', header: 'Severity', render: (row) => <StatusChip label={row.severity} tone="danger" /> },
+          { key: 'event', header: 'Event', render: (row) => row.eventType },
+          { key: 'metadata', header: 'Metadata', render: (row) => row.metadataJson }
+        ]}
+      />
+    );
+
+    expect(screen.getByText('Critical').className).toContain('danger');
+    expect(screen.getByText('KillSwitchActivated')).toBeTruthy();
+    expect(screen.queryByText('do-not-store')).toBeNull();
+  });
 });

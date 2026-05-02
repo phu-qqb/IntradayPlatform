@@ -218,9 +218,26 @@ The cockpit is now organized as a PMS/OMS/EMS operator shell:
 - Reconciliation: intraday and EOD breaks
 - LMAX EOD: import runs, validation issues, individual trades, trade summaries, currency wallets, PnL, and EOD breaks
 - Risk & Admin: kill switch, reference integrity, instruments, and venues
+- Audit Journal: append-only operator/system action journal with correlation IDs
 - Connectivity Lab: read-only script guidance only; no credential forms or live controls
 
 Development CORS allows only `http://localhost:5173` and `http://127.0.0.1:5173`; wildcard CORS is not enabled for production-like environments.
+
+## Operator Audit Trail
+
+The platform persists an append-only `OperatorAuditEvents` journal for safety-relevant local operator and system actions. Audited actions include DB weight batch creation/validation/promotion, model-run creation and processing, kill-switch activation/clear, reference-data integrity blocking checks, fake LMAX EOD generation/import, and EOD reconciliation runs.
+
+Each event records UTC time, actor type/name, event type, severity, result, entity reference, correlation/request IDs, source, description, optional reason, and sanitized JSON metadata. The local operator context is attribution only, not authentication: API requests default to `local-dev` and may set `X-Operator-Id`, `X-Operator-Name`, and `X-Correlation-Id`.
+
+Audit APIs are read-only:
+
+```powershell
+curl "http://localhost:5050/audit/events?limit=100"
+curl "http://localhost:5050/audit/events/by-entity?entityType=ModelRun&entityId=<id>"
+curl "http://localhost:5050/audit/events/by-correlation/<correlationId>"
+```
+
+Audit metadata is sanitized before persistence for keys containing `password`, `secret`, `token`, or `apiKey`. There are no update/delete endpoints for audit events. The current limitation is that the local operator identity is not authenticated yet.
 
 ## DB Model Weight Source
 

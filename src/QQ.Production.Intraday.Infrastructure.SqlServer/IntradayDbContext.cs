@@ -45,6 +45,7 @@ public sealed class IntradayDbContext(DbContextOptions<IntradayDbContext> option
     public DbSet<LmaxCurrencyWallet> LmaxCurrencyWallets => Set<LmaxCurrencyWallet>();
     public DbSet<EodReconciliationRun> EodReconciliationRuns => Set<EodReconciliationRun>();
     public DbSet<EodReconciliationBreak> EodReconciliationBreaks => Set<EodReconciliationBreak>();
+    public DbSet<OperatorAuditEvent> OperatorAuditEvents => Set<OperatorAuditEvent>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -89,6 +90,7 @@ public sealed class IntradayDbContext(DbContextOptions<IntradayDbContext> option
         modelBuilder.Entity<LmaxCurrencyWallet>().HasKey(x => x.Id);
         modelBuilder.Entity<EodReconciliationRun>().HasKey(x => x.Id);
         modelBuilder.Entity<EodReconciliationBreak>().HasKey(x => x.Id);
+        modelBuilder.Entity<OperatorAuditEvent>().HasKey(x => x.Id);
 
         modelBuilder.Entity<ModelRun>().HasIndex(x => x.Id).IsUnique();
         modelBuilder.Entity<Fund>().HasIndex(x => x.Name).IsUnique().HasFilter("[IsEnabled] = 1");
@@ -131,6 +133,11 @@ public sealed class IntradayDbContext(DbContextOptions<IntradayDbContext> option
         modelBuilder.Entity<LmaxTradeSummary>().HasIndex(x => new { x.InstrumentId, x.ReportDate });
         modelBuilder.Entity<LmaxCurrencyWallet>().HasIndex(x => new { x.ReportDate, x.BrokerAccountId });
         modelBuilder.Entity<LmaxCurrencyWallet>().HasIndex(x => new { x.ReportDate, x.VenueId, x.BrokerAccountId, x.Currency }).IsUnique();
+        modelBuilder.Entity<OperatorAuditEvent>().HasIndex(x => x.OccurredAtUtc);
+        modelBuilder.Entity<OperatorAuditEvent>().HasIndex(x => x.EventType);
+        modelBuilder.Entity<OperatorAuditEvent>().HasIndex(x => new { x.EntityType, x.EntityId });
+        modelBuilder.Entity<OperatorAuditEvent>().HasIndex(x => x.CorrelationId);
+        modelBuilder.Entity<OperatorAuditEvent>().HasIndex(x => x.Severity);
 
         modelBuilder.Entity<BrokerAccount>().HasOne<Fund>().WithMany().HasForeignKey(x => x.FundId).OnDelete(DeleteBehavior.Restrict);
         modelBuilder.Entity<NavSnapshot>().HasOne<Fund>().WithMany().HasForeignKey(x => x.FundId).OnDelete(DeleteBehavior.Restrict);
@@ -192,6 +199,17 @@ public sealed class IntradayDbContext(DbContextOptions<IntradayDbContext> option
         modelBuilder.Entity<EodReconciliationRun>().HasOne<BrokerAccount>().WithMany().HasForeignKey(x => x.BrokerAccountId).OnDelete(DeleteBehavior.Restrict);
         modelBuilder.Entity<EodReconciliationBreak>().HasOne<EodReconciliationRun>().WithMany().HasForeignKey(x => x.RunId).OnDelete(DeleteBehavior.Restrict);
         modelBuilder.Entity<EodReconciliationBreak>().HasOne<Instrument>().WithMany().HasForeignKey(x => x.InstrumentId).OnDelete(DeleteBehavior.Restrict);
+
+        modelBuilder.Entity<OperatorAuditEvent>().Property(x => x.ActorId).HasMaxLength(128);
+        modelBuilder.Entity<OperatorAuditEvent>().Property(x => x.ActorDisplayName).HasMaxLength(256);
+        modelBuilder.Entity<OperatorAuditEvent>().Property(x => x.EntityType).HasMaxLength(128);
+        modelBuilder.Entity<OperatorAuditEvent>().Property(x => x.EntityId).HasMaxLength(128);
+        modelBuilder.Entity<OperatorAuditEvent>().Property(x => x.CorrelationId).HasMaxLength(128);
+        modelBuilder.Entity<OperatorAuditEvent>().Property(x => x.CausationId).HasMaxLength(128);
+        modelBuilder.Entity<OperatorAuditEvent>().Property(x => x.RequestId).HasMaxLength(128);
+        modelBuilder.Entity<OperatorAuditEvent>().Property(x => x.Source).HasMaxLength(128);
+        modelBuilder.Entity<OperatorAuditEvent>().Property(x => x.Description).HasMaxLength(1000);
+        modelBuilder.Entity<OperatorAuditEvent>().Property(x => x.Reason).HasMaxLength(1000);
 
         foreach (var entityType in modelBuilder.Model.GetEntityTypes())
         {
@@ -300,7 +318,47 @@ public sealed class IntradayDbContext(DbContextOptions<IntradayDbContext> option
         modelBuilder.Entity<EodReconciliationRun>().Property(x => x.VenueId).HasConversion(x => x.Value, x => new VenueId(x));
         modelBuilder.Entity<EodReconciliationRun>().Property(x => x.BrokerAccountId).HasConversion(x => x.Value, x => new BrokerAccountId(x));
         modelBuilder.Entity<EodReconciliationBreak>().Property(x => x.InstrumentId).HasConversion(x => x.HasValue ? x.Value.Value : (Guid?)null, x => x.HasValue ? new InstrumentId(x.Value) : null);
+        modelBuilder.Entity<OperatorAuditEvent>().Property(x => x.Id).HasConversion(x => x.Value, x => new OperatorAuditEventId(x));
     }
+}
+
+public sealed class SqlServerOperatorAuditRepository(IntradayDbContext dbContext) : IOperatorAuditRepository
+{
+    public async Task AddAsync(OperatorAuditEvent auditEvent, CancellationToken cancellationToken)
+    {
+        dbContext.OperatorAuditEvents.Add(auditEvent);
+        await dbContext.SaveChangesAsync(cancellationToken);
+    }
+
+    public Task<OperatorAuditEvent?> GetAsync(OperatorAuditEventId id, CancellationToken cancellationToken)
+        => dbContext.OperatorAuditEvents.AsNoTracking().FirstOrDefaultAsync(x => x.Id == id, cancellationToken);
+
+    public async Task<IReadOnlyList<OperatorAuditEvent>> GetRecentAsync(OperatorAuditEventFilter filter, CancellationToken cancellationToken)
+    {
+        var query = dbContext.OperatorAuditEvents.AsNoTracking().AsQueryable();
+        if (filter.Severity is not null) query = query.Where(x => x.Severity == filter.Severity.Value);
+        if (filter.EventType is not null) query = query.Where(x => x.EventType == filter.EventType.Value);
+        if (!string.IsNullOrWhiteSpace(filter.EntityType)) query = query.Where(x => x.EntityType == filter.EntityType);
+        if (!string.IsNullOrWhiteSpace(filter.EntityId)) query = query.Where(x => x.EntityId == filter.EntityId);
+        if (!string.IsNullOrWhiteSpace(filter.CorrelationId)) query = query.Where(x => x.CorrelationId == filter.CorrelationId);
+        if (filter.FromUtc is not null) query = query.Where(x => x.OccurredAtUtc >= filter.FromUtc);
+        if (filter.ToUtc is not null) query = query.Where(x => x.OccurredAtUtc <= filter.ToUtc);
+        return await query.OrderByDescending(x => x.OccurredAtUtc).Take(Math.Clamp(filter.Limit, 1, 500)).ToListAsync(cancellationToken);
+    }
+
+    public async Task<IReadOnlyList<OperatorAuditEvent>> GetByEntityAsync(string entityType, string entityId, int limit, CancellationToken cancellationToken)
+        => await dbContext.OperatorAuditEvents.AsNoTracking()
+            .Where(x => x.EntityType == entityType && x.EntityId == entityId)
+            .OrderByDescending(x => x.OccurredAtUtc)
+            .Take(Math.Clamp(limit, 1, 500))
+            .ToListAsync(cancellationToken);
+
+    public async Task<IReadOnlyList<OperatorAuditEvent>> GetByCorrelationIdAsync(string correlationId, int limit, CancellationToken cancellationToken)
+        => await dbContext.OperatorAuditEvents.AsNoTracking()
+            .Where(x => x.CorrelationId == correlationId)
+            .OrderByDescending(x => x.OccurredAtUtc)
+            .Take(Math.Clamp(limit, 1, 500))
+            .ToListAsync(cancellationToken);
 }
 
 public sealed class SqlServerIntradayRepository(IntradayDbContext dbContext) : IIntradayRepository
@@ -347,6 +405,7 @@ public sealed class SqlServerIntradayRepository(IntradayDbContext dbContext) : I
         state.LmaxCurrencyWallets.AddRange(await dbContext.LmaxCurrencyWallets.AsNoTracking().ToListAsync(cancellationToken));
         state.EodReconciliationRuns.AddRange(await dbContext.EodReconciliationRuns.AsNoTracking().ToListAsync(cancellationToken));
         state.EodReconciliationBreaks.AddRange(await dbContext.EodReconciliationBreaks.AsNoTracking().ToListAsync(cancellationToken));
+        state.OperatorAuditEvents.AddRange(await dbContext.OperatorAuditEvents.AsNoTracking().ToListAsync(cancellationToken));
         state.KillSwitch = state.KillSwitchStates.OrderByDescending(x => x.UpdatedAtUtc).FirstOrDefault() ?? state.KillSwitch;
         return state;
     }

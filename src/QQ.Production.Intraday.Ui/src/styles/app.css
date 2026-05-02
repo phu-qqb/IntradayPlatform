@@ -278,10 +278,25 @@ tr:hover td { background: rgba(88, 166, 255, 0.06); }
   background: #0b1118;
   padding: 8px 14px;
 }
+.filter-row {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 8px;
+  margin: 10px 0 14px;
+}
+.filter-row input,
+.filter-row select {
+  min-width: 0;
+  border: 1px solid #2a3546;
+  border-radius: 6px;
+  background: #0d141d;
+  color: #d8e0ea;
+  padding: 8px 10px;
+}
 .command-list { display: grid; gap: 8px; }
 
 @media (max-width: 900px) {
-  .operator-body, .status-banner, .top-status-bar, .dashboard-grid, .split, .form-grid, .page-grid.two, .metric-grid { grid-template-columns: 1fr; }
+  .operator-body, .status-banner, .top-status-bar, .dashboard-grid, .split, .form-grid, .page-grid.two, .metric-grid, .filter-row { grid-template-columns: 1fr; }
   .left-navigation, .detail-drawer { position: static; height: auto; }
   .app-shell { padding: 10px; }
 }

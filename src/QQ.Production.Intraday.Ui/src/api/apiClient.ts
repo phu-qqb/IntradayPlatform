@@ -27,6 +27,7 @@ import type {
   ModelWeightRowDto,
   ModelWeightValidationIssueDto,
   OrdersDto,
+  OperatorAuditEventDto,
   PositionDto,
   ProcessModelRunResult,
   ReconciliationBreakDto,
@@ -119,6 +120,12 @@ export const apiClient = {
   getInstruments: () => request<InstrumentDto[]>('/instruments'),
   getVenues: () => request<VenueDto[]>('/venues')
   ,
+  getAuditEvents: (params: { limit?: number; severity?: string; eventType?: string; entityType?: string; entityId?: string; correlationId?: string; fromUtc?: string; toUtc?: string } = {}) =>
+    request<OperatorAuditEventDto[]>(`/audit/events${query({ limit: 100, ...params })}`),
+  getAuditEventsByEntity: (entityType: string, entityId: string, limit = 100) =>
+    request<OperatorAuditEventDto[]>(`/audit/events/by-entity${query({ entityType, entityId, limit })}`),
+  getAuditEventsByCorrelation: (correlationId: string, limit = 100) =>
+    request<OperatorAuditEventDto[]>(`/audit/events/by-correlation/${encodeURIComponent(correlationId)}${query({ limit })}`),
   getLmaxEodImportRuns: () => request<LmaxReportImportRunDto[]>('/lmax-eod/import-runs?limit=100'),
   getLmaxEodValidationIssues: () => request<LmaxReportValidationIssueDto[]>('/lmax-eod/validation-issues?limit=100'),
   getLmaxIndividualTrades: (reportDate?: string) => request<LmaxIndividualTradeDto[]>(`/lmax-eod/individual-trades${query({ limit: 100, reportDate })}`),

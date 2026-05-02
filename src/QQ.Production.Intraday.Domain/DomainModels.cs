@@ -105,6 +105,11 @@ public readonly record struct LmaxCurrencyWalletId(Guid Value)
     public static LmaxCurrencyWalletId New() => new(Guid.NewGuid());
 }
 
+public readonly record struct OperatorAuditEventId(Guid Value)
+{
+    public static OperatorAuditEventId New() => new(Guid.NewGuid());
+}
+
 public readonly record struct ClientOrderId(string Value)
 {
     public override string ToString() => Value;
@@ -408,6 +413,54 @@ public sealed record LmaxCurrencyWallet(
 
 public sealed record EodReconciliationRun(Guid Id, DateOnly ReportDate, VenueId VenueId, BrokerAccountId BrokerAccountId, DateTimeOffset CreatedAtUtc, bool HasBlockingBreaks);
 public sealed record EodReconciliationBreak(Guid Id, Guid RunId, ReconciliationBreakType Type, ReconciliationBreakSeverity Severity, ReconciliationBreakStatus Status, InstrumentId? InstrumentId, string Description, string? BrokerExecutionId, string? InternalFillId, DateTimeOffset CreatedAtUtc);
+
+public enum OperatorAuditEventType
+{
+    ModelWeightBatchCreated,
+    ModelWeightBatchValidated,
+    ModelWeightBatchPromoted,
+    ModelRunCreated,
+    ModelRunProcessed,
+    ModelRunBlocked,
+    OrderCreated,
+    OrderFilled,
+    KillSwitchActivated,
+    KillSwitchCleared,
+    ReferenceDataIntegrityChecked,
+    EodReportGenerated,
+    EodReportImported,
+    EodReconciliationRun,
+    EodBreakCreated,
+    PnlSummaryCalculated,
+    LmaxLabCommandRun,
+    SafetyStartupValidation,
+    Unknown
+}
+
+public enum OperatorAuditSeverity { Info, Warning, Critical }
+public enum OperatorAuditActorType { System, Operator, Worker, Api, ConnectivityLab, Unknown }
+public enum OperatorAuditResult { Started, Succeeded, Failed, Blocked, NoActionRequired }
+
+public sealed record OperatorAuditEvent(
+    OperatorAuditEventId Id,
+    DateTimeOffset OccurredAtUtc,
+    OperatorAuditActorType ActorType,
+    string ActorId,
+    string ActorDisplayName,
+    OperatorAuditEventType EventType,
+    OperatorAuditSeverity Severity,
+    OperatorAuditResult Result,
+    string? EntityType,
+    string? EntityId,
+    string? CorrelationId,
+    string? CausationId,
+    string? RequestId,
+    string Source,
+    string Description,
+    string? Reason,
+    string? BeforeJson,
+    string? AfterJson,
+    string? MetadataJson);
 
 public sealed record EodPnlCurrencyRow(
     string Currency,
