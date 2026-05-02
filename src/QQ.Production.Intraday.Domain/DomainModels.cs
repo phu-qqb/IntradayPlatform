@@ -110,6 +110,21 @@ public readonly record struct OperatorAuditEventId(Guid Value)
     public static OperatorAuditEventId New() => new(Guid.NewGuid());
 }
 
+public readonly record struct ExceptionCaseId(Guid Value)
+{
+    public static ExceptionCaseId New() => new(Guid.NewGuid());
+}
+
+public readonly record struct ExceptionCaseActionId(Guid Value)
+{
+    public static ExceptionCaseActionId New() => new(Guid.NewGuid());
+}
+
+public readonly record struct ExceptionCaseNoteId(Guid Value)
+{
+    public static ExceptionCaseNoteId New() => new(Guid.NewGuid());
+}
+
 public readonly record struct ClientOrderId(string Value)
 {
     public override string ToString() => Value;
@@ -414,6 +429,83 @@ public sealed record LmaxCurrencyWallet(
 public sealed record EodReconciliationRun(Guid Id, DateOnly ReportDate, VenueId VenueId, BrokerAccountId BrokerAccountId, DateTimeOffset CreatedAtUtc, bool HasBlockingBreaks);
 public sealed record EodReconciliationBreak(Guid Id, Guid RunId, ReconciliationBreakType Type, ReconciliationBreakSeverity Severity, ReconciliationBreakStatus Status, InstrumentId? InstrumentId, string Description, string? BrokerExecutionId, string? InternalFillId, DateTimeOffset CreatedAtUtc);
 
+public enum ExceptionCaseStatus { Open, Acknowledged, Investigating, Resolved, FalsePositive, Waived, Closed }
+public enum ExceptionCaseSeverity { Info, Warning, Blocking, Critical }
+public enum ExceptionCaseType
+{
+    PositionMismatch,
+    InternalFillMissingInBrokerReport,
+    BrokerFillMissingInternally,
+    QuantityMismatch,
+    PriceMismatch,
+    SideMismatch,
+    InstrumentMismatch,
+    ReferenceDataIssue,
+    RiskBlock,
+    StaleMarketData,
+    StaleModelRun,
+    EodBreak,
+    IntradayBreak,
+    SystemHealth,
+    Other
+}
+
+public enum ExceptionCaseSource { IntradayReconciliation, EodReconciliation, RiskEngine, ReferenceDataIntegrity, SystemHealth, Operator, Other }
+public enum ExceptionCaseActionType { Created, Acknowledged, Assigned, MarkedInvestigating, Resolved, MarkedFalsePositive, Waived, Reopened, NoteAdded }
+
+public sealed record ExceptionCase(
+    ExceptionCaseId Id,
+    DateTimeOffset CreatedAtUtc,
+    DateTimeOffset UpdatedAtUtc,
+    ExceptionCaseStatus Status,
+    ExceptionCaseSeverity Severity,
+    ExceptionCaseType Type,
+    ExceptionCaseSource Source,
+    string Title,
+    string Description,
+    string? EntityType,
+    string? EntityId,
+    InstrumentId? InstrumentId,
+    string? Symbol,
+    string? CorrelationId,
+    string? AssignedTo,
+    DateTimeOffset? AcknowledgedAtUtc,
+    string? AcknowledgedBy,
+    DateTimeOffset? ResolvedAtUtc,
+    string? ResolvedBy,
+    string? ResolutionReason,
+    string? WaiverReason,
+    string? MetadataJson);
+
+public sealed record ExceptionCaseAction(
+    ExceptionCaseActionId Id,
+    ExceptionCaseId CaseId,
+    ExceptionCaseActionType ActionType,
+    string ActorId,
+    string ActorDisplayName,
+    DateTimeOffset OccurredAtUtc,
+    ExceptionCaseStatus? FromStatus,
+    ExceptionCaseStatus? ToStatus,
+    string? Reason,
+    string? Note,
+    string? MetadataJson,
+    string? CorrelationId);
+
+public sealed record ExceptionCaseNote(
+    ExceptionCaseNoteId Id,
+    ExceptionCaseId CaseId,
+    DateTimeOffset CreatedAtUtc,
+    string CreatedBy,
+    string Note,
+    string? CorrelationId);
+
+public sealed record ExceptionCaseLink(
+    Guid Id,
+    ExceptionCaseId CaseId,
+    string SourceEntityType,
+    string SourceEntityId,
+    DateTimeOffset CreatedAtUtc);
+
 public enum OperatorAuditEventType
 {
     ModelWeightBatchCreated,
@@ -434,6 +526,15 @@ public enum OperatorAuditEventType
     PnlSummaryCalculated,
     LmaxLabCommandRun,
     SafetyStartupValidation,
+    ExceptionCaseCreated,
+    ExceptionCaseAcknowledged,
+    ExceptionCaseAssigned,
+    ExceptionCaseInvestigating,
+    ExceptionCaseResolved,
+    ExceptionCaseFalsePositive,
+    ExceptionCaseWaived,
+    ExceptionCaseReopened,
+    ExceptionCaseNoteAdded,
     Unknown
 }
 

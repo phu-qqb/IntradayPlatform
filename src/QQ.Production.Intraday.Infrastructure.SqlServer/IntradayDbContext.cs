@@ -45,6 +45,10 @@ public sealed class IntradayDbContext(DbContextOptions<IntradayDbContext> option
     public DbSet<LmaxCurrencyWallet> LmaxCurrencyWallets => Set<LmaxCurrencyWallet>();
     public DbSet<EodReconciliationRun> EodReconciliationRuns => Set<EodReconciliationRun>();
     public DbSet<EodReconciliationBreak> EodReconciliationBreaks => Set<EodReconciliationBreak>();
+    public DbSet<ExceptionCase> ExceptionCases => Set<ExceptionCase>();
+    public DbSet<ExceptionCaseAction> ExceptionCaseActions => Set<ExceptionCaseAction>();
+    public DbSet<ExceptionCaseNote> ExceptionCaseNotes => Set<ExceptionCaseNote>();
+    public DbSet<ExceptionCaseLink> ExceptionCaseLinks => Set<ExceptionCaseLink>();
     public DbSet<OperatorAuditEvent> OperatorAuditEvents => Set<OperatorAuditEvent>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
@@ -90,6 +94,10 @@ public sealed class IntradayDbContext(DbContextOptions<IntradayDbContext> option
         modelBuilder.Entity<LmaxCurrencyWallet>().HasKey(x => x.Id);
         modelBuilder.Entity<EodReconciliationRun>().HasKey(x => x.Id);
         modelBuilder.Entity<EodReconciliationBreak>().HasKey(x => x.Id);
+        modelBuilder.Entity<ExceptionCase>().HasKey(x => x.Id);
+        modelBuilder.Entity<ExceptionCaseAction>().HasKey(x => x.Id);
+        modelBuilder.Entity<ExceptionCaseNote>().HasKey(x => x.Id);
+        modelBuilder.Entity<ExceptionCaseLink>().HasKey(x => x.Id);
         modelBuilder.Entity<OperatorAuditEvent>().HasKey(x => x.Id);
 
         modelBuilder.Entity<ModelRun>().HasIndex(x => x.Id).IsUnique();
@@ -138,6 +146,18 @@ public sealed class IntradayDbContext(DbContextOptions<IntradayDbContext> option
         modelBuilder.Entity<OperatorAuditEvent>().HasIndex(x => new { x.EntityType, x.EntityId });
         modelBuilder.Entity<OperatorAuditEvent>().HasIndex(x => x.CorrelationId);
         modelBuilder.Entity<OperatorAuditEvent>().HasIndex(x => x.Severity);
+        modelBuilder.Entity<ExceptionCase>().HasIndex(x => x.Status);
+        modelBuilder.Entity<ExceptionCase>().HasIndex(x => x.Severity);
+        modelBuilder.Entity<ExceptionCase>().HasIndex(x => x.Type);
+        modelBuilder.Entity<ExceptionCase>().HasIndex(x => x.Source);
+        modelBuilder.Entity<ExceptionCase>().HasIndex(x => x.CreatedAtUtc);
+        modelBuilder.Entity<ExceptionCase>().HasIndex(x => new { x.EntityType, x.EntityId });
+        modelBuilder.Entity<ExceptionCase>().HasIndex(x => x.InstrumentId);
+        modelBuilder.Entity<ExceptionCase>().HasIndex(x => x.CorrelationId);
+        modelBuilder.Entity<ExceptionCase>().HasIndex(x => x.AssignedTo);
+        modelBuilder.Entity<ExceptionCaseAction>().HasIndex(x => new { x.CaseId, x.OccurredAtUtc });
+        modelBuilder.Entity<ExceptionCaseNote>().HasIndex(x => new { x.CaseId, x.CreatedAtUtc });
+        modelBuilder.Entity<ExceptionCaseLink>().HasIndex(x => new { x.SourceEntityType, x.SourceEntityId }).IsUnique();
 
         modelBuilder.Entity<BrokerAccount>().HasOne<Fund>().WithMany().HasForeignKey(x => x.FundId).OnDelete(DeleteBehavior.Restrict);
         modelBuilder.Entity<NavSnapshot>().HasOne<Fund>().WithMany().HasForeignKey(x => x.FundId).OnDelete(DeleteBehavior.Restrict);
@@ -199,6 +219,10 @@ public sealed class IntradayDbContext(DbContextOptions<IntradayDbContext> option
         modelBuilder.Entity<EodReconciliationRun>().HasOne<BrokerAccount>().WithMany().HasForeignKey(x => x.BrokerAccountId).OnDelete(DeleteBehavior.Restrict);
         modelBuilder.Entity<EodReconciliationBreak>().HasOne<EodReconciliationRun>().WithMany().HasForeignKey(x => x.RunId).OnDelete(DeleteBehavior.Restrict);
         modelBuilder.Entity<EodReconciliationBreak>().HasOne<Instrument>().WithMany().HasForeignKey(x => x.InstrumentId).OnDelete(DeleteBehavior.Restrict);
+        modelBuilder.Entity<ExceptionCase>().HasOne<Instrument>().WithMany().HasForeignKey(x => x.InstrumentId).OnDelete(DeleteBehavior.Restrict);
+        modelBuilder.Entity<ExceptionCaseAction>().HasOne<ExceptionCase>().WithMany().HasForeignKey(x => x.CaseId).OnDelete(DeleteBehavior.Restrict);
+        modelBuilder.Entity<ExceptionCaseNote>().HasOne<ExceptionCase>().WithMany().HasForeignKey(x => x.CaseId).OnDelete(DeleteBehavior.Restrict);
+        modelBuilder.Entity<ExceptionCaseLink>().HasOne<ExceptionCase>().WithMany().HasForeignKey(x => x.CaseId).OnDelete(DeleteBehavior.Restrict);
 
         modelBuilder.Entity<OperatorAuditEvent>().Property(x => x.ActorId).HasMaxLength(128);
         modelBuilder.Entity<OperatorAuditEvent>().Property(x => x.ActorDisplayName).HasMaxLength(256);
@@ -318,6 +342,13 @@ public sealed class IntradayDbContext(DbContextOptions<IntradayDbContext> option
         modelBuilder.Entity<EodReconciliationRun>().Property(x => x.VenueId).HasConversion(x => x.Value, x => new VenueId(x));
         modelBuilder.Entity<EodReconciliationRun>().Property(x => x.BrokerAccountId).HasConversion(x => x.Value, x => new BrokerAccountId(x));
         modelBuilder.Entity<EodReconciliationBreak>().Property(x => x.InstrumentId).HasConversion(x => x.HasValue ? x.Value.Value : (Guid?)null, x => x.HasValue ? new InstrumentId(x.Value) : null);
+        modelBuilder.Entity<ExceptionCase>().Property(x => x.Id).HasConversion(x => x.Value, x => new ExceptionCaseId(x));
+        modelBuilder.Entity<ExceptionCase>().Property(x => x.InstrumentId).HasConversion(x => x.HasValue ? x.Value.Value : (Guid?)null, x => x.HasValue ? new InstrumentId(x.Value) : null);
+        modelBuilder.Entity<ExceptionCaseAction>().Property(x => x.Id).HasConversion(x => x.Value, x => new ExceptionCaseActionId(x));
+        modelBuilder.Entity<ExceptionCaseAction>().Property(x => x.CaseId).HasConversion(x => x.Value, x => new ExceptionCaseId(x));
+        modelBuilder.Entity<ExceptionCaseNote>().Property(x => x.Id).HasConversion(x => x.Value, x => new ExceptionCaseNoteId(x));
+        modelBuilder.Entity<ExceptionCaseNote>().Property(x => x.CaseId).HasConversion(x => x.Value, x => new ExceptionCaseId(x));
+        modelBuilder.Entity<ExceptionCaseLink>().Property(x => x.CaseId).HasConversion(x => x.Value, x => new ExceptionCaseId(x));
         modelBuilder.Entity<OperatorAuditEvent>().Property(x => x.Id).HasConversion(x => x.Value, x => new OperatorAuditEventId(x));
     }
 }
@@ -359,6 +390,76 @@ public sealed class SqlServerOperatorAuditRepository(IntradayDbContext dbContext
             .OrderByDescending(x => x.OccurredAtUtc)
             .Take(Math.Clamp(limit, 1, 500))
             .ToListAsync(cancellationToken);
+}
+
+public sealed class SqlServerExceptionCaseRepository(IntradayDbContext dbContext) : IExceptionCaseRepository
+{
+    public async Task AddCaseAsync(ExceptionCase exceptionCase, ExceptionCaseAction action, ExceptionCaseLink? link, CancellationToken cancellationToken)
+    {
+        dbContext.ExceptionCases.Add(exceptionCase);
+        dbContext.ExceptionCaseActions.Add(action);
+        if (link is not null)
+        {
+            dbContext.ExceptionCaseLinks.Add(link);
+        }
+
+        await dbContext.SaveChangesAsync(cancellationToken);
+    }
+
+    public async Task UpdateCaseAsync(ExceptionCase exceptionCase, ExceptionCaseAction action, CancellationToken cancellationToken)
+    {
+        var existing = await dbContext.ExceptionCases.FirstAsync(x => x.Id == exceptionCase.Id, cancellationToken);
+        dbContext.Entry(existing).CurrentValues.SetValues(exceptionCase);
+        dbContext.ExceptionCaseActions.Add(action);
+        await dbContext.SaveChangesAsync(cancellationToken);
+    }
+
+    public async Task AddNoteAsync(ExceptionCaseNote note, ExceptionCaseAction action, CancellationToken cancellationToken)
+    {
+        dbContext.ExceptionCaseNotes.Add(note);
+        dbContext.ExceptionCaseActions.Add(action);
+        await dbContext.SaveChangesAsync(cancellationToken);
+    }
+
+    public Task<ExceptionCase?> GetCaseAsync(ExceptionCaseId id, CancellationToken cancellationToken)
+        => dbContext.ExceptionCases.AsNoTracking().FirstOrDefaultAsync(x => x.Id == id, cancellationToken);
+
+    public Task<ExceptionCaseLink?> GetLinkAsync(string sourceEntityType, string sourceEntityId, CancellationToken cancellationToken)
+        => dbContext.ExceptionCaseLinks.AsNoTracking().FirstOrDefaultAsync(x => x.SourceEntityType == sourceEntityType && x.SourceEntityId == sourceEntityId, cancellationToken);
+
+    public async Task<IReadOnlyList<ExceptionCase>> GetCasesAsync(ExceptionCaseFilter filter, CancellationToken cancellationToken)
+    {
+        var query = dbContext.ExceptionCases.AsNoTracking().AsQueryable();
+        if (filter.Status is not null) query = query.Where(x => x.Status == filter.Status.Value);
+        if (filter.Severity is not null) query = query.Where(x => x.Severity == filter.Severity.Value);
+        if (filter.Type is not null) query = query.Where(x => x.Type == filter.Type.Value);
+        if (filter.Source is not null) query = query.Where(x => x.Source == filter.Source.Value);
+        if (!string.IsNullOrWhiteSpace(filter.AssignedTo)) query = query.Where(x => x.AssignedTo == filter.AssignedTo);
+        if (!string.IsNullOrWhiteSpace(filter.Instrument))
+        {
+            if (Guid.TryParse(filter.Instrument, out var instrumentId))
+            {
+                var typedInstrumentId = new InstrumentId(instrumentId);
+                query = query.Where(x => x.Symbol == filter.Instrument || x.InstrumentId == typedInstrumentId);
+            }
+            else
+            {
+                query = query.Where(x => x.Symbol == filter.Instrument);
+            }
+        }
+        if (!string.IsNullOrWhiteSpace(filter.EntityType)) query = query.Where(x => x.EntityType == filter.EntityType);
+        if (!string.IsNullOrWhiteSpace(filter.EntityId)) query = query.Where(x => x.EntityId == filter.EntityId);
+        if (!string.IsNullOrWhiteSpace(filter.CorrelationId)) query = query.Where(x => x.CorrelationId == filter.CorrelationId);
+        if (filter.FromUtc is not null) query = query.Where(x => x.CreatedAtUtc >= filter.FromUtc);
+        if (filter.ToUtc is not null) query = query.Where(x => x.CreatedAtUtc <= filter.ToUtc);
+        return await query.OrderByDescending(x => x.UpdatedAtUtc).Take(Math.Clamp(filter.Limit, 1, 500)).ToListAsync(cancellationToken);
+    }
+
+    public async Task<IReadOnlyList<ExceptionCaseAction>> GetActionsAsync(ExceptionCaseId id, CancellationToken cancellationToken)
+        => await dbContext.ExceptionCaseActions.AsNoTracking().Where(x => x.CaseId == id).OrderBy(x => x.OccurredAtUtc).ToListAsync(cancellationToken);
+
+    public async Task<IReadOnlyList<ExceptionCaseNote>> GetNotesAsync(ExceptionCaseId id, CancellationToken cancellationToken)
+        => await dbContext.ExceptionCaseNotes.AsNoTracking().Where(x => x.CaseId == id).OrderBy(x => x.CreatedAtUtc).ToListAsync(cancellationToken);
 }
 
 public sealed class SqlServerIntradayRepository(IntradayDbContext dbContext) : IIntradayRepository
@@ -405,6 +506,10 @@ public sealed class SqlServerIntradayRepository(IntradayDbContext dbContext) : I
         state.LmaxCurrencyWallets.AddRange(await dbContext.LmaxCurrencyWallets.AsNoTracking().ToListAsync(cancellationToken));
         state.EodReconciliationRuns.AddRange(await dbContext.EodReconciliationRuns.AsNoTracking().ToListAsync(cancellationToken));
         state.EodReconciliationBreaks.AddRange(await dbContext.EodReconciliationBreaks.AsNoTracking().ToListAsync(cancellationToken));
+        state.ExceptionCases.AddRange(await dbContext.ExceptionCases.AsNoTracking().ToListAsync(cancellationToken));
+        state.ExceptionCaseActions.AddRange(await dbContext.ExceptionCaseActions.AsNoTracking().ToListAsync(cancellationToken));
+        state.ExceptionCaseNotes.AddRange(await dbContext.ExceptionCaseNotes.AsNoTracking().ToListAsync(cancellationToken));
+        state.ExceptionCaseLinks.AddRange(await dbContext.ExceptionCaseLinks.AsNoTracking().ToListAsync(cancellationToken));
         state.OperatorAuditEvents.AddRange(await dbContext.OperatorAuditEvents.AsNoTracking().ToListAsync(cancellationToken));
         state.KillSwitch = state.KillSwitchStates.OrderByDescending(x => x.UpdatedAtUtc).FirstOrDefault() ?? state.KillSwitch;
         return state;

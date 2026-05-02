@@ -107,6 +107,64 @@ public interface IOperatorAuditService
     Task<IReadOnlyList<OperatorAuditEvent>> GetByCorrelationIdAsync(string correlationId, int limit, CancellationToken cancellationToken);
 }
 
+public sealed record ExceptionCaseFilter(
+    int Limit,
+    ExceptionCaseStatus? Status = null,
+    ExceptionCaseSeverity? Severity = null,
+    ExceptionCaseType? Type = null,
+    ExceptionCaseSource? Source = null,
+    string? AssignedTo = null,
+    string? Instrument = null,
+    string? EntityType = null,
+    string? EntityId = null,
+    string? CorrelationId = null,
+    DateTimeOffset? FromUtc = null,
+    DateTimeOffset? ToUtc = null);
+
+public sealed record CreateExceptionCaseRequest(
+    ExceptionCaseSeverity Severity,
+    ExceptionCaseType Type,
+    ExceptionCaseSource Source,
+    string Title,
+    string Description,
+    string? EntityType = null,
+    string? EntityId = null,
+    InstrumentId? InstrumentId = null,
+    string? Symbol = null,
+    string? AssignedTo = null,
+    object? Metadata = null);
+
+public interface IExceptionCaseRepository
+{
+    Task AddCaseAsync(ExceptionCase exceptionCase, ExceptionCaseAction action, ExceptionCaseLink? link, CancellationToken cancellationToken);
+    Task UpdateCaseAsync(ExceptionCase exceptionCase, ExceptionCaseAction action, CancellationToken cancellationToken);
+    Task AddNoteAsync(ExceptionCaseNote note, ExceptionCaseAction action, CancellationToken cancellationToken);
+    Task<ExceptionCase?> GetCaseAsync(ExceptionCaseId id, CancellationToken cancellationToken);
+    Task<ExceptionCaseLink?> GetLinkAsync(string sourceEntityType, string sourceEntityId, CancellationToken cancellationToken);
+    Task<IReadOnlyList<ExceptionCase>> GetCasesAsync(ExceptionCaseFilter filter, CancellationToken cancellationToken);
+    Task<IReadOnlyList<ExceptionCaseAction>> GetActionsAsync(ExceptionCaseId id, CancellationToken cancellationToken);
+    Task<IReadOnlyList<ExceptionCaseNote>> GetNotesAsync(ExceptionCaseId id, CancellationToken cancellationToken);
+}
+
+public interface IExceptionCaseService
+{
+    Task<ExceptionCase?> CreateOrUpdateFromReconciliationBreakAsync(ReconciliationRun run, ReconciliationBreak reconciliationBreak, CancellationToken cancellationToken);
+    Task<ExceptionCase?> CreateOrUpdateFromEodBreakAsync(EodReconciliationRun run, EodReconciliationBreak reconciliationBreak, CancellationToken cancellationToken);
+    Task<ExceptionCase> CreateManualCaseAsync(CreateExceptionCaseRequest request, CancellationToken cancellationToken);
+    Task<IReadOnlyList<ExceptionCase>> GetCasesAsync(ExceptionCaseFilter filter, CancellationToken cancellationToken);
+    Task<ExceptionCase?> GetCaseAsync(ExceptionCaseId id, CancellationToken cancellationToken);
+    Task<IReadOnlyList<ExceptionCaseAction>> GetActionsAsync(ExceptionCaseId id, CancellationToken cancellationToken);
+    Task<IReadOnlyList<ExceptionCaseNote>> GetNotesAsync(ExceptionCaseId id, CancellationToken cancellationToken);
+    Task<ExceptionCase> AcknowledgeAsync(ExceptionCaseId id, string? reason, CancellationToken cancellationToken);
+    Task<ExceptionCase> AssignAsync(ExceptionCaseId id, string assignedTo, CancellationToken cancellationToken);
+    Task<ExceptionCase> MarkInvestigatingAsync(ExceptionCaseId id, string? reason, CancellationToken cancellationToken);
+    Task<ExceptionCase> ResolveAsync(ExceptionCaseId id, string reason, CancellationToken cancellationToken);
+    Task<ExceptionCase> MarkFalsePositiveAsync(ExceptionCaseId id, string reason, CancellationToken cancellationToken);
+    Task<ExceptionCase> WaiveAsync(ExceptionCaseId id, string reason, CancellationToken cancellationToken);
+    Task<ExceptionCase> ReopenAsync(ExceptionCaseId id, string? reason, CancellationToken cancellationToken);
+    Task<ExceptionCaseNote> AddNoteAsync(ExceptionCaseId id, string note, CancellationToken cancellationToken);
+}
+
 public interface IIntradayRepository
 {
     Task<PlatformState> LoadStateAsync(CancellationToken cancellationToken);
@@ -349,6 +407,10 @@ public sealed class PlatformState
     public List<LmaxCurrencyWallet> LmaxCurrencyWallets { get; } = [];
     public List<EodReconciliationRun> EodReconciliationRuns { get; } = [];
     public List<EodReconciliationBreak> EodReconciliationBreaks { get; } = [];
+    public List<ExceptionCase> ExceptionCases { get; } = [];
+    public List<ExceptionCaseAction> ExceptionCaseActions { get; } = [];
+    public List<ExceptionCaseNote> ExceptionCaseNotes { get; } = [];
+    public List<ExceptionCaseLink> ExceptionCaseLinks { get; } = [];
     public List<OperatorAuditEvent> OperatorAuditEvents { get; } = [];
     public KillSwitchState KillSwitch { get; set; } = new(Guid.NewGuid(), false, null, DateTimeOffset.UnixEpoch);
 }
@@ -515,6 +577,333 @@ public sealed class InMemoryOperatorAuditRepository(PlatformState state) : IOper
         if (filter.ToUtc is not null) query = query.Where(x => x.OccurredAtUtc <= filter.ToUtc);
         return query.OrderByDescending(x => x.OccurredAtUtc).Take(Math.Clamp(filter.Limit, 1, 500));
     }
+}
+
+public sealed class InMemoryExceptionCaseRepository(PlatformState state) : IExceptionCaseRepository
+{
+    private readonly object _sync = new();
+
+    public Task AddCaseAsync(ExceptionCase exceptionCase, ExceptionCaseAction action, ExceptionCaseLink? link, CancellationToken cancellationToken)
+    {
+        lock (_sync)
+        {
+            if (!state.ExceptionCases.Any(x => x.Id == exceptionCase.Id)) state.ExceptionCases.Add(exceptionCase);
+            if (link is not null && !state.ExceptionCaseLinks.Any(x => x.SourceEntityType == link.SourceEntityType && x.SourceEntityId == link.SourceEntityId)) state.ExceptionCaseLinks.Add(link);
+            state.ExceptionCaseActions.Add(action);
+        }
+
+        return Task.CompletedTask;
+    }
+
+    public Task UpdateCaseAsync(ExceptionCase exceptionCase, ExceptionCaseAction action, CancellationToken cancellationToken)
+    {
+        lock (_sync)
+        {
+            var index = state.ExceptionCases.FindIndex(x => x.Id == exceptionCase.Id);
+            if (index < 0) throw new DomainRuleViolationException("Exception case was not found.");
+            state.ExceptionCases[index] = exceptionCase;
+            state.ExceptionCaseActions.Add(action);
+        }
+
+        return Task.CompletedTask;
+    }
+
+    public Task AddNoteAsync(ExceptionCaseNote note, ExceptionCaseAction action, CancellationToken cancellationToken)
+    {
+        lock (_sync)
+        {
+            state.ExceptionCaseNotes.Add(note);
+            state.ExceptionCaseActions.Add(action);
+        }
+
+        return Task.CompletedTask;
+    }
+
+    public Task<ExceptionCase?> GetCaseAsync(ExceptionCaseId id, CancellationToken cancellationToken)
+    {
+        lock (_sync) return Task.FromResult(state.ExceptionCases.FirstOrDefault(x => x.Id == id));
+    }
+
+    public Task<ExceptionCaseLink?> GetLinkAsync(string sourceEntityType, string sourceEntityId, CancellationToken cancellationToken)
+    {
+        lock (_sync)
+        {
+            return Task.FromResult(state.ExceptionCaseLinks.FirstOrDefault(x =>
+                string.Equals(x.SourceEntityType, sourceEntityType, StringComparison.OrdinalIgnoreCase) &&
+                string.Equals(x.SourceEntityId, sourceEntityId, StringComparison.OrdinalIgnoreCase)));
+        }
+    }
+
+    public Task<IReadOnlyList<ExceptionCase>> GetCasesAsync(ExceptionCaseFilter filter, CancellationToken cancellationToken)
+    {
+        lock (_sync) return Task.FromResult<IReadOnlyList<ExceptionCase>>(ApplyFilter(state.ExceptionCases, filter).ToList());
+    }
+
+    public Task<IReadOnlyList<ExceptionCaseAction>> GetActionsAsync(ExceptionCaseId id, CancellationToken cancellationToken)
+    {
+        lock (_sync) return Task.FromResult<IReadOnlyList<ExceptionCaseAction>>(state.ExceptionCaseActions.Where(x => x.CaseId == id).OrderBy(x => x.OccurredAtUtc).ToList());
+    }
+
+    public Task<IReadOnlyList<ExceptionCaseNote>> GetNotesAsync(ExceptionCaseId id, CancellationToken cancellationToken)
+    {
+        lock (_sync) return Task.FromResult<IReadOnlyList<ExceptionCaseNote>>(state.ExceptionCaseNotes.Where(x => x.CaseId == id).OrderBy(x => x.CreatedAtUtc).ToList());
+    }
+
+    private static IEnumerable<ExceptionCase> ApplyFilter(IEnumerable<ExceptionCase> cases, ExceptionCaseFilter filter)
+    {
+        var query = cases;
+        if (filter.Status is not null) query = query.Where(x => x.Status == filter.Status.Value);
+        if (filter.Severity is not null) query = query.Where(x => x.Severity == filter.Severity.Value);
+        if (filter.Type is not null) query = query.Where(x => x.Type == filter.Type.Value);
+        if (filter.Source is not null) query = query.Where(x => x.Source == filter.Source.Value);
+        if (!string.IsNullOrWhiteSpace(filter.AssignedTo)) query = query.Where(x => string.Equals(x.AssignedTo, filter.AssignedTo, StringComparison.OrdinalIgnoreCase));
+        if (!string.IsNullOrWhiteSpace(filter.Instrument)) query = query.Where(x => string.Equals(x.Symbol, filter.Instrument, StringComparison.OrdinalIgnoreCase) || string.Equals(x.InstrumentId?.Value.ToString("D"), filter.Instrument, StringComparison.OrdinalIgnoreCase));
+        if (!string.IsNullOrWhiteSpace(filter.EntityType)) query = query.Where(x => string.Equals(x.EntityType, filter.EntityType, StringComparison.OrdinalIgnoreCase));
+        if (!string.IsNullOrWhiteSpace(filter.EntityId)) query = query.Where(x => string.Equals(x.EntityId, filter.EntityId, StringComparison.OrdinalIgnoreCase));
+        if (!string.IsNullOrWhiteSpace(filter.CorrelationId)) query = query.Where(x => string.Equals(x.CorrelationId, filter.CorrelationId, StringComparison.OrdinalIgnoreCase));
+        if (filter.FromUtc is not null) query = query.Where(x => x.CreatedAtUtc >= filter.FromUtc);
+        if (filter.ToUtc is not null) query = query.Where(x => x.CreatedAtUtc <= filter.ToUtc);
+        return query.OrderByDescending(x => x.UpdatedAtUtc).Take(Math.Clamp(filter.Limit, 1, 500));
+    }
+}
+
+public sealed class ExceptionCaseService(IExceptionCaseRepository repository, IOperatorAuditService audit, IOperatorContext context, IClock clock, IIntradayRepository intradayRepository) : IExceptionCaseService
+{
+    public async Task<ExceptionCase?> CreateOrUpdateFromReconciliationBreakAsync(ReconciliationRun run, ReconciliationBreak reconciliationBreak, CancellationToken cancellationToken)
+    {
+        if (!ShouldCreateCase(reconciliationBreak.Severity)) return null;
+        var state = await intradayRepository.LoadStateAsync(cancellationToken);
+        var symbol = reconciliationBreak.InstrumentId is null ? null : state.Instruments.FirstOrDefault(x => x.Id == reconciliationBreak.InstrumentId.Value)?.Symbol;
+        return await CreateFromSourceAsync(
+            "ReconciliationBreak",
+            reconciliationBreak.Id.ToString("D"),
+            MapSeverity(reconciliationBreak.Severity),
+            MapType(reconciliationBreak.Type, false),
+            ExceptionCaseSource.IntradayReconciliation,
+            $"Intraday {reconciliationBreak.Type}",
+            reconciliationBreak.Description,
+            reconciliationBreak.InstrumentId,
+            symbol,
+            new { run.Id, run.ModelRunId, run.Phase, reconciliationBreak.Type, reconciliationBreak.Severity },
+            cancellationToken);
+    }
+
+    public async Task<ExceptionCase?> CreateOrUpdateFromEodBreakAsync(EodReconciliationRun run, EodReconciliationBreak reconciliationBreak, CancellationToken cancellationToken)
+    {
+        if (!ShouldCreateCase(reconciliationBreak.Severity)) return null;
+        var state = await intradayRepository.LoadStateAsync(cancellationToken);
+        var symbol = reconciliationBreak.InstrumentId is null ? null : state.Instruments.FirstOrDefault(x => x.Id == reconciliationBreak.InstrumentId.Value)?.Symbol;
+        return await CreateFromSourceAsync(
+            "EodReconciliationBreak",
+            reconciliationBreak.Id.ToString("D"),
+            MapSeverity(reconciliationBreak.Severity),
+            MapType(reconciliationBreak.Type, true),
+            ExceptionCaseSource.EodReconciliation,
+            $"EOD {reconciliationBreak.Type}",
+            reconciliationBreak.Description,
+            reconciliationBreak.InstrumentId,
+            symbol,
+            new { run.Id, run.ReportDate, reconciliationBreak.Type, reconciliationBreak.Severity, reconciliationBreak.BrokerExecutionId, reconciliationBreak.InternalFillId },
+            cancellationToken);
+    }
+
+    public async Task<ExceptionCase> CreateManualCaseAsync(CreateExceptionCaseRequest request, CancellationToken cancellationToken)
+    {
+        RequireText(request.Title, "Exception case title is required.");
+        RequireText(request.Description, "Exception case description is required.");
+        var now = clock.UtcNow;
+        var actor = context.Current;
+        var exceptionCase = new ExceptionCase(
+            ExceptionCaseId.New(),
+            now,
+            now,
+            ExceptionCaseStatus.Open,
+            request.Severity,
+            request.Type,
+            request.Source,
+            request.Title.Trim(),
+            request.Description.Trim(),
+            request.EntityType,
+            request.EntityId,
+            request.InstrumentId,
+            request.Symbol,
+            context.CorrelationId,
+            request.AssignedTo,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            OperatorAuditService.SerializeSanitized(request.Metadata));
+        var action = NewAction(exceptionCase.Id, ExceptionCaseActionType.Created, null, exceptionCase.Status, null, null, request.Metadata);
+        await repository.AddCaseAsync(exceptionCase, action, null, cancellationToken);
+        await AuditAsync(OperatorAuditEventType.ExceptionCaseCreated, OperatorAuditResult.Succeeded, OperatorAuditSeverity.Info, "Manual exception case created.", exceptionCase, null, request.Metadata, cancellationToken);
+        return exceptionCase;
+    }
+
+    public Task<IReadOnlyList<ExceptionCase>> GetCasesAsync(ExceptionCaseFilter filter, CancellationToken cancellationToken)
+        => repository.GetCasesAsync(filter, cancellationToken);
+
+    public Task<ExceptionCase?> GetCaseAsync(ExceptionCaseId id, CancellationToken cancellationToken)
+        => repository.GetCaseAsync(id, cancellationToken);
+
+    public Task<IReadOnlyList<ExceptionCaseAction>> GetActionsAsync(ExceptionCaseId id, CancellationToken cancellationToken)
+        => repository.GetActionsAsync(id, cancellationToken);
+
+    public Task<IReadOnlyList<ExceptionCaseNote>> GetNotesAsync(ExceptionCaseId id, CancellationToken cancellationToken)
+        => repository.GetNotesAsync(id, cancellationToken);
+
+    public Task<ExceptionCase> AcknowledgeAsync(ExceptionCaseId id, string? reason, CancellationToken cancellationToken)
+        => TransitionAsync(id, ExceptionCaseStatus.Acknowledged, ExceptionCaseActionType.Acknowledged, OperatorAuditEventType.ExceptionCaseAcknowledged, reason, false, cancellationToken);
+
+    public async Task<ExceptionCase> AssignAsync(ExceptionCaseId id, string assignedTo, CancellationToken cancellationToken)
+    {
+        RequireText(assignedTo, "AssignedTo is required.");
+        var current = await RequireCaseAsync(id, cancellationToken);
+        EnsureCanEdit(current);
+        var updated = current with { AssignedTo = assignedTo.Trim(), UpdatedAtUtc = clock.UtcNow };
+        var action = NewAction(id, ExceptionCaseActionType.Assigned, current.Status, updated.Status, $"Assigned to {assignedTo.Trim()}.", null, new { assignedTo = assignedTo.Trim() });
+        await repository.UpdateCaseAsync(updated, action, cancellationToken);
+        await AuditAsync(OperatorAuditEventType.ExceptionCaseAssigned, OperatorAuditResult.Succeeded, OperatorAuditSeverity.Info, "Exception case assigned.", updated, null, new { previousStatus = current.Status, updated.Status, assignedTo = assignedTo.Trim() }, cancellationToken);
+        return updated;
+    }
+
+    public Task<ExceptionCase> MarkInvestigatingAsync(ExceptionCaseId id, string? reason, CancellationToken cancellationToken)
+        => TransitionAsync(id, ExceptionCaseStatus.Investigating, ExceptionCaseActionType.MarkedInvestigating, OperatorAuditEventType.ExceptionCaseInvestigating, reason, false, cancellationToken);
+
+    public Task<ExceptionCase> ResolveAsync(ExceptionCaseId id, string reason, CancellationToken cancellationToken)
+        => TransitionAsync(id, ExceptionCaseStatus.Resolved, ExceptionCaseActionType.Resolved, OperatorAuditEventType.ExceptionCaseResolved, reason, true, cancellationToken);
+
+    public Task<ExceptionCase> MarkFalsePositiveAsync(ExceptionCaseId id, string reason, CancellationToken cancellationToken)
+        => TransitionAsync(id, ExceptionCaseStatus.FalsePositive, ExceptionCaseActionType.MarkedFalsePositive, OperatorAuditEventType.ExceptionCaseFalsePositive, reason, true, cancellationToken);
+
+    public Task<ExceptionCase> WaiveAsync(ExceptionCaseId id, string reason, CancellationToken cancellationToken)
+        => TransitionAsync(id, ExceptionCaseStatus.Waived, ExceptionCaseActionType.Waived, OperatorAuditEventType.ExceptionCaseWaived, reason, true, cancellationToken);
+
+    public Task<ExceptionCase> ReopenAsync(ExceptionCaseId id, string? reason, CancellationToken cancellationToken)
+        => TransitionAsync(id, ExceptionCaseStatus.Open, ExceptionCaseActionType.Reopened, OperatorAuditEventType.ExceptionCaseReopened, reason, false, cancellationToken);
+
+    public async Task<ExceptionCaseNote> AddNoteAsync(ExceptionCaseId id, string note, CancellationToken cancellationToken)
+    {
+        RequireText(note, "Exception note is required.");
+        var current = await RequireCaseAsync(id, cancellationToken);
+        var actor = context.Current;
+        var now = clock.UtcNow;
+        var exceptionNote = new ExceptionCaseNote(ExceptionCaseNoteId.New(), id, now, actor.ActorDisplayName, note.Trim(), context.CorrelationId);
+        var action = NewAction(id, ExceptionCaseActionType.NoteAdded, current.Status, current.Status, null, note.Trim(), null);
+        await repository.AddNoteAsync(exceptionNote, action, cancellationToken);
+        await AuditAsync(OperatorAuditEventType.ExceptionCaseNoteAdded, OperatorAuditResult.Succeeded, OperatorAuditSeverity.Info, "Exception case note added.", current, null, new { note = note.Trim() }, cancellationToken);
+        return exceptionNote;
+    }
+
+    private async Task<ExceptionCase?> CreateFromSourceAsync(string sourceEntityType, string sourceEntityId, ExceptionCaseSeverity severity, ExceptionCaseType type, ExceptionCaseSource source, string title, string description, InstrumentId? instrumentId, string? symbol, object metadata, CancellationToken cancellationToken)
+    {
+        var existingLink = await repository.GetLinkAsync(sourceEntityType, sourceEntityId, cancellationToken);
+        if (existingLink is not null)
+        {
+            var existing = await repository.GetCaseAsync(existingLink.CaseId, cancellationToken);
+            if (existing is not null) return existing;
+        }
+
+        var now = clock.UtcNow;
+        var exceptionCase = new ExceptionCase(ExceptionCaseId.New(), now, now, ExceptionCaseStatus.Open, severity, type, source, title, description, sourceEntityType, sourceEntityId, instrumentId, symbol, context.CorrelationId, null, null, null, null, null, null, null, OperatorAuditService.SerializeSanitized(metadata));
+        var action = NewAction(exceptionCase.Id, ExceptionCaseActionType.Created, null, exceptionCase.Status, null, null, metadata);
+        var link = new ExceptionCaseLink(Guid.NewGuid(), exceptionCase.Id, sourceEntityType, sourceEntityId, now);
+        await repository.AddCaseAsync(exceptionCase, action, link, cancellationToken);
+        await AuditAsync(OperatorAuditEventType.ExceptionCaseCreated, OperatorAuditResult.Succeeded, severity is ExceptionCaseSeverity.Critical or ExceptionCaseSeverity.Blocking ? OperatorAuditSeverity.Warning : OperatorAuditSeverity.Info, "Exception case created from break.", exceptionCase, null, metadata, cancellationToken);
+        return exceptionCase;
+    }
+
+    private async Task<ExceptionCase> TransitionAsync(ExceptionCaseId id, ExceptionCaseStatus nextStatus, ExceptionCaseActionType actionType, OperatorAuditEventType eventType, string? reason, bool requireReason, CancellationToken cancellationToken)
+    {
+        if (requireReason) RequireText(reason, "A reason is required for this exception case action.");
+        var current = await RequireCaseAsync(id, cancellationToken);
+        EnsureTransition(current.Status, nextStatus);
+        var now = clock.UtcNow;
+        var actor = context.Current;
+        var updated = current with
+        {
+            Status = nextStatus,
+            UpdatedAtUtc = now,
+            AcknowledgedAtUtc = nextStatus == ExceptionCaseStatus.Acknowledged ? now : current.AcknowledgedAtUtc,
+            AcknowledgedBy = nextStatus == ExceptionCaseStatus.Acknowledged ? actor.ActorDisplayName : current.AcknowledgedBy,
+            ResolvedAtUtc = nextStatus is ExceptionCaseStatus.Resolved or ExceptionCaseStatus.FalsePositive or ExceptionCaseStatus.Waived or ExceptionCaseStatus.Closed ? now : current.ResolvedAtUtc,
+            ResolvedBy = nextStatus is ExceptionCaseStatus.Resolved or ExceptionCaseStatus.FalsePositive or ExceptionCaseStatus.Waived or ExceptionCaseStatus.Closed ? actor.ActorDisplayName : current.ResolvedBy,
+            ResolutionReason = nextStatus is ExceptionCaseStatus.Resolved or ExceptionCaseStatus.FalsePositive ? reason?.Trim() : current.ResolutionReason,
+            WaiverReason = nextStatus == ExceptionCaseStatus.Waived ? reason?.Trim() : current.WaiverReason
+        };
+        var action = NewAction(id, actionType, current.Status, nextStatus, reason, null, new { previousStatus = current.Status, newStatus = nextStatus });
+        await repository.UpdateCaseAsync(updated, action, cancellationToken);
+        await AuditAsync(eventType, OperatorAuditResult.Succeeded, AuditSeverityFor(updated), $"Exception case {nextStatus}.", updated, reason, new { previousStatus = current.Status, newStatus = nextStatus, reason }, cancellationToken);
+        return updated;
+    }
+
+    private async Task<ExceptionCase> RequireCaseAsync(ExceptionCaseId id, CancellationToken cancellationToken)
+        => await repository.GetCaseAsync(id, cancellationToken) ?? throw new DomainRuleViolationException("Exception case was not found.");
+
+    private ExceptionCaseAction NewAction(ExceptionCaseId id, ExceptionCaseActionType actionType, ExceptionCaseStatus? fromStatus, ExceptionCaseStatus? toStatus, string? reason, string? note, object? metadata)
+    {
+        var actor = context.Current;
+        return new ExceptionCaseAction(ExceptionCaseActionId.New(), id, actionType, actor.ActorId, actor.ActorDisplayName, clock.UtcNow, fromStatus, toStatus, string.IsNullOrWhiteSpace(reason) ? null : reason.Trim(), string.IsNullOrWhiteSpace(note) ? null : note.Trim(), OperatorAuditService.SerializeSanitized(metadata), context.CorrelationId);
+    }
+
+    private Task AuditAsync(OperatorAuditEventType eventType, OperatorAuditResult result, OperatorAuditSeverity severity, string description, ExceptionCase exceptionCase, string? reason, object? metadata, CancellationToken cancellationToken)
+        => audit.RecordAsync(new OperatorAuditRecordRequest(eventType, severity, result, "ExceptionCaseService", description, "ExceptionCase", exceptionCase.Id.Value.ToString("D"), reason, Metadata: metadata), cancellationToken);
+
+    private static void EnsureTransition(ExceptionCaseStatus current, ExceptionCaseStatus next)
+    {
+        if (current == next) return;
+        var allowed = next switch
+        {
+            ExceptionCaseStatus.Acknowledged => current == ExceptionCaseStatus.Open,
+            ExceptionCaseStatus.Investigating => current is ExceptionCaseStatus.Open or ExceptionCaseStatus.Acknowledged,
+            ExceptionCaseStatus.Resolved or ExceptionCaseStatus.FalsePositive or ExceptionCaseStatus.Waived or ExceptionCaseStatus.Closed => current is ExceptionCaseStatus.Open or ExceptionCaseStatus.Acknowledged or ExceptionCaseStatus.Investigating,
+            ExceptionCaseStatus.Open => current is ExceptionCaseStatus.Resolved or ExceptionCaseStatus.FalsePositive or ExceptionCaseStatus.Waived or ExceptionCaseStatus.Closed,
+            _ => false
+        };
+        if (!allowed) throw new DomainRuleViolationException($"Invalid exception case transition from {current} to {next}.");
+    }
+
+    private static void EnsureCanEdit(ExceptionCase exceptionCase)
+    {
+        if (exceptionCase.Status == ExceptionCaseStatus.Closed)
+        {
+            throw new DomainRuleViolationException("Closed exception cases cannot be edited.");
+        }
+    }
+
+    private static void RequireText(string? value, string message)
+    {
+        if (string.IsNullOrWhiteSpace(value)) throw new DomainRuleViolationException(message);
+    }
+
+    private static bool ShouldCreateCase(ReconciliationBreakSeverity severity)
+        => severity is ReconciliationBreakSeverity.Blocking or ReconciliationBreakSeverity.Warning;
+
+    private static ExceptionCaseSeverity MapSeverity(ReconciliationBreakSeverity severity)
+        => severity switch
+        {
+            ReconciliationBreakSeverity.Blocking => ExceptionCaseSeverity.Blocking,
+            ReconciliationBreakSeverity.Warning => ExceptionCaseSeverity.Warning,
+            _ => ExceptionCaseSeverity.Info
+        };
+
+    private static ExceptionCaseType MapType(ReconciliationBreakType type, bool eod)
+        => type switch
+        {
+            ReconciliationBreakType.InternalBrokerPositionMismatch => ExceptionCaseType.PositionMismatch,
+            ReconciliationBreakType.InternalFillMissingInBrokerReport => ExceptionCaseType.InternalFillMissingInBrokerReport,
+            ReconciliationBreakType.BrokerFillMissingInternally => ExceptionCaseType.BrokerFillMissingInternally,
+            ReconciliationBreakType.QuantityMismatch => ExceptionCaseType.QuantityMismatch,
+            ReconciliationBreakType.PriceMismatch => ExceptionCaseType.PriceMismatch,
+            ReconciliationBreakType.SideMismatch => ExceptionCaseType.SideMismatch,
+            ReconciliationBreakType.InstrumentMismatch => ExceptionCaseType.InstrumentMismatch,
+            _ => eod ? ExceptionCaseType.EodBreak : ExceptionCaseType.IntradayBreak
+        };
+
+    private static OperatorAuditSeverity AuditSeverityFor(ExceptionCase exceptionCase)
+        => exceptionCase.Severity is ExceptionCaseSeverity.Critical or ExceptionCaseSeverity.Blocking ? OperatorAuditSeverity.Warning : OperatorAuditSeverity.Info;
 }
 
 public sealed class InMemoryIntradayRepository(PlatformState state) : IIntradayRepository
@@ -1507,7 +1896,7 @@ public sealed record ProcessModelRunResult(
         => new(null, false, ProcessModelRunStatus.NoActionRequired, null, "No unprocessed model runs.", 0, 0, 0, 0, 0, 0, false, now);
 }
 
-public sealed class ProcessModelRunService(IIntradayRepository repository, IVenueExecutionGateway venueGateway, IBrokerPositionProvider brokerPositionProvider, IClock clock, IReferenceDataIntegrityService referenceDataIntegrityService)
+public sealed class ProcessModelRunService(IIntradayRepository repository, IVenueExecutionGateway venueGateway, IBrokerPositionProvider brokerPositionProvider, IClock clock, IReferenceDataIntegrityService referenceDataIntegrityService, IExceptionCaseService? exceptionCaseService = null)
 {
     public async Task<ProcessModelRunResult> ProcessNextAsync(CancellationToken cancellationToken = default)
     {
@@ -1569,6 +1958,7 @@ public sealed class ProcessModelRunService(IIntradayRepository repository, IVenu
         var internalPositions = BuildInternalPositions(state, fund.Id, now);
         var reconciliation = Reconcile(run.Id, ReconciliationPhase.PreTrade, targetWeights.Select(x => x.InstrumentId).ToList(), internalPositions, brokerPositions, riskLimitSet.PositionToleranceBaseQuantity, now);
         await repository.SaveReconciliationAsync(reconciliation.Run, reconciliation.Breaks, cancellationToken);
+        await CreateExceptionCasesAsync(reconciliation.Run, reconciliation.Breaks, cancellationToken);
         if (reconciliation.Run.HasBlockingBreaks)
         {
             state = await repository.LoadStateAsync(cancellationToken);
@@ -1671,6 +2061,7 @@ public sealed class ProcessModelRunService(IIntradayRepository repository, IVenu
         brokerPositions = await brokerPositionProvider.GetPositionsAsync(brokerAccount.Id, cancellationToken);
         var postTrade = Reconcile(run.Id, ReconciliationPhase.PostTrade, targetWeights.Select(x => x.InstrumentId).ToList(), internalPositions, brokerPositions, riskLimitSet.PositionToleranceBaseQuantity, now);
         await repository.SaveReconciliationAsync(postTrade.Run, postTrade.Breaks, cancellationToken);
+        await CreateExceptionCasesAsync(postTrade.Run, postTrade.Breaks, cancellationToken);
 
         if (postTrade.Run.HasBlockingBreaks)
         {
@@ -1682,6 +2073,19 @@ public sealed class ProcessModelRunService(IIntradayRepository repository, IVenu
         state = await repository.LoadStateAsync(cancellationToken);
         var noDrift = state.TradeIntents.All(x => x.ModelRunId != run.Id);
         return BuildResult(state, run.Id, true, noDrift ? ProcessModelRunStatus.NoActionRequired : ProcessModelRunStatus.Processed, noDrift ? ProcessModelRunBlockedReason.NoDrift : null, noDrift ? "No rebalance drift exceeded the configured threshold." : "Processed.", false, now);
+    }
+
+    private async Task CreateExceptionCasesAsync(ReconciliationRun run, IReadOnlyList<ReconciliationBreak> breaks, CancellationToken cancellationToken)
+    {
+        if (exceptionCaseService is null || breaks.Count == 0)
+        {
+            return;
+        }
+
+        foreach (var reconciliationBreak in breaks)
+        {
+            await exceptionCaseService.CreateOrUpdateFromReconciliationBreakAsync(run, reconciliationBreak, cancellationToken);
+        }
     }
 
     private static Dictionary<InstrumentId, decimal> BuildInternalPositions(PlatformState state, FundId fundId, DateTimeOffset now)

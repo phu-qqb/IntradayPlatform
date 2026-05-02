@@ -419,7 +419,7 @@ public sealed class LmaxReportPairConsistencyService(ILmaxEodReportRepository re
     }
 }
 
-public sealed class EodReconciliationService(IIntradayRepository intradayRepository, ILmaxEodReportRepository eodRepository, IClock clock) : IEodReconciliationService
+public sealed class EodReconciliationService(IIntradayRepository intradayRepository, ILmaxEodReportRepository eodRepository, IClock clock, IExceptionCaseService? exceptionCaseService = null) : IEodReconciliationService
 {
     public async Task<EodReconciliationResult> RunAsync(DateOnly reportDate, string venueName, string brokerAccountCode, CancellationToken cancellationToken)
     {
@@ -450,6 +450,14 @@ public sealed class EodReconciliationService(IIntradayRepository intradayReposit
         var run = new EodReconciliationRun(Guid.NewGuid(), reportDate, venue.Id, account.Id, clock.UtcNow, breaks.Any(x => x.Severity == ReconciliationBreakSeverity.Blocking));
         breaks = breaks.Select(x => x with { RunId = run.Id }).ToList();
         await eodRepository.AddEodReconciliationAsync(run, breaks, cancellationToken);
+        if (exceptionCaseService is not null)
+        {
+            foreach (var reconciliationBreak in breaks)
+            {
+                await exceptionCaseService.CreateOrUpdateFromEodBreakAsync(run, reconciliationBreak, cancellationToken);
+            }
+        }
+
         return new EodReconciliationResult(run.Id, reportDate, breaks.Count, breaks.Count(x => x.Severity == ReconciliationBreakSeverity.Blocking), breaks);
 
         EodReconciliationBreak NewBreak(ReconciliationBreakType type, InstrumentId? instrumentId, string description, string? brokerExecutionId, string? fillId)

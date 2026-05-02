@@ -533,3 +533,66 @@ export type OperatorAuditEventDto = {
   afterJson?: string | null;
   metadataJson?: string | null;
 };
+
+export type ExceptionCaseDto = {
+  id: string;
+  createdAtUtc: string;
+  updatedAtUtc: string;
+  status: string;
+  severity: string;
+  type: string;
+  source: string;
+  title: string;
+  description: string;
+  entityType?: string | null;
+  entityId?: string | null;
+  instrumentId?: string | null;
+  symbol?: string | null;
+  correlationId?: string | null;
+  assignedTo?: string | null;
+  acknowledgedAtUtc?: string | null;
+  acknowledgedBy?: string | null;
+  resolvedAtUtc?: string | null;
+  resolvedBy?: string | null;
+  resolutionReason?: string | null;
+  waiverReason?: string | null;
+  metadataJson?: string | null;
+};
+
+export type ExceptionCaseActionDto = {
+  id: string;
+  caseId: string;
+  actionType: string;
+  actorId: string;
+  actorDisplayName: string;
+  occurredAtUtc: string;
+  fromStatus?: string | null;
+  toStatus?: string | null;
+  reason?: string | null;
+  note?: string | null;
+  metadataJson?: string | null;
+  correlationId?: string | null;
+};
+
+export type ExceptionCaseNoteDto = {
+  id: string;
+  caseId: string;
+  createdAtUtc: string;
+  createdBy: string;
+  note: string;
+  correlationId?: string | null;
+};
+
+export type CreateExceptionCaseRequest = {
+  severity: string;
+  type: string;
+  source: string;
+  title: string;
+  description: string;
+  entityType?: string;
+  entityId?: string;
+  instrumentId?: string;
+  symbol?: string;
+  assignedTo?: string;
+  metadata?: unknown;
+};

@@ -108,6 +108,7 @@ The UI shell is organized for operator workflows:
 - Model Weights for DB-staged batches and promotion
 - OMS for model runs, trade intents, risk decisions, orders, and fills
 - EMS for execution state, local market data, fills, and future execution-quality views
+- Exceptions for acknowledging, assigning, investigating, resolving, waiving, and documenting operational breaks
 - Reconciliation and LMAX EOD for intraday breaks, EOD reports, wallet/PnL, and audit
 - Risk & Admin for kill switch and reference data
 - Audit Journal for append-only operator/system action history and correlation IDs
@@ -141,6 +142,24 @@ Invoke-RestMethod "http://localhost:5050/audit/events?limit=100"
 Invoke-RestMethod "http://localhost:5050/audit/events/by-entity?entityType=ModelRun&entityId=<id>"
 Invoke-RestMethod "http://localhost:5050/audit/events/by-correlation/<correlationId>"
 ```
+
+## Exception Management
+
+Warning and blocking reconciliation breaks create `ExceptionCases` automatically. Info breaks are retained as breaks but do not create cases by default. Exception cases are the local operator workflow object; the source break stays in the reconciliation/EOD view.
+
+Supported statuses are `Open`, `Acknowledged`, `Investigating`, `Resolved`, `FalsePositive`, `Waived`, and `Closed`. Resolution, false-positive, and waiver actions require a reason. Waiving a blocking or critical case should be treated as an explicit operator decision and is audited.
+
+Useful local API calls:
+
+```powershell
+Invoke-RestMethod "http://localhost:5050/exceptions?limit=100"
+Invoke-RestMethod "http://localhost:5050/exceptions/<id>/actions"
+Invoke-RestMethod "http://localhost:5050/exceptions/<id>/notes"
+Invoke-RestMethod -Method Post -ContentType "application/json" -Body '{"reason":"Reviewed"}' "http://localhost:5050/exceptions/<id>/acknowledge"
+Invoke-RestMethod -Method Post -ContentType "application/json" -Body '{"reason":"Resolved after report correction"}' "http://localhost:5050/exceptions/<id>/resolve"
+```
+
+In the UI, open the Exceptions page to filter cases, select a case, view its action timeline and notes, and perform operator actions. Every action writes both case history and an audit event. Local operator headers remain attribution only; there is no real authentication or four-eyes approval yet.
 
 ## Reference Data Integrity
 

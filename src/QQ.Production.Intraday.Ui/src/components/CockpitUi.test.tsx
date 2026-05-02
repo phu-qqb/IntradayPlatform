@@ -53,4 +53,23 @@ describe('cockpit UI primitives', () => {
     expect(screen.getByText('KillSwitchActivated')).toBeTruthy();
     expect(screen.queryByText('do-not-store')).toBeNull();
   });
+
+  it('renders exception case status and action timeline rows', () => {
+    render(
+      <DataTable
+        rows={[{ id: 'case-1', severity: 'Blocking', status: 'Investigating', type: 'QuantityMismatch', title: 'EOD quantity mismatch' }]}
+        getRowKey={(row) => row.id}
+        columns={[
+          { key: 'severity', header: 'Severity', render: (row) => <StatusChip label={row.severity} tone="danger" /> },
+          { key: 'status', header: 'Status', render: (row) => <StatusChip label={row.status} tone="info" /> },
+          { key: 'type', header: 'Type', render: (row) => row.type },
+          { key: 'title', header: 'Title', render: (row) => row.title }
+        ]}
+      />
+    );
+
+    expect(screen.getByText('Blocking').className).toContain('danger');
+    expect(screen.getByText('Investigating').className).toContain('info');
+    expect(screen.getByText('EOD quantity mismatch')).toBeTruthy();
+  });
 });

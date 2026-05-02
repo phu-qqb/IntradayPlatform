@@ -215,6 +215,7 @@ The cockpit is now organized as a PMS/OMS/EMS operator shell:
 - OMS: model runs, trade intents, risk decisions, parent/child orders, and fills
 - EMS: execution gateway status, child orders, fills, latest local market data, and `MarketImmediate`
 - Market Data: fake/local snapshots and 15-minute bars
+- Exceptions: operator workflow for breaks and operational exceptions
 - Reconciliation: intraday and EOD breaks
 - LMAX EOD: import runs, validation issues, individual trades, trade summaries, currency wallets, PnL, and EOD breaks
 - Risk & Admin: kill switch, reference integrity, instruments, and venues
@@ -238,6 +239,23 @@ curl "http://localhost:5050/audit/events/by-correlation/<correlationId>"
 ```
 
 Audit metadata is sanitized before persistence for keys containing `password`, `secret`, `token`, or `apiKey`. There are no update/delete endpoints for audit events. The current limitation is that the local operator identity is not authenticated yet.
+
+## Exception Management
+
+The platform now persists `ExceptionCases` for warning/blocking operational breaks. Blocking and warning intraday reconciliation breaks and EOD reconciliation breaks create or update an exception case idempotently; informational breaks do not create cases by default. The original break remains intact, and the exception case becomes the operator workflow object.
+
+Operators can acknowledge, assign, mark investigating, resolve, mark false positive, waive with reason, reopen, and add notes. Resolution, waiver, and false-positive actions require a reason. Every action is written to the append-only action history and also creates an `OperatorAuditEvent` with correlation metadata.
+
+Read/write local APIs are under `/exceptions`; there are no delete endpoints:
+
+```powershell
+curl "http://localhost:5050/exceptions?limit=100"
+curl "http://localhost:5050/exceptions/<id>/actions"
+curl -X POST "http://localhost:5050/exceptions/<id>/acknowledge" -H "Content-Type: application/json" -d "{\"reason\":\"Reviewed locally\"}"
+curl -X POST "http://localhost:5050/exceptions/<id>/resolve" -H "Content-Type: application/json" -d "{\"reason\":\"Source break was remediated\"}"
+```
+
+The cockpit has an Exceptions page plus Command Center exception counts. Local operator headers are attribution only; real authentication and approval workflows are not implemented yet.
 
 ## DB Model Weight Source
 

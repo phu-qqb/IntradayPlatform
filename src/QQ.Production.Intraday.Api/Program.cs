@@ -19,6 +19,7 @@ builder.Services.AddSingleton<IMarketDataProvider, FakeMarketDataProvider>();
 builder.Services.AddSingleton(new BarBuilderOptions());
 builder.Services.AddScoped<ProcessModelRunService>();
 builder.Services.AddScoped<IReferenceDataIntegrityService, ReferenceDataIntegrityService>();
+builder.Services.AddScoped<IExceptionCaseService, ExceptionCaseService>();
 builder.Services.AddScoped<IModelWeightPromotionService, ModelWeightPromotionService>();
 builder.Services.AddScoped<IFakeModelWeightGenerator, FakeModelWeightGenerator>();
 builder.Services.AddSingleton(new LmaxEodReportOptions());
@@ -51,6 +52,7 @@ if (string.Equals(persistenceProvider, "SqlServerLocal", StringComparison.Ordina
     builder.Services.AddScoped<IModelWeightBatchRepository, SqlServerModelWeightBatchRepository>();
     builder.Services.AddScoped<ILmaxEodReportRepository, SqlServerLmaxEodReportRepository>();
     builder.Services.AddScoped<IOperatorAuditRepository, SqlServerOperatorAuditRepository>();
+    builder.Services.AddScoped<IExceptionCaseRepository, SqlServerExceptionCaseRepository>();
     builder.Services.AddScoped<IBrokerPositionProvider, SqlServerFakeBrokerPositionProvider>();
     builder.Services.AddScoped<IBarBuilderService, BarBuilderService>();
     builder.Services.AddScoped<LocalDatabaseInitializer>();
@@ -66,6 +68,7 @@ else if (string.Equals(persistenceProvider, "InMemory", StringComparison.Ordinal
     builder.Services.AddSingleton<IModelWeightBatchRepository, InMemoryModelWeightBatchRepository>();
     builder.Services.AddSingleton<ILmaxEodReportRepository, InMemoryLmaxEodReportRepository>();
     builder.Services.AddSingleton<IOperatorAuditRepository, InMemoryOperatorAuditRepository>();
+    builder.Services.AddSingleton<IExceptionCaseRepository, InMemoryExceptionCaseRepository>();
     builder.Services.AddSingleton<IBrokerPositionProvider, FakeBrokerPositionProvider>();
     builder.Services.AddSingleton<IBarBuilderService, BarBuilderService>();
 }
@@ -659,6 +662,83 @@ app.MapGet("/audit/events/by-correlation/{correlationId}", async (string correla
     return Results.Ok(events.Select(ToOperatorAuditEventDto));
 });
 
+app.MapGet("/exceptions", async (IExceptionCaseService service, int? limit, string? status, string? severity, string? type, string? source, string? assignedTo, string? instrument, string? entityType, string? entityId, string? correlationId, DateTimeOffset? fromUtc, DateTimeOffset? toUtc, CancellationToken cancellationToken) =>
+{
+    var cases = await service.GetCasesAsync(new ExceptionCaseFilter(
+        ClampLimit(limit),
+        ParseEnum<ExceptionCaseStatus>(status),
+        ParseEnum<ExceptionCaseSeverity>(severity),
+        ParseEnum<ExceptionCaseType>(type),
+        ParseEnum<ExceptionCaseSource>(source),
+        assignedTo,
+        instrument,
+        entityType,
+        entityId,
+        correlationId,
+        fromUtc,
+        toUtc), cancellationToken);
+    return Results.Ok(cases.Select(ToExceptionCaseDto));
+});
+
+app.MapGet("/exceptions/{id:guid}", async (Guid id, IExceptionCaseService service, CancellationToken cancellationToken) =>
+{
+    var exceptionCase = await service.GetCaseAsync(new ExceptionCaseId(id), cancellationToken);
+    return exceptionCase is null ? Results.NotFound() : Results.Ok(ToExceptionCaseDto(exceptionCase));
+});
+
+app.MapGet("/exceptions/{id:guid}/actions", async (Guid id, IExceptionCaseService service, CancellationToken cancellationToken) =>
+{
+    var actions = await service.GetActionsAsync(new ExceptionCaseId(id), cancellationToken);
+    return Results.Ok(actions.Select(ToExceptionCaseActionDto));
+});
+
+app.MapGet("/exceptions/{id:guid}/notes", async (Guid id, IExceptionCaseService service, CancellationToken cancellationToken) =>
+{
+    var notes = await service.GetNotesAsync(new ExceptionCaseId(id), cancellationToken);
+    return Results.Ok(notes.Select(ToExceptionCaseNoteDto));
+});
+
+app.MapPost("/exceptions", async (CreateExceptionCaseApiRequest request, IExceptionCaseService service, CancellationToken cancellationToken) =>
+{
+    var exceptionCase = await service.CreateManualCaseAsync(new CreateExceptionCaseRequest(
+        request.Severity,
+        request.Type,
+        request.Source,
+        request.Title,
+        request.Description,
+        request.EntityType,
+        request.EntityId,
+        request.InstrumentId is null ? null : new InstrumentId(request.InstrumentId.Value),
+        request.Symbol,
+        request.AssignedTo,
+        request.Metadata), cancellationToken);
+    return Results.Created($"/exceptions/{exceptionCase.Id.Value}", ToExceptionCaseDto(exceptionCase));
+});
+
+app.MapPost("/exceptions/{id:guid}/acknowledge", async (Guid id, ExceptionCaseReasonRequest request, IExceptionCaseService service, CancellationToken cancellationToken) =>
+    Results.Ok(ToExceptionCaseDto(await service.AcknowledgeAsync(new ExceptionCaseId(id), request.Reason, cancellationToken))));
+
+app.MapPost("/exceptions/{id:guid}/assign", async (Guid id, ExceptionCaseAssignRequest request, IExceptionCaseService service, CancellationToken cancellationToken) =>
+    Results.Ok(ToExceptionCaseDto(await service.AssignAsync(new ExceptionCaseId(id), request.AssignedTo, cancellationToken))));
+
+app.MapPost("/exceptions/{id:guid}/investigate", async (Guid id, ExceptionCaseReasonRequest request, IExceptionCaseService service, CancellationToken cancellationToken) =>
+    Results.Ok(ToExceptionCaseDto(await service.MarkInvestigatingAsync(new ExceptionCaseId(id), request.Reason, cancellationToken))));
+
+app.MapPost("/exceptions/{id:guid}/resolve", async (Guid id, ExceptionCaseReasonRequest request, IExceptionCaseService service, CancellationToken cancellationToken) =>
+    Results.Ok(ToExceptionCaseDto(await service.ResolveAsync(new ExceptionCaseId(id), request.Reason ?? string.Empty, cancellationToken))));
+
+app.MapPost("/exceptions/{id:guid}/false-positive", async (Guid id, ExceptionCaseReasonRequest request, IExceptionCaseService service, CancellationToken cancellationToken) =>
+    Results.Ok(ToExceptionCaseDto(await service.MarkFalsePositiveAsync(new ExceptionCaseId(id), request.Reason ?? string.Empty, cancellationToken))));
+
+app.MapPost("/exceptions/{id:guid}/waive", async (Guid id, ExceptionCaseReasonRequest request, IExceptionCaseService service, CancellationToken cancellationToken) =>
+    Results.Ok(ToExceptionCaseDto(await service.WaiveAsync(new ExceptionCaseId(id), request.Reason ?? string.Empty, cancellationToken))));
+
+app.MapPost("/exceptions/{id:guid}/reopen", async (Guid id, ExceptionCaseReasonRequest request, IExceptionCaseService service, CancellationToken cancellationToken) =>
+    Results.Ok(ToExceptionCaseDto(await service.ReopenAsync(new ExceptionCaseId(id), request.Reason, cancellationToken))));
+
+app.MapPost("/exceptions/{id:guid}/notes", async (Guid id, ExceptionCaseNoteRequest request, IExceptionCaseService service, CancellationToken cancellationToken) =>
+    Results.Ok(ToExceptionCaseNoteDto(await service.AddNoteAsync(new ExceptionCaseId(id), request.Note, cancellationToken))));
+
 app.MapGet("/instruments", async (IIntradayRepository repository, CancellationToken cancellationToken) =>
 {
     var state = await repository.LoadStateAsync(cancellationToken);
@@ -1003,6 +1083,49 @@ static OperatorAuditEventDto ToOperatorAuditEventDto(OperatorAuditEvent x)
         x.AfterJson,
         x.MetadataJson);
 
+static ExceptionCaseDto ToExceptionCaseDto(ExceptionCase x)
+    => new(
+        x.Id.Value.ToString("D"),
+        x.CreatedAtUtc,
+        x.UpdatedAtUtc,
+        x.Status.ToString(),
+        x.Severity.ToString(),
+        x.Type.ToString(),
+        x.Source.ToString(),
+        x.Title,
+        x.Description,
+        x.EntityType,
+        x.EntityId,
+        x.InstrumentId?.Value.ToString("D"),
+        x.Symbol,
+        x.CorrelationId,
+        x.AssignedTo,
+        x.AcknowledgedAtUtc,
+        x.AcknowledgedBy,
+        x.ResolvedAtUtc,
+        x.ResolvedBy,
+        x.ResolutionReason,
+        x.WaiverReason,
+        x.MetadataJson);
+
+static ExceptionCaseActionDto ToExceptionCaseActionDto(ExceptionCaseAction x)
+    => new(
+        x.Id.Value.ToString("D"),
+        x.CaseId.Value.ToString("D"),
+        x.ActionType.ToString(),
+        x.ActorId,
+        x.ActorDisplayName,
+        x.OccurredAtUtc,
+        x.FromStatus?.ToString(),
+        x.ToStatus?.ToString(),
+        x.Reason,
+        x.Note,
+        x.MetadataJson,
+        x.CorrelationId);
+
+static ExceptionCaseNoteDto ToExceptionCaseNoteDto(ExceptionCaseNote x)
+    => new(x.Id.Value.ToString("D"), x.CaseId.Value.ToString("D"), x.CreatedAtUtc, x.CreatedBy, x.Note, x.CorrelationId);
+
 public sealed record HealthDto(string Application, string Environment, string PersistenceProvider, bool DatabaseReachable, int PendingMigrationsCount, string DatabaseTarget, string ExecutionGateway, string MarketDataMode, bool LiveTradingEnabled, bool ExternalConnectionsEnabled, DateTimeOffset UtcServerTime);
 public sealed record ReferenceDataIntegrityDto(DateTimeOffset CheckedAtUtc, int BlockingIssueCount, int WarningIssueCount, IReadOnlyList<ReferenceDataIntegrityIssueDto> Issues);
 public sealed record ReferenceDataIntegrityIssueDto(string Id, string Type, string Severity, string Status, string Key, string Description, DateTimeOffset CreatedAtUtc);
@@ -1033,6 +1156,9 @@ public sealed record FillDto(string Id, string BrokerExecutionId, string ChildOr
 public sealed record MarketDataSnapshotDto(string Id, string InstrumentId, string? Symbol, string VenueId, string? VenueName, decimal Bid, decimal Ask, decimal Mid, decimal Spread, string Source, DateTimeOffset SourceTimestampUtc, DateTimeOffset ReceivedAtUtc, long? SequenceNumber, bool IsSynthetic, DateTimeOffset CreatedAtUtc);
 public sealed record MarketDataBarDto(string Id, string InstrumentId, string? Symbol, string VenueId, string? VenueName, string Timeframe, DateTimeOffset BarStartUtc, DateTimeOffset BarEndUtc, string Source, decimal BidOpen, decimal BidHigh, decimal BidLow, decimal BidClose, decimal AskOpen, decimal AskHigh, decimal AskLow, decimal AskClose, decimal MidOpen, decimal MidHigh, decimal MidLow, decimal MidClose, decimal SpreadOpen, decimal SpreadHigh, decimal SpreadLow, decimal SpreadClose, decimal SpreadAverage, int ObservationCount, DateTimeOffset? FirstSnapshotUtc, DateTimeOffset? LastSnapshotUtc, bool IsComplete, string QualityStatus, string? BuildRunId, string BuilderVersion, DateTimeOffset CreatedAtUtc);
 public sealed record OperatorAuditEventDto(string Id, DateTimeOffset OccurredAtUtc, string ActorType, string ActorId, string ActorDisplayName, string EventType, string Severity, string Result, string? EntityType, string? EntityId, string? CorrelationId, string? CausationId, string? RequestId, string Source, string Description, string? Reason, string? BeforeJson, string? AfterJson, string? MetadataJson);
+public sealed record ExceptionCaseDto(string Id, DateTimeOffset CreatedAtUtc, DateTimeOffset UpdatedAtUtc, string Status, string Severity, string Type, string Source, string Title, string Description, string? EntityType, string? EntityId, string? InstrumentId, string? Symbol, string? CorrelationId, string? AssignedTo, DateTimeOffset? AcknowledgedAtUtc, string? AcknowledgedBy, DateTimeOffset? ResolvedAtUtc, string? ResolvedBy, string? ResolutionReason, string? WaiverReason, string? MetadataJson);
+public sealed record ExceptionCaseActionDto(string Id, string CaseId, string ActionType, string ActorId, string ActorDisplayName, DateTimeOffset OccurredAtUtc, string? FromStatus, string? ToStatus, string? Reason, string? Note, string? MetadataJson, string? CorrelationId);
+public sealed record ExceptionCaseNoteDto(string Id, string CaseId, DateTimeOffset CreatedAtUtc, string CreatedBy, string Note, string? CorrelationId);
 public sealed record KillSwitchDto(string Id, bool IsActive, string? Reason, DateTimeOffset UpdatedAtUtc);
 public sealed record InstrumentDto(string Id, string Symbol, string AssetClass, string BaseCurrency, string QuoteCurrency, int PricePrecision, int QuantityPrecision, bool IsEnabled);
 public sealed record VenueDto(string Id, string Name, string VenueType, bool IsEnabled);
@@ -1046,6 +1172,10 @@ public sealed record ImportGeneratedLmaxEodRequest(DateOnly ReportDate, string? 
 public sealed record ImportLmaxReportSetRequest(string IndividualTradesPath, string TradesSummaryPath, string CurrencyWalletsPath, DateOnly ReportDate, string? VenueName, string? BrokerAccountCode);
 public sealed record ImportSingleLmaxReportRequest(string FilePath, DateOnly ReportDate, string? VenueName, string? BrokerAccountCode);
 public sealed record RunEodReconciliationRequest(DateOnly ReportDate, string? VenueName, string? BrokerAccountCode);
+public sealed record CreateExceptionCaseApiRequest(ExceptionCaseSeverity Severity, ExceptionCaseType Type, ExceptionCaseSource Source, string Title, string Description, string? EntityType, string? EntityId, Guid? InstrumentId, string? Symbol, string? AssignedTo, object? Metadata);
+public sealed record ExceptionCaseReasonRequest(string? Reason);
+public sealed record ExceptionCaseAssignRequest(string AssignedTo);
+public sealed record ExceptionCaseNoteRequest(string Note);
 public sealed record KillSwitchRequest(string? Reason);
 public sealed record FakeSnapshotsRequest(string? InstrumentSymbol, string? VenueName, DateTimeOffset StartUtc, int IntervalSeconds, int Count, decimal Bid, decimal Ask, decimal? BidStep, decimal? AskStep);
 public sealed record BuildBarsRequest(string? VenueName, BarTimeframe Timeframe, DateTimeOffset StartUtc, DateTimeOffset EndUtc);

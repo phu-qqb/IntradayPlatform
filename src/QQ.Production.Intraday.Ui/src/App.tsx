@@ -6,6 +6,9 @@ import type {
   EodPnlSummaryDto,
   EodReconciliationBreakDto,
   EodReconciliationRunDto,
+  ExceptionCaseActionDto,
+  ExceptionCaseDto,
+  ExceptionCaseNoteDto,
   FillDto,
   HealthDto,
   InstrumentDto,
@@ -80,10 +83,11 @@ type DashboardState = {
   eodReconciliationRuns: EodReconciliationRunDto[];
   eodReconciliationBreaks: EodReconciliationBreakDto[];
   eodPnlSummary?: EodPnlSummaryDto;
+  exceptionCases: ExceptionCaseDto[];
   auditEvents: OperatorAuditEventDto[];
 };
 
-type PageId = 'command' | 'pms' | 'weights' | 'oms' | 'ems' | 'market' | 'recon' | 'lmax-eod' | 'risk-admin' | 'audit' | 'connectivity';
+type PageId = 'command' | 'pms' | 'weights' | 'oms' | 'ems' | 'market' | 'exceptions' | 'recon' | 'lmax-eod' | 'risk-admin' | 'audit' | 'connectivity';
 
 const emptyDashboard: DashboardState = {
   modelRuns: [],
@@ -109,6 +113,7 @@ const emptyDashboard: DashboardState = {
   lmaxCurrencyWallets: [],
   eodReconciliationRuns: [],
   eodReconciliationBreaks: [],
+  exceptionCases: [],
   auditEvents: []
 };
 
@@ -119,6 +124,7 @@ const navItems: Array<{ id: PageId; label: string; icon: typeof Activity }> = [
   { id: 'oms', label: 'OMS', icon: Archive },
   { id: 'ems', label: 'EMS', icon: Activity },
   { id: 'market', label: 'Market Data', icon: BarChart3 },
+  { id: 'exceptions', label: 'Exceptions', icon: ShieldAlert },
   { id: 'recon', label: 'Reconciliation', icon: FileSearch },
   { id: 'lmax-eod', label: 'LMAX EOD', icon: WalletCards },
   { id: 'risk-admin', label: 'Risk & Admin', icon: ShieldAlert },
@@ -139,7 +145,7 @@ export default function App() {
   const loadIntegrity = useCallback(async () => setIntegrity(await apiClient.getReferenceDataIntegrity()), []);
 
   const loadDashboard = useCallback(async () => {
-    const [modelRuns, modelWeightBatches, targets, drifts, internalPositions, brokerPositions, reconciliationBreaks, tradeIntents, riskDecisions, orders, fills, snapshots, bars, killSwitch, instruments, venues, lmaxImportRuns, lmaxValidationIssues, lmaxIndividualTrades, lmaxTradeSummaries, lmaxCurrencyWallets, eodReconciliationRuns, eodReconciliationBreaks, auditEvents] = await Promise.all([
+    const [modelRuns, modelWeightBatches, targets, drifts, internalPositions, brokerPositions, reconciliationBreaks, tradeIntents, riskDecisions, orders, fills, snapshots, bars, killSwitch, instruments, venues, lmaxImportRuns, lmaxValidationIssues, lmaxIndividualTrades, lmaxTradeSummaries, lmaxCurrencyWallets, eodReconciliationRuns, eodReconciliationBreaks, exceptionCases, auditEvents] = await Promise.all([
       apiClient.getModelRuns(),
       apiClient.getModelWeightBatches(),
       apiClient.getTargetPositions(),
@@ -163,10 +169,11 @@ export default function App() {
       apiClient.getLmaxCurrencyWallets(),
       apiClient.getEodReconciliationRuns(),
       apiClient.getEodReconciliationBreaks(),
+      apiClient.getExceptionCases(),
       apiClient.getAuditEvents({ limit: 100 })
     ]);
 
-    setDashboard((current) => ({ ...current, modelRuns, modelWeightBatches, targets, drifts, internalPositions, brokerPositions, reconciliationBreaks, tradeIntents, riskDecisions, orders, fills, snapshots, bars, killSwitch, instruments, venues, lmaxImportRuns, lmaxValidationIssues, lmaxIndividualTrades, lmaxTradeSummaries, lmaxCurrencyWallets, eodReconciliationRuns, eodReconciliationBreaks, auditEvents }));
+    setDashboard((current) => ({ ...current, modelRuns, modelWeightBatches, targets, drifts, internalPositions, brokerPositions, reconciliationBreaks, tradeIntents, riskDecisions, orders, fills, snapshots, bars, killSwitch, instruments, venues, lmaxImportRuns, lmaxValidationIssues, lmaxIndividualTrades, lmaxTradeSummaries, lmaxCurrencyWallets, eodReconciliationRuns, eodReconciliationBreaks, exceptionCases, auditEvents }));
   }, []);
 
   const refreshAll = useCallback(async () => {
@@ -253,6 +260,8 @@ function renderPage(page: PageId, dashboard: DashboardState, health: HealthDto |
       return <EmsPage dashboard={dashboard} health={health} />;
     case 'market':
       return <MarketPage dashboard={dashboard} actions={actions} />;
+    case 'exceptions':
+      return <ExceptionsPage dashboard={dashboard} actions={actions} />;
     case 'recon':
       return <ReconPage dashboard={dashboard} />;
     case 'lmax-eod':
@@ -272,6 +281,8 @@ function renderPage(page: PageId, dashboard: DashboardState, health: HealthDto |
 function CommandCenter({ dashboard, health, integrity, actions }: { dashboard: DashboardState; health?: HealthDto; integrity?: ReferenceDataIntegrityDto; actions: { setSelected: (item: unknown) => void } }) {
   const openOrders = (dashboard.orders?.childOrders ?? []).filter((order) => !['Filled', 'Cancelled', 'Rejected', 'Expired'].includes(order.status)).length;
   const blockingBreaks = dashboard.eodReconciliationBreaks.filter((item) => item.severity === 'Blocking').length;
+  const openExceptions = dashboard.exceptionCases.filter((item) => !['Resolved', 'FalsePositive', 'Waived', 'Closed'].includes(item.status));
+  const blockingExceptions = openExceptions.filter((item) => ['Blocking', 'Critical'].includes(item.severity)).length;
   return (
     <section className="workspace-page">
       <SectionHeader title="Command Center" eyebrow="Operational overview" />
@@ -283,6 +294,7 @@ function CommandCenter({ dashboard, health, integrity, actions }: { dashboard: D
         <MetricCard label="Open Orders" value={openOrders} tone={openOrders === 0 ? 'neutral' : 'warning'} />
         <MetricCard label="Fills" value={dashboard.fills.length} tone="info" />
         <MetricCard label="EOD Blocking Breaks" value={blockingBreaks} tone={blockingBreaks === 0 ? 'ok' : 'danger'} />
+        <MetricCard label="Open Exceptions" value={openExceptions.length} tone={blockingExceptions ? 'danger' : openExceptions.length ? 'warning' : 'ok'} />
         <MetricCard label="Net Wallet PnL" value={formatUsd(dashboard.eodPnlSummary?.totalNetPnlUsd)} tone="neutral" />
       </div>
       <div className="page-grid two">
@@ -405,6 +417,117 @@ function ReconPage({ dashboard }: { dashboard: DashboardState }) {
       <SectionHeader title="Reconciliation" eyebrow="Intraday and EOD breaks" />
       <ReconciliationPanel breaks={dashboard.reconciliationBreaks} />
       <EodBreakTable rows={dashboard.eodReconciliationBreaks} />
+    </section>
+  );
+}
+
+function ExceptionsPage({ dashboard, actions }: { dashboard: DashboardState; actions: { refreshAll: () => Promise<void>; setSelected: (item: unknown) => void } }) {
+  const [selected, setSelected] = useState<ExceptionCaseDto | undefined>(dashboard.exceptionCases[0]);
+  const [caseActions, setCaseActions] = useState<ExceptionCaseActionDto[]>([]);
+  const [notes, setNotes] = useState<ExceptionCaseNoteDto[]>([]);
+  const [status, setStatus] = useState('');
+  const [severity, setSeverity] = useState('');
+  const openCases = dashboard.exceptionCases.filter((item) => !['Resolved', 'FalsePositive', 'Waived', 'Closed'].includes(item.status));
+  const resolvedToday = dashboard.exceptionCases.filter((item) => item.resolvedAtUtc?.slice(0, 10) === new Date().toISOString().slice(0, 10)).length;
+  const assignedLocal = openCases.filter((item) => (item.assignedTo ?? '').toLowerCase().includes('local')).length;
+  const filtered = dashboard.exceptionCases.filter((item) => (!status || item.status === status) && (!severity || item.severity === severity));
+
+  const loadDetail = async (row: ExceptionCaseDto) => {
+    setSelected(row);
+    actions.setSelected(row);
+    const [loadedActions, loadedNotes] = await Promise.all([apiClient.getExceptionCaseActions(row.id), apiClient.getExceptionCaseNotes(row.id)]);
+    setCaseActions(loadedActions);
+    setNotes(loadedNotes);
+  };
+
+  const runAction = async (label: string, callback: (reason?: string) => Promise<unknown>, requireReason = false) => {
+    if (!selected) return;
+    const reason = requireReason ? window.prompt(`${label} reason`) : window.prompt(`${label} reason (optional)`);
+    if (requireReason && !reason?.trim()) return;
+    if (label === 'Waive' && ['Blocking', 'Critical'].includes(selected.severity) && !window.confirm('Waive this blocking or critical exception case?')) return;
+    await callback(reason ?? undefined);
+    await actions.refreshAll();
+    const refreshed = await apiClient.getExceptionCases({ limit: 100 });
+    const updated = refreshed.find((item) => item.id === selected.id);
+    if (updated) await loadDetail(updated);
+  };
+
+  return (
+    <section className="workspace-page">
+      <SectionHeader title="Exceptions" eyebrow="Operational exception and break management" />
+      <div className="metric-grid">
+        <MetricCard label="Open" value={openCases.length} tone={openCases.length ? 'warning' : 'ok'} />
+        <MetricCard label="Blocking" value={openCases.filter((item) => item.severity === 'Blocking').length} tone={openCases.some((item) => item.severity === 'Blocking') ? 'danger' : 'ok'} />
+        <MetricCard label="Critical" value={openCases.filter((item) => item.severity === 'Critical').length} tone={openCases.some((item) => item.severity === 'Critical') ? 'danger' : 'ok'} />
+        <MetricCard label="Assigned Local" value={assignedLocal} tone={assignedLocal ? 'info' : 'neutral'} />
+        <MetricCard label="Resolved Today" value={resolvedToday} tone="ok" />
+      </div>
+      <div className="panel wide">
+        <SectionHeader title="Case Register" actions={(
+          <div className="inline-controls">
+            <select value={status} onChange={(event) => setStatus(event.target.value)} aria-label="Exception status filter">
+              <option value="">All statuses</option>
+              {['Open', 'Acknowledged', 'Investigating', 'Resolved', 'FalsePositive', 'Waived', 'Closed'].map((value) => <option key={value}>{value}</option>)}
+            </select>
+            <select value={severity} onChange={(event) => setSeverity(event.target.value)} aria-label="Exception severity filter">
+              <option value="">All severities</option>
+              {['Info', 'Warning', 'Blocking', 'Critical'].map((value) => <option key={value}>{value}</option>)}
+            </select>
+          </div>
+        )} />
+        <DataTable
+          rows={filtered}
+          getRowKey={(row) => row.id}
+          onRowClick={(row) => void loadDetail(row)}
+          emptyLabel="No exception cases"
+          columns={[
+            { key: 'created', header: 'Created', render: (row) => formatUtc(row.createdAtUtc), sortValue: (row) => row.createdAtUtc },
+            { key: 'severity', header: 'Severity', render: (row) => <SeverityBadge value={row.severity} />, sortValue: (row) => row.severity },
+            { key: 'status', header: 'Status', render: (row) => <StatusChip label={formatStatus(row.status)} tone={toneForStatus(row.status)} />, sortValue: (row) => row.status },
+            { key: 'type', header: 'Type', render: (row) => formatStatus(row.type), sortValue: (row) => row.type },
+            { key: 'source', header: 'Source', render: (row) => formatStatus(row.source), sortValue: (row) => row.source },
+            { key: 'symbol', header: 'Symbol', render: (row) => row.symbol ?? '-' },
+            { key: 'title', header: 'Title', render: (row) => row.title },
+            { key: 'assigned', header: 'Assigned', render: (row) => row.assignedTo ?? '-' },
+            { key: 'entity', header: 'Entity', render: (row) => `${row.entityType ?? '-'} ${formatIdShort(row.entityId)}` },
+            { key: 'updated', header: 'Updated', render: (row) => formatUtc(row.updatedAtUtc), sortValue: (row) => row.updatedAtUtc }
+          ]}
+        />
+      </div>
+      {selected && (
+        <div className="panel wide">
+          <SectionHeader title="Selected Case" eyebrow={`${selected.title} (${formatIdShort(selected.id)})`} />
+          <div className="detail-grid">
+            <div>
+              <p>{selected.description}</p>
+              <p><strong>Status:</strong> {selected.status} <strong>Severity:</strong> {selected.severity}</p>
+              <p><strong>Assigned:</strong> {selected.assignedTo ?? '-'} <strong>Entity:</strong> {selected.entityType ?? '-'} {formatIdShort(selected.entityId)}</p>
+              <div className="button-row">
+                <CommandButton onClick={() => void runAction('Acknowledge', (reason) => apiClient.acknowledgeExceptionCase(selected.id, reason))}>Acknowledge</CommandButton>
+                <CommandButton onClick={() => {
+                  const assignedTo = window.prompt('Assign to');
+                  if (assignedTo?.trim()) void apiClient.assignExceptionCase(selected.id, assignedTo.trim()).then(actions.refreshAll);
+                }}>Assign</CommandButton>
+                <CommandButton onClick={() => void runAction('Investigate', (reason) => apiClient.investigateExceptionCase(selected.id, reason))}>Investigating</CommandButton>
+                <CommandButton onClick={() => void runAction('Resolve', (reason) => apiClient.resolveExceptionCase(selected.id, reason ?? ''), true)}>Resolve</CommandButton>
+                <CommandButton onClick={() => void runAction('False Positive', (reason) => apiClient.falsePositiveExceptionCase(selected.id, reason ?? ''), true)}>False Positive</CommandButton>
+                <CommandButton onClick={() => void runAction('Waive', (reason) => apiClient.waiveExceptionCase(selected.id, reason ?? ''), true)}>Waive</CommandButton>
+                <CommandButton onClick={() => void runAction('Reopen', (reason) => apiClient.reopenExceptionCase(selected.id, reason))}>Reopen</CommandButton>
+                <CommandButton onClick={() => {
+                  const note = window.prompt('Add note');
+                  if (note?.trim()) void apiClient.addExceptionCaseNote(selected.id, note.trim()).then(() => loadDetail(selected));
+                }}>Add Note</CommandButton>
+              </div>
+            </div>
+            <div>
+              <SectionHeader title="Action Timeline" />
+              <Timeline items={caseActions.map((item) => ({ label: `${formatStatus(item.actionType)} by ${item.actorDisplayName}`, time: item.occurredAtUtc, tone: toneForStatus(item.toStatus ?? item.actionType), detail: item.reason ?? item.note ?? undefined }))} />
+              <SectionHeader title="Notes" />
+              {notes.length === 0 ? <div className="empty-state">No notes</div> : notes.map((note) => <div className="note-row" key={note.id}><strong>{note.createdBy}</strong> {formatUtc(note.createdAtUtc)}<br />{note.note}</div>)}
+            </div>
+          </div>
+        </div>
+      )}
     </section>
   );
 }
@@ -621,7 +744,8 @@ function AuditStrip({ health, dashboard }: { health?: HealthDto; dashboard: Dash
         { label: `Server ${health?.environment ?? 'unknown'}`, time: health?.utcServerTime, tone: 'info' },
         { label: `${dashboard.modelRuns.length} model runs`, tone: 'neutral' },
         { label: `${dashboard.fills.length} fills`, tone: 'neutral' },
-        { label: `${dashboard.eodReconciliationBreaks.length} EOD breaks`, tone: dashboard.eodReconciliationBreaks.some((x) => x.severity === 'Blocking') ? 'danger' : 'ok' }
+        { label: `${dashboard.eodReconciliationBreaks.length} EOD breaks`, tone: dashboard.eodReconciliationBreaks.some((x) => x.severity === 'Blocking') ? 'danger' : 'ok' },
+        { label: `${dashboard.exceptionCases.filter((x) => !['Resolved', 'FalsePositive', 'Waived', 'Closed'].includes(x.status)).length} open exceptions`, tone: dashboard.exceptionCases.some((x) => !['Resolved', 'FalsePositive', 'Waived', 'Closed'].includes(x.status) && ['Blocking', 'Critical'].includes(x.severity)) ? 'danger' : 'neutral' }
       ]} />
     </footer>
   );

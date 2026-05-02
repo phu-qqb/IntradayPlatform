@@ -49,6 +49,10 @@ public sealed class WorkflowTests
         var breakItem = Assert.Single(state.ReconciliationBreaks);
         Assert.Equal(ReconciliationBreakType.InternalBrokerPositionMismatch, breakItem.Type);
         Assert.Equal(ReconciliationBreakSeverity.Blocking, breakItem.Severity);
+        var exceptionCase = Assert.Single(state.ExceptionCases);
+        Assert.Equal(ExceptionCaseSource.IntradayReconciliation, exceptionCase.Source);
+        Assert.Equal(ExceptionCaseType.PositionMismatch, exceptionCase.Type);
+        Assert.Contains(state.OperatorAuditEvents, x => x.EventType == OperatorAuditEventType.ExceptionCaseCreated);
     }
 
     [Fact]
@@ -282,7 +286,10 @@ public sealed class WorkflowTests
     {
         var repository = new InMemoryIntradayRepository(state);
         var gateway = new FakeLmaxGateway(new FakeLmaxOptions { Behavior = behavior }, Clock);
-        return new ProcessModelRunService(repository, gateway, brokerProvider ?? new FakeBrokerPositionProvider(state, Clock), Clock, new ReferenceDataIntegrityService(repository, Clock));
+        var context = new StaticOperatorContext(OperatorAuditActorType.System, "workflow-test", "Workflow Test", "workflow-corr", "workflow-request");
+        var audit = new OperatorAuditService(new InMemoryOperatorAuditRepository(state), context, Clock);
+        var exceptionCaseService = new ExceptionCaseService(new InMemoryExceptionCaseRepository(state), audit, context, Clock, repository);
+        return new ProcessModelRunService(repository, gateway, brokerProvider ?? new FakeBrokerPositionProvider(state, Clock), Clock, new ReferenceDataIntegrityService(repository, Clock), exceptionCaseService);
     }
 
     private static string FindRepoRoot()

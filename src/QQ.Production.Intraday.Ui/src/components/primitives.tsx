@@ -5,10 +5,11 @@ export type Tone = 'ok' | 'info' | 'warning' | 'danger' | 'neutral';
 
 export function toneForStatus(status?: string | null): Tone {
   const normalized = (status ?? '').toLowerCase();
-  if (['approved', 'processed', 'promoted', 'imported', 'completed', 'filled', 'acked', 'ok', 'complete'].includes(normalized)) return 'ok';
-  if (['blocked', 'rejected', 'riskrejected', 'failed', 'critical'].includes(normalized)) return 'danger';
-  if (['requiresmanualapproval', 'warning', 'sparsedata', 'incomplete'].includes(normalized)) return 'warning';
-  if (['noactionrequired', 'alreadyprocessed', 'received', 'created', 'draft', 'started'].includes(normalized)) return 'info';
+  if (['approved', 'processed', 'promoted', 'imported', 'completed', 'filled', 'acked', 'ok', 'complete', 'resolved'].includes(normalized)) return 'ok';
+  if (['blocked', 'rejected', 'riskrejected', 'failed', 'critical', 'open'].includes(normalized)) return 'danger';
+  if (['requiresmanualapproval', 'warning', 'sparsedata', 'incomplete', 'waived'].includes(normalized)) return 'warning';
+  if (['noactionrequired', 'alreadyprocessed', 'received', 'created', 'draft', 'started', 'acknowledged', 'investigating'].includes(normalized)) return 'info';
+  if (['falsepositive', 'closed'].includes(normalized)) return 'neutral';
   return 'neutral';
 }
 
