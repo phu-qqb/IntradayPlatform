@@ -8,8 +8,6 @@ using System.Text;
 
 public sealed class RawLmaxFixSessionClient(LmaxConnectivityLabSafetyValidator safety) : ILmaxFixSessionClient
 {
-    private const char Soh = '\x01';
-
     public LabCommandResult Validate(LmaxConnectivityLabOptions options, bool marketData)
     {
         var missing = MissingStructuralFixFields(options, marketData).ToList();
@@ -48,7 +46,7 @@ public sealed class RawLmaxFixSessionClient(LmaxConnectivityLabSafetyValidator s
             await tcp.ConnectAsync(host, port, timeout.Token);
             await using var stream = options.UseTls ? await CreateTlsStreamAsync(tcp, host, timeout.Token) : tcp.GetStream();
 
-            var logon = BuildMessage("A", 1, options.FixSenderCompId!, target, [
+            var logon = LmaxFixMarketDataCodec.BuildMessage("A", 1, options.FixSenderCompId!, target, [
                 ("98", "0"),
                 ("108", "30"),
                 ("141", "Y"),
@@ -58,8 +56,8 @@ public sealed class RawLmaxFixSessionClient(LmaxConnectivityLabSafetyValidator s
             await WriteAsciiAsync(stream, logon, timeout.Token);
 
             var response = await ReadFixResponseAsync(stream, timeout.Token);
-            var loggedOn = ContainsTag(response, "35", "A");
-            var receivedLogout = ContainsTag(response, "35", "5");
+            var loggedOn = LmaxFixMarketDataCodec.ContainsTag(response, "35", "A");
+            var receivedLogout = LmaxFixMarketDataCodec.ContainsTag(response, "35", "5");
             var status = loggedOn ? "Ok" : "Failed";
             var message = loggedOn
                 ? "FIX logon succeeded and logout was sent. No orders or subscriptions were submitted."
@@ -69,7 +67,7 @@ public sealed class RawLmaxFixSessionClient(LmaxConnectivityLabSafetyValidator s
 
             if (loggedOn)
             {
-                var logout = BuildMessage("5", 2, options.FixSenderCompId!, target, [("58", "Connectivity lab logoff")]);
+                var logout = LmaxFixMarketDataCodec.BuildMessage("5", 2, options.FixSenderCompId!, target, [("58", "Connectivity lab logoff")]);
                 await WriteAsciiAsync(stream, logout, CancellationToken.None);
             }
 
@@ -85,15 +83,213 @@ public sealed class RawLmaxFixSessionClient(LmaxConnectivityLabSafetyValidator s
         }
     }
 
-    public LabCommandResult SnapshotSmoke(LmaxConnectivityLabOptions options)
+    public async Task<LmaxFixMarketDataSmokeResult> MarketDataSnapshotSmokeAsync(LmaxConnectivityLabOptions options, CancellationToken cancellationToken)
     {
+        var startedAt = DateTimeOffset.UtcNow;
         var issues = safety.ValidateForFixLogon(options, marketData: true).ToList();
+        var diagnostics = BuildSafeDiagnostics(options).ToList();
         if (issues.Count > 0)
         {
-            return LabCommandResult.Skipped("fix-marketdata-snapshot-smoke", string.Join(" ", issues), LmaxConnectivityLabSafetyValidator.DecisionsForExternalCommand(options));
+            var skipped = LmaxFixMarketDataSmokeResult.Skipped(string.Join(" ", issues), LmaxConnectivityLabSafetyValidator.DecisionsForExternalCommand(options));
+            return skipped with { Diagnostics = diagnostics };
         }
 
-        return LabCommandResult.Skipped("fix-marketdata-snapshot-smoke", "Read-only market data snapshot request is not implemented yet. Use fix-marketdata-logon-smoke first.", LmaxConnectivityLabSafetyValidator.DecisionsForExternalCommand(options));
+        var requestOptions = LmaxFixMarketDataRequestOptions.FromLabOptions(options);
+        var requestModes = GetRequestModeAttempts(requestOptions.RequestMode).ToList();
+        var encodings = GetEncodingAttempts(requestOptions.SymbolEncodingMode).ToList();
+        var allAttempts = new List<string>();
+        LmaxFixMarketDataSmokeResult? lastResult = null;
+        foreach (var requestMode in requestModes)
+        {
+            foreach (var encoding in encodings)
+            {
+                var attemptOptions = requestOptions.WithRequestMode(requestMode).WithEncoding(encoding);
+                var attemptLabel = $"RequestMode={requestMode};Encoding={encoding}";
+                allAttempts.Add($"{attemptLabel}: started with clean FIX session");
+                var result = await RunSingleMarketDataSnapshotAttemptAsync(options, attemptOptions, attemptLabel, startedAt, diagnostics, cancellationToken);
+                allAttempts.AddRange(result.Attempts);
+                lastResult = result with { Attempts = allAttempts.ToList() };
+                if (result.Status == "Ok" || requestOptions.RequestMode != LmaxFixMarketDataRequestMode.Auto && requestOptions.SymbolEncodingMode != LmaxFixMarketDataSymbolEncodingMode.Auto)
+                {
+                    return lastResult;
+                }
+            }
+        }
+
+        return lastResult ?? LmaxFixMarketDataSmokeResult.Create("Failed", "No market data request attempts were made.", startedAt, false, false, false, false, false, false, false, false, null, null, null, LmaxConnectivityLabSafetyValidator.DecisionsForExternalCommand(options), diagnostics, allAttempts);
+    }
+
+    private static async Task<LmaxFixMarketDataSmokeResult> RunSingleMarketDataSnapshotAttemptAsync(
+        LmaxConnectivityLabOptions options,
+        LmaxFixMarketDataRequestOptions requestOptions,
+        string attemptLabel,
+        DateTimeOffset startedAt,
+        IReadOnlyList<string> diagnostics,
+        CancellationToken cancellationToken)
+    {
+        var host = options.FixMarketDataHost!;
+        var port = options.FixMarketDataPort!.Value;
+        var target = (options.FixMarketDataTargetCompId ?? options.FixTargetCompId)!;
+        var messages = new List<string>();
+        var entries = new List<LmaxFixMarketDataEntry>();
+        var mdReqId = $"QQMD-{DateTimeOffset.UtcNow:yyyyMMddHHmmssfff}";
+        var attempts = new List<string> { $"{attemptLabel}: MDReqID={mdReqId}" };
+        var tcpConnected = false;
+        var tlsHandshakeCompleted = false;
+        var fixLogonSent = false;
+        var fixLoggedOn = false;
+        var marketDataRequestSent = false;
+        var marketDataSnapshotReceived = false;
+        var marketDataRejectReceived = false;
+        var logoutSent = false;
+        string? rejectReason = null;
+        string? rejectText = null;
+        string? lastMsgType = null;
+        Stream? stream = null;
+        var sequenceNumber = 1;
+
+        try
+        {
+            using var tcp = new TcpClient();
+            using (var connectTimeout = CreateTimeout(options.ConnectTimeoutSeconds, cancellationToken))
+            {
+                await tcp.ConnectAsync(host, port, connectTimeout.Token);
+                tcpConnected = true;
+            }
+
+            Stream rawStream;
+            using (var connectTimeout = CreateTimeout(options.ConnectTimeoutSeconds, cancellationToken))
+            {
+                rawStream = options.UseTls ? await CreateTlsStreamAsync(tcp, host, connectTimeout.Token) : tcp.GetStream();
+                tlsHandshakeCompleted = options.UseTls || rawStream is not null;
+            }
+
+            await using var disposableStream = rawStream;
+            stream = disposableStream;
+            Stream activeStream = disposableStream ?? throw new IOException("FIX stream was not created.");
+
+            var logon = LmaxFixMarketDataCodec.BuildMessage("A", sequenceNumber++, options.FixSenderCompId!, target, [
+                ("98", "0"),
+                ("108", "30"),
+                ("141", "Y"),
+                ("553", options.FixUsername!),
+                ("554", options.FixPassword!)
+            ]);
+            using (var logonTimeout = CreateTimeout(options.LogonTimeoutSeconds, cancellationToken))
+            {
+                await WriteAsciiAsync(activeStream, logon, logonTimeout.Token);
+                fixLogonSent = true;
+                var logonResponse = await ReadFixResponseAsync(activeStream, logonTimeout.Token);
+                lastMsgType = LmaxFixMarketDataCodec.GetMsgType(logonResponse);
+                messages.Add(logonResponse);
+                fixLoggedOn = LmaxFixMarketDataCodec.ContainsTag(logonResponse, "35", "A");
+            }
+
+            if (!fixLoggedOn)
+            {
+                return LmaxFixMarketDataSmokeResult.Create("Failed", "FIX market data logon was not confirmed; market data request was not sent.", startedAt, tcpConnected, tlsHandshakeCompleted, fixLogonSent, fixLoggedOn, false, false, false, logoutSent, null, null, lastMsgType, LmaxConnectivityLabSafetyValidator.DecisionsForExternalCommand(options), diagnostics, attempts, messageCount: messages.Count);
+            }
+
+            var request = LmaxFixMarketDataCodec.BuildMarketDataRequest(options.FixSenderCompId!, target, sequenceNumber++, mdReqId, requestOptions);
+            attempts.AddRange(LmaxFixMarketDataCodec.DescribeMarketDataRequest(request).Select(x => $"{attemptLabel}: {x}"));
+            if (requestOptions.ShowFixMessages)
+            {
+                attempts.Add($"{attemptLabel}: OUT {LmaxFixMarketDataCodec.SanitizeMessage(request)}");
+            }
+
+            using (var marketDataTimeout = CreateTimeout(requestOptions.MaxWaitSeconds, cancellationToken))
+            {
+                await WriteAsciiAsync(activeStream, request, marketDataTimeout.Token);
+                attempts.Add($"{attemptLabel}: request bytes written and flushed");
+                marketDataRequestSent = true;
+                while (messages.Count < requestOptions.MaxMessages + 1 && !marketDataTimeout.IsCancellationRequested)
+                {
+                    var readResult = await ReadMarketDataResponseAsync(activeStream, options, target, sequenceNumber, marketDataTimeout.Token);
+                    sequenceNumber = readResult.NextSequenceNumber;
+                    var message = readResult.Message;
+                    if (string.IsNullOrWhiteSpace(message))
+                    {
+                        break;
+                    }
+
+                    messages.Add(message);
+                    lastMsgType = LmaxFixMarketDataCodec.GetMsgType(message);
+                    attempts.Add($"{attemptLabel}: received MsgType={lastMsgType ?? "(unknown)"}");
+                    if (requestOptions.ShowFixMessages)
+                    {
+                        attempts.Add($"{attemptLabel}: IN {LmaxFixMarketDataCodec.SanitizeMessage(message)}");
+                    }
+
+                    if (LmaxFixMarketDataCodec.ContainsTag(message, "35", "W") || LmaxFixMarketDataCodec.ContainsTag(message, "35", "X"))
+                    {
+                        entries.AddRange(LmaxFixMarketDataCodec.ParseMarketDataEntries(message));
+                        marketDataSnapshotReceived = true;
+                        break;
+                    }
+
+                    if (LmaxFixMarketDataCodec.ContainsTag(message, "35", "Y"))
+                    {
+                        var reject = LmaxFixMarketDataCodec.ParseReject(message);
+                        marketDataRejectReceived = true;
+                        rejectReason = reject.Reason;
+                        rejectText = reject.Text;
+                        attempts.Add($"{attemptLabel}: rejected reason={rejectReason} text={rejectText}");
+                        break;
+                    }
+
+                    if (LmaxFixMarketDataCodec.ContainsTag(message, "35", "3"))
+                    {
+                        rejectText = LmaxFixMarketDataCodec.GetTag(message, "58");
+                        attempts.Add($"{attemptLabel}: session-level reject text={rejectText}");
+                        break;
+                    }
+
+                    if (LmaxFixMarketDataCodec.ContainsTag(message, "35", "5"))
+                    {
+                        rejectText = LmaxFixMarketDataCodec.GetTag(message, "58");
+                        attempts.Add($"{attemptLabel}: logout received text={rejectText}");
+                        break;
+                    }
+                }
+            }
+
+            if (requestOptions.RequestMode == LmaxFixMarketDataRequestMode.SnapshotPlusUpdates)
+            {
+                var unsubscribe = LmaxFixMarketDataCodec.BuildMarketDataRequest(options.FixSenderCompId!, target, sequenceNumber++, mdReqId, requestOptions, unsubscribe: true);
+                if (requestOptions.ShowFixMessages)
+                {
+                    attempts.Add($"{attemptLabel}: OUT {LmaxFixMarketDataCodec.SanitizeMessage(unsubscribe)}");
+                }
+
+                await WriteAsciiAsync(activeStream, unsubscribe, CancellationToken.None);
+                attempts.Add($"{attemptLabel}: unsubscribe sent");
+            }
+
+            await TrySendLogoutAsync(activeStream, options, target, sequenceNumber, attempts, attemptLabel);
+            logoutSent = true;
+            var (bestBid, bestAsk, mid) = LmaxFixMarketDataCodec.ComputeTopOfBook(entries);
+            var status = entries.Count > 0 ? "Ok" : "Failed";
+            var text = entries.Count > 0
+                ? "Received market data entries. No data was persisted."
+                : marketDataRejectReceived
+                    ? "LMAX rejected the MarketDataRequest."
+                    : "No market data snapshot or incremental entries were received before timeout.";
+            return LmaxFixMarketDataSmokeResult.Create(status, text, startedAt, tcpConnected, tlsHandshakeCompleted, fixLogonSent, fixLoggedOn, marketDataRequestSent, marketDataSnapshotReceived, marketDataRejectReceived, logoutSent, rejectReason, rejectText, lastMsgType, LmaxConnectivityLabSafetyValidator.DecisionsForExternalCommand(options), diagnostics, attempts, entries, bestBid, bestAsk, mid, messages.Count);
+        }
+        catch (OperationCanceledException)
+        {
+            if (fixLoggedOn && stream is not null)
+            {
+                logoutSent = await TrySendLogoutAsync(stream, options, target, sequenceNumber, attempts, attemptLabel);
+            }
+
+            var phase = !tcpConnected ? "TCP connect" : !tlsHandshakeCompleted && options.UseTls ? "TLS handshake" : !fixLoggedOn ? "FIX logon" : marketDataRequestSent ? "market data response" : "market data request";
+            return LmaxFixMarketDataSmokeResult.Create("Failed", $"Market data snapshot smoke timed out during {phase}.", startedAt, tcpConnected, tlsHandshakeCompleted, fixLogonSent, fixLoggedOn, marketDataRequestSent, marketDataSnapshotReceived, marketDataRejectReceived, logoutSent, rejectReason, rejectText, lastMsgType, LmaxConnectivityLabSafetyValidator.DecisionsForExternalCommand(options), diagnostics, attempts, entries, messageCount: messages.Count);
+        }
+        catch (Exception ex) when (ex is SocketException or IOException or AuthenticationException)
+        {
+            return LmaxFixMarketDataSmokeResult.Create("Failed", $"Market data snapshot smoke failed: {ex.GetType().Name}: {ex.Message}", startedAt, tcpConnected, tlsHandshakeCompleted, fixLogonSent, fixLoggedOn, marketDataRequestSent, marketDataSnapshotReceived, marketDataRejectReceived, logoutSent, rejectReason, rejectText, lastMsgType, LmaxConnectivityLabSafetyValidator.DecisionsForExternalCommand(options), diagnostics, attempts, entries, messageCount: messages.Count);
+        }
     }
 
     private static async Task<Stream> CreateTlsStreamAsync(TcpClient tcp, string host, CancellationToken cancellationToken)
@@ -124,7 +320,11 @@ public sealed class RawLmaxFixSessionClient(LmaxConnectivityLabSafetyValidator s
 
             builder.Append(Encoding.ASCII.GetString(buffer, 0, read));
             var text = builder.ToString();
-            if (ContainsTag(text, "35", "A") || ContainsTag(text, "35", "5"))
+            if (LmaxFixMarketDataCodec.ContainsTag(text, "35", "A") ||
+                LmaxFixMarketDataCodec.ContainsTag(text, "35", "5") ||
+                LmaxFixMarketDataCodec.ContainsTag(text, "35", "W") ||
+                LmaxFixMarketDataCodec.ContainsTag(text, "35", "X") ||
+                LmaxFixMarketDataCodec.ContainsTag(text, "35", "Y"))
             {
                 return text;
             }
@@ -133,27 +333,139 @@ public sealed class RawLmaxFixSessionClient(LmaxConnectivityLabSafetyValidator s
         return builder.ToString();
     }
 
-    private static string BuildMessage(string messageType, int sequenceNumber, string senderCompId, string targetCompId, IReadOnlyList<(string Tag, string Value)> fields)
+    private static async Task<(string Message, int NextSequenceNumber)> ReadMarketDataResponseAsync(
+        Stream stream,
+        LmaxConnectivityLabOptions options,
+        string target,
+        int sequenceNumber,
+        CancellationToken cancellationToken)
     {
-        var body = new StringBuilder();
-        body.Append("35=").Append(messageType).Append(Soh);
-        body.Append("34=").Append(sequenceNumber.ToString(CultureInfo.InvariantCulture)).Append(Soh);
-        body.Append("49=").Append(senderCompId).Append(Soh);
-        body.Append("52=").Append(DateTimeOffset.UtcNow.ToString("yyyyMMdd-HH:mm:ss.fff", CultureInfo.InvariantCulture)).Append(Soh);
-        body.Append("56=").Append(targetCompId).Append(Soh);
-        foreach (var (tag, value) in fields)
+        while (!cancellationToken.IsCancellationRequested)
         {
-            body.Append(tag).Append('=').Append(value).Append(Soh);
+            var message = await ReadAnyFixMessageAsync(stream, cancellationToken);
+            var msgType = LmaxFixMarketDataCodec.GetMsgType(message);
+            if (msgType == "1")
+            {
+                var testReqId = LmaxFixMarketDataCodec.GetTag(message, "112");
+                IReadOnlyList<(string Tag, string Value)> heartbeatFields = string.IsNullOrWhiteSpace(testReqId)
+                    ? []
+                    : [("112", testReqId)];
+                var heartbeat = LmaxFixMarketDataCodec.BuildMessage("0", sequenceNumber++, options.FixSenderCompId!, target, heartbeatFields);
+                await WriteAsciiAsync(stream, heartbeat, cancellationToken);
+                continue;
+            }
+
+            if (msgType == "0")
+            {
+                continue;
+            }
+
+            return (message, sequenceNumber);
         }
 
-        var head = $"8=FIX.4.4{Soh}9={Encoding.ASCII.GetByteCount(body.ToString())}{Soh}";
-        var withoutChecksum = head + body;
-        var checksum = Encoding.ASCII.GetBytes(withoutChecksum).Sum(x => x) % 256;
-        return withoutChecksum + $"10={checksum.ToString("000", CultureInfo.InvariantCulture)}{Soh}";
+        return (string.Empty, sequenceNumber);
     }
 
-    private static bool ContainsTag(string message, string tag, string value)
-        => message.Contains($"{Soh}{tag}={value}{Soh}", StringComparison.Ordinal) || message.StartsWith($"{tag}={value}{Soh}", StringComparison.Ordinal);
+    private static async Task<string> ReadAnyFixMessageAsync(Stream stream, CancellationToken cancellationToken)
+    {
+        var buffer = new byte[4096];
+        var builder = new StringBuilder();
+        while (!cancellationToken.IsCancellationRequested)
+        {
+            var read = await stream.ReadAsync(buffer, cancellationToken);
+            if (read == 0)
+            {
+                break;
+            }
+
+            builder.Append(Encoding.ASCII.GetString(buffer, 0, read));
+            var text = builder.ToString();
+            if (text.Contains($"{LmaxFixMarketDataCodec.Soh}10=", StringComparison.Ordinal))
+            {
+                return text;
+            }
+        }
+
+        return builder.ToString();
+    }
+
+    private static async Task<bool> TrySendLogoutAsync(Stream stream, LmaxConnectivityLabOptions options, string target, int sequenceNumber, ICollection<string> attempts, string attemptLabel)
+    {
+        try
+        {
+            var logout = LmaxFixMarketDataCodec.BuildMessage("5", sequenceNumber, options.FixSenderCompId!, target, [("58", "Connectivity lab market data logoff")]);
+            if (options.ShowFixMessages)
+            {
+                attempts.Add($"{attemptLabel}: OUT {LmaxFixMarketDataCodec.SanitizeMessage(logout)}");
+            }
+
+            await WriteAsciiAsync(stream, logout, CancellationToken.None);
+            attempts.Add($"{attemptLabel}: logout sent");
+            return true;
+        }
+        catch (Exception ex) when (ex is IOException or ObjectDisposedException or SocketException or AuthenticationException)
+        {
+            attempts.Add($"{attemptLabel}: logout attempt failed {ex.GetType().Name}");
+            return false;
+        }
+    }
+
+    private static async Task SendMarketDataCleanupAsync(Stream stream, LmaxConnectivityLabOptions options, string target, string mdReqId, int sequenceNumber, LmaxFixMarketDataRequestOptions requestOptions, bool unsubscribe)
+    {
+        if (unsubscribe)
+        {
+            var unsubscribeMessage = LmaxFixMarketDataCodec.BuildMarketDataRequest(options.FixSenderCompId!, target, sequenceNumber, mdReqId, requestOptions, unsubscribe: true);
+            await WriteAsciiAsync(stream, unsubscribeMessage, CancellationToken.None);
+            sequenceNumber++;
+        }
+
+        var logout = LmaxFixMarketDataCodec.BuildMessage("5", sequenceNumber, options.FixSenderCompId!, target, [("58", "Connectivity lab market data logoff")]);
+        await WriteAsciiAsync(stream, logout, CancellationToken.None);
+    }
+
+    private static CancellationTokenSource CreateTimeout(int seconds, CancellationToken cancellationToken)
+    {
+        var source = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        source.CancelAfter(TimeSpan.FromSeconds(Math.Max(1, seconds)));
+        return source;
+    }
+
+    private static IEnumerable<LmaxFixMarketDataSymbolEncodingMode> GetEncodingAttempts(LmaxFixMarketDataSymbolEncodingMode requested)
+        => requested == LmaxFixMarketDataSymbolEncodingMode.Auto
+            ? [
+                LmaxFixMarketDataSymbolEncodingMode.SecurityIdAndSymbolNoIdSource,
+                LmaxFixMarketDataSymbolEncodingMode.SecurityIdNoIdSource,
+                LmaxFixMarketDataSymbolEncodingMode.SlashSymbol,
+                LmaxFixMarketDataSymbolEncodingMode.SecurityIdAndSymbolWithIdSource,
+                LmaxFixMarketDataSymbolEncodingMode.SecurityId,
+                LmaxFixMarketDataSymbolEncodingMode.InternalSymbol
+            ]
+            : [requested];
+
+    private static IEnumerable<LmaxFixMarketDataRequestMode> GetRequestModeAttempts(LmaxFixMarketDataRequestMode requested)
+        => requested == LmaxFixMarketDataRequestMode.Auto
+            ? [LmaxFixMarketDataRequestMode.SnapshotPlusUpdates, LmaxFixMarketDataRequestMode.SnapshotOnly]
+            : [requested];
+
+    private static IEnumerable<string> BuildSafeDiagnostics(LmaxConnectivityLabOptions options)
+    {
+        yield return $"Host={options.FixMarketDataHost ?? "(not configured)"}";
+        yield return $"Port={options.FixMarketDataPort?.ToString(CultureInfo.InvariantCulture) ?? "(not configured)"}";
+        yield return $"TargetCompId={options.FixMarketDataTargetCompId ?? options.FixTargetCompId ?? "(not configured)"}";
+        yield return $"SenderCompId={LmaxConnectivityLabOptions.Mask(options.FixSenderCompId)}";
+        yield return $"EnvironmentName={options.EnvironmentName}";
+        yield return $"AllowExternalConnections={options.AllowExternalConnections}";
+        yield return $"UseTls={options.UseTls}";
+        yield return $"ConnectTimeoutSeconds={options.ConnectTimeoutSeconds}";
+        yield return $"LogonTimeoutSeconds={options.LogonTimeoutSeconds}";
+        yield return $"MarketDataWaitSeconds={options.MarketDataMaxWaitSeconds}";
+        yield return $"RequestMode={options.MarketDataRequestMode}";
+        yield return $"MarketDepth={options.MarketDepth}";
+        yield return $"SymbolEncodingMode={options.MarketDataSymbolEncodingMode}";
+        yield return $"InstrumentSymbol={options.InstrumentSymbol}";
+        yield return $"LmaxInstrumentId={options.LmaxInstrumentId}";
+        yield return $"LmaxSlashSymbol={options.LmaxSlashSymbol}";
+    }
 
     private static IEnumerable<string> MissingStructuralFixFields(LmaxConnectivityLabOptions options, bool marketData)
     {

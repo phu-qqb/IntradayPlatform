@@ -207,6 +207,19 @@ Run locally:
 
 The cockpit shows live trading status, external connection status, execution gateway, market data mode, persistence provider, database reachability, pending migrations, and reference data integrity. It shows critical warnings if anything violates the local-only FakeLmax safety boundary.
 
+The cockpit is now organized as a PMS/OMS/EMS operator shell:
+
+- Command Center: safety, health, latest batches/runs, open orders, fills, EOD breaks, and wallet/PnL summary
+- PMS: internal/broker positions, target positions, drift, currency wallets, and USD PnL
+- Model Weights: DB-staged batches, rows, validation issues, validation, and promotion
+- OMS: model runs, trade intents, risk decisions, parent/child orders, and fills
+- EMS: execution gateway status, child orders, fills, latest local market data, and `MarketImmediate`
+- Market Data: fake/local snapshots and 15-minute bars
+- Reconciliation: intraday and EOD breaks
+- LMAX EOD: import runs, validation issues, individual trades, trade summaries, currency wallets, PnL, and EOD breaks
+- Risk & Admin: kill switch, reference integrity, instruments, and venues
+- Connectivity Lab: read-only script guidance only; no credential forms or live controls
+
 Development CORS allows only `http://localhost:5173` and `http://127.0.0.1:5173`; wildcard CORS is not enabled for production-like environments.
 
 ## DB Model Weight Source
@@ -411,6 +424,10 @@ The lab defaults to disabled, dry-run, no external connections, no order submiss
 
 The lab also has gated Demo FIX logon/logoff smoke commands for Broker FIX Trading and Broker FIX Market Data. Credentials must be supplied through user-secrets or environment variables and are never stored in source-controlled appsettings.
 
+It also includes a read-only Demo FIX market data snapshot smoke command. The command sends `35=V`, parses `35=W`, `35=X`, or `35=Y`, prints bid/ask/mid if available, and does not persist data into the main database or execution workflow.
+
+The isolated lab has validated LMAX Demo FIX market data snapshot retrieval for `EURUSD` using `SecurityId` mode with LMAX instrument id `4001`. This does not change the main runtime: API and Worker remain FakeLmax-only, no orders are submitted, and Demo market data is not persisted into LocalDB.
+
 Useful dry-run commands:
 
 ```powershell
@@ -418,6 +435,7 @@ Useful dry-run commands:
 .\scripts\lmax-lab-fix-dry-run.ps1
 .\scripts\lmax-lab-fix-order-logon-smoke.ps1
 .\scripts\lmax-lab-fix-marketdata-logon-smoke.ps1
+.\scripts\lmax-lab-fix-marketdata-snapshot-smoke.ps1
 .\scripts\lmax-lab-order-dry-run.ps1
 ```
 

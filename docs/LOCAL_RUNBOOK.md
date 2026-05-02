@@ -101,6 +101,19 @@ $env:VITE_API_BASE_URL = "http://localhost:5050"
 
 The cockpit is local-only. It displays backend state and sends explicit local commands only: create fake snapshots, build bars, create/promote fake DB model weight batches, create a local model run, process a model run through FakeLmax, and activate or clear the kill switch. It has no controls for live trading, external connectivity, real LMAX settings, broker credentials, or production secrets.
 
+The UI shell is organized for operator workflows:
+
+- Command Center for health, safety, reference integrity, current activity, and break counts
+- PMS for positions, targets, drift, wallet/cash/PnL views
+- Model Weights for DB-staged batches and promotion
+- OMS for model runs, trade intents, risk decisions, orders, and fills
+- EMS for execution state, local market data, fills, and future execution-quality views
+- Reconciliation and LMAX EOD for intraday breaks, EOD reports, wallet/PnL, and audit
+- Risk & Admin for kill switch and reference data
+- Connectivity Lab for read-only script guidance only
+
+The top status bar is always visible and must show `FakeLmaxGateway`, `FakeMarketDataProvider`, `liveTradingEnabled=false`, and `externalConnectionsEnabled=false` during normal local operation.
+
 If the browser shows CORS errors, confirm the API is running in `Development` and the UI is using `http://localhost:5173` or `http://127.0.0.1:5173`.
 
 ## Reference Data Integrity
@@ -300,6 +313,7 @@ dotnet build .\QQ.Production.Intraday.sln --no-restore -m:1 /p:BuildInParallel=f
 .\scripts\lmax-lab-fix-dry-run.ps1
 .\scripts\lmax-lab-fix-order-logon-smoke.ps1
 .\scripts\lmax-lab-fix-marketdata-logon-smoke.ps1
+.\scripts\lmax-lab-fix-marketdata-snapshot-smoke.ps1
 .\scripts\lmax-lab-order-dry-run.ps1
 ```
 
@@ -313,6 +327,16 @@ After credentials are configured, manual Demo FIX logon checks are explicit:
 ```
 
 These commands send only FIX Logon and Logout. They do not submit orders, do not subscribe to market data, and are not connected to the main execution workflow.
+
+Read-only market data snapshot smoke is also explicit:
+
+```powershell
+.\scripts\lmax-lab-fix-marketdata-snapshot-smoke.ps1 -AllowExternalConnections -Instrument EURUSD -LmaxInstrumentId 4001 -SlashSymbol "EUR/USD"
+```
+
+It sends a FIX `MarketDataRequest`, prints bid/ask/mid or reject details, does not submit orders, and does not persist live LMAX data into LocalDB.
+
+LMAX Demo FIX market data snapshot retrieval has been validated in the isolated lab for `EURUSD` using `SecurityId` mode with LMAX instrument id `4001`. The main API/Worker runtime remains FakeLmax-only and does not consume or persist Demo market data.
 
 See [LMAX_CONNECTIVITY_LAB.md](LMAX_CONNECTIVITY_LAB.md) for command details, safety gates, and questions to resolve with LMAX before any real demo/UAT connectivity work.
 

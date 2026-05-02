@@ -13,6 +13,14 @@ public sealed class LmaxConnectivityLabRunner(
         var options = LmaxConnectivityLabOptions.FromEnvironmentAndArgs(optionArgs);
         var explicitConfirm = args.Any(x => x.Equals("--confirm-demo-order", StringComparison.OrdinalIgnoreCase));
 
+        if (command.Equals("fix-marketdata-snapshot-smoke", StringComparison.OrdinalIgnoreCase) ||
+            command.Equals("fix-market-data-snapshot-smoke", StringComparison.OrdinalIgnoreCase))
+        {
+            var marketDataResult = await fixClient.MarketDataSnapshotSmokeAsync(options, cancellationToken);
+            WriteMarketDataResult(marketDataResult);
+            return marketDataResult.Status == "Failed" ? 1 : 0;
+        }
+
         var result = command.ToLowerInvariant() switch
         {
             "print-config" => PrintConfig(options),
@@ -24,8 +32,6 @@ public sealed class LmaxConnectivityLabRunner(
             "fix-order-logon-smoke" => await fixClient.LogonSmokeAsync(options, marketData: false, cancellationToken),
             "fix-marketdata-logon-smoke" => await fixClient.LogonSmokeAsync(options, marketData: true, cancellationToken),
             "fix-market-data-logon-smoke" => await fixClient.LogonSmokeAsync(options, marketData: true, cancellationToken),
-            "fix-marketdata-snapshot-smoke" => fixClient.SnapshotSmoke(options),
-            "fix-market-data-snapshot-smoke" => fixClient.SnapshotSmoke(options),
             "order-lifecycle-demo-dry-run" => OrderLifecycleDryRun(options),
             "order-lifecycle-demo" => OrderLifecycleDemo(options, explicitConfirm),
             _ => LabCommandResult.Blocked(command, $"Unknown command '{command}'.", [])
@@ -80,6 +86,53 @@ public sealed class LmaxConnectivityLabRunner(
         if (result.StartedAtUtc is not null) Console.WriteLine($"StartedAtUtc: {result.StartedAtUtc:O}");
         if (result.CompletedAtUtc is not null) Console.WriteLine($"CompletedAtUtc: {result.CompletedAtUtc:O}");
         Console.WriteLine($"Message: {result.Message}");
+        foreach (var decision in result.SafetyDecisions)
+        {
+            Console.WriteLine($"- {decision}");
+        }
+    }
+
+    private static void WriteMarketDataResult(LmaxFixMarketDataSmokeResult result)
+    {
+        Console.WriteLine($"Command: {result.Command}");
+        Console.WriteLine($"Status: {result.Status}");
+        Console.WriteLine($"Connected: {result.Connected}");
+        Console.WriteLine($"LoggedOn: {result.LoggedOn}");
+        Console.WriteLine($"TcpConnected: {result.TcpConnected}");
+        Console.WriteLine($"TlsHandshakeCompleted: {result.TlsHandshakeCompleted}");
+        Console.WriteLine($"FixLogonSent: {result.FixLogonSent}");
+        Console.WriteLine($"FixLoggedOn: {result.FixLoggedOn}");
+        Console.WriteLine($"RequestSent: {result.RequestSent}");
+        Console.WriteLine($"MarketDataRequestSent: {result.MarketDataRequestSent}");
+        Console.WriteLine($"MarketDataSnapshotReceived: {result.MarketDataSnapshotReceived}");
+        Console.WriteLine($"RequestRejected: {result.RequestRejected}");
+        Console.WriteLine($"MarketDataRejectReceived: {result.MarketDataRejectReceived}");
+        Console.WriteLine($"LogoutSent: {result.LogoutSent}");
+        if (!string.IsNullOrWhiteSpace(result.RejectReason)) Console.WriteLine($"RejectReason: {result.RejectReason}");
+        if (!string.IsNullOrWhiteSpace(result.RejectText)) Console.WriteLine($"RejectText: {result.RejectText}");
+        if (!string.IsNullOrWhiteSpace(result.LastReceivedMsgType)) Console.WriteLine($"LastReceivedMsgType: {result.LastReceivedMsgType}");
+        Console.WriteLine($"MessageCount: {result.MessageCount}");
+        if (result.BestBid is not null) Console.WriteLine($"BestBid: {result.BestBid}");
+        if (result.BestAsk is not null) Console.WriteLine($"BestAsk: {result.BestAsk}");
+        if (result.Mid is not null) Console.WriteLine($"Mid: {result.Mid}");
+        Console.WriteLine($"StartedAtUtc: {result.StartedAtUtc:O}");
+        Console.WriteLine($"CompletedAtUtc: {result.CompletedAtUtc:O}");
+        Console.WriteLine($"Message: {result.Message}");
+        foreach (var entry in result.Entries)
+        {
+            Console.WriteLine($"Entry: Type={entry.EntryType} Price={entry.Price} Size={entry.Size} Symbol={entry.Symbol} SecurityId={entry.SecurityId} UpdateAction={entry.UpdateAction}");
+        }
+
+        foreach (var diagnostic in result.Diagnostics)
+        {
+            Console.WriteLine($"Diagnostic: {diagnostic}");
+        }
+
+        foreach (var attempt in result.Attempts)
+        {
+            Console.WriteLine($"Attempt: {attempt}");
+        }
+
         foreach (var decision in result.SafetyDecisions)
         {
             Console.WriteLine($"- {decision}");

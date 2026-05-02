@@ -29,6 +29,16 @@ public sealed class LmaxConnectivityLabOptions
     public bool UseTls { get; set; } = true;
     public string InstrumentSymbol { get; set; } = "EURUSD";
     public string LmaxInstrumentId { get; set; } = "4001";
+    public string LmaxSlashSymbol { get; set; } = "EUR/USD";
+    public string FixSecurityIdSource { get; set; } = "8";
+    public int MarketDepth { get; set; } = 1;
+    public LmaxFixMarketDataRequestMode MarketDataRequestMode { get; set; } = LmaxFixMarketDataRequestMode.SnapshotOnly;
+    public int ConnectTimeoutSeconds { get; set; } = 10;
+    public int LogonTimeoutSeconds { get; set; } = 10;
+    public int MarketDataMaxWaitSeconds { get; set; } = 10;
+    public int MarketDataMaxMessages { get; set; } = 5;
+    public LmaxFixMarketDataSymbolEncodingMode MarketDataSymbolEncodingMode { get; set; } = LmaxFixMarketDataSymbolEncodingMode.SecurityIdAndSymbol;
+    public bool ShowFixMessages { get; set; } = false;
     public int RequestTimeoutSeconds { get; set; } = 10;
     public string? AccountApiKey { get; set; }
 
@@ -68,7 +78,18 @@ public sealed class LmaxConnectivityLabOptions
             if (key == "fix-username") options.FixUsername = value;
             if (key == "fix-password") options.FixPassword = value;
             if (key == "instrument-symbol") options.InstrumentSymbol = value;
+            if (key == "instrument") options.InstrumentSymbol = value;
             if (key == "lmax-instrument-id") options.LmaxInstrumentId = value;
+            if (key == "slash-symbol") options.LmaxSlashSymbol = value;
+            if (key == "fix-security-id-source") options.FixSecurityIdSource = value;
+            if (key == "market-depth") options.MarketDepth = int.Parse(value);
+            if (key == "request-mode") options.MarketDataRequestMode = Enum.Parse<LmaxFixMarketDataRequestMode>(value, ignoreCase: true);
+            if (key == "symbol-encoding-mode") options.MarketDataSymbolEncodingMode = Enum.Parse<LmaxFixMarketDataSymbolEncodingMode>(value, ignoreCase: true);
+            if (key == "show-fix-messages") options.ShowFixMessages = bool.Parse(value);
+            if (key == "connect-timeout-seconds") options.ConnectTimeoutSeconds = int.Parse(value);
+            if (key == "logon-timeout-seconds") options.LogonTimeoutSeconds = int.Parse(value);
+            if (key == "max-wait-seconds") options.MarketDataMaxWaitSeconds = int.Parse(value);
+            if (key == "max-messages") options.MarketDataMaxMessages = int.Parse(value);
         }
 
         return options;
@@ -100,6 +121,16 @@ public sealed class LmaxConnectivityLabOptions
             ["UseTls"] = UseTls.ToString(),
             ["InstrumentSymbol"] = InstrumentSymbol,
             ["LmaxInstrumentId"] = LmaxInstrumentId,
+            ["LmaxSlashSymbol"] = LmaxSlashSymbol,
+            ["FixSecurityIdSource"] = FixSecurityIdSource,
+            ["MarketDepth"] = MarketDepth.ToString(),
+            ["MarketDataRequestMode"] = MarketDataRequestMode.ToString(),
+            ["ConnectTimeoutSeconds"] = ConnectTimeoutSeconds.ToString(),
+            ["LogonTimeoutSeconds"] = LogonTimeoutSeconds.ToString(),
+            ["MarketDataMaxWaitSeconds"] = MarketDataMaxWaitSeconds.ToString(),
+            ["MarketDataMaxMessages"] = MarketDataMaxMessages.ToString(),
+            ["MarketDataSymbolEncodingMode"] = MarketDataSymbolEncodingMode.ToString(),
+            ["ShowFixMessages"] = ShowFixMessages.ToString(),
             ["RequestTimeoutSeconds"] = RequestTimeoutSeconds.ToString(),
             ["AccountApiKey"] = Mask(AccountApiKey)
         };
@@ -189,6 +220,16 @@ public sealed class LmaxConnectivityLabOptions
         SetIfPresent(values, "LmaxConnectivityLab:UseTls", "QQ_LMAX_USE_TLS", "LmaxConnectivityLab__UseTls");
         SetIfPresent(values, "LmaxConnectivityLab:InstrumentSymbol", "QQ_LMAX_INSTRUMENT_SYMBOL", "LmaxConnectivityLab__InstrumentSymbol");
         SetIfPresent(values, "LmaxConnectivityLab:LmaxInstrumentId", "QQ_LMAX_INSTRUMENT_ID", "LmaxConnectivityLab__LmaxInstrumentId");
+        SetIfPresent(values, "LmaxConnectivityLab:LmaxSlashSymbol", "QQ_LMAX_SLASH_SYMBOL", "LmaxConnectivityLab__LmaxSlashSymbol");
+        SetIfPresent(values, "LmaxConnectivityLab:FixSecurityIdSource", "QQ_LMAX_FIX_SECURITY_ID_SOURCE", "LmaxConnectivityLab__FixSecurityIdSource");
+        SetIfPresent(values, "LmaxConnectivityLab:MarketDepth", "QQ_LMAX_MARKET_DEPTH", "LmaxConnectivityLab__MarketDepth");
+        SetIfPresent(values, "LmaxConnectivityLab:MarketDataRequestMode", "QQ_LMAX_MARKET_DATA_REQUEST_MODE", "LmaxConnectivityLab__MarketDataRequestMode");
+        SetIfPresent(values, "LmaxConnectivityLab:ConnectTimeoutSeconds", "QQ_LMAX_CONNECT_TIMEOUT_SECONDS", "LmaxConnectivityLab__ConnectTimeoutSeconds");
+        SetIfPresent(values, "LmaxConnectivityLab:LogonTimeoutSeconds", "QQ_LMAX_LOGON_TIMEOUT_SECONDS", "LmaxConnectivityLab__LogonTimeoutSeconds");
+        SetIfPresent(values, "LmaxConnectivityLab:MarketDataMaxWaitSeconds", "QQ_LMAX_MARKET_DATA_MAX_WAIT_SECONDS", "LmaxConnectivityLab__MarketDataMaxWaitSeconds");
+        SetIfPresent(values, "LmaxConnectivityLab:MarketDataMaxMessages", "QQ_LMAX_MARKET_DATA_MAX_MESSAGES", "LmaxConnectivityLab__MarketDataMaxMessages");
+        SetIfPresent(values, "LmaxConnectivityLab:MarketDataSymbolEncodingMode", "QQ_LMAX_MARKET_DATA_SYMBOL_ENCODING_MODE", "LmaxConnectivityLab__MarketDataSymbolEncodingMode");
+        SetIfPresent(values, "LmaxConnectivityLab:ShowFixMessages", "QQ_LMAX_SHOW_FIX_MESSAGES", "LmaxConnectivityLab__ShowFixMessages");
         SetIfPresent(values, "LmaxConnectivityLab:RequestTimeoutSeconds", "QQ_LMAX_REQUEST_TIMEOUT_SECONDS", "LmaxConnectivityLab__RequestTimeoutSeconds");
         SetIfPresent(values, "LmaxConnectivityLab:AccountApiKey", "QQ_LMAX_ACCOUNT_API_KEY", "LmaxConnectivityLab__AccountApiKey");
     }
@@ -231,6 +272,16 @@ public sealed class LmaxConnectivityLabOptions
         options.UseTls = GetBool(values, nameof(UseTls), options.UseTls);
         options.InstrumentSymbol = GetString(values, nameof(InstrumentSymbol), options.InstrumentSymbol) ?? options.InstrumentSymbol;
         options.LmaxInstrumentId = GetString(values, nameof(LmaxInstrumentId), options.LmaxInstrumentId) ?? options.LmaxInstrumentId;
+        options.LmaxSlashSymbol = GetString(values, nameof(LmaxSlashSymbol), options.LmaxSlashSymbol) ?? options.LmaxSlashSymbol;
+        options.FixSecurityIdSource = GetString(values, nameof(FixSecurityIdSource), options.FixSecurityIdSource) ?? options.FixSecurityIdSource;
+        options.MarketDepth = GetInt(values, nameof(MarketDepth), options.MarketDepth) ?? options.MarketDepth;
+        options.MarketDataRequestMode = GetEnum(values, nameof(MarketDataRequestMode), options.MarketDataRequestMode);
+        options.ConnectTimeoutSeconds = GetInt(values, nameof(ConnectTimeoutSeconds), options.ConnectTimeoutSeconds) ?? options.ConnectTimeoutSeconds;
+        options.LogonTimeoutSeconds = GetInt(values, nameof(LogonTimeoutSeconds), options.LogonTimeoutSeconds) ?? options.LogonTimeoutSeconds;
+        options.MarketDataMaxWaitSeconds = GetInt(values, nameof(MarketDataMaxWaitSeconds), options.MarketDataMaxWaitSeconds) ?? options.MarketDataMaxWaitSeconds;
+        options.MarketDataMaxMessages = GetInt(values, nameof(MarketDataMaxMessages), options.MarketDataMaxMessages) ?? options.MarketDataMaxMessages;
+        options.MarketDataSymbolEncodingMode = GetEnum(values, nameof(MarketDataSymbolEncodingMode), options.MarketDataSymbolEncodingMode);
+        options.ShowFixMessages = GetBool(values, nameof(ShowFixMessages), options.ShowFixMessages);
         options.RequestTimeoutSeconds = GetInt(values, nameof(RequestTimeoutSeconds), options.RequestTimeoutSeconds) ?? options.RequestTimeoutSeconds;
         options.AccountApiKey = GetString(values, nameof(AccountApiKey), options.AccountApiKey);
     }
@@ -243,6 +294,10 @@ public sealed class LmaxConnectivityLabOptions
 
     private static int? GetInt(IReadOnlyDictionary<string, string> values, string key, int? defaultValue)
         => values.TryGetValue($"LmaxConnectivityLab:{key}", out var value) && int.TryParse(value, out var parsed) ? parsed : defaultValue;
+
+    private static TEnum GetEnum<TEnum>(IReadOnlyDictionary<string, string> values, string key, TEnum defaultValue)
+        where TEnum : struct
+        => values.TryGetValue($"LmaxConnectivityLab:{key}", out var value) && Enum.TryParse<TEnum>(value, ignoreCase: true, out var parsed) ? parsed : defaultValue;
 }
 
 public sealed record LabCommandResult(
@@ -282,7 +337,7 @@ public interface ILmaxFixSessionClient
     LabCommandResult Validate(LmaxConnectivityLabOptions options, bool marketData);
     Task<LabCommandResult> SmokeAsync(LmaxConnectivityLabOptions options, bool marketData, CancellationToken cancellationToken);
     Task<LabCommandResult> LogonSmokeAsync(LmaxConnectivityLabOptions options, bool marketData, CancellationToken cancellationToken);
-    LabCommandResult SnapshotSmoke(LmaxConnectivityLabOptions options);
+    Task<LmaxFixMarketDataSmokeResult> MarketDataSnapshotSmokeAsync(LmaxConnectivityLabOptions options, CancellationToken cancellationToken);
 }
 
 public sealed class PlaceholderLmaxPublicDataClient : ILmaxPublicDataClient
@@ -340,8 +395,8 @@ public sealed class PlaceholderLmaxFixSessionClient : ILmaxFixSessionClient
         return Task.FromResult(new LabCommandResult(command, "Skipped", "No FIX session implementation is wired into this client.", LmaxConnectivityLabSafetyValidator.DecisionsForExternalCommand(options), marketData ? "MarketData" : "Order", false, false, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow));
     }
 
-    public LabCommandResult SnapshotSmoke(LmaxConnectivityLabOptions options)
-        => LabCommandResult.Skipped("fix-marketdata-snapshot-smoke", "Read-only market data snapshot smoke is not implemented yet.", LmaxConnectivityLabSafetyValidator.DecisionsForExternalCommand(options));
+    public Task<LmaxFixMarketDataSmokeResult> MarketDataSnapshotSmokeAsync(LmaxConnectivityLabOptions options, CancellationToken cancellationToken)
+        => Task.FromResult(LmaxFixMarketDataSmokeResult.Skipped("Read-only market data snapshot smoke is not implemented in this placeholder client.", LmaxConnectivityLabSafetyValidator.DecisionsForExternalCommand(options)));
 
     private static IEnumerable<string> RequiredFixFields(LmaxConnectivityLabOptions options, bool marketData)
     {
