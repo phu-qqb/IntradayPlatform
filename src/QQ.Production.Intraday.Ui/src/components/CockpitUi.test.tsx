@@ -1,11 +1,11 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ActionButton, ActionToast } from './ActionFeedback';
 import { DataTable } from './DataTable';
 import { TopStatusBar } from './TopStatusBar';
 import { SeverityBadge, StatusChip, processResultTone, toneForStatus } from './primitives';
 import { formatIdShort, formatPrice, formatUsd, formatUtc } from '../utils/format';
-import { getSelectedOperatorId, setSelectedOperatorId } from '../api/apiClient';
+import { apiClient, getSelectedOperatorId, setSelectedOperatorId } from '../api/apiClient';
 import type { HealthDto, ReferenceDataIntegrityDto } from '../api/types';
 
 const safeHealth: HealthDto = {
@@ -28,6 +28,10 @@ const cleanIntegrity: ReferenceDataIntegrityDto = {
   warningIssueCount: 0,
   issues: []
 };
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
 
 describe('cockpit UI primitives', () => {
   it('renders status chip severity classes', () => {
@@ -164,6 +168,27 @@ describe('cockpit UI primitives', () => {
     setSelectedOperatorId('local-risk');
 
     expect(getSelectedOperatorId()).toBe('local-risk');
+  });
+
+  it('sends selected local operator context through API header', async () => {
+    window.localStorage.clear();
+    setSelectedOperatorId('local-risk');
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      id: 'operator-1',
+      operatorId: 'local-risk',
+      displayName: 'Local Risk Manager',
+      email: null,
+      isEnabled: true,
+      roles: ['RiskManager'],
+      permissions: ['ViewRiskConfig']
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await apiClient.getCurrentOperator();
+
+    expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining('/operators/current'), expect.objectContaining({
+      headers: expect.objectContaining({ 'X-Operator-Id': 'local-risk' })
+    }));
   });
 
   it('renders governance approval queue concepts without live controls', () => {

@@ -190,6 +190,18 @@ Approval-gated actions currently include:
 
 Use the Governance page to view the current operator, permissions, pending approvals, approval history, and approval decision timeline. The approval workflow writes `OperatorAuditEvents` for request creation, approval, rejection, cancellation, execution, permission denial, and approval-required outcomes. It cannot enable live trading, external connections, real LMAX execution, or credential capture.
 
+Run the automated local governance smoke after resetting/seeding LocalDB and starting the API:
+
+```powershell
+.\scripts\reset-local-db.ps1 -SeedDemoData
+.\scripts\run-api.ps1
+
+# In another terminal:
+.\scripts\smoke-governance-local.ps1
+```
+
+The smoke uses explicit `X-Operator-Id` headers and validates the same maker/checker path used manually: `local-risk` requests risk activation, self-approval is blocked, `local-approver` approves and executes once, kill-switch clear stays active until checker execution, and approval/audit records are visible. It defaults to `http://localhost:5050`, refuses non-local API URLs, prints API error bodies, and does not use credentials, external URLs, LMAX, live trading, or external connections.
+
 ## Risk Control Center
 
 Open the Risk Control Center from the Control navigation group. It is local-only and cannot enable live trading, external connections, credentials, or a real LMAX gateway.
@@ -363,6 +375,7 @@ Recommended full local EOD workflow:
 .\scripts\check-reference-data.ps1
 .\scripts\smoke-db-weights-local.ps1
 .\scripts\smoke-lmax-eod-local.ps1
+.\scripts\smoke-governance-local.ps1
 .\scripts\run-ui.ps1
 ```
 

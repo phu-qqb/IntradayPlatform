@@ -149,6 +149,7 @@ public sealed class OperatorPermissionService(
                     set.Add(OperatorPermission.ManageExceptions);
                     set.Add(OperatorPermission.ResolveExceptions);
                     set.Add(OperatorPermission.WaiveExceptions);
+                    set.Add(OperatorPermission.ClearKillSwitch);
                     break;
                 case OperatorRole.Operator:
                     set.Add(OperatorPermission.ViewDashboard);

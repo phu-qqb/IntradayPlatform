@@ -70,7 +70,14 @@ public sealed class OperatorGovernanceTests
 
         Assert.Equal(ApprovalRequestStatus.Approved, approved.Status);
         Assert.True(executed.Executed);
+        var priorActive = state.RiskLimitSets.Single(x => x.Id == active.Id);
+        var activatedDraft = state.RiskLimitSets.Single(x => x.Id == draft.Id);
+        Assert.False(priorActive.IsActive);
+        Assert.Equal(RiskLimitSetStatus.Retired, priorActive.Status);
+        Assert.True(activatedDraft.IsActive);
+        Assert.Equal(RiskLimitSetStatus.Active, activatedDraft.Status);
         Assert.Contains(state.OperatorAuditEvents, x => x.EventType == OperatorAuditEventType.ApprovalRequestExecuted);
+        Assert.Contains(state.OperatorAuditEvents, x => x.EventType == OperatorAuditEventType.RiskLimitSetActivated);
         await Assert.ThrowsAsync<DomainRuleViolationException>(() => approverWorkflow.ExecuteApprovedAsync(request.Id, CancellationToken.None));
     }
 
@@ -91,6 +98,35 @@ public sealed class OperatorGovernanceTests
         await approverWorkflow.RejectAsync(request.Id, "Not enough context.", CancellationToken.None);
 
         await Assert.ThrowsAsync<DomainRuleViolationException>(() => approverWorkflow.ExecuteApprovedAsync(request.Id, CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task Risk_manager_can_request_governed_kill_switch_clear_and_checker_executes()
+    {
+        var state = SeedData.Create(Now);
+        await new InMemoryIntradayRepository(state).SetKillSwitchAsync(true, "Test active kill switch.", CancellationToken.None);
+        var workflow = CreateWorkflow(state, "local-risk");
+
+        var request = await workflow.CreateApprovalRequestAsync(new CreateApprovalRequestRequest(
+            ApprovalRequestType.ClearKillSwitch,
+            "KillSwitch",
+            "global",
+            "Clear after checker approval.",
+            new { action = "clearKillSwitch" }),
+            CancellationToken.None);
+
+        Assert.Equal(ApprovalRequestStatus.Pending, request.Status);
+        Assert.True(state.KillSwitch.IsActive);
+
+        var approverWorkflow = CreateWorkflow(state, "local-approver");
+        await approverWorkflow.ApproveAsync(request.Id, "Checker approval.", CancellationToken.None);
+        var executed = await approverWorkflow.ExecuteApprovedAsync(request.Id, CancellationToken.None);
+
+        Assert.True(executed.Executed);
+        Assert.False(state.KillSwitch.IsActive);
+        Assert.Contains(state.OperatorAuditEvents, x => x.EventType == OperatorAuditEventType.ApprovalRequestCreated);
+        Assert.Contains(state.OperatorAuditEvents, x => x.EventType == OperatorAuditEventType.ApprovalRequestApproved);
+        Assert.Contains(state.OperatorAuditEvents, x => x.EventType == OperatorAuditEventType.ApprovalRequestExecuted);
     }
 
     private static IOperatorPermissionService CreatePermissionService(PlatformState state, string operatorId)

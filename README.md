@@ -134,6 +134,7 @@ Prompt #6 adds `AddModelWeightSourceTables` for DB-staged model weights:
 - `scripts/create-fake-weight-batch.ps1`
 - `scripts/promote-ready-weight-batches.ps1`
 - `scripts/smoke-db-weights-local.ps1`
+- `scripts/smoke-governance-local.ps1`
 - `scripts/run-ui.ps1`
 - `scripts/run-local-stack.ps1`
 
@@ -253,6 +254,18 @@ Roles map to local permissions such as viewing dashboards, creating/promoting mo
 Four-eyes approval is enabled by default for safety-critical local actions. The first operator creates a pending `ApprovalRequest`; a different approver/admin must approve it with a reason; the approved request is then executed once. The requester cannot approve their own request, and rejected/cancelled/executed requests cannot be executed again.
 
 Approval-gated actions currently include risk limit set activation, risk limit set retirement, kill-switch clear, waiving blocking/critical exceptions, marking blocking/critical exceptions false positive, and resolving blocking/critical exceptions. The Governance page shows current operator permissions, pending approvals, approval history, and approve/reject/execute actions. These workflows do not enable live trading or external connectivity.
+
+To rerun the local maker/checker validation after resetting and starting the API:
+
+```powershell
+.\scripts\reset-local-db.ps1 -SeedDemoData
+.\scripts\run-api.ps1
+
+# In another terminal:
+.\scripts\smoke-governance-local.ps1
+```
+
+The smoke confirms health remains FakeLmax-only, seeded operators resolve through `X-Operator-Id`, `local-risk` can create a risk activation approval request, requester self-approval is blocked, `local-approver` can approve/execute once, kill-switch clear remains pending until checker execution, and audit/approval records are written. It only calls `http://localhost:5050` by default and never uses credentials, LMAX, live trading, or external connections.
 
 ## Exception Management
 
