@@ -575,6 +575,12 @@ public enum OperatorAuditEventType
     ApprovalRequestExecuted,
     PermissionDenied,
     SensitiveActionApprovalRequired,
+    OperationalJobStarted,
+    OperationalJobSucceeded,
+    OperationalJobFailed,
+    OperationalJobRetried,
+    DailyChecklistViewed,
+    DailyOperationsSummaryViewed,
     Unknown
 }
 
@@ -627,6 +633,10 @@ public enum OperatorPermission
     ManageEodReports,
     RunConnectivityLab,
     ManageApprovals,
+    ViewOperations,
+    RunOperationalJobs,
+    RetryOperationalJobs,
+    ViewJobHistory,
     Admin
 }
 

@@ -121,6 +121,13 @@ Prompt #6 adds `AddModelWeightSourceTables` for DB-staged model weights:
 - `ModelWeightRows`
 - `ModelWeightValidationIssues`
 
+Daily Operations adds `AddDailyOperationsJobControl` for persistent local operational job history:
+
+- `OperationalJobDefinitions`
+- `OperationalJobRuns`
+- `OperationalJobSteps`
+- `OperationalJobRunEvents`
+
 ## Scripts
 
 - `scripts/check-env.ps1`
@@ -135,6 +142,8 @@ Prompt #6 adds `AddModelWeightSourceTables` for DB-staged model weights:
 - `scripts/promote-ready-weight-batches.ps1`
 - `scripts/smoke-db-weights-local.ps1`
 - `scripts/smoke-governance-local.ps1`
+- `scripts/run-ops-job.ps1`
+- `scripts/smoke-daily-ops-local.ps1`
 - `scripts/run-ui.ps1`
 - `scripts/run-local-stack.ps1`
 
@@ -218,6 +227,7 @@ The cockpit is now organized as a PMS/OMS/EMS operator shell:
 - Market Data: fake/local snapshots and 15-minute bars
 - Exceptions: operator workflow for breaks and operational exceptions
 - Reconciliation: intraday and EOD breaks
+- Daily Operations: local job runs, daily checklist, retryable job history, and operational timeline
 - LMAX EOD: import runs, validation issues, individual trades, trade summaries, currency wallets, PnL, and EOD breaks
 - Risk Control Center: active risk profile, versioned limit sets, trading windows, instrument/venue controls, kill switch, and recent explainable risk decisions
 - Audit Journal: append-only operator/system action journal with correlation IDs

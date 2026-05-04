@@ -104,6 +104,7 @@ The cockpit is local-only. It displays backend state and sends explicit local co
 The UI shell is organized for operator workflows:
 
 - Command Center for health, safety, reference integrity, current activity, and break counts
+- Daily Operations for local job runs, daily checklist, retryable job history, and operational timeline
 - PMS for positions, targets, drift, wallet/cash/PnL views
 - Model Weights for DB-staged batches and promotion
 - OMS for model runs, trade intents, risk decisions, orders, and fills
@@ -201,6 +202,47 @@ Run the automated local governance smoke after resetting/seeding LocalDB and sta
 ```
 
 The smoke uses explicit `X-Operator-Id` headers and validates the same maker/checker path used manually: `local-risk` requests risk activation, self-approval is blocked, `local-approver` approves and executes once, kill-switch clear stays active until checker execution, and approval/audit records are visible. It defaults to `http://localhost:5050`, refuses non-local API URLs, prints API error bodies, and does not use credentials, external URLs, LMAX, live trading, or external connections.
+
+## Daily Operations and Job Control
+
+Daily Operations is a local control layer around existing safe workflows. It records persistent `OperationalJobRuns`, step rows, and job events for operator-triggered tasks. It does not rewrite business logic and does not introduce a scheduler, cloud dependency, real LMAX calls, live trading, credentials, or external connections.
+
+Supported local job types include:
+
+- `ReferenceDataIntegrityCheck`
+- `BuildMarketDataBars`
+- `PromoteReadyWeightBatches`
+- `ProcessPendingModelRuns`
+- `GenerateFakeLmaxEodReports`
+- `ImportGeneratedLmaxEodReports`
+- `RunEodReconciliation`
+- `CalculateEodPnlSummary`
+
+Every manual job run requires a reason and writes operator audit events such as `OperationalJobStarted`, `OperationalJobSucceeded`, `OperationalJobFailed`, and `OperationalJobRetried`. Critical infrastructure failures can create an exception case. Business outcomes such as blocked model-run processing remain visible in job output and do not bypass risk, reconciliation, exception, audit, or governance checks.
+
+Useful API calls:
+
+```powershell
+Invoke-RestMethod "http://localhost:5050/ops/jobs/definitions"
+Invoke-RestMethod "http://localhost:5050/ops/jobs/runs?limit=50"
+Invoke-RestMethod -Method Post -ContentType "application/json" -Body '{"jobType":"ReferenceDataIntegrityCheck","reason":"Manual reference check","input":{}}' "http://localhost:5050/ops/jobs/run"
+Invoke-RestMethod "http://localhost:5050/ops/daily-summary"
+Invoke-RestMethod "http://localhost:5050/ops/daily-checklist"
+```
+
+Run one job from PowerShell:
+
+```powershell
+.\scripts\run-ops-job.ps1 -JobType ReferenceDataIntegrityCheck -Reason "Manual operator check"
+```
+
+Run the local Daily Operations smoke after starting the API:
+
+```powershell
+.\scripts\smoke-daily-ops-local.ps1
+```
+
+The smoke validates health, FakeLmax-only safety, daily summary, reference check job, bar build job, ready-weight promotion job, pending model-run processing job, job history, and audit events. It skips EOD reconciliation clearly when no local LMAX EOD import run exists.
 
 ## Risk Control Center
 

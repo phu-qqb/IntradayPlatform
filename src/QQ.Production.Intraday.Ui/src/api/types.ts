@@ -281,6 +281,92 @@ export type EodPnlSummaryDto = {
   currencyRows: EodPnlCurrencyRowDto[];
 };
 
+export type OperationalJobDefinitionDto = {
+  id: string;
+  jobType: string;
+  name: string;
+  description: string;
+  isEnabled: boolean;
+  isRerunnable: boolean;
+  requiresApproval: boolean;
+  severity: string;
+  createdAtUtc: string;
+  updatedAtUtc?: string | null;
+};
+
+export type OperationalJobRunDto = {
+  id: string;
+  jobDefinitionId?: string | null;
+  jobType: string;
+  name: string;
+  status: string;
+  triggerType: string;
+  triggeredByActorType: string;
+  triggeredByOperatorId?: string | null;
+  triggeredByDisplayName?: string | null;
+  startedAtUtc: string;
+  completedAtUtc?: string | null;
+  durationMs?: number | null;
+  correlationId?: string | null;
+  requestId?: string | null;
+  inputJson?: string | null;
+  outputJson?: string | null;
+  errorMessage?: string | null;
+  exceptionCaseId?: string | null;
+  auditEventId?: string | null;
+  retryOfJobRunId?: string | null;
+  retryCount: number;
+  canRetry: boolean;
+  createdAtUtc: string;
+  updatedAtUtc?: string | null;
+};
+
+export type OperationalJobStepDto = {
+  id: string;
+  jobRunId: string;
+  stepName: string;
+  status: string;
+  startedAtUtc: string;
+  completedAtUtc?: string | null;
+  durationMs?: number | null;
+  message?: string | null;
+  inputJson?: string | null;
+  outputJson?: string | null;
+  errorMessage?: string | null;
+};
+
+export type OperationalJobRunEventDto = {
+  id: string;
+  jobRunId: string;
+  occurredAtUtc: string;
+  severity: string;
+  message: string;
+  metadataJson?: string | null;
+};
+
+export type DailyOperationsSummaryDto = {
+  date: string;
+  latestReferenceIntegrity?: OperationalJobRunDto | null;
+  latestMarketDataBars?: OperationalJobRunDto | null;
+  latestWeightPromotion?: OperationalJobRunDto | null;
+  latestModelRunProcessing?: OperationalJobRunDto | null;
+  latestEodImport?: OperationalJobRunDto | null;
+  latestEodReconciliation?: OperationalJobRunDto | null;
+  latestPnlSummary?: OperationalJobRunDto | null;
+  openExceptionCount: number;
+  openBlockingExceptionCount: number;
+  failedJobCount: number;
+  pendingApprovalCount: number;
+};
+
+export type DailyChecklistItemDto = {
+  name: string;
+  status: string;
+  message: string;
+  relatedEntityType?: string | null;
+  relatedEntityId?: string | null;
+};
+
 export type CreateFakeModelWeightBatchRequest = {
   externalBatchId?: string;
   sourceSystem: string;

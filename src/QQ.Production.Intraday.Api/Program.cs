@@ -35,6 +35,8 @@ builder.Services.AddScoped<ProcessModelRunService>();
 builder.Services.AddScoped<IReferenceDataIntegrityService, ReferenceDataIntegrityService>();
 builder.Services.AddScoped<IExceptionCaseService, ExceptionCaseService>();
 builder.Services.AddScoped<IRiskControlService, RiskControlService>();
+builder.Services.AddScoped<IOperationalJobRunner, OperationalJobRunner>();
+builder.Services.AddScoped<IDailyOperationsService, DailyOperationsService>();
 builder.Services.AddScoped<IModelWeightPromotionService, ModelWeightPromotionService>();
 builder.Services.AddScoped<IFakeModelWeightGenerator, FakeModelWeightGenerator>();
 builder.Services.AddSingleton(new LmaxEodReportOptions());
@@ -69,6 +71,7 @@ if (string.Equals(persistenceProvider, "SqlServerLocal", StringComparison.Ordina
     builder.Services.AddScoped<IOperatorAuditRepository, SqlServerOperatorAuditRepository>();
     builder.Services.AddScoped<IOperatorGovernanceRepository, SqlServerOperatorGovernanceRepository>();
     builder.Services.AddScoped<IExceptionCaseRepository, SqlServerExceptionCaseRepository>();
+    builder.Services.AddScoped<IOperationalJobRepository, SqlServerOperationalJobRepository>();
     builder.Services.AddScoped<IBrokerPositionProvider, SqlServerFakeBrokerPositionProvider>();
     builder.Services.AddScoped<IBarBuilderService, BarBuilderService>();
     builder.Services.AddScoped<LocalDatabaseInitializer>();
@@ -86,6 +89,7 @@ else if (string.Equals(persistenceProvider, "InMemory", StringComparison.Ordinal
     builder.Services.AddSingleton<IOperatorAuditRepository, InMemoryOperatorAuditRepository>();
     builder.Services.AddSingleton<IOperatorGovernanceRepository, InMemoryOperatorGovernanceRepository>();
     builder.Services.AddSingleton<IExceptionCaseRepository, InMemoryExceptionCaseRepository>();
+    builder.Services.AddSingleton<IOperationalJobRepository, InMemoryOperationalJobRepository>();
     builder.Services.AddSingleton<IBrokerPositionProvider, FakeBrokerPositionProvider>();
     builder.Services.AddSingleton<IBarBuilderService, BarBuilderService>();
 }
@@ -958,6 +962,78 @@ app.MapPost("/exceptions/{id:guid}/reopen", async (Guid id, ExceptionCaseReasonR
 app.MapPost("/exceptions/{id:guid}/notes", async (Guid id, ExceptionCaseNoteRequest request, IExceptionCaseService service, CancellationToken cancellationToken) =>
     Results.Ok(ToExceptionCaseNoteDto(await service.AddNoteAsync(new ExceptionCaseId(id), request.Note, cancellationToken))));
 
+app.MapGet("/ops/jobs/definitions", async (IOperationalJobRunner runner, CancellationToken cancellationToken) =>
+    Results.Ok((await runner.GetDefinitionsAsync(cancellationToken)).Select(ToOperationalJobDefinitionDto)));
+
+app.MapGet("/ops/jobs/runs", async (IOperationalJobRunner runner, string? status, string? jobType, DateTimeOffset? fromUtc, DateTimeOffset? toUtc, int? limit, CancellationToken cancellationToken) =>
+{
+    var filter = new OperationalJobRunFilter(ClampLimit(limit), ParseEnum<OperationalJobRunStatus>(status), ParseEnum<OperationalJobType>(jobType), fromUtc, toUtc);
+    return Results.Ok((await runner.GetRecentJobRunsAsync(filter, cancellationToken)).Select(ToOperationalJobRunDto));
+});
+
+app.MapGet("/ops/jobs/runs/{id:guid}", async (Guid id, IOperationalJobRunner runner, CancellationToken cancellationToken) =>
+{
+    var run = await runner.GetJobRunAsync(new OperationalJobRunId(id), cancellationToken);
+    return run is null ? Results.NotFound() : Results.Ok(ToOperationalJobRunDto(run));
+});
+
+app.MapGet("/ops/jobs/runs/{id:guid}/steps", async (Guid id, IOperationalJobRunner runner, CancellationToken cancellationToken) =>
+    Results.Ok((await runner.GetJobStepsAsync(new OperationalJobRunId(id), cancellationToken)).Select(ToOperationalJobStepDto)));
+
+app.MapGet("/ops/jobs/runs/{id:guid}/events", async (Guid id, IOperationalJobRunner runner, CancellationToken cancellationToken) =>
+    Results.Ok((await runner.GetJobEventsAsync(new OperationalJobRunId(id), cancellationToken)).Select(ToOperationalJobRunEventDto)));
+
+app.MapPost("/ops/jobs/run", async (RunOperationalJobApiRequest request, IOperationalJobRunner runner, CancellationToken cancellationToken) =>
+{
+    if (string.IsNullOrWhiteSpace(request.Reason)) return Results.BadRequest(new { message = "A reason is required to run an operational job." });
+    if (!Enum.TryParse<OperationalJobType>(request.JobType, true, out var jobType)) return Results.BadRequest(new { message = $"Unknown operational job type '{request.JobType}'." });
+    try
+    {
+        return Results.Ok(ToOperationalJobRunDto(await runner.RunJobAsync(new RunOperationalJobRequest(jobType, request.Reason, request.Input), cancellationToken)));
+    }
+    catch (DomainRuleViolationException ex)
+    {
+        return Results.BadRequest(new { message = ex.Message });
+    }
+});
+
+app.MapPost("/ops/jobs/runs/{id:guid}/retry", async (Guid id, ReasonRequest request, IOperationalJobRunner runner, CancellationToken cancellationToken) =>
+{
+    if (string.IsNullOrWhiteSpace(request.Reason)) return Results.BadRequest(new { message = "A reason is required to retry an operational job." });
+    try
+    {
+        return Results.Ok(ToOperationalJobRunDto(await runner.RetryJobAsync(new OperationalJobRunId(id), request.Reason, cancellationToken)));
+    }
+    catch (DomainRuleViolationException ex)
+    {
+        return Results.BadRequest(new { message = ex.Message });
+    }
+});
+
+app.MapGet("/ops/daily-summary", async (DateOnly? date, IDailyOperationsService service, IClock clock, CancellationToken cancellationToken) =>
+    Results.Ok(ToDailyOperationsSummaryDto(await service.GetTodaySummaryAsync(date ?? DateOnly.FromDateTime(clock.UtcNow.UtcDateTime), cancellationToken))));
+
+app.MapGet("/ops/daily-checklist", async (DateOnly? date, IDailyOperationsService service, IClock clock, CancellationToken cancellationToken) =>
+    Results.Ok((await service.GetDailyChecklistAsync(date ?? DateOnly.FromDateTime(clock.UtcNow.UtcDateTime), cancellationToken)).Select(ToDailyChecklistItemDto)));
+
+app.MapGet("/ops/timeline", async (DateOnly? date, IDailyOperationsService service, IClock clock, CancellationToken cancellationToken) =>
+    Results.Ok(await service.GetOperationalTimelineAsync(date ?? DateOnly.FromDateTime(clock.UtcNow.UtcDateTime), cancellationToken)));
+
+app.MapPost("/ops/run-reference-check", async (ReasonRequest request, IOperationalJobRunner runner, CancellationToken cancellationToken) =>
+    Results.Ok(ToOperationalJobRunDto(await runner.RunJobAsync(new RunOperationalJobRequest(OperationalJobType.ReferenceDataIntegrityCheck, request.Reason), cancellationToken))));
+
+app.MapPost("/ops/build-bars", async (ReasonRequest request, IOperationalJobRunner runner, CancellationToken cancellationToken) =>
+    Results.Ok(ToOperationalJobRunDto(await runner.RunJobAsync(new RunOperationalJobRequest(OperationalJobType.BuildMarketDataBars, request.Reason), cancellationToken))));
+
+app.MapPost("/ops/promote-ready-weights", async (ReasonRequest request, IOperationalJobRunner runner, CancellationToken cancellationToken) =>
+    Results.Ok(ToOperationalJobRunDto(await runner.RunJobAsync(new RunOperationalJobRequest(OperationalJobType.PromoteReadyWeightBatches, request.Reason), cancellationToken))));
+
+app.MapPost("/ops/process-pending-model-runs", async (ReasonRequest request, IOperationalJobRunner runner, CancellationToken cancellationToken) =>
+    Results.Ok(ToOperationalJobRunDto(await runner.RunJobAsync(new RunOperationalJobRequest(OperationalJobType.ProcessPendingModelRuns, request.Reason), cancellationToken))));
+
+app.MapPost("/ops/run-eod-reconciliation", async (ReasonRequest request, IOperationalJobRunner runner, CancellationToken cancellationToken) =>
+    Results.Ok(ToOperationalJobRunDto(await runner.RunJobAsync(new RunOperationalJobRequest(OperationalJobType.RunEodReconciliation, request.Reason), cancellationToken))));
+
 app.MapGet("/instruments", async (IIntradayRepository repository, CancellationToken cancellationToken) =>
 {
     var state = await repository.LoadStateAsync(cancellationToken);
@@ -1301,6 +1377,60 @@ static RiskInstrumentDto ToRiskInstrumentDto(Instrument x, IReadOnlyList<Instrum
 static RiskVenueDto ToRiskVenueDto(Venue x)
     => new(ToVenueDto(x));
 
+static OperationalJobDefinitionDto ToOperationalJobDefinitionDto(OperationalJobDefinition x)
+    => new(x.Id.Value.ToString("D"), x.JobType.ToString(), x.Name, x.Description, x.IsEnabled, x.IsRerunnable, x.RequiresApproval, x.Severity.ToString(), x.CreatedAtUtc, x.UpdatedAtUtc);
+
+static OperationalJobRunDto ToOperationalJobRunDto(OperationalJobRun x)
+    => new(
+        x.Id.Value.ToString("D"),
+        x.JobDefinitionId?.Value.ToString("D"),
+        x.JobType.ToString(),
+        x.Name,
+        x.Status.ToString(),
+        x.TriggerType.ToString(),
+        x.TriggeredByActorType.ToString(),
+        x.TriggeredByOperatorId,
+        x.TriggeredByDisplayName,
+        x.StartedAtUtc,
+        x.CompletedAtUtc,
+        x.DurationMs,
+        x.CorrelationId,
+        x.RequestId,
+        x.InputJson,
+        x.OutputJson,
+        x.ErrorMessage,
+        x.ExceptionCaseId?.Value.ToString("D"),
+        x.AuditEventId?.Value.ToString("D"),
+        x.RetryOfJobRunId?.Value.ToString("D"),
+        x.RetryCount,
+        x.CanRetry,
+        x.CreatedAtUtc,
+        x.UpdatedAtUtc);
+
+static OperationalJobStepDto ToOperationalJobStepDto(OperationalJobStep x)
+    => new(x.Id.Value.ToString("D"), x.JobRunId.Value.ToString("D"), x.StepName, x.Status.ToString(), x.StartedAtUtc, x.CompletedAtUtc, x.DurationMs, x.Message, x.InputJson, x.OutputJson, x.ErrorMessage);
+
+static OperationalJobRunEventDto ToOperationalJobRunEventDto(OperationalJobRunEvent x)
+    => new(x.Id.ToString("D"), x.JobRunId.Value.ToString("D"), x.OccurredAtUtc, x.Severity.ToString(), x.Message, x.MetadataJson);
+
+static DailyOperationsSummaryDto ToDailyOperationsSummaryDto(DailyOperationsSummary x)
+    => new(
+        x.Date,
+        x.LatestReferenceIntegrity is null ? null : ToOperationalJobRunDto(x.LatestReferenceIntegrity),
+        x.LatestMarketDataBars is null ? null : ToOperationalJobRunDto(x.LatestMarketDataBars),
+        x.LatestWeightPromotion is null ? null : ToOperationalJobRunDto(x.LatestWeightPromotion),
+        x.LatestModelRunProcessing is null ? null : ToOperationalJobRunDto(x.LatestModelRunProcessing),
+        x.LatestEodImport is null ? null : ToOperationalJobRunDto(x.LatestEodImport),
+        x.LatestEodReconciliation is null ? null : ToOperationalJobRunDto(x.LatestEodReconciliation),
+        x.LatestPnlSummary is null ? null : ToOperationalJobRunDto(x.LatestPnlSummary),
+        x.OpenExceptionCount,
+        x.OpenBlockingExceptionCount,
+        x.FailedJobCount,
+        x.PendingApprovalCount);
+
+static DailyChecklistItemDto ToDailyChecklistItemDto(DailyChecklistItem x)
+    => new(x.Name, x.Status.ToString(), x.Message, x.RelatedEntityType, x.RelatedEntityId);
+
 static FillDto ToFillDto(Fill x, IReadOnlyDictionary<InstrumentId, string> symbols, IReadOnlyDictionary<VenueId, string> venues)
     => new(x.Id.Value.ToString("D"), x.BrokerExecutionId, x.ChildOrderId.Value.ToString("D"), x.InstrumentId.Value.ToString("D"), symbols.GetValueOrDefault(x.InstrumentId), x.VenueId.Value.ToString("D"), venues.GetValueOrDefault(x.VenueId), x.Side.ToString(), x.BaseQuantity, x.VenueQuantity, x.Price, x.TradeDateUtc, x.ReceivedAtUtc);
 
@@ -1499,6 +1629,12 @@ public sealed record RiskLimitDto(string Id, string RiskLimitSetId, string Name,
 public sealed record InstrumentRiskLimitDto(string Id, string RiskLimitSetId, string InstrumentId, string? Symbol, decimal MaxTradeNotionalUsd, decimal MaxExposureUsd, decimal MinTradeQuantity, int MaxOrdersPerDay, bool IsEnabled, bool IsTradingEnabled);
 public sealed record VenueRiskLimitDto(string Id, string RiskLimitSetId, string VenueId, string? VenueName, decimal MaxTradeNotionalUsd, decimal MaxDailyTurnoverUsd, int MaxOrdersPerMinute, bool IsEnabled, bool IsVenueEnabled);
 public sealed record TradingWindowDto(string Id, string FundId, string ModelName, string DayOfWeek, string TimeZoneId, string OpensAtUtc, string ClosesAtUtc, string NoNewOrdersAfterUtc, string? FlattenAtUtc, bool IsEnabled, bool TradingEnabled, string ScheduleName, int Version, DateTimeOffset? CreatedAtUtc, DateTimeOffset? UpdatedAtUtc);
+public sealed record OperationalJobDefinitionDto(string Id, string JobType, string Name, string Description, bool IsEnabled, bool IsRerunnable, bool RequiresApproval, string Severity, DateTimeOffset CreatedAtUtc, DateTimeOffset? UpdatedAtUtc);
+public sealed record OperationalJobRunDto(string Id, string? JobDefinitionId, string JobType, string Name, string Status, string TriggerType, string TriggeredByActorType, string? TriggeredByOperatorId, string? TriggeredByDisplayName, DateTimeOffset StartedAtUtc, DateTimeOffset? CompletedAtUtc, long? DurationMs, string? CorrelationId, string? RequestId, string? InputJson, string? OutputJson, string? ErrorMessage, string? ExceptionCaseId, string? AuditEventId, string? RetryOfJobRunId, int RetryCount, bool CanRetry, DateTimeOffset CreatedAtUtc, DateTimeOffset? UpdatedAtUtc);
+public sealed record OperationalJobStepDto(string Id, string JobRunId, string StepName, string Status, DateTimeOffset StartedAtUtc, DateTimeOffset? CompletedAtUtc, long? DurationMs, string? Message, string? InputJson, string? OutputJson, string? ErrorMessage);
+public sealed record OperationalJobRunEventDto(string Id, string JobRunId, DateTimeOffset OccurredAtUtc, string Severity, string Message, string? MetadataJson);
+public sealed record DailyOperationsSummaryDto(DateOnly Date, OperationalJobRunDto? LatestReferenceIntegrity, OperationalJobRunDto? LatestMarketDataBars, OperationalJobRunDto? LatestWeightPromotion, OperationalJobRunDto? LatestModelRunProcessing, OperationalJobRunDto? LatestEodImport, OperationalJobRunDto? LatestEodReconciliation, OperationalJobRunDto? LatestPnlSummary, int OpenExceptionCount, int OpenBlockingExceptionCount, int FailedJobCount, int PendingApprovalCount);
+public sealed record DailyChecklistItemDto(string Name, string Status, string Message, string? RelatedEntityType, string? RelatedEntityId);
 public sealed record FillDto(string Id, string BrokerExecutionId, string ChildOrderId, string InstrumentId, string? Symbol, string VenueId, string? VenueName, string Side, decimal BaseQuantity, decimal VenueQuantity, decimal Price, DateTimeOffset TradeDateUtc, DateTimeOffset ReceivedAtUtc);
 public sealed record MarketDataSnapshotDto(string Id, string InstrumentId, string? Symbol, string VenueId, string? VenueName, decimal Bid, decimal Ask, decimal Mid, decimal Spread, string Source, DateTimeOffset SourceTimestampUtc, DateTimeOffset ReceivedAtUtc, long? SequenceNumber, bool IsSynthetic, DateTimeOffset CreatedAtUtc);
 public sealed record MarketDataBarDto(string Id, string InstrumentId, string? Symbol, string VenueId, string? VenueName, string Timeframe, DateTimeOffset BarStartUtc, DateTimeOffset BarEndUtc, string Source, decimal BidOpen, decimal BidHigh, decimal BidLow, decimal BidClose, decimal AskOpen, decimal AskHigh, decimal AskLow, decimal AskClose, decimal MidOpen, decimal MidHigh, decimal MidLow, decimal MidClose, decimal SpreadOpen, decimal SpreadHigh, decimal SpreadLow, decimal SpreadClose, decimal SpreadAverage, int ObservationCount, DateTimeOffset? FirstSnapshotUtc, DateTimeOffset? LastSnapshotUtc, bool IsComplete, string QualityStatus, string? BuildRunId, string BuilderVersion, DateTimeOffset CreatedAtUtc);
@@ -1518,6 +1654,7 @@ public sealed record VenueInstrumentMappingDto(string Id, string VenueId, string
 public sealed record RiskInstrumentDto(InstrumentDto Instrument, IReadOnlyList<InstrumentAliasDto> Aliases, IReadOnlyList<VenueInstrumentMappingDto> VenueMappings);
 public sealed record RiskVenueDto(VenueDto Venue);
 public sealed record ReasonRequest(string Reason);
+public sealed record RunOperationalJobApiRequest(string JobType, string Reason, object? Input);
 public sealed record CreateRiskLimitSetRequest(string? FundCode, string? ModelName, string Name, string? Description, string Reason);
 public sealed record UpdateRiskLimitRequest(decimal Value, string? Unit, string Reason);
 public sealed record UpdateInstrumentRiskLimitRequest(decimal? MaxTradeNotionalUsd, decimal? MaxExposureUsd, decimal? MinTradeQuantity, int? MaxOrdersPerDay, bool? IsTradingEnabled, string Reason);

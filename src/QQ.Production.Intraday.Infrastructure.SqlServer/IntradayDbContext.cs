@@ -55,6 +55,10 @@ public sealed class IntradayDbContext(DbContextOptions<IntradayDbContext> option
     public DbSet<OperatorUserRole> OperatorUserRoles => Set<OperatorUserRole>();
     public DbSet<ApprovalRequest> ApprovalRequests => Set<ApprovalRequest>();
     public DbSet<ApprovalDecision> ApprovalDecisions => Set<ApprovalDecision>();
+    public DbSet<OperationalJobDefinition> OperationalJobDefinitions => Set<OperationalJobDefinition>();
+    public DbSet<OperationalJobRun> OperationalJobRuns => Set<OperationalJobRun>();
+    public DbSet<OperationalJobStep> OperationalJobSteps => Set<OperationalJobStep>();
+    public DbSet<OperationalJobRunEvent> OperationalJobRunEvents => Set<OperationalJobRunEvent>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -109,6 +113,10 @@ public sealed class IntradayDbContext(DbContextOptions<IntradayDbContext> option
         modelBuilder.Entity<OperatorUserRole>().HasKey(x => x.Id);
         modelBuilder.Entity<ApprovalRequest>().HasKey(x => x.Id);
         modelBuilder.Entity<ApprovalDecision>().HasKey(x => x.Id);
+        modelBuilder.Entity<OperationalJobDefinition>().HasKey(x => x.Id);
+        modelBuilder.Entity<OperationalJobRun>().HasKey(x => x.Id);
+        modelBuilder.Entity<OperationalJobStep>().HasKey(x => x.Id);
+        modelBuilder.Entity<OperationalJobRunEvent>().HasKey(x => x.Id);
 
         modelBuilder.Entity<ModelRun>().HasIndex(x => x.Id).IsUnique();
         modelBuilder.Entity<Fund>().HasIndex(x => x.Name).IsUnique().HasFilter("[IsEnabled] = 1");
@@ -182,6 +190,12 @@ public sealed class IntradayDbContext(DbContextOptions<IntradayDbContext> option
         modelBuilder.Entity<ApprovalRequest>().HasIndex(x => x.CorrelationId);
         modelBuilder.Entity<ApprovalRequest>().HasIndex(x => x.CreatedAtUtc);
         modelBuilder.Entity<ApprovalDecision>().HasIndex(x => new { x.ApprovalRequestId, x.DecidedAtUtc });
+        modelBuilder.Entity<OperationalJobRun>().HasIndex(x => new { x.JobType, x.StartedAtUtc });
+        modelBuilder.Entity<OperationalJobRun>().HasIndex(x => x.Status);
+        modelBuilder.Entity<OperationalJobRun>().HasIndex(x => x.CorrelationId);
+        modelBuilder.Entity<OperationalJobRun>().HasIndex(x => x.TriggeredByOperatorId);
+        modelBuilder.Entity<OperationalJobRun>().HasIndex(x => x.RetryOfJobRunId);
+        modelBuilder.Entity<OperationalJobStep>().HasIndex(x => x.JobRunId);
 
         modelBuilder.Entity<BrokerAccount>().HasOne<Fund>().WithMany().HasForeignKey(x => x.FundId).OnDelete(DeleteBehavior.Restrict);
         modelBuilder.Entity<NavSnapshot>().HasOne<Fund>().WithMany().HasForeignKey(x => x.FundId).OnDelete(DeleteBehavior.Restrict);
@@ -251,6 +265,12 @@ public sealed class IntradayDbContext(DbContextOptions<IntradayDbContext> option
         modelBuilder.Entity<ExceptionCaseLink>().HasOne<ExceptionCase>().WithMany().HasForeignKey(x => x.CaseId).OnDelete(DeleteBehavior.Restrict);
         modelBuilder.Entity<OperatorUserRole>().HasOne<OperatorUser>().WithMany().HasForeignKey(x => x.OperatorUserId).OnDelete(DeleteBehavior.Restrict);
         modelBuilder.Entity<ApprovalDecision>().HasOne<ApprovalRequest>().WithMany().HasForeignKey(x => x.ApprovalRequestId).OnDelete(DeleteBehavior.Restrict);
+        modelBuilder.Entity<OperationalJobRun>().HasOne<OperationalJobDefinition>().WithMany().HasForeignKey(x => x.JobDefinitionId).OnDelete(DeleteBehavior.Restrict);
+        modelBuilder.Entity<OperationalJobRun>().HasOne<ExceptionCase>().WithMany().HasForeignKey(x => x.ExceptionCaseId).OnDelete(DeleteBehavior.Restrict);
+        modelBuilder.Entity<OperationalJobRun>().HasOne<OperatorAuditEvent>().WithMany().HasForeignKey(x => x.AuditEventId).OnDelete(DeleteBehavior.Restrict);
+        modelBuilder.Entity<OperationalJobRun>().HasOne<OperationalJobRun>().WithMany().HasForeignKey(x => x.RetryOfJobRunId).OnDelete(DeleteBehavior.Restrict);
+        modelBuilder.Entity<OperationalJobStep>().HasOne<OperationalJobRun>().WithMany().HasForeignKey(x => x.JobRunId).OnDelete(DeleteBehavior.Restrict);
+        modelBuilder.Entity<OperationalJobRunEvent>().HasOne<OperationalJobRun>().WithMany().HasForeignKey(x => x.JobRunId).OnDelete(DeleteBehavior.Restrict);
 
         modelBuilder.Entity<OperatorAuditEvent>().Property(x => x.ActorId).HasMaxLength(128);
         modelBuilder.Entity<OperatorAuditEvent>().Property(x => x.ActorDisplayName).HasMaxLength(256);
@@ -262,6 +282,18 @@ public sealed class IntradayDbContext(DbContextOptions<IntradayDbContext> option
         modelBuilder.Entity<OperatorAuditEvent>().Property(x => x.Source).HasMaxLength(128);
         modelBuilder.Entity<OperatorAuditEvent>().Property(x => x.Description).HasMaxLength(1000);
         modelBuilder.Entity<OperatorAuditEvent>().Property(x => x.Reason).HasMaxLength(1000);
+        modelBuilder.Entity<OperationalJobDefinition>().Property(x => x.Name).HasMaxLength(160);
+        modelBuilder.Entity<OperationalJobDefinition>().Property(x => x.Description).HasMaxLength(1000);
+        modelBuilder.Entity<OperationalJobRun>().Property(x => x.Name).HasMaxLength(160);
+        modelBuilder.Entity<OperationalJobRun>().Property(x => x.TriggeredByOperatorId).HasMaxLength(128);
+        modelBuilder.Entity<OperationalJobRun>().Property(x => x.TriggeredByDisplayName).HasMaxLength(256);
+        modelBuilder.Entity<OperationalJobRun>().Property(x => x.CorrelationId).HasMaxLength(128);
+        modelBuilder.Entity<OperationalJobRun>().Property(x => x.RequestId).HasMaxLength(128);
+        modelBuilder.Entity<OperationalJobRun>().Property(x => x.ErrorMessage).HasMaxLength(4000);
+        modelBuilder.Entity<OperationalJobStep>().Property(x => x.StepName).HasMaxLength(160);
+        modelBuilder.Entity<OperationalJobStep>().Property(x => x.Message).HasMaxLength(1000);
+        modelBuilder.Entity<OperationalJobStep>().Property(x => x.ErrorMessage).HasMaxLength(4000);
+        modelBuilder.Entity<OperationalJobRunEvent>().Property(x => x.Message).HasMaxLength(2000);
 
         foreach (var entityType in modelBuilder.Model.GetEntityTypes())
         {
@@ -387,6 +419,15 @@ public sealed class IntradayDbContext(DbContextOptions<IntradayDbContext> option
         modelBuilder.Entity<ApprovalRequest>().Property(x => x.Id).HasConversion(x => x.Value, x => new ApprovalRequestId(x));
         modelBuilder.Entity<ApprovalDecision>().Property(x => x.Id).HasConversion(x => x.Value, x => new ApprovalDecisionId(x));
         modelBuilder.Entity<ApprovalDecision>().Property(x => x.ApprovalRequestId).HasConversion(x => x.Value, x => new ApprovalRequestId(x));
+        modelBuilder.Entity<OperationalJobDefinition>().Property(x => x.Id).HasConversion(x => x.Value, x => new OperationalJobDefinitionId(x));
+        modelBuilder.Entity<OperationalJobRun>().Property(x => x.Id).HasConversion(x => x.Value, x => new OperationalJobRunId(x));
+        modelBuilder.Entity<OperationalJobRun>().Property(x => x.JobDefinitionId).HasConversion(x => x.HasValue ? x.Value.Value : (Guid?)null, x => x.HasValue ? new OperationalJobDefinitionId(x.Value) : null);
+        modelBuilder.Entity<OperationalJobRun>().Property(x => x.ExceptionCaseId).HasConversion(x => x.HasValue ? x.Value.Value : (Guid?)null, x => x.HasValue ? new ExceptionCaseId(x.Value) : null);
+        modelBuilder.Entity<OperationalJobRun>().Property(x => x.AuditEventId).HasConversion(x => x.HasValue ? x.Value.Value : (Guid?)null, x => x.HasValue ? new OperatorAuditEventId(x.Value) : null);
+        modelBuilder.Entity<OperationalJobRun>().Property(x => x.RetryOfJobRunId).HasConversion(x => x.HasValue ? x.Value.Value : (Guid?)null, x => x.HasValue ? new OperationalJobRunId(x.Value) : null);
+        modelBuilder.Entity<OperationalJobStep>().Property(x => x.Id).HasConversion(x => x.Value, x => new OperationalJobStepId(x));
+        modelBuilder.Entity<OperationalJobStep>().Property(x => x.JobRunId).HasConversion(x => x.Value, x => new OperationalJobRunId(x));
+        modelBuilder.Entity<OperationalJobRunEvent>().Property(x => x.JobRunId).HasConversion(x => x.Value, x => new OperationalJobRunId(x));
     }
 }
 
@@ -553,6 +594,10 @@ public sealed class SqlServerIntradayRepository(IntradayDbContext dbContext) : I
         state.OperatorUserRoles.AddRange(await dbContext.OperatorUserRoles.AsNoTracking().ToListAsync(cancellationToken));
         state.ApprovalRequests.AddRange(await dbContext.ApprovalRequests.AsNoTracking().ToListAsync(cancellationToken));
         state.ApprovalDecisions.AddRange(await dbContext.ApprovalDecisions.AsNoTracking().ToListAsync(cancellationToken));
+        state.OperationalJobDefinitions.AddRange(await dbContext.OperationalJobDefinitions.AsNoTracking().ToListAsync(cancellationToken));
+        state.OperationalJobRuns.AddRange(await dbContext.OperationalJobRuns.AsNoTracking().ToListAsync(cancellationToken));
+        state.OperationalJobSteps.AddRange(await dbContext.OperationalJobSteps.AsNoTracking().ToListAsync(cancellationToken));
+        state.OperationalJobRunEvents.AddRange(await dbContext.OperationalJobRunEvents.AsNoTracking().ToListAsync(cancellationToken));
         state.KillSwitch = state.KillSwitchStates.OrderByDescending(x => x.UpdatedAtUtc).FirstOrDefault() ?? state.KillSwitch;
         return state;
     }
@@ -1018,4 +1063,84 @@ public sealed class SqlServerFakeBrokerPositionProvider(IntradayDbContext dbCont
             .Select(x => new BrokerPositionSnapshot(brokerAccountId, x.Key, x.Sum(y => y.BaseQuantityDelta), clock.UtcNow))
             .ToListAsync(cancellationToken);
     }
+}
+
+public sealed class SqlServerOperationalJobRepository(IntradayDbContext dbContext) : IOperationalJobRepository
+{
+    public async Task AddDefinitionAsync(OperationalJobDefinition definition, CancellationToken cancellationToken)
+    {
+        if (!await dbContext.OperationalJobDefinitions.AnyAsync(x => x.Id == definition.Id, cancellationToken))
+        {
+            dbContext.OperationalJobDefinitions.Add(definition);
+            await dbContext.SaveChangesAsync(cancellationToken);
+        }
+    }
+
+    public async Task<IReadOnlyList<OperationalJobDefinition>> GetDefinitionsAsync(CancellationToken cancellationToken)
+        => await dbContext.OperationalJobDefinitions.AsNoTracking().OrderBy(x => x.JobType).ToListAsync(cancellationToken);
+
+    public Task<OperationalJobDefinition?> GetDefinitionAsync(OperationalJobDefinitionId id, CancellationToken cancellationToken)
+        => dbContext.OperationalJobDefinitions.AsNoTracking().FirstOrDefaultAsync(x => x.Id == id, cancellationToken);
+
+    public Task<OperationalJobDefinition?> GetDefinitionByTypeAsync(OperationalJobType jobType, CancellationToken cancellationToken)
+        => dbContext.OperationalJobDefinitions.AsNoTracking().FirstOrDefaultAsync(x => x.JobType == jobType, cancellationToken);
+
+    public async Task AddRunAsync(OperationalJobRun run, CancellationToken cancellationToken)
+    {
+        dbContext.OperationalJobRuns.Add(run);
+        await dbContext.SaveChangesAsync(cancellationToken);
+    }
+
+    public async Task UpdateRunAsync(OperationalJobRun run, CancellationToken cancellationToken)
+    {
+        var existing = await dbContext.OperationalJobRuns.FirstOrDefaultAsync(x => x.Id == run.Id, cancellationToken);
+        if (existing is null) return;
+        dbContext.Entry(existing).CurrentValues.SetValues(run);
+        await dbContext.SaveChangesAsync(cancellationToken);
+    }
+
+    public Task<OperationalJobRun?> GetRunAsync(OperationalJobRunId id, CancellationToken cancellationToken)
+        => dbContext.OperationalJobRuns.AsNoTracking().FirstOrDefaultAsync(x => x.Id == id, cancellationToken);
+
+    public async Task<IReadOnlyList<OperationalJobRun>> GetRunsAsync(OperationalJobRunFilter filter, CancellationToken cancellationToken)
+    {
+        var query = dbContext.OperationalJobRuns.AsNoTracking().AsQueryable();
+        if (filter.Status is not null) query = query.Where(x => x.Status == filter.Status);
+        if (filter.JobType is not null) query = query.Where(x => x.JobType == filter.JobType);
+        if (filter.FromUtc is not null) query = query.Where(x => x.StartedAtUtc >= filter.FromUtc);
+        if (filter.ToUtc is not null) query = query.Where(x => x.StartedAtUtc <= filter.ToUtc);
+        return await query.OrderByDescending(x => x.StartedAtUtc).Take(Math.Clamp(filter.Limit, 1, 500)).ToListAsync(cancellationToken);
+    }
+
+    public async Task AddStepAsync(OperationalJobStep step, CancellationToken cancellationToken)
+    {
+        dbContext.OperationalJobSteps.Add(step);
+        await dbContext.SaveChangesAsync(cancellationToken);
+    }
+
+    public async Task UpdateStepAsync(OperationalJobStep step, CancellationToken cancellationToken)
+    {
+        var existing = await dbContext.OperationalJobSteps.FirstOrDefaultAsync(x => x.Id == step.Id, cancellationToken);
+        if (existing is null) return;
+        dbContext.Entry(existing).CurrentValues.SetValues(step);
+        await dbContext.SaveChangesAsync(cancellationToken);
+    }
+
+    public async Task<IReadOnlyList<OperationalJobStep>> GetStepsAsync(OperationalJobRunId jobRunId, CancellationToken cancellationToken)
+        => await dbContext.OperationalJobSteps.AsNoTracking()
+            .Where(x => x.JobRunId == jobRunId)
+            .OrderBy(x => x.StartedAtUtc)
+            .ToListAsync(cancellationToken);
+
+    public async Task AddEventAsync(OperationalJobRunEvent jobEvent, CancellationToken cancellationToken)
+    {
+        dbContext.OperationalJobRunEvents.Add(jobEvent);
+        await dbContext.SaveChangesAsync(cancellationToken);
+    }
+
+    public async Task<IReadOnlyList<OperationalJobRunEvent>> GetEventsAsync(OperationalJobRunId jobRunId, CancellationToken cancellationToken)
+        => await dbContext.OperationalJobRunEvents.AsNoTracking()
+            .Where(x => x.JobRunId == jobRunId)
+            .OrderBy(x => x.OccurredAtUtc)
+            .ToListAsync(cancellationToken);
 }

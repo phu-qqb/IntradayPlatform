@@ -208,6 +208,25 @@ describe('cockpit UI primitives', () => {
     expect(screen.queryByLabelText(/password/i)).toBeNull();
   });
 
+  it('renders daily operations job control concepts without live LMAX controls', () => {
+    render(
+      <div>
+        <h1>Daily Operations</h1>
+        <span>Daily Checklist</span>
+        <span>Job Runs</span>
+        <button>Run Reference Check</button>
+        <button>Build Latest 15m Bars</button>
+        <button>Promote Ready Weights</button>
+      </div>
+    );
+
+    expect(screen.getByText('Daily Operations')).toBeTruthy();
+    expect(screen.getByText('Daily Checklist')).toBeTruthy();
+    expect(screen.getByText('Job Runs')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /real lmax/i })).toBeNull();
+    expect(screen.queryByRole('button', { name: /enable live trading/i })).toBeNull();
+  });
+
   it('renders risk decision explainability with observed and limit values', () => {
     render(
       <DataTable

@@ -136,6 +136,8 @@ public sealed class OperatorPermissionService(
                     set.Add(OperatorPermission.ViewDashboard);
                     set.Add(OperatorPermission.ViewRiskConfig);
                     set.Add(OperatorPermission.ManageApprovals);
+                    set.Add(OperatorPermission.ViewOperations);
+                    set.Add(OperatorPermission.ViewJobHistory);
                     break;
                 case OperatorRole.RiskManager:
                     set.Add(OperatorPermission.ViewDashboard);
@@ -150,6 +152,10 @@ public sealed class OperatorPermissionService(
                     set.Add(OperatorPermission.ResolveExceptions);
                     set.Add(OperatorPermission.WaiveExceptions);
                     set.Add(OperatorPermission.ClearKillSwitch);
+                    set.Add(OperatorPermission.ViewOperations);
+                    set.Add(OperatorPermission.ViewJobHistory);
+                    set.Add(OperatorPermission.RunOperationalJobs);
+                    set.Add(OperatorPermission.RetryOperationalJobs);
                     break;
                 case OperatorRole.Operator:
                     set.Add(OperatorPermission.ViewDashboard);
@@ -160,10 +166,15 @@ public sealed class OperatorPermissionService(
                     set.Add(OperatorPermission.RunEodReconciliation);
                     set.Add(OperatorPermission.ManageEodReports);
                     set.Add(OperatorPermission.ActivateKillSwitch);
+                    set.Add(OperatorPermission.ViewOperations);
+                    set.Add(OperatorPermission.ViewJobHistory);
+                    set.Add(OperatorPermission.RunOperationalJobs);
                     break;
                 case OperatorRole.Viewer:
                     set.Add(OperatorPermission.ViewDashboard);
                     set.Add(OperatorPermission.ViewRiskConfig);
+                    set.Add(OperatorPermission.ViewOperations);
+                    set.Add(OperatorPermission.ViewJobHistory);
                     break;
             }
         }

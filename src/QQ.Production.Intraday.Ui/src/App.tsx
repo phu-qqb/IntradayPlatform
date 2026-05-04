@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Activity, Archive, BarChart3, ClipboardList, FileSearch, Gauge, GitBranch, Landmark, RadioTower, ShieldAlert, UserCheck, WalletCards } from 'lucide-react';
+import { Activity, Archive, BarChart3, CalendarClock, ClipboardList, FileSearch, Gauge, GitBranch, Landmark, RadioTower, ShieldAlert, UserCheck, WalletCards } from 'lucide-react';
 import { apiClient, getSelectedOperatorId, setSelectedOperatorId } from './api/apiClient';
 import type {
   DriftSnapshotDto,
@@ -43,7 +43,11 @@ import type {
   TradeIntentDto,
   TradingWindowDto,
   VenueRiskLimitDto,
-  VenueDto
+  VenueDto,
+  OperationalJobDefinitionDto,
+  OperationalJobRunDto,
+  DailyOperationsSummaryDto,
+  DailyChecklistItemDto
 } from './api/types';
 import { AdminPanel } from './components/AdminPanel';
 import { ActionButton, ActionToast, useAsyncAction } from './components/ActionFeedback';
@@ -108,9 +112,13 @@ type DashboardState = {
   operators: OperatorUserDto[];
   currentOperator?: OperatorUserDto;
   approvalRequests: ApprovalRequestDto[];
+  opsJobDefinitions: OperationalJobDefinitionDto[];
+  opsJobRuns: OperationalJobRunDto[];
+  dailyOpsSummary?: DailyOperationsSummaryDto;
+  dailyOpsChecklist: DailyChecklistItemDto[];
 };
 
-type PageId = 'command' | 'pms' | 'weights' | 'oms' | 'ems' | 'market' | 'exceptions' | 'recon' | 'lmax-eod' | 'risk-admin' | 'governance' | 'audit' | 'connectivity';
+type PageId = 'command' | 'daily-ops' | 'pms' | 'weights' | 'oms' | 'ems' | 'market' | 'exceptions' | 'recon' | 'lmax-eod' | 'risk-admin' | 'governance' | 'audit' | 'connectivity';
 
 const emptyDashboard: DashboardState = {
   modelRuns: [],
@@ -146,7 +154,10 @@ const emptyDashboard: DashboardState = {
   riskInstruments: [],
   riskVenues: [],
   operators: [],
-  approvalRequests: []
+  approvalRequests: [],
+  opsJobDefinitions: [],
+  opsJobRuns: [],
+  dailyOpsChecklist: []
 };
 
 const navSections: Array<{ label: string; items: Array<{ id: PageId; label: string; icon: typeof Activity }> }> = [
@@ -154,6 +165,7 @@ const navSections: Array<{ label: string; items: Array<{ id: PageId; label: stri
     label: 'Operations',
     items: [
       { id: 'command', label: 'Command Center', icon: Gauge },
+      { id: 'daily-ops', label: 'Daily Operations', icon: CalendarClock },
       { id: 'exceptions', label: 'Exceptions', icon: ShieldAlert },
       { id: 'recon', label: 'Reconciliation', icon: FileSearch }
     ]
@@ -199,7 +211,7 @@ export default function App() {
   const loadIntegrity = useCallback(async () => setIntegrity(await apiClient.getReferenceDataIntegrity()), []);
 
   const loadDashboard = useCallback(async () => {
-    const [modelRuns, modelWeightBatches, targets, drifts, internalPositions, brokerPositions, reconciliationBreaks, tradeIntents, riskDecisions, orders, fills, snapshots, bars, killSwitch, instruments, venues, lmaxImportRuns, lmaxValidationIssues, lmaxIndividualTrades, lmaxTradeSummaries, lmaxCurrencyWallets, eodReconciliationRuns, eodReconciliationBreaks, exceptionCases, auditEvents, riskLimitSets, activeRiskLimitSet, tradingWindows, riskInstruments, riskVenues, operators, currentOperator, approvalRequests] = await Promise.all([
+    const [modelRuns, modelWeightBatches, targets, drifts, internalPositions, brokerPositions, reconciliationBreaks, tradeIntents, riskDecisions, orders, fills, snapshots, bars, killSwitch, instruments, venues, lmaxImportRuns, lmaxValidationIssues, lmaxIndividualTrades, lmaxTradeSummaries, lmaxCurrencyWallets, eodReconciliationRuns, eodReconciliationBreaks, exceptionCases, auditEvents, riskLimitSets, activeRiskLimitSet, tradingWindows, riskInstruments, riskVenues, operators, currentOperator, approvalRequests, opsJobDefinitions, opsJobRuns, dailyOpsSummary, dailyOpsChecklist] = await Promise.all([
       apiClient.getModelRuns(),
       apiClient.getModelWeightBatches(),
       apiClient.getTargetPositions(),
@@ -232,7 +244,11 @@ export default function App() {
       apiClient.getRiskVenues(),
       apiClient.getOperators(),
       apiClient.getCurrentOperator().catch(() => undefined),
-      apiClient.getApprovals()
+      apiClient.getApprovals(),
+      apiClient.getOpsJobDefinitions(),
+      apiClient.getOpsJobRuns(),
+      apiClient.getDailyOpsSummary(),
+      apiClient.getDailyOpsChecklist()
     ]);
 
     const [riskLimits, instrumentRiskLimits, venueRiskLimits] = activeRiskLimitSet
@@ -243,7 +259,7 @@ export default function App() {
         ])
       : [[], [], []];
 
-    setDashboard((current) => ({ ...current, modelRuns, modelWeightBatches, targets, drifts, internalPositions, brokerPositions, reconciliationBreaks, tradeIntents, riskDecisions, orders, fills, snapshots, bars, killSwitch, instruments, venues, lmaxImportRuns, lmaxValidationIssues, lmaxIndividualTrades, lmaxTradeSummaries, lmaxCurrencyWallets, eodReconciliationRuns, eodReconciliationBreaks, exceptionCases, auditEvents, riskLimitSets, activeRiskLimitSet, riskLimits, instrumentRiskLimits, venueRiskLimits, tradingWindows, riskInstruments, riskVenues, operators, currentOperator, approvalRequests }));
+    setDashboard((current) => ({ ...current, modelRuns, modelWeightBatches, targets, drifts, internalPositions, brokerPositions, reconciliationBreaks, tradeIntents, riskDecisions, orders, fills, snapshots, bars, killSwitch, instruments, venues, lmaxImportRuns, lmaxValidationIssues, lmaxIndividualTrades, lmaxTradeSummaries, lmaxCurrencyWallets, eodReconciliationRuns, eodReconciliationBreaks, exceptionCases, auditEvents, riskLimitSets, activeRiskLimitSet, riskLimits, instrumentRiskLimits, venueRiskLimits, tradingWindows, riskInstruments, riskVenues, operators, currentOperator, approvalRequests, opsJobDefinitions, opsJobRuns, dailyOpsSummary, dailyOpsChecklist }));
   }, []);
 
   const refreshAll = useCallback(async () => {
@@ -342,6 +358,8 @@ function LeftNavigation({ activePage, onSelect }: { activePage: PageId; onSelect
 
 function renderPage(page: PageId, dashboard: DashboardState, health: HealthDto | undefined, integrity: ReferenceDataIntegrityDto | undefined, actions: { refreshAll: () => Promise<void>; runOperation: <T>(label: string, work: () => Promise<T>, successMessage?: (result: T) => string | undefined) => Promise<T>; setSelected: (item: unknown) => void; onCreateModelRun: (request: Parameters<typeof apiClient.createModelRun>[0]) => Promise<void>; onProcessModelRun: (id: string) => Promise<Awaited<ReturnType<typeof apiClient.processModelRun>>> }) {
   switch (page) {
+    case 'daily-ops':
+      return <DailyOperationsPage dashboard={dashboard} actions={actions} />;
     case 'pms':
       return <PmsPage dashboard={dashboard} />;
     case 'weights':
@@ -474,6 +492,8 @@ function CommandCenter({ dashboard, health, integrity, actions }: { dashboard: D
   const recentRiskBlocks = dashboard.riskDecisions.filter((item) => ['Rejected', 'Blocked'].includes(item.status));
   const activeWindow = dashboard.tradingWindows.find((item) => item.isActive && item.tradingEnabled);
   const pendingApprovals = dashboard.approvalRequests.filter((item) => item.status === 'Pending');
+  const latestJob = dashboard.opsJobRuns[0];
+  const checklistComplete = dashboard.dailyOpsChecklist.filter((item) => item.status === 'Complete').length;
   return (
     <section className="workspace-page">
       <SectionHeader title="Command Center" eyebrow="Operational overview" actions={<CommandButton tone="info" onClick={() => actions.setSelected(dashboard.auditEvents[0])}>Latest Event</CommandButton>} />
@@ -486,6 +506,8 @@ function CommandCenter({ dashboard, health, integrity, actions }: { dashboard: D
         <MetricCard label="Latest Model Run" value={dashboard.modelRuns[0]?.status ?? '-'} sublabel={formatIdShort(dashboard.modelRuns[0]?.id)} tone={toneForStatus(dashboard.modelRuns[0]?.status)} />
         <MetricCard label="Open Exceptions" value={openExceptions.length} sublabel={`${blockingExceptions} blocking/critical`} tone={blockingExceptions ? 'danger' : openExceptions.length ? 'warning' : 'ok'} />
         <MetricCard label="Pending Approvals" value={pendingApprovals.length} sublabel={pendingApprovals[0] ? `${formatStatus(pendingApprovals[0].type)} requested by ${pendingApprovals[0].requestedByOperatorId}` : 'No maker/checker items pending'} tone={pendingApprovals.length ? 'warning' : 'ok'} />
+        <MetricCard label="Daily Checklist" value={`${checklistComplete}/${dashboard.dailyOpsChecklist.length || '-'}`} sublabel={latestJob ? `Latest job ${formatStatus(latestJob.status)}` : 'No operational jobs yet'} tone={dashboard.dailyOpsSummary?.failedJobCount ? 'danger' : checklistComplete ? 'info' : 'neutral'} />
+        <MetricCard label="Failed Jobs Today" value={dashboard.dailyOpsSummary?.failedJobCount ?? 0} sublabel={latestJob ? `${formatStatus(latestJob.jobType)} at ${formatUtc(latestJob.startedAtUtc)}` : 'No job history loaded'} tone={dashboard.dailyOpsSummary?.failedJobCount ? 'danger' : 'ok'} />
         <MetricCard label="Position Match" value={mismatchCount === 0 ? 'Matched' : `${mismatchCount} hint${mismatchCount === 1 ? '' : 's'}`} sublabel="Visual hint only, backend recon is authoritative" tone={mismatchCount === 0 ? 'ok' : 'warning'} />
         <MetricCard label="Open Orders" value={openOrders} sublabel={`${dashboard.fills.length} fills loaded`} tone={openOrders === 0 ? 'neutral' : 'warning'} />
         <MetricCard label="Latest EOD Recon" value={latestEod ? (latestEod.hasBlockingBreaks ? 'Breaks' : 'Clean') : '-'} sublabel={latestEod ? formatDate(latestEod.reportDate) : 'No run loaded'} tone={latestEod?.hasBlockingBreaks ? 'danger' : latestEod ? 'ok' : 'neutral'} />
@@ -496,6 +518,111 @@ function CommandCenter({ dashboard, health, integrity, actions }: { dashboard: D
       <div className="page-grid two overview-grid">
         <HealthPanel health={health} />
         <ReferenceDataPanel integrity={integrity} />
+      </div>
+    </section>
+  );
+}
+
+function DailyOperationsPage({ dashboard, actions }: { dashboard: DashboardState; actions: { refreshAll: () => Promise<void>; runOperation: <T>(label: string, work: () => Promise<T>, successMessage?: (result: T) => string | undefined) => Promise<T>; setSelected: (item: unknown) => void } }) {
+  const [reason, setReason] = useState('Daily operations manual run');
+  const runJob = async (jobType: string) => {
+    if (!reason.trim()) {
+      window.alert('A reason is required to run an operational job.');
+      return;
+    }
+    await actions.runOperation(
+      `Running ${formatStatus(jobType)}`,
+      () => apiClient.runOpsJob({ jobType, reason }),
+      (job) => `${formatStatus(job.jobType)} finished with ${formatStatus(job.status)}.`
+    );
+    await actions.refreshAll();
+  };
+  const retryJob = async (job: OperationalJobRunDto) => {
+    if (!reason.trim()) {
+      window.alert('A reason is required to retry an operational job.');
+      return;
+    }
+    await actions.runOperation(
+      `Retrying ${formatStatus(job.jobType)}`,
+      () => apiClient.retryOpsJob(job.id, reason),
+      (result) => `Retry created job ${formatIdShort(result.id)} with ${formatStatus(result.status)}.`
+    );
+    await actions.refreshAll();
+  };
+
+  const summary = dashboard.dailyOpsSummary;
+  const jobButtons = [
+    'ReferenceDataIntegrityCheck',
+    'BuildMarketDataBars',
+    'PromoteReadyWeightBatches',
+    'ProcessPendingModelRuns',
+    'RunEodReconciliation',
+    'CalculateEodPnlSummary'
+  ];
+
+  return (
+    <section className="workspace-page">
+      <SectionHeader title="Daily Operations" eyebrow="Persistent local job runs, checklist, audit, and safe reruns" />
+      <div className="metric-grid">
+        <MetricCard label="Reference Data" value={summary?.latestReferenceIntegrity?.status ?? 'Not Started'} sublabel={summary?.latestReferenceIntegrity ? formatUtc(summary.latestReferenceIntegrity.startedAtUtc) : 'Run the integrity check'} tone={toneForStatus(summary?.latestReferenceIntegrity?.status)} />
+        <MetricCard label="Market Data Bars" value={summary?.latestMarketDataBars?.status ?? 'Not Started'} sublabel="Latest 15-minute bar build" tone={toneForStatus(summary?.latestMarketDataBars?.status)} />
+        <MetricCard label="Weight Promotion" value={summary?.latestWeightPromotion?.status ?? 'Not Started'} sublabel="Ready DB batches to ModelRuns" tone={toneForStatus(summary?.latestWeightPromotion?.status)} />
+        <MetricCard label="Model Processing" value={summary?.latestModelRunProcessing?.status ?? 'Not Started'} sublabel="Explicit FakeLmax-only processing" tone={toneForStatus(summary?.latestModelRunProcessing?.status)} />
+        <MetricCard label="EOD Reconciliation" value={summary?.latestEodReconciliation?.status ?? 'Not Started'} sublabel="Imported local LMAX EOD only" tone={toneForStatus(summary?.latestEodReconciliation?.status)} />
+        <MetricCard label="PnL Summary" value={summary?.latestPnlSummary?.status ?? 'Not Started'} sublabel="Wallet/cash/PnL USD summary" tone={toneForStatus(summary?.latestPnlSummary?.status)} />
+        <MetricCard label="Open Exceptions" value={summary?.openExceptionCount ?? 0} sublabel={`${summary?.openBlockingExceptionCount ?? 0} blocking/critical`} tone={summary?.openBlockingExceptionCount ? 'danger' : summary?.openExceptionCount ? 'warning' : 'ok'} />
+        <MetricCard label="Pending Approvals" value={summary?.pendingApprovalCount ?? 0} tone={summary?.pendingApprovalCount ? 'warning' : 'ok'} />
+        <MetricCard label="Failed Jobs Today" value={summary?.failedJobCount ?? 0} tone={summary?.failedJobCount ? 'danger' : 'ok'} />
+      </div>
+
+      <div className="panel wide">
+        <SectionHeader title="Job Runner" eyebrow="Local-only wrappers around existing operational services. A reason is required." />
+        <label className="form-field">
+          <span>Reason</span>
+          <input value={reason} onChange={(event) => setReason(event.target.value)} placeholder="Reason for this operational run" />
+        </label>
+        <div className="button-row">
+          {jobButtons.map((jobType) => (
+            <ActionButton key={jobType} idleLabel={formatStatus(jobType)} runningLabel="Running..." onAction={() => runJob(jobType)} />
+          ))}
+        </div>
+        <div className="info-box">No job here calls real LMAX, enables live trading, or changes external connection safety. Business blocks are recorded as job output rather than hidden.</div>
+      </div>
+
+      <div className="page-grid two">
+        <div className="panel wide">
+          <SectionHeader title="Daily Checklist" eyebrow="Status is derived from today's operational job history and open controls." />
+          <DataTable rows={dashboard.dailyOpsChecklist} getRowKey={(row, index) => `${row.name}-${index}`} onRowClick={(row) => actions.setSelected(row)} emptyLabel="No checklist items loaded" columns={[
+            { key: 'name', header: 'Item', render: (row) => row.name, sortValue: (row) => row.name },
+            { key: 'status', header: 'Status', render: (row) => <StatusChip label={row.status} tone={toneForStatus(row.status)} />, sortValue: (row) => row.status },
+            { key: 'message', header: 'Message', render: (row) => row.message },
+            { key: 'entity', header: 'Related', render: (row) => row.relatedEntityType ? `${row.relatedEntityType} ${formatIdShort(row.relatedEntityId)}` : '-' }
+          ]} />
+        </div>
+        <div className="panel wide">
+          <SectionHeader title="Job Definitions" eyebrow="Enabled local workflows and retry policy." />
+          <DataTable rows={dashboard.opsJobDefinitions} getRowKey={(row) => row.id} emptyLabel="No job definitions loaded" columns={[
+            { key: 'name', header: 'Name', render: (row) => row.name, sortValue: (row) => row.name },
+            { key: 'jobType', header: 'Type', render: (row) => formatStatus(row.jobType), sortValue: (row) => row.jobType },
+            { key: 'enabled', header: 'Enabled', render: (row) => <StatusChip label={row.isEnabled ? 'Enabled' : 'Disabled'} tone={row.isEnabled ? 'ok' : 'warning'} /> },
+            { key: 'retry', header: 'Rerun', render: (row) => row.isRerunnable ? 'Yes' : 'No' },
+            { key: 'severity', header: 'Severity', render: (row) => <SeverityBadge value={row.severity} /> }
+          ]} />
+        </div>
+      </div>
+
+      <div className="panel wide">
+        <SectionHeader title="Job Runs" eyebrow="Audited, persistent run history with step/event details in the drawer." />
+        <DataTable rows={dashboard.opsJobRuns} getRowKey={(row) => row.id} onRowClick={(row) => actions.setSelected(row)} emptyLabel="No operational job runs loaded" columns={[
+          { key: 'started', header: 'Started', render: (row) => formatUtc(row.startedAtUtc), sortValue: (row) => row.startedAtUtc },
+          { key: 'jobType', header: 'Job', render: (row) => formatStatus(row.jobType), sortValue: (row) => row.jobType },
+          { key: 'status', header: 'Status', render: (row) => <StatusChip label={row.status} tone={toneForStatus(row.status)} />, sortValue: (row) => row.status },
+          { key: 'duration', header: 'Duration', render: (row) => row.durationMs == null ? '-' : `${Math.round(row.durationMs / 1000)}s`, sortValue: (row) => row.durationMs ?? 0, className: 'numeric' },
+          { key: 'operator', header: 'Triggered By', render: (row) => row.triggeredByDisplayName ?? row.triggeredByOperatorId ?? row.triggeredByActorType },
+          { key: 'input', header: 'Input', render: (row) => row.inputJson ?? '-' },
+          { key: 'correlation', header: 'Correlation', render: (row) => row.correlationId ?? '-' },
+          { key: 'retry', header: 'Retry', render: (row) => row.canRetry ? <ActionButton idleLabel="Retry" runningLabel="Retrying..." onClick={(event) => event.stopPropagation()} onAction={() => retryJob(row)} /> : '-' }
+        ]} />
       </div>
     </section>
   );

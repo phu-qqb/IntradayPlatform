@@ -50,7 +50,13 @@ import type {
   TargetPositionDto,
   TradeIntentDto,
   VenueRiskLimitDto,
-  VenueDto
+  VenueDto,
+  OperationalJobDefinitionDto,
+  OperationalJobRunDto,
+  OperationalJobStepDto,
+  OperationalJobRunEventDto,
+  DailyOperationsSummaryDto,
+  DailyChecklistItemDto
 } from './types';
 
 const configuredBaseUrl = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:5050';
@@ -189,6 +195,19 @@ export const apiClient = {
   getInstruments: () => request<InstrumentDto[]>('/instruments'),
   getVenues: () => request<VenueDto[]>('/venues')
   ,
+  getOpsJobDefinitions: () => request<OperationalJobDefinitionDto[]>('/ops/jobs/definitions'),
+  getOpsJobRuns: (params: { limit?: number; status?: string; jobType?: string; fromUtc?: string; toUtc?: string } = {}) =>
+    request<OperationalJobRunDto[]>(`/ops/jobs/runs${query({ limit: 100, ...params })}`),
+  getOpsJobRun: (id: string) => request<OperationalJobRunDto>(`/ops/jobs/runs/${id}`),
+  getOpsJobSteps: (id: string) => request<OperationalJobStepDto[]>(`/ops/jobs/runs/${id}/steps`),
+  getOpsJobEvents: (id: string) => request<OperationalJobRunEventDto[]>(`/ops/jobs/runs/${id}/events`),
+  runOpsJob: (body: { jobType: string; reason: string; input?: unknown }) =>
+    request<OperationalJobRunDto>('/ops/jobs/run', { method: 'POST', body: JSON.stringify(body) }),
+  retryOpsJob: (id: string, reason: string) =>
+    request<OperationalJobRunDto>(`/ops/jobs/runs/${id}/retry`, { method: 'POST', body: JSON.stringify({ reason }) }),
+  getDailyOpsSummary: (date?: string) => request<DailyOperationsSummaryDto>(`/ops/daily-summary${query({ date })}`),
+  getDailyOpsChecklist: (date?: string) => request<DailyChecklistItemDto[]>(`/ops/daily-checklist${query({ date })}`),
+  getOpsTimeline: (date?: string) => request<unknown[]>(`/ops/timeline${query({ date })}`),
   getAuditEvents: (params: { limit?: number; severity?: string; eventType?: string; entityType?: string; entityId?: string; correlationId?: string; fromUtc?: string; toUtc?: string } = {}) =>
     request<OperatorAuditEventDto[]>(`/audit/events${query({ limit: 100, ...params })}`),
   getAuditEventsByEntity: (entityType: string, entityId: string, limit = 100) =>

@@ -441,6 +441,10 @@ public sealed class PlatformState
     public List<OperatorUserRole> OperatorUserRoles { get; } = [];
     public List<ApprovalRequest> ApprovalRequests { get; } = [];
     public List<ApprovalDecision> ApprovalDecisions { get; } = [];
+    public List<OperationalJobDefinition> OperationalJobDefinitions { get; } = [];
+    public List<OperationalJobRun> OperationalJobRuns { get; } = [];
+    public List<OperationalJobStep> OperationalJobSteps { get; } = [];
+    public List<OperationalJobRunEvent> OperationalJobRunEvents { get; } = [];
     public KillSwitchState KillSwitch { get; set; } = new(Guid.NewGuid(), false, null, DateTimeOffset.UnixEpoch);
 }
 

@@ -3,6 +3,7 @@ using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using QQ.Production.Intraday.Infrastructure.SqlServer;
 
@@ -11,9 +12,11 @@ using QQ.Production.Intraday.Infrastructure.SqlServer;
 namespace QQ.Production.Intraday.Infrastructure.SqlServer.Migrations
 {
     [DbContext(typeof(IntradayDbContext))]
-    partial class IntradayDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260504145409_AddDailyOperationsJobControl")]
+    partial class AddDailyOperationsJobControl
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
