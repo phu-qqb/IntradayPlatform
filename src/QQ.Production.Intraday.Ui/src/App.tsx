@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Activity, Archive, BarChart3, ClipboardList, Database, FileSearch, Gauge, GitBranch, Landmark, RadioTower, ShieldAlert, WalletCards } from 'lucide-react';
+import { Activity, Archive, BarChart3, ClipboardList, FileSearch, Gauge, GitBranch, Landmark, RadioTower, ShieldAlert, WalletCards } from 'lucide-react';
 import { apiClient } from './api/apiClient';
 import type {
   DriftSnapshotDto,
@@ -117,19 +117,39 @@ const emptyDashboard: DashboardState = {
   auditEvents: []
 };
 
-const navItems: Array<{ id: PageId; label: string; icon: typeof Activity }> = [
-  { id: 'command', label: 'Command Center', icon: Gauge },
-  { id: 'pms', label: 'PMS', icon: Landmark },
-  { id: 'weights', label: 'Model Weights', icon: GitBranch },
-  { id: 'oms', label: 'OMS', icon: Archive },
-  { id: 'ems', label: 'EMS', icon: Activity },
-  { id: 'market', label: 'Market Data', icon: BarChart3 },
-  { id: 'exceptions', label: 'Exceptions', icon: ShieldAlert },
-  { id: 'recon', label: 'Reconciliation', icon: FileSearch },
-  { id: 'lmax-eod', label: 'LMAX EOD', icon: WalletCards },
-  { id: 'risk-admin', label: 'Risk & Admin', icon: ShieldAlert },
-  { id: 'audit', label: 'Audit Journal', icon: ClipboardList },
-  { id: 'connectivity', label: 'Connectivity Lab', icon: RadioTower }
+const navSections: Array<{ label: string; items: Array<{ id: PageId; label: string; icon: typeof Activity }> }> = [
+  {
+    label: 'Operations',
+    items: [
+      { id: 'command', label: 'Command Center', icon: Gauge },
+      { id: 'exceptions', label: 'Exceptions', icon: ShieldAlert },
+      { id: 'recon', label: 'Reconciliation', icon: FileSearch }
+    ]
+  },
+  {
+    label: 'Trading',
+    items: [
+      { id: 'pms', label: 'PMS', icon: Landmark },
+      { id: 'weights', label: 'Model Weights', icon: GitBranch },
+      { id: 'oms', label: 'OMS', icon: Archive },
+      { id: 'ems', label: 'EMS', icon: Activity }
+    ]
+  },
+  {
+    label: 'Data',
+    items: [
+      { id: 'market', label: 'Market Data', icon: BarChart3 },
+      { id: 'lmax-eod', label: 'LMAX EOD', icon: WalletCards }
+    ]
+  },
+  {
+    label: 'Control',
+    items: [
+      { id: 'risk-admin', label: 'Risk & Admin', icon: ShieldAlert },
+      { id: 'audit', label: 'Audit Journal', icon: ClipboardList },
+      { id: 'connectivity', label: 'Connectivity Lab', icon: RadioTower }
+    ]
+  }
 ];
 
 export default function App() {
@@ -236,14 +256,19 @@ export default function App() {
 function LeftNavigation({ activePage, onSelect }: { activePage: PageId; onSelect: (page: PageId) => void }) {
   return (
     <nav className="left-navigation" aria-label="Cockpit sections">
-      {navItems.map((item) => {
-        const Icon = item.icon;
-        return (
-          <button key={item.id} className={activePage === item.id ? 'active' : undefined} onClick={() => onSelect(item.id)}>
-            <Icon size={16} /> {item.label}
-          </button>
-        );
-      })}
+      {navSections.map((section) => (
+        <div className="nav-section" key={section.label}>
+          <span className="nav-section-label">{section.label}</span>
+          {section.items.map((item) => {
+            const Icon = item.icon;
+            return (
+              <button key={item.id} className={activePage === item.id ? 'active' : undefined} onClick={() => onSelect(item.id)}>
+                <Icon size={16} /> <span className="nav-label">{item.label}</span>
+              </button>
+            );
+          })}
+        </div>
+      ))}
     </nav>
   );
 }
@@ -278,39 +303,60 @@ function renderPage(page: PageId, dashboard: DashboardState, health: HealthDto |
   }
 }
 
+function obviousPositionMismatchCount(internalPositions: PositionDto[], brokerPositions: PositionDto[]) {
+  const brokerByInstrument = new Map(brokerPositions.map((position) => [position.instrumentId ?? position.symbol ?? '-', position]));
+  const internalByInstrument = new Map(internalPositions.map((position) => [position.instrumentId ?? position.symbol ?? '-', position]));
+  const instruments = new Set([...brokerByInstrument.keys(), ...internalByInstrument.keys()]);
+  return [...instruments].filter((instrument) => {
+    const internal = internalByInstrument.get(instrument)?.baseQuantity;
+    const broker = brokerByInstrument.get(instrument)?.baseQuantity;
+    if (internal === undefined || broker === undefined) return true;
+    return Math.abs(internal - broker) > 0.0001;
+  }).length;
+}
+
 function CommandCenter({ dashboard, health, integrity, actions }: { dashboard: DashboardState; health?: HealthDto; integrity?: ReferenceDataIntegrityDto; actions: { setSelected: (item: unknown) => void } }) {
   const openOrders = (dashboard.orders?.childOrders ?? []).filter((order) => !['Filled', 'Cancelled', 'Rejected', 'Expired'].includes(order.status)).length;
   const blockingBreaks = dashboard.eodReconciliationBreaks.filter((item) => item.severity === 'Blocking').length;
   const openExceptions = dashboard.exceptionCases.filter((item) => !['Resolved', 'FalsePositive', 'Waived', 'Closed'].includes(item.status));
   const blockingExceptions = openExceptions.filter((item) => ['Blocking', 'Critical'].includes(item.severity)).length;
+  const mismatchCount = obviousPositionMismatchCount(dashboard.internalPositions, dashboard.brokerPositions);
+  const latestEod = dashboard.eodReconciliationRuns[0];
   return (
     <section className="workspace-page">
-      <SectionHeader title="Command Center" eyebrow="Operational overview" />
+      <SectionHeader title="Command Center" eyebrow="Operational overview" actions={<CommandButton tone="info" onClick={() => actions.setSelected(dashboard.auditEvents[0])}>Latest Event</CommandButton>} />
       <div className="metric-grid">
-        <MetricCard label="Safety" value={health?.executionGateway === 'FakeLmaxGateway' && !health.liveTradingEnabled ? 'Local Only' : 'Attention'} tone={health?.executionGateway === 'FakeLmaxGateway' && !health.liveTradingEnabled ? 'ok' : 'danger'} />
-        <MetricCard label="Reference Integrity" value={`${integrity?.blockingIssueCount ?? '?'} blocking`} tone={(integrity?.blockingIssueCount ?? 1) === 0 ? 'ok' : 'danger'} />
-        <MetricCard label="Latest Model Run" value={dashboard.modelRuns[0]?.status ?? '-'} sublabel={formatIdShort(dashboard.modelRuns[0]?.id)} tone={toneForStatus(dashboard.modelRuns[0]?.status)} />
+        <MetricCard label="Runtime Safety" value={health?.executionGateway === 'FakeLmaxGateway' && !health.liveTradingEnabled && !health.externalConnectionsEnabled ? 'Safe Local' : 'Attention'} sublabel="FakeLmax-only runtime boundary" tone={health?.executionGateway === 'FakeLmaxGateway' && !health.liveTradingEnabled && !health.externalConnectionsEnabled ? 'ok' : 'danger'} />
         <MetricCard label="Latest Weight Batch" value={dashboard.modelWeightBatches[0]?.status ?? '-'} sublabel={formatIdShort(dashboard.modelWeightBatches[0]?.id)} tone={toneForStatus(dashboard.modelWeightBatches[0]?.status)} />
-        <MetricCard label="Open Orders" value={openOrders} tone={openOrders === 0 ? 'neutral' : 'warning'} />
-        <MetricCard label="Fills" value={dashboard.fills.length} tone="info" />
-        <MetricCard label="EOD Blocking Breaks" value={blockingBreaks} tone={blockingBreaks === 0 ? 'ok' : 'danger'} />
-        <MetricCard label="Open Exceptions" value={openExceptions.length} tone={blockingExceptions ? 'danger' : openExceptions.length ? 'warning' : 'ok'} />
-        <MetricCard label="Net Wallet PnL" value={formatUsd(dashboard.eodPnlSummary?.totalNetPnlUsd)} tone="neutral" />
+        <MetricCard label="Latest Model Run" value={dashboard.modelRuns[0]?.status ?? '-'} sublabel={formatIdShort(dashboard.modelRuns[0]?.id)} tone={toneForStatus(dashboard.modelRuns[0]?.status)} />
+        <MetricCard label="Open Exceptions" value={openExceptions.length} sublabel={`${blockingExceptions} blocking/critical`} tone={blockingExceptions ? 'danger' : openExceptions.length ? 'warning' : 'ok'} />
+        <MetricCard label="Position Match" value={mismatchCount === 0 ? 'Matched' : `${mismatchCount} hint${mismatchCount === 1 ? '' : 's'}`} sublabel="Visual hint only, backend recon is authoritative" tone={mismatchCount === 0 ? 'ok' : 'warning'} />
+        <MetricCard label="Open Orders" value={openOrders} sublabel={`${dashboard.fills.length} fills loaded`} tone={openOrders === 0 ? 'neutral' : 'warning'} />
+        <MetricCard label="Latest EOD Recon" value={latestEod ? (latestEod.hasBlockingBreaks ? 'Breaks' : 'Clean') : '-'} sublabel={latestEod ? formatDate(latestEod.reportDate) : 'No run loaded'} tone={latestEod?.hasBlockingBreaks ? 'danger' : latestEod ? 'ok' : 'neutral'} />
+        <MetricCard label="EOD Blocking Breaks" value={blockingBreaks} sublabel="From imported LMAX reports" tone={blockingBreaks === 0 ? 'ok' : 'danger'} />
+        <MetricCard label="PnL USD Summary" value={formatUsd(dashboard.eodPnlSummary?.totalNetPnlUsd)} sublabel="Wallet/cash/PnL only" tone="neutral" />
+        <MetricCard label="LMAX Lab" value="Read-only" sublabel="Isolated; not connected to runtime" tone="info" />
       </div>
-      <div className="page-grid two">
+      <div className="page-grid two overview-grid">
         <HealthPanel health={health} />
         <ReferenceDataPanel integrity={integrity} />
-        <RecentModelRuns rows={dashboard.modelRuns} onSelect={actions.setSelected} />
-        <RecentOrders orders={dashboard.orders} onSelect={actions.setSelected} />
       </div>
     </section>
   );
 }
 
 function PmsPage({ dashboard }: { dashboard: DashboardState }) {
+  const mismatchCount = obviousPositionMismatchCount(dashboard.internalPositions, dashboard.brokerPositions);
   return (
     <section className="workspace-page">
       <SectionHeader title="PMS" eyebrow="Portfolio, positions, targets, drift, wallets, PnL" />
+      <div className="metric-grid">
+        <MetricCard label="Internal Positions" value={dashboard.internalPositions.length} tone="neutral" />
+        <MetricCard label="Broker Positions" value={dashboard.brokerPositions.length} tone="neutral" />
+        <MetricCard label="Position Hints" value={mismatchCount} sublabel="Obvious internal/broker visual mismatches" tone={mismatchCount === 0 ? 'ok' : 'warning'} />
+        <MetricCard label="Wallet Balance USD" value={formatUsd(dashboard.eodPnlSummary?.totalWalletBalanceUsd)} tone="neutral" />
+        <MetricCard label="Net PnL USD" value={formatUsd(dashboard.eodPnlSummary?.totalNetPnlUsd)} tone="neutral" />
+      </div>
       <PositionsPanel internalPositions={dashboard.internalPositions} brokerPositions={dashboard.brokerPositions} />
       <DriftPanel targets={dashboard.targets} drifts={dashboard.drifts} />
       <WalletSummary dashboard={dashboard} />
@@ -356,9 +402,20 @@ function WeightsPage({ dashboard, actions }: { dashboard: DashboardState; action
 }
 
 function OmsPage({ dashboard, actions }: { dashboard: DashboardState; actions: { onCreateModelRun: (request: Parameters<typeof apiClient.createModelRun>[0]) => Promise<void>; onProcessModelRun: (id: string) => Promise<Awaited<ReturnType<typeof apiClient.processModelRun>>> } }) {
+  const childOrders = dashboard.orders?.childOrders ?? [];
+  const parentOrders = dashboard.orders?.parentOrders ?? [];
+  const activeChildOrders = childOrders.filter((order) => !['Filled', 'Cancelled', 'Rejected', 'Expired'].includes(order.status));
   return (
     <section className="workspace-page">
       <SectionHeader title="OMS" eyebrow="Model runs, intents, risk decisions, orders, fills" />
+      <div className="metric-grid">
+        <MetricCard label="Model Runs" value={dashboard.modelRuns.length} tone="neutral" />
+        <MetricCard label="Trade Intents" value={dashboard.tradeIntents.length} tone="info" />
+        <MetricCard label="Parent Orders" value={parentOrders.length} tone="neutral" />
+        <MetricCard label="Active Child Orders" value={activeChildOrders.length} tone={activeChildOrders.length ? 'warning' : 'ok'} />
+        <MetricCard label="Fills" value={dashboard.fills.length} tone="info" />
+        <MetricCard label="Risk Blocks" value={dashboard.riskDecisions.filter((item) => ['Rejected', 'Blocked'].includes(item.status)).length} tone={dashboard.riskDecisions.some((item) => ['Rejected', 'Blocked'].includes(item.status)) ? 'warning' : 'ok'} />
+      </div>
       <ModelRunsPanel modelRuns={dashboard.modelRuns} onCreate={actions.onCreateModelRun} onProcess={actions.onProcessModelRun} />
       <RiskPanel tradeIntents={dashboard.tradeIntents} riskDecisions={dashboard.riskDecisions} />
       <OrdersPanel orders={dashboard.orders} />
@@ -503,15 +560,15 @@ function ExceptionsPage({ dashboard, actions }: { dashboard: DashboardState; act
               <p><strong>Status:</strong> {selected.status} <strong>Severity:</strong> {selected.severity}</p>
               <p><strong>Assigned:</strong> {selected.assignedTo ?? '-'} <strong>Entity:</strong> {selected.entityType ?? '-'} {formatIdShort(selected.entityId)}</p>
               <div className="button-row">
-                <CommandButton onClick={() => void runAction('Acknowledge', (reason) => apiClient.acknowledgeExceptionCase(selected.id, reason))}>Acknowledge</CommandButton>
+                <CommandButton tone="info" onClick={() => void runAction('Acknowledge', (reason) => apiClient.acknowledgeExceptionCase(selected.id, reason))}>Acknowledge</CommandButton>
                 <CommandButton onClick={() => {
                   const assignedTo = window.prompt('Assign to');
                   if (assignedTo?.trim()) void apiClient.assignExceptionCase(selected.id, assignedTo.trim()).then(actions.refreshAll);
                 }}>Assign</CommandButton>
-                <CommandButton onClick={() => void runAction('Investigate', (reason) => apiClient.investigateExceptionCase(selected.id, reason))}>Investigating</CommandButton>
-                <CommandButton onClick={() => void runAction('Resolve', (reason) => apiClient.resolveExceptionCase(selected.id, reason ?? ''), true)}>Resolve</CommandButton>
-                <CommandButton onClick={() => void runAction('False Positive', (reason) => apiClient.falsePositiveExceptionCase(selected.id, reason ?? ''), true)}>False Positive</CommandButton>
-                <CommandButton onClick={() => void runAction('Waive', (reason) => apiClient.waiveExceptionCase(selected.id, reason ?? ''), true)}>Waive</CommandButton>
+                <CommandButton tone="warning" onClick={() => void runAction('Investigate', (reason) => apiClient.investigateExceptionCase(selected.id, reason))}>Investigating</CommandButton>
+                <CommandButton tone="ok" onClick={() => void runAction('Resolve', (reason) => apiClient.resolveExceptionCase(selected.id, reason ?? ''), true)}>Resolve</CommandButton>
+                <CommandButton tone="warning" onClick={() => void runAction('False Positive', (reason) => apiClient.falsePositiveExceptionCase(selected.id, reason ?? ''), true)}>False Positive</CommandButton>
+                <CommandButton tone={['Blocking', 'Critical'].includes(selected.severity) ? 'danger' : 'warning'} onClick={() => void runAction('Waive', (reason) => apiClient.waiveExceptionCase(selected.id, reason ?? ''), true)}>Waive</CommandButton>
                 <CommandButton onClick={() => void runAction('Reopen', (reason) => apiClient.reopenExceptionCase(selected.id, reason))}>Reopen</CommandButton>
                 <CommandButton onClick={() => {
                   const note = window.prompt('Add note');
@@ -537,6 +594,13 @@ function LmaxEodPage({ dashboard, actions }: { dashboard: DashboardState; action
     <section className="workspace-page">
       <SectionHeader title="LMAX EOD" eyebrow="Report import, rollup control, wallet/PnL, EOD recon" />
       <div className="info-box">individual-trades.csv is the execution source of truth. trades.csv is a summary/rollup control. currency-wallets.csv is wallet/cash/PnL, not instrument positions.</div>
+      <div className="metric-grid">
+        <MetricCard label="Total Wallet USD" value={formatUsd(dashboard.eodPnlSummary?.totalWalletBalanceUsd)} tone="neutral" />
+        <MetricCard label="Total P&L USD" value={formatUsd(dashboard.eodPnlSummary?.totalProfitLossUsd)} tone="neutral" />
+        <MetricCard label="Total Commission USD" value={formatUsd(dashboard.eodPnlSummary?.totalCommissionUsd)} tone="neutral" />
+        <MetricCard label="Total Financing USD" value={formatUsd(dashboard.eodPnlSummary?.totalFinancingUsd)} tone="neutral" />
+        <MetricCard label="Total Net PnL USD" value={formatUsd(dashboard.eodPnlSummary?.totalNetPnlUsd)} tone="neutral" />
+      </div>
       <LmaxEodReportsPanel
         importRuns={dashboard.lmaxImportRuns}
         validationIssues={dashboard.lmaxValidationIssues}
@@ -599,7 +663,7 @@ function RiskAdminPage({ dashboard, health, integrity, actions }: { dashboard: D
 function ConnectivityLabPage() {
   return (
     <section className="workspace-page">
-      <SectionHeader title="Connectivity Lab" eyebrow="Isolated manual Demo/UAT investigation" />
+      <SectionHeader title="Connectivity Lab" eyebrow="Isolated manual Demo/UAT investigation" actions={<StatusChip label="Isolated Lab" tone="info" />} />
       <div className="critical-box">This page is read-only. The lab is not connected to this runtime, API, Worker, or execution workflow.</div>
       <div className="panel wide">
         <h3>Manual Commands</h3>

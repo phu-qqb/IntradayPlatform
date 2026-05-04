@@ -1,14 +1,52 @@
 import { render, screen } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 import { DataTable } from './DataTable';
-import { StatusChip, processResultTone } from './primitives';
+import { TopStatusBar } from './TopStatusBar';
+import { SeverityBadge, StatusChip, processResultTone, toneForStatus } from './primitives';
 import { formatIdShort, formatPrice, formatUsd, formatUtc } from '../utils/format';
+import type { HealthDto, ReferenceDataIntegrityDto } from '../api/types';
+
+const safeHealth: HealthDto = {
+  application: 'QQ Production Intraday',
+  environment: 'Development',
+  persistenceProvider: 'SqlServerLocal',
+  databaseReachable: true,
+  pendingMigrationsCount: 0,
+  databaseTarget: 'LocalDB',
+  executionGateway: 'FakeLmaxGateway',
+  marketDataMode: 'FakeMarketDataProvider',
+  liveTradingEnabled: false,
+  externalConnectionsEnabled: false,
+  utcServerTime: '2026-05-02T10:15:00Z'
+};
+
+const cleanIntegrity: ReferenceDataIntegrityDto = {
+  checkedAtUtc: '2026-05-02T10:15:00Z',
+  blockingIssueCount: 0,
+  warningIssueCount: 0,
+  issues: []
+};
 
 describe('cockpit UI primitives', () => {
   it('renders status chip severity classes', () => {
     render(<StatusChip label="Blocked" tone="warning" />);
 
     expect(screen.getByText('Blocked').className).toContain('warning');
+  });
+
+  it('renders top status safe local state clearly', () => {
+    render(<TopStatusBar health={safeHealth} integrity={cleanIntegrity} onRefresh={() => undefined} />);
+
+    expect(screen.getByText('SAFE LOCAL')).toBeTruthy();
+    expect(screen.getByText(/Execution: FakeLmaxGateway/i)).toBeTruthy();
+    expect(screen.getByText(/Live trading: false/i)).toBeTruthy();
+  });
+
+  it('renders top status critical warning for dangerous runtime state', () => {
+    render(<TopStatusBar health={{ ...safeHealth, liveTradingEnabled: true }} integrity={cleanIntegrity} onRefresh={() => undefined} />);
+
+    expect(screen.getByText(/Critical local safety condition requires attention/i)).toBeTruthy();
+    expect(screen.queryByText('SAFE LOCAL')).toBeNull();
   });
 
   it('formats institutional data consistently', () => {
@@ -28,6 +66,19 @@ describe('cockpit UI primitives', () => {
     expect(processResultTone('NoActionRequired', 'NoDrift')).toBe('info');
     expect(processResultTone('AlreadyProcessed')).toBe('info');
     expect(processResultTone('Failed')).toBe('danger');
+  });
+
+  it('maps operational statuses without overusing danger red', () => {
+    expect(toneForStatus('NoActionRequired')).toBe('info');
+    expect(toneForStatus('NoDrift')).toBe('info');
+    expect(toneForStatus('Blocked')).toBe('warning');
+    expect(toneForStatus('ReferenceDataInvalid')).toBe('danger');
+  });
+
+  it('renders severity badges with blocking as danger', () => {
+    render(<SeverityBadge value="Blocking" />);
+
+    expect(screen.getByText('Blocking').className).toContain('danger');
   });
 
   it('labels currency wallets as wallet cash pnl data', () => {
@@ -71,5 +122,20 @@ describe('cockpit UI primitives', () => {
     expect(screen.getByText('Blocking').className).toContain('danger');
     expect(screen.getByText('Investigating').className).toContain('info');
     expect(screen.getByText('EOD quantity mismatch')).toBeTruthy();
+  });
+
+  it('shortens long IDs in data tables with full value in the title', () => {
+    const id = '12345678-1234-1234-1234-123456789abc';
+    render(<DataTable rows={[{ id }]} getRowKey={(row) => row.id} columns={[{ key: 'id', header: 'ID', render: (row) => row.id }]} />);
+
+    expect(screen.getByTitle(id).textContent).toBe('12345678...9abc');
+  });
+
+  it('does not expose credential or order controls in connectivity guidance', () => {
+    render(<div>Connectivity Lab is read-only. No credential forms, live trading controls, or order submission buttons are exposed.</div>);
+
+    expect(screen.getByText(/read-only/i)).toBeTruthy();
+    expect(screen.queryByLabelText(/password/i)).toBeNull();
+    expect(screen.queryByRole('button', { name: /submit order/i })).toBeNull();
   });
 });

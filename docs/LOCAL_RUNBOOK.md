@@ -116,6 +116,8 @@ The UI shell is organized for operator workflows:
 
 The top status bar is always visible and must show `FakeLmaxGateway`, `FakeMarketDataProvider`, `liveTradingEnabled=false`, and `externalConnectionsEnabled=false` during normal local operation.
 
+The comfort/readability pass groups the UI into calmer operator sections: the safety bar separates Runtime, Safety, Data, and Reference state; the left navigation is grouped by Operations, Trading, Data, and Control; tables shorten technical IDs and keep full values in row details; the right drawer groups Summary, IDs, Timestamps, Details, and Raw JSON. These changes are UI-only and do not add live trading controls, credential forms, real LMAX controls, or any new backend execution path.
+
 If the browser shows CORS errors, confirm the API is running in `Development` and the UI is using `http://localhost:5173` or `http://127.0.0.1:5173`.
 
 ## Operator Audit Trail

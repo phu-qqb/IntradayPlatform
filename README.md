@@ -222,6 +222,8 @@ The cockpit is now organized as a PMS/OMS/EMS operator shell:
 - Audit Journal: append-only operator/system action journal with correlation IDs
 - Connectivity Lab: read-only script guidance only; no credential forms or live controls
 
+The UI comfort pass keeps the same local-only backend behavior while making the cockpit calmer and easier to read for intraday use. The top safety bar groups runtime, safety, data, and reference-integrity state and shows `SAFE LOCAL` only when the FakeLmax boundary is intact. Tables now prioritize human-readable fields, shorten long technical IDs, keep headers sticky, and move full record detail into the right-side drawer. The drawer groups summary, IDs, timestamps, details, and raw JSON so operators can inspect records without turning every blotter into a wall of identifiers.
+
 Development CORS allows only `http://localhost:5173` and `http://127.0.0.1:5173`; wildcard CORS is not enabled for production-like environments.
 
 ## Operator Audit Trail

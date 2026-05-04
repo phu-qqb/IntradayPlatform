@@ -1,4 +1,4 @@
-import type React from 'react';
+import React from 'react';
 import { X } from 'lucide-react';
 
 export type Tone = 'ok' | 'info' | 'warning' | 'danger' | 'neutral';
@@ -6,9 +6,9 @@ export type Tone = 'ok' | 'info' | 'warning' | 'danger' | 'neutral';
 export function toneForStatus(status?: string | null): Tone {
   const normalized = (status ?? '').toLowerCase();
   if (['approved', 'processed', 'promoted', 'imported', 'completed', 'filled', 'acked', 'ok', 'complete', 'resolved'].includes(normalized)) return 'ok';
-  if (['blocked', 'rejected', 'riskrejected', 'failed', 'critical', 'open'].includes(normalized)) return 'danger';
-  if (['requiresmanualapproval', 'warning', 'sparsedata', 'incomplete', 'waived'].includes(normalized)) return 'warning';
-  if (['noactionrequired', 'alreadyprocessed', 'received', 'created', 'draft', 'started', 'acknowledged', 'investigating'].includes(normalized)) return 'info';
+  if (['failed', 'rejected', 'riskrejected', 'critical', 'blocking', 'positionmismatch', 'brokerfillmissinginternally', 'internalfillmissinginbrokerreport', 'killswitchactive', 'referencedatainvalid'].includes(normalized)) return 'danger';
+  if (['blocked', 'requiresmanualapproval', 'warning', 'sparsedata', 'incomplete', 'waived', 'acknowledged', 'investigating', 'open'].includes(normalized)) return 'warning';
+  if (['noactionrequired', 'nodrift', 'alreadyprocessed', 'received', 'created', 'draft', 'ready', 'started', 'info', 'skipped'].includes(normalized)) return 'info';
   if (['falsepositive', 'closed'].includes(normalized)) return 'neutral';
   return 'neutral';
 }
@@ -59,6 +59,27 @@ export function CommandButton({ children, tone = 'neutral', ...props }: React.Bu
 }
 
 export function DetailDrawer({ item, onClose }: { item?: unknown; onClose: () => void }) {
+  const [showRawJson, setShowRawJson] = React.useState(false);
+  const record = item && typeof item === 'object' ? item as Record<string, unknown> : undefined;
+  const entries = record ? Object.entries(record).filter(([, value]) => value !== undefined && value !== null && value !== '') : [];
+  const idEntries = entries.filter(([key]) => key.toLowerCase().includes('id'));
+  const timeEntries = entries.filter(([key]) => key.toLowerCase().includes('utc') || key.toLowerCase().endsWith('at'));
+  const summaryKeys = ['status', 'severity', 'type', 'source', 'symbol', 'title', 'modelName', 'description', 'message', 'result'];
+  const summaryEntries = entries.filter(([key]) => summaryKeys.some((summaryKey) => summaryKey.toLowerCase() === key.toLowerCase()));
+  const usedKeys = new Set([...idEntries, ...timeEntries, ...summaryEntries].map(([key]) => key));
+  const detailEntries = entries.filter(([key]) => !usedKeys.has(key) && typeof record?.[key] !== 'object').slice(0, 16);
+
+  const renderEntries = (items: Array<[string, unknown]>) => (
+    <dl className="drawer-field-list">
+      {items.map(([key, value]) => (
+        <React.Fragment key={key}>
+          <dt>{key}</dt>
+          <dd title={String(value)}>{String(value)}</dd>
+        </React.Fragment>
+      ))}
+    </dl>
+  );
+
   return (
     <aside className={`detail-drawer ${item ? 'open' : ''}`} aria-label="Detail drawer">
       <div className="drawer-head">
@@ -69,7 +90,18 @@ export function DetailDrawer({ item, onClose }: { item?: unknown; onClose: () =>
         <button aria-label="Close details" onClick={onClose}><X size={16} /></button>
       </div>
       {item ? (
-        <pre>{JSON.stringify(item, null, 2)}</pre>
+        <>
+          {summaryEntries.length > 0 && <section className="drawer-section"><h3>Summary</h3>{renderEntries(summaryEntries)}</section>}
+          {idEntries.length > 0 && <section className="drawer-section"><h3>IDs</h3>{renderEntries(idEntries)}</section>}
+          {timeEntries.length > 0 && <section className="drawer-section"><h3>Timestamps</h3>{renderEntries(timeEntries)}</section>}
+          {detailEntries.length > 0 && <section className="drawer-section"><h3>Details</h3>{renderEntries(detailEntries)}</section>}
+          <section className="drawer-section">
+            <button className="raw-json-toggle" onClick={() => setShowRawJson((value) => !value)}>
+              {showRawJson ? 'Hide raw JSON' : 'Show raw JSON'}
+            </button>
+            {showRawJson && <pre>{JSON.stringify(item, null, 2)}</pre>}
+          </section>
+        </>
       ) : (
         <div className="empty-state">Select a row to inspect its fields.</div>
       )}
@@ -77,13 +109,14 @@ export function DetailDrawer({ item, onClose }: { item?: unknown; onClose: () =>
   );
 }
 
-export function Timeline({ items }: { items: Array<{ label: string; time?: string | null; tone?: Tone }> }) {
+export function Timeline({ items }: { items: Array<{ label: string; time?: string | null; tone?: Tone; detail?: React.ReactNode }> }) {
   return (
     <div className="timeline">
       {items.map((item, index) => (
         <div className={`timeline-item ${item.tone ?? 'neutral'}`} key={`${item.label}-${index}`}>
           <span>{item.label}</span>
           <small>{item.time ?? '-'}</small>
+          {item.detail && <em>{item.detail}</em>}
         </div>
       ))}
     </div>

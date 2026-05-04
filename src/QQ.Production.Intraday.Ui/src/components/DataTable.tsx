@@ -23,6 +23,7 @@ export function DataTable<T>({ rows, columns, getRowKey, emptyLabel = 'No rows',
   const [filter, setFilter] = React.useState('');
   const [sortKey, setSortKey] = React.useState<string>();
   const [sortDirection, setSortDirection] = React.useState<'asc' | 'desc'>('asc');
+  const [selectedKey, setSelectedKey] = React.useState<string>();
 
   if (loading) {
     return <div className="loading-state">Loading rows</div>;
@@ -45,6 +46,31 @@ export function DataTable<T>({ rows, columns, getRowKey, emptyLabel = 'No rows',
         return sortDirection === 'asc' ? compare : -compare;
       })
     : filtered;
+
+  const renderCell = (column: Column<T>, row: T) => {
+    const rendered = column.render(row);
+    if (typeof rendered !== 'string') return rendered;
+
+    const looksLikeId = /id$/i.test(column.key) || /^[0-9a-f]{8}-[0-9a-f-]{27,}$/i.test(rendered) || rendered.length > 32;
+    if (looksLikeId && rendered !== '-') {
+      const short = rendered.length > 14 ? `${rendered.slice(0, 8)}...${rendered.slice(-4)}` : rendered;
+      return (
+        <button
+          className="id-token"
+          title={rendered}
+          onClick={(event) => {
+            event.stopPropagation();
+            void navigator.clipboard?.writeText(rendered);
+          }}
+        >
+          {short}
+        </button>
+      );
+    }
+
+    if (rendered.length > 42) return <span className="table-cell-truncate" title={rendered}>{rendered}</span>;
+    return rendered;
+  };
 
   return (
     <div className="data-table-shell">
@@ -74,15 +100,29 @@ export function DataTable<T>({ rows, columns, getRowKey, emptyLabel = 'No rows',
               </tr>
             </thead>
             <tbody>
-              {displayRows.map((row, index) => (
-                <tr key={getRowKey(row, index)} onClick={() => onRowClick?.(row)} className={onRowClick ? 'clickable-row' : undefined}>
-                  {columns.map((column) => (
-                    <td key={column.key} className={column.className}>
-                      {column.render(row)}
-                    </td>
-                  ))}
-                </tr>
-              ))}
+              {displayRows.map((row, index) => {
+                const rowKey = getRowKey(row, index);
+                return (
+                  <tr
+                    key={rowKey}
+                    onClick={() => {
+                      setSelectedKey(rowKey);
+                      onRowClick?.(row);
+                    }}
+                    className={`${onRowClick ? 'clickable-row' : ''} ${selectedKey === rowKey ? 'selected-row' : ''}`.trim() || undefined}
+                  >
+                    {columns.map((column) => {
+                      const sortValue = column.sortValue?.(row);
+                      const numeric = typeof sortValue === 'number' || column.className?.includes('numeric');
+                      return (
+                        <td key={column.key} className={[column.className, numeric ? 'numeric' : undefined].filter(Boolean).join(' ') || undefined}>
+                          {renderCell(column, row)}
+                        </td>
+                      );
+                    })}
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
