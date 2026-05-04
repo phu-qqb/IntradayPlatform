@@ -14,7 +14,7 @@ export function AdminPanel({
   instruments: InstrumentDto[];
   venues: VenueDto[];
   onActivateKillSwitch: (reason: string) => Promise<void>;
-  onClearKillSwitch: () => Promise<void>;
+  onClearKillSwitch: (reason: string) => Promise<void>;
 }) {
   const [reason, setReason] = useState('Local operator activation');
 
@@ -29,7 +29,7 @@ export function AdminPanel({
         <label>Reason<input value={reason} onChange={(event) => setReason(event.target.value)} /></label>
         <ActionButton idleLabel="Activate Kill Switch" runningLabel="Activating..." onAction={() => onActivateKillSwitch(reason)} />
         <ActionButton className="primary" idleLabel="Clear Kill Switch" runningLabel="Clearing..." onAction={async () => {
-          if (window.confirm('Clear the local kill switch?')) await onClearKillSwitch();
+          if (window.confirm('Clear the local kill switch?')) await onClearKillSwitch(reason);
         }} />
       </div>
       <h3>Instruments</h3>

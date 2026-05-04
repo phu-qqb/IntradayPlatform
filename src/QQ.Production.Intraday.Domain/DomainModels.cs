@@ -110,6 +110,26 @@ public readonly record struct OperatorAuditEventId(Guid Value)
     public static OperatorAuditEventId New() => new(Guid.NewGuid());
 }
 
+public readonly record struct OperatorUserId(Guid Value)
+{
+    public static OperatorUserId New() => new(Guid.NewGuid());
+}
+
+public readonly record struct OperatorUserRoleId(Guid Value)
+{
+    public static OperatorUserRoleId New() => new(Guid.NewGuid());
+}
+
+public readonly record struct ApprovalRequestId(Guid Value)
+{
+    public static ApprovalRequestId New() => new(Guid.NewGuid());
+}
+
+public readonly record struct ApprovalDecisionId(Guid Value)
+{
+    public static ApprovalDecisionId New() => new(Guid.NewGuid());
+}
+
 public readonly record struct ExceptionCaseId(Guid Value)
 {
     public static ExceptionCaseId New() => new(Guid.NewGuid());
@@ -548,6 +568,13 @@ public enum OperatorAuditEventType
     TradingWindowUpdated,
     InstrumentControlUpdated,
     VenueControlUpdated,
+    ApprovalRequestCreated,
+    ApprovalRequestApproved,
+    ApprovalRequestRejected,
+    ApprovalRequestCancelled,
+    ApprovalRequestExecuted,
+    PermissionDenied,
+    SensitiveActionApprovalRequired,
     Unknown
 }
 
@@ -575,6 +602,88 @@ public sealed record OperatorAuditEvent(
     string? BeforeJson,
     string? AfterJson,
     string? MetadataJson);
+
+public enum OperatorRole { Viewer, Operator, RiskManager, Approver, Admin, System }
+
+public enum OperatorPermission
+{
+    ViewDashboard,
+    CreateModelWeightBatch,
+    PromoteModelWeightBatch,
+    ProcessModelRun,
+    ManageExceptions,
+    ResolveExceptions,
+    WaiveExceptions,
+    ViewRiskConfig,
+    DraftRiskConfig,
+    ActivateRiskConfig,
+    RetireRiskConfig,
+    ManageTradingWindows,
+    ManageInstrumentControls,
+    ManageVenueControls,
+    ActivateKillSwitch,
+    ClearKillSwitch,
+    RunEodReconciliation,
+    ManageEodReports,
+    RunConnectivityLab,
+    ManageApprovals,
+    Admin
+}
+
+public sealed record OperatorUser(
+    OperatorUserId Id,
+    string OperatorId,
+    string DisplayName,
+    string? Email,
+    bool IsEnabled,
+    DateTimeOffset CreatedAtUtc,
+    DateTimeOffset? UpdatedAtUtc = null);
+
+public sealed record OperatorUserRole(
+    OperatorUserRoleId Id,
+    OperatorUserId OperatorUserId,
+    OperatorRole Role,
+    DateTimeOffset CreatedAtUtc);
+
+public enum ApprovalRequestStatus { Pending, Approved, Rejected, Cancelled, Expired, Executed }
+public enum ApprovalRequestType { ActivateRiskLimitSet, RetireRiskLimitSet, UpdateRiskLimit, UpdateTradingWindow, UpdateInstrumentControl, UpdateVenueControl, ClearKillSwitch, WaiveException, MarkExceptionFalsePositive, ResolveCriticalException, Other }
+public enum ApprovalDecisionType { Approved, Rejected }
+
+public sealed record ApprovalRequest(
+    ApprovalRequestId Id,
+    ApprovalRequestType Type,
+    ApprovalRequestStatus Status,
+    string RequestedByOperatorId,
+    string RequestedByDisplayName,
+    DateTimeOffset RequestedAtUtc,
+    OperatorRole RequiredApproverRole,
+    string EntityType,
+    string EntityId,
+    string Reason,
+    string PayloadJson,
+    string? BeforeJson,
+    string? AfterJson,
+    string? CorrelationId,
+    DateTimeOffset? ExpiresAtUtc,
+    DateTimeOffset? ApprovedAtUtc,
+    string? ApprovedByOperatorId,
+    DateTimeOffset? RejectedAtUtc,
+    string? RejectedByOperatorId,
+    DateTimeOffset? ExecutedAtUtc,
+    string? ExecutedByOperatorId,
+    string? ResultMessage,
+    DateTimeOffset CreatedAtUtc,
+    DateTimeOffset? UpdatedAtUtc = null);
+
+public sealed record ApprovalDecision(
+    ApprovalDecisionId Id,
+    ApprovalRequestId ApprovalRequestId,
+    ApprovalDecisionType Decision,
+    string DecidedByOperatorId,
+    string DecidedByDisplayName,
+    string Reason,
+    DateTimeOffset DecidedAtUtc,
+    string? CorrelationId);
 
 public sealed record EodPnlCurrencyRow(
     string Currency,

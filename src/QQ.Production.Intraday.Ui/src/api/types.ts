@@ -666,6 +666,67 @@ export type OperatorAuditEventDto = {
   metadataJson?: string | null;
 };
 
+export type OperatorUserDto = {
+  id: string;
+  operatorId: string;
+  displayName: string;
+  email?: string | null;
+  isEnabled: boolean;
+  createdAtUtc: string;
+  updatedAtUtc?: string | null;
+  roles: string[];
+  permissions: string[];
+};
+
+export type ApprovalRequestDto = {
+  id: string;
+  type: string;
+  status: string;
+  requestedByOperatorId: string;
+  requestedByDisplayName: string;
+  requestedAtUtc: string;
+  requiredApproverRole: string;
+  entityType: string;
+  entityId: string;
+  reason: string;
+  payloadJson: string;
+  beforeJson?: string | null;
+  afterJson?: string | null;
+  correlationId?: string | null;
+  expiresAtUtc?: string | null;
+  approvedAtUtc?: string | null;
+  approvedByOperatorId?: string | null;
+  rejectedAtUtc?: string | null;
+  rejectedByOperatorId?: string | null;
+  executedAtUtc?: string | null;
+  executedByOperatorId?: string | null;
+  resultMessage?: string | null;
+  createdAtUtc: string;
+  updatedAtUtc?: string | null;
+};
+
+export type ApprovalDecisionDto = {
+  id: string;
+  approvalRequestId: string;
+  decision: string;
+  decidedByOperatorId: string;
+  decidedByDisplayName: string;
+  reason: string;
+  decidedAtUtc: string;
+  correlationId?: string | null;
+};
+
+export type GovernedActionResultDto = {
+  executed: boolean;
+  approvalRequired: boolean;
+  approvalRequestId?: string | null;
+  status: string;
+  message: string;
+  entityId: string;
+  resultEntityId?: string | null;
+  correlationId?: string | null;
+};
+
 export type ExceptionCaseDto = {
   id: string;
   createdAtUtc: string;

@@ -230,9 +230,9 @@ Development CORS allows only `http://localhost:5173` and `http://127.0.0.1:5173`
 
 ## Operator Audit Trail
 
-The platform persists an append-only `OperatorAuditEvents` journal for safety-relevant local operator and system actions. Audited actions include DB weight batch creation/validation/promotion, model-run creation and processing, kill-switch activation/clear, reference-data integrity blocking checks, fake LMAX EOD generation/import, and EOD reconciliation runs.
+The platform persists an append-only `OperatorAuditEvents` journal for safety-relevant local operator and system actions. Audited actions include DB weight batch creation/validation/promotion, model-run creation and processing, kill-switch activation/clear, reference-data integrity blocking checks, fake LMAX EOD generation/import, EOD reconciliation runs, permission denials, and approval workflow decisions.
 
-Each event records UTC time, actor type/name, event type, severity, result, entity reference, correlation/request IDs, source, description, optional reason, and sanitized JSON metadata. The local operator context is attribution only, not authentication: API requests default to `local-dev` and may set `X-Operator-Id`, `X-Operator-Name`, and `X-Correlation-Id`.
+Each event records UTC time, actor type/name, event type, severity, result, entity reference, correlation/request IDs, source, description, optional reason, and sanitized JSON metadata. The local operator context is attribution only, not production authentication: API requests default to the configured local operator (`local-admin` in development) and may set `X-Operator-Id` and `X-Correlation-Id`.
 
 Audit APIs are read-only:
 
@@ -242,7 +242,17 @@ curl "http://localhost:5050/audit/events/by-entity?entityType=ModelRun&entityId=
 curl "http://localhost:5050/audit/events/by-correlation/<correlationId>"
 ```
 
-Audit metadata is sanitized before persistence for keys containing `password`, `secret`, `token`, or `apiKey`. There are no update/delete endpoints for audit events. The current limitation is that the local operator identity is not authenticated yet.
+Audit metadata is sanitized before persistence for keys containing `password`, `secret`, `token`, or `apiKey`. There are no update/delete endpoints for audit events. The current limitation is that the local operator identity is a development governance context, not real authentication.
+
+## Local Governance and Approvals
+
+The local runtime now seeds operator identities and roles for maker/checker testing: `local-viewer`, `local-operator`, `local-risk`, `local-approver`, `local-admin`, and `system`. The UI has a local operator selector that stores the selected operator in browser storage and sends it as `X-Operator-Id`. This is deliberately labelled as local development context only; there is no login form, password capture, external identity provider, or production authentication.
+
+Roles map to local permissions such as viewing dashboards, creating/promoting model weights, processing model runs, managing exceptions, drafting/activating risk config, clearing the kill switch, running EOD reconciliation, and managing approvals. `Admin` has all local permissions. Disabled or unknown operators are rejected for sensitive actions.
+
+Four-eyes approval is enabled by default for safety-critical local actions. The first operator creates a pending `ApprovalRequest`; a different approver/admin must approve it with a reason; the approved request is then executed once. The requester cannot approve their own request, and rejected/cancelled/executed requests cannot be executed again.
+
+Approval-gated actions currently include risk limit set activation, risk limit set retirement, kill-switch clear, waiving blocking/critical exceptions, marking blocking/critical exceptions false positive, and resolving blocking/critical exceptions. The Governance page shows current operator permissions, pending approvals, approval history, and approve/reject/execute actions. These workflows do not enable live trading or external connectivity.
 
 ## Exception Management
 
@@ -259,7 +269,7 @@ curl -X POST "http://localhost:5050/exceptions/<id>/acknowledge" -H "Content-Typ
 curl -X POST "http://localhost:5050/exceptions/<id>/resolve" -H "Content-Type: application/json" -d "{\"reason\":\"Source break was remediated\"}"
 ```
 
-The cockpit has an Exceptions page plus Command Center exception counts. Local operator headers are attribution only; real authentication and approval workflows are not implemented yet.
+The cockpit has an Exceptions page plus Command Center exception counts. Blocking/critical waiver, false-positive, and resolution actions can require four-eyes approval; normal acknowledge, investigate, assign, and note actions remain immediate local workflow actions with audit.
 
 ## Risk Control Center
 
@@ -271,7 +281,7 @@ Risk decisions now retain the active `RiskLimitSetId` and check-level details su
 
 Approved decisions also keep passed check rows. The UI shows a summary observed/limit pair in the Risk table and a check-detail table when a decision is selected. Older historical rows that predate detail persistence may show “No check details available for this historical decision.”
 
-Instrument controls distinguish execution and reporting permissions. `IsTradingEnabled` gates order generation, while `IsReportImportEnabled` allows historical LMAX EOD import for known aliases even when an instrument is not tradable. Current limitations: no real authentication, no four-eyes approval workflow, and risk changes affect only the local/FakeLmax runtime.
+Instrument controls distinguish execution and reporting permissions. `IsTradingEnabled` gates order generation, while `IsReportImportEnabled` allows historical LMAX EOD import for known aliases even when an instrument is not tradable. Current limitations: local identity is not production authentication, there is no four-eyes multi-party authentication provider yet, and risk changes affect only the local/FakeLmax runtime.
 
 ## DB Model Weight Source
 

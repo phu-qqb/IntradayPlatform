@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Activity, Archive, BarChart3, ClipboardList, FileSearch, Gauge, GitBranch, Landmark, RadioTower, ShieldAlert, WalletCards } from 'lucide-react';
-import { apiClient } from './api/apiClient';
+import { Activity, Archive, BarChart3, ClipboardList, FileSearch, Gauge, GitBranch, Landmark, RadioTower, ShieldAlert, UserCheck, WalletCards } from 'lucide-react';
+import { apiClient, getSelectedOperatorId, setSelectedOperatorId } from './api/apiClient';
 import type {
   DriftSnapshotDto,
   EodPnlSummaryDto,
@@ -26,6 +26,10 @@ import type {
   LmaxTradeSummaryDto,
   OrdersDto,
   OperatorAuditEventDto,
+  OperatorUserDto,
+  ApprovalRequestDto,
+  ApprovalDecisionDto,
+  GovernedActionResultDto,
   PositionDto,
   ReconciliationBreakDto,
   ReferenceDataIntegrityDto,
@@ -101,9 +105,12 @@ type DashboardState = {
   tradingWindows: TradingWindowDto[];
   riskInstruments: RiskInstrumentDto[];
   riskVenues: RiskVenueDto[];
+  operators: OperatorUserDto[];
+  currentOperator?: OperatorUserDto;
+  approvalRequests: ApprovalRequestDto[];
 };
 
-type PageId = 'command' | 'pms' | 'weights' | 'oms' | 'ems' | 'market' | 'exceptions' | 'recon' | 'lmax-eod' | 'risk-admin' | 'audit' | 'connectivity';
+type PageId = 'command' | 'pms' | 'weights' | 'oms' | 'ems' | 'market' | 'exceptions' | 'recon' | 'lmax-eod' | 'risk-admin' | 'governance' | 'audit' | 'connectivity';
 
 const emptyDashboard: DashboardState = {
   modelRuns: [],
@@ -137,7 +144,9 @@ const emptyDashboard: DashboardState = {
   venueRiskLimits: [],
   tradingWindows: [],
   riskInstruments: [],
-  riskVenues: []
+  riskVenues: [],
+  operators: [],
+  approvalRequests: []
 };
 
 const navSections: Array<{ label: string; items: Array<{ id: PageId; label: string; icon: typeof Activity }> }> = [
@@ -169,6 +178,7 @@ const navSections: Array<{ label: string; items: Array<{ id: PageId; label: stri
     label: 'Control',
     items: [
       { id: 'risk-admin', label: 'Risk & Admin', icon: ShieldAlert },
+      { id: 'governance', label: 'Governance', icon: UserCheck },
       { id: 'audit', label: 'Audit Journal', icon: ClipboardList },
       { id: 'connectivity', label: 'Connectivity Lab', icon: RadioTower }
     ]
@@ -189,7 +199,7 @@ export default function App() {
   const loadIntegrity = useCallback(async () => setIntegrity(await apiClient.getReferenceDataIntegrity()), []);
 
   const loadDashboard = useCallback(async () => {
-    const [modelRuns, modelWeightBatches, targets, drifts, internalPositions, brokerPositions, reconciliationBreaks, tradeIntents, riskDecisions, orders, fills, snapshots, bars, killSwitch, instruments, venues, lmaxImportRuns, lmaxValidationIssues, lmaxIndividualTrades, lmaxTradeSummaries, lmaxCurrencyWallets, eodReconciliationRuns, eodReconciliationBreaks, exceptionCases, auditEvents, riskLimitSets, activeRiskLimitSet, tradingWindows, riskInstruments, riskVenues] = await Promise.all([
+    const [modelRuns, modelWeightBatches, targets, drifts, internalPositions, brokerPositions, reconciliationBreaks, tradeIntents, riskDecisions, orders, fills, snapshots, bars, killSwitch, instruments, venues, lmaxImportRuns, lmaxValidationIssues, lmaxIndividualTrades, lmaxTradeSummaries, lmaxCurrencyWallets, eodReconciliationRuns, eodReconciliationBreaks, exceptionCases, auditEvents, riskLimitSets, activeRiskLimitSet, tradingWindows, riskInstruments, riskVenues, operators, currentOperator, approvalRequests] = await Promise.all([
       apiClient.getModelRuns(),
       apiClient.getModelWeightBatches(),
       apiClient.getTargetPositions(),
@@ -219,7 +229,10 @@ export default function App() {
       apiClient.getActiveRiskLimitSet().catch(() => undefined),
       apiClient.getTradingWindows(),
       apiClient.getRiskInstruments(),
-      apiClient.getRiskVenues()
+      apiClient.getRiskVenues(),
+      apiClient.getOperators(),
+      apiClient.getCurrentOperator().catch(() => undefined),
+      apiClient.getApprovals()
     ]);
 
     const [riskLimits, instrumentRiskLimits, venueRiskLimits] = activeRiskLimitSet
@@ -230,7 +243,7 @@ export default function App() {
         ])
       : [[], [], []];
 
-    setDashboard((current) => ({ ...current, modelRuns, modelWeightBatches, targets, drifts, internalPositions, brokerPositions, reconciliationBreaks, tradeIntents, riskDecisions, orders, fills, snapshots, bars, killSwitch, instruments, venues, lmaxImportRuns, lmaxValidationIssues, lmaxIndividualTrades, lmaxTradeSummaries, lmaxCurrencyWallets, eodReconciliationRuns, eodReconciliationBreaks, exceptionCases, auditEvents, riskLimitSets, activeRiskLimitSet, riskLimits, instrumentRiskLimits, venueRiskLimits, tradingWindows, riskInstruments, riskVenues }));
+    setDashboard((current) => ({ ...current, modelRuns, modelWeightBatches, targets, drifts, internalPositions, brokerPositions, reconciliationBreaks, tradeIntents, riskDecisions, orders, fills, snapshots, bars, killSwitch, instruments, venues, lmaxImportRuns, lmaxValidationIssues, lmaxIndividualTrades, lmaxTradeSummaries, lmaxCurrencyWallets, eodReconciliationRuns, eodReconciliationBreaks, exceptionCases, auditEvents, riskLimitSets, activeRiskLimitSet, riskLimits, instrumentRiskLimits, venueRiskLimits, tradingWindows, riskInstruments, riskVenues, operators, currentOperator, approvalRequests }));
   }, []);
 
   const refreshAll = useCallback(async () => {
@@ -277,6 +290,21 @@ export default function App() {
   return (
     <div className="operator-shell">
       <TopStatusBar health={health} integrity={integrity} onRefresh={refreshAll} />
+      <div className="operator-context-strip">
+        <span>Local operator context only — not production authentication.</span>
+        <label>
+          Operator
+          <select value={dashboard.currentOperator?.operatorId ?? getSelectedOperatorId()} onChange={(event) => {
+            setSelectedOperatorId(event.target.value);
+            void refreshAll();
+          }}>
+            {dashboard.operators.map((operator) => (
+              <option key={operator.operatorId} value={operator.operatorId}>{operator.displayName} ({operator.operatorId})</option>
+            ))}
+          </select>
+        </label>
+        <span className="chip neutral">Roles: {dashboard.currentOperator?.roles.join(', ') ?? 'unknown'}</span>
+      </div>
       <div className="operator-body">
         <LeftNavigation activePage={activePage} onSelect={setActivePage} />
         <main className="main-workspace">
@@ -332,6 +360,8 @@ function renderPage(page: PageId, dashboard: DashboardState, health: HealthDto |
       return <LmaxEodPage dashboard={dashboard} actions={actions} />;
     case 'risk-admin':
       return <RiskAdminPage dashboard={dashboard} health={health} integrity={integrity} actions={actions} />;
+    case 'governance':
+      return <GovernancePage dashboard={dashboard} actions={actions} />;
     case 'audit':
       return <AuditJournalPage events={dashboard.auditEvents} onSelect={actions.setSelected} />;
     case 'connectivity':
@@ -354,6 +384,86 @@ function obviousPositionMismatchCount(internalPositions: PositionDto[], brokerPo
   }).length;
 }
 
+function isGovernedActionResult(value: unknown): value is GovernedActionResultDto {
+  return Boolean(value && typeof value === 'object' && 'approvalRequired' in value && 'executed' in value);
+}
+
+function approvalMessage(result: GovernedActionResultDto) {
+  return result.approvalRequired ? `Approval request created: ${formatIdShort(result.approvalRequestId)}.` : result.message;
+}
+
+function GovernancePage({ dashboard, actions }: { dashboard: DashboardState; actions: { refreshAll: () => Promise<void>; runOperation: <T>(label: string, work: () => Promise<T>, successMessage?: (result: T) => string | undefined) => Promise<T>; setSelected: (item: unknown) => void } }) {
+  const pending = dashboard.approvalRequests.filter((item) => item.status === 'Pending');
+  const [status, setStatus] = useState('');
+  const filtered = dashboard.approvalRequests.filter((item) => !status || item.status === status);
+
+  const decide = async (label: string, approval: ApprovalRequestDto, fn: (reason: string) => Promise<ApprovalRequestDto>) => {
+    const reason = window.prompt(`${label} approval request. Enter reason:`);
+    if (!reason?.trim()) return;
+    await actions.runOperation(`${label} approval request`, () => fn(reason.trim()), (updated) => `${label}: ${formatStatus(updated.status)}.`);
+    await actions.refreshAll();
+  };
+
+  const execute = async (approval: ApprovalRequestDto) => {
+    await actions.runOperation('Executing approved request', () => apiClient.executeApproval(approval.id), (result) => result.message);
+    await actions.refreshAll();
+  };
+
+  return (
+    <section className="workspace-page">
+      <SectionHeader title="Governance" eyebrow="Local identity, roles, permissions, and four-eyes approvals" />
+      <div className="metric-grid">
+        <MetricCard label="Current Operator" value={dashboard.currentOperator?.displayName ?? getSelectedOperatorId()} sublabel="Local development operator context only" tone="info" />
+        <MetricCard label="Roles" value={dashboard.currentOperator?.roles.join(', ') || '-'} sublabel="Header-based, not authentication" tone="neutral" />
+        <MetricCard label="Pending Approvals" value={pending.length} sublabel="Sensitive actions waiting for checker" tone={pending.length ? 'warning' : 'ok'} />
+        <MetricCard label="My Permission Count" value={dashboard.currentOperator?.permissions.length ?? 0} tone="neutral" />
+      </div>
+      <div className="page-grid two">
+        <div className="panel">
+          <SectionHeader title="Local Operators" />
+          <DataTable rows={dashboard.operators} getRowKey={(row) => row.id} onRowClick={actions.setSelected} columns={[
+            { key: 'operator', header: 'Operator', render: (row) => row.displayName },
+            { key: 'id', header: 'Operator ID', render: (row) => <code>{row.operatorId}</code> },
+            { key: 'roles', header: 'Roles', render: (row) => row.roles.join(', ') },
+            { key: 'enabled', header: 'Enabled', render: (row) => <StatusChip label={String(row.isEnabled)} tone={row.isEnabled ? 'ok' : 'danger'} /> }
+          ]} />
+        </div>
+        <div className="panel">
+          <SectionHeader title="Current Permissions" />
+          <div className="chip-list">
+            {(dashboard.currentOperator?.permissions ?? []).map((permission) => <span key={permission} className="chip neutral">{formatStatus(permission)}</span>)}
+          </div>
+        </div>
+      </div>
+      <div className="panel wide">
+        <SectionHeader title="Approval Requests" actions={(
+          <select value={status} onChange={(event) => setStatus(event.target.value)} aria-label="Approval status filter">
+            <option value="">All statuses</option>
+            {['Pending', 'Approved', 'Rejected', 'Cancelled', 'Expired', 'Executed'].map((value) => <option key={value}>{value}</option>)}
+          </select>
+        )} />
+        <DataTable rows={filtered} getRowKey={(row) => row.id} onRowClick={actions.setSelected} columns={[
+          { key: 'requestedAt', header: 'Requested', render: (row) => formatUtc(row.requestedAtUtc) },
+          { key: 'type', header: 'Type', render: (row) => formatStatus(row.type) },
+          { key: 'status', header: 'Status', render: (row) => <StatusChip label={row.status} tone={toneForStatus(row.status)} /> },
+          { key: 'requestedBy', header: 'Requested By', render: (row) => row.requestedByDisplayName },
+          { key: 'role', header: 'Required Role', render: (row) => row.requiredApproverRole },
+          { key: 'entity', header: 'Entity', render: (row) => `${row.entityType} ${formatIdShort(row.entityId)}` },
+          { key: 'reason', header: 'Reason', render: (row) => row.reason },
+          { key: 'expires', header: 'Expires', render: (row) => formatUtc(row.expiresAtUtc) },
+          { key: 'actions', header: 'Actions', render: (row) => (
+            <div className="button-row compact">
+              <ActionButton idleLabel="Approve" runningLabel="Approving..." disabled={row.status !== 'Pending'} onClick={(event) => event.stopPropagation()} onAction={() => decide('Approve', row, (reason) => apiClient.approveApproval(row.id, reason))} />
+              <ActionButton className="command-button warning" idleLabel="Reject" runningLabel="Rejecting..." disabled={row.status !== 'Pending'} onClick={(event) => event.stopPropagation()} onAction={() => decide('Reject', row, (reason) => apiClient.rejectApproval(row.id, reason))} />
+              <ActionButton className="command-button danger" idleLabel="Execute" runningLabel="Executing..." disabled={row.status !== 'Approved'} onClick={(event) => event.stopPropagation()} onAction={() => execute(row)} />
+            </div>
+          ) }
+        ]} />
+      </div>
+    </section>
+  );
+}
+
 function CommandCenter({ dashboard, health, integrity, actions }: { dashboard: DashboardState; health?: HealthDto; integrity?: ReferenceDataIntegrityDto; actions: { setSelected: (item: unknown) => void } }) {
   const openOrders = (dashboard.orders?.childOrders ?? []).filter((order) => !['Filled', 'Cancelled', 'Rejected', 'Expired'].includes(order.status)).length;
   const blockingBreaks = dashboard.eodReconciliationBreaks.filter((item) => item.severity === 'Blocking').length;
@@ -363,6 +473,7 @@ function CommandCenter({ dashboard, health, integrity, actions }: { dashboard: D
   const latestEod = dashboard.eodReconciliationRuns[0];
   const recentRiskBlocks = dashboard.riskDecisions.filter((item) => ['Rejected', 'Blocked'].includes(item.status));
   const activeWindow = dashboard.tradingWindows.find((item) => item.isActive && item.tradingEnabled);
+  const pendingApprovals = dashboard.approvalRequests.filter((item) => item.status === 'Pending');
   return (
     <section className="workspace-page">
       <SectionHeader title="Command Center" eyebrow="Operational overview" actions={<CommandButton tone="info" onClick={() => actions.setSelected(dashboard.auditEvents[0])}>Latest Event</CommandButton>} />
@@ -374,6 +485,7 @@ function CommandCenter({ dashboard, health, integrity, actions }: { dashboard: D
         <MetricCard label="Latest Weight Batch" value={dashboard.modelWeightBatches[0]?.status ?? '-'} sublabel={formatIdShort(dashboard.modelWeightBatches[0]?.id)} tone={toneForStatus(dashboard.modelWeightBatches[0]?.status)} />
         <MetricCard label="Latest Model Run" value={dashboard.modelRuns[0]?.status ?? '-'} sublabel={formatIdShort(dashboard.modelRuns[0]?.id)} tone={toneForStatus(dashboard.modelRuns[0]?.status)} />
         <MetricCard label="Open Exceptions" value={openExceptions.length} sublabel={`${blockingExceptions} blocking/critical`} tone={blockingExceptions ? 'danger' : openExceptions.length ? 'warning' : 'ok'} />
+        <MetricCard label="Pending Approvals" value={pendingApprovals.length} sublabel={pendingApprovals[0] ? `${formatStatus(pendingApprovals[0].type)} requested by ${pendingApprovals[0].requestedByOperatorId}` : 'No maker/checker items pending'} tone={pendingApprovals.length ? 'warning' : 'ok'} />
         <MetricCard label="Position Match" value={mismatchCount === 0 ? 'Matched' : `${mismatchCount} hint${mismatchCount === 1 ? '' : 's'}`} sublabel="Visual hint only, backend recon is authoritative" tone={mismatchCount === 0 ? 'ok' : 'warning'} />
         <MetricCard label="Open Orders" value={openOrders} sublabel={`${dashboard.fills.length} fills loaded`} tone={openOrders === 0 ? 'neutral' : 'warning'} />
         <MetricCard label="Latest EOD Recon" value={latestEod ? (latestEod.hasBlockingBreaks ? 'Breaks' : 'Clean') : '-'} sublabel={latestEod ? formatDate(latestEod.reportDate) : 'No run loaded'} tone={latestEod?.hasBlockingBreaks ? 'danger' : latestEod ? 'ok' : 'neutral'} />
@@ -546,7 +658,7 @@ function ExceptionsPage({ dashboard, actions }: { dashboard: DashboardState; act
     const reason = requireReason ? window.prompt(`${label} reason`) : window.prompt(`${label} reason (optional)`);
     if (requireReason && !reason?.trim()) return;
     if (label === 'Waive' && ['Blocking', 'Critical'].includes(selected.severity) && !window.confirm('Waive this blocking or critical exception case?')) return;
-    await actions.runOperation(`${label} exception case`, () => callback(reason ?? undefined), () => `${label} completed.`);
+    await actions.runOperation(`${label} exception case`, () => callback(reason ?? undefined), (result) => isGovernedActionResult(result) ? approvalMessage(result) : `${label} completed.`);
     await actions.refreshAll();
     const refreshed = await apiClient.getExceptionCases({ limit: 100 });
     const updated = refreshed.find((item) => item.id === selected.id);
@@ -703,15 +815,15 @@ function RiskAdminPage({ dashboard, health, integrity, actions }: { dashboard: D
   const activateSet = async (set: RiskLimitSetDto) => {
     const reason = requireReason('Activate draft risk limit set');
     if (!reason || !window.confirm(`Activate ${set.name} v${set.version} and retire the prior active profile?`)) return;
-    const activated = await actions.runOperation('Activating risk set', () => apiClient.activateRiskLimitSet(set.id, reason), (active) => `Activated risk set ${active.name} v${active.version}.`);
-    setSelectedSetId(activated.id);
+    const activated = await actions.runOperation('Activating risk set', () => apiClient.activateRiskLimitSet(set.id, reason), (active) => isGovernedActionResult(active) ? approvalMessage(active) : `Activated risk set ${active.name} v${active.version}.`);
+    if (!isGovernedActionResult(activated)) setSelectedSetId(activated.id);
     await actions.refreshAll();
   };
 
   const retireSet = async (set: RiskLimitSetDto) => {
     const reason = requireReason('Retire risk limit set');
     if (!reason || !window.confirm(`Retire ${set.name} v${set.version}?`)) return;
-    await actions.runOperation('Retiring risk set', () => apiClient.retireRiskLimitSet(set.id, reason), (retired) => `Retired risk set ${retired.name} v${retired.version}.`);
+    await actions.runOperation('Retiring risk set', () => apiClient.retireRiskLimitSet(set.id, reason), (retired) => isGovernedActionResult(retired) ? approvalMessage(retired) : `Retired risk set ${retired.name} v${retired.version}.`);
     await actions.refreshAll();
   };
 
@@ -869,8 +981,8 @@ function RiskAdminPage({ dashboard, health, integrity, actions }: { dashboard: D
           await actions.runOperation('Activating kill switch', () => apiClient.activateKillSwitch(reason), () => 'Kill switch activated.');
           await actions.refreshAll();
         }}
-        onClearKillSwitch={async () => {
-          await actions.runOperation('Clearing kill switch', () => apiClient.clearKillSwitch(), () => 'Kill switch cleared.');
+        onClearKillSwitch={async (reason) => {
+          await actions.runOperation('Clearing kill switch', () => apiClient.clearKillSwitch(reason), (result) => isGovernedActionResult(result) ? approvalMessage(result) : 'Kill switch cleared.');
           await actions.refreshAll();
         }}
       />

@@ -5,6 +5,7 @@ import { DataTable } from './DataTable';
 import { TopStatusBar } from './TopStatusBar';
 import { SeverityBadge, StatusChip, processResultTone, toneForStatus } from './primitives';
 import { formatIdShort, formatPrice, formatUsd, formatUtc } from '../utils/format';
+import { getSelectedOperatorId, setSelectedOperatorId } from '../api/apiClient';
 import type { HealthDto, ReferenceDataIntegrityDto } from '../api/types';
 
 const safeHealth: HealthDto = {
@@ -154,6 +155,32 @@ describe('cockpit UI primitives', () => {
     expect(screen.getByText('Active Risk Profile')).toBeTruthy();
     expect(screen.getByText(/activation and retirement require a reason/i)).toBeTruthy();
     expect(screen.getByText(/No endpoint here can enable live trading or external connections/i)).toBeTruthy();
+  });
+
+  it('stores selected local operator context for API headers', () => {
+    window.localStorage.clear();
+    expect(getSelectedOperatorId()).toBe('local-admin');
+
+    setSelectedOperatorId('local-risk');
+
+    expect(getSelectedOperatorId()).toBe('local-risk');
+  });
+
+  it('renders governance approval queue concepts without live controls', () => {
+    render(
+      <div>
+        <h1>Governance</h1>
+        <span>Pending Approvals</span>
+        <span>Local operator context only — not production authentication.</span>
+        <button>Approve</button>
+        <button>Execute</button>
+      </div>
+    );
+
+    expect(screen.getByText('Governance')).toBeTruthy();
+    expect(screen.getByText('Pending Approvals')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /enable live trading/i })).toBeNull();
+    expect(screen.queryByLabelText(/password/i)).toBeNull();
   });
 
   it('renders risk decision explainability with observed and limit values', () => {

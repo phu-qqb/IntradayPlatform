@@ -131,13 +131,12 @@ Each API request gets a correlation ID. Pass one explicitly when you want to sti
 ```powershell
 $headers = @{
   "X-Correlation-Id" = "local-run-001"
-  "X-Operator-Id" = "local-dev"
-  "X-Operator-Name" = "Local Developer"
+  "X-Operator-Id" = "local-admin"
 }
 Invoke-RestMethod -Headers $headers -Uri "http://localhost:5050/audit/events?limit=20"
 ```
 
-Operator headers are local attribution only and are not authentication. Audit metadata is sanitized before storage for keys containing `password`, `secret`, `token`, or `apiKey`; do not put credentials into request metadata. There are no audit update/delete endpoints.
+Operator headers are local attribution and governance context only and are not production authentication. Audit metadata is sanitized before storage for keys containing `password`, `secret`, `token`, or `apiKey`; do not put credentials into request metadata. There are no audit update/delete endpoints.
 
 Useful audit queries:
 
@@ -163,7 +162,33 @@ Invoke-RestMethod -Method Post -ContentType "application/json" -Body '{"reason":
 Invoke-RestMethod -Method Post -ContentType "application/json" -Body '{"reason":"Resolved after report correction"}' "http://localhost:5050/exceptions/<id>/resolve"
 ```
 
-In the UI, open the Exceptions page to filter cases, select a case, view its action timeline and notes, and perform operator actions. Every action writes both case history and an audit event. Local operator headers remain attribution only; there is no real authentication or four-eyes approval yet.
+In the UI, open the Exceptions page to filter cases, select a case, view its action timeline and notes, and perform operator actions. Every action writes both case history and an audit event. Blocking/critical waiver, false-positive, and resolution actions can create a pending approval request instead of executing immediately.
+
+## Local Governance and Approvals
+
+The local governance foundation seeds these development operators:
+
+- `local-viewer`: read-only viewer
+- `local-operator`: local model-weight/model-run/EOD operator
+- `local-risk`: risk manager
+- `local-approver`: approver
+- `local-admin`: admin, approver, risk manager, and operator
+- `system`: system actor
+
+The UI top bar includes a local operator selector. The selected operator is stored in browser local storage and sent as `X-Operator-Id`. This is for maker/checker testing and audit attribution only; it is not a login mechanism, not password-based authentication, and not connected to an external identity provider.
+
+Four-eyes approval is enabled by default for sensitive local actions. The requester creates a pending `ApprovalRequest`; a different approver/admin approves or rejects it with a reason; an approved request can be executed exactly once. A requester cannot approve their own request.
+
+Approval-gated actions currently include:
+
+- risk limit set activation
+- risk limit set retirement
+- kill-switch clear
+- waiver of blocking/critical exception cases
+- false-positive marking of blocking/critical exception cases
+- resolution of blocking/critical exception cases
+
+Use the Governance page to view the current operator, permissions, pending approvals, approval history, and approval decision timeline. The approval workflow writes `OperatorAuditEvents` for request creation, approval, rejection, cancellation, execution, permission denial, and approval-required outcomes. It cannot enable live trading, external connections, real LMAX execution, or credential capture.
 
 ## Risk Control Center
 
@@ -184,7 +209,7 @@ Risk decisions reference the risk limit set used and include check-level detail 
 
 Interpret risk observed/limit columns as the key check selected by the backend. Rejected/blocked decisions summarize the first failing check. Approved decisions summarize a numeric utilization check when possible and still include passed detail rows such as model staleness, market-data staleness, max trade notional, exposure limits, and trading-window status. Select a risk decision in the UI to inspect the full checks table. Older historical rows may have no details and will show a clear fallback instead of a misleading `None` message.
 
-Execution permission and report-import permission are separate. A known LMAX report alias may import historical EOD rows even if the instrument is disabled for trading. Trading-disabled instruments still block new orders. Current limitations: local operator identity is attribution only, no real authentication, no four-eyes approval, and risk configuration changes affect only local/FakeLmax processing.
+Execution permission and report-import permission are separate. A known LMAX report alias may import historical EOD rows even if the instrument is disabled for trading. Trading-disabled instruments still block new orders. Current limitations: local operator identity is not production authentication, no external identity provider is integrated, and risk configuration changes affect only local/FakeLmax processing.
 
 ## Reference Data Integrity
 

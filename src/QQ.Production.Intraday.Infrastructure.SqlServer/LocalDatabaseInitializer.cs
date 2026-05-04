@@ -106,6 +106,12 @@ public sealed class LocalDatabaseInitializer(IntradayDbContext dbContext, IClock
             dbContext.KillSwitchStates.Add(seeded.KillSwitch);
         }
 
+        foreach (var seedOperator in seeded.OperatorUsers)
+        {
+            var roles = seeded.OperatorUserRoles.Where(x => x.OperatorUserId == seedOperator.Id).ToList();
+            await UpsertOperatorAsync(seedOperator, roles, cancellationToken);
+        }
+
         if (!await dbContext.PositionLedgerEvents.AnyAsync(x => x.ReferenceId == "SOD", cancellationToken))
         {
             dbContext.PositionLedgerEvents.AddRange(seeded.PositionLedger);
@@ -289,6 +295,30 @@ public sealed class LocalDatabaseInitializer(IntradayDbContext dbContext, IClock
         {
             dbContext.InstrumentAliases.Add(candidate);
         }
+    }
+
+    private async Task UpsertOperatorAsync(OperatorUser candidate, IReadOnlyList<OperatorUserRole> roles, CancellationToken cancellationToken)
+    {
+        var existing = dbContext.OperatorUsers.Local.FirstOrDefault(x => x.OperatorId == candidate.OperatorId)
+            ?? await dbContext.OperatorUsers.FirstOrDefaultAsync(x => x.OperatorId == candidate.OperatorId, cancellationToken);
+        if (existing is null)
+        {
+            dbContext.OperatorUsers.Add(candidate);
+        }
+        else
+        {
+            dbContext.Entry(existing).CurrentValues.SetValues(candidate);
+        }
+
+        var roleUserId = existing?.Id ?? candidate.Id;
+        var existingRoles = dbContext.OperatorUserRoles.Local.Where(x => x.OperatorUserId == roleUserId).ToList();
+        existingRoles.AddRange(await dbContext.OperatorUserRoles.Where(x => x.OperatorUserId == roleUserId).ToListAsync(cancellationToken));
+        foreach (var existingRole in existingRoles.DistinctBy(x => x.Id))
+        {
+            dbContext.OperatorUserRoles.Remove(existingRole);
+        }
+
+        dbContext.OperatorUserRoles.AddRange(roles.Select(x => x with { OperatorUserId = roleUserId }));
     }
 
     private async Task<InstrumentAlias?> FindInstrumentAliasBySymbolAsync(string source, string externalSymbol, CancellationToken cancellationToken)

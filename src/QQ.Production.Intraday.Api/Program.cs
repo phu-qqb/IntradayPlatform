@@ -13,6 +13,20 @@ builder.Services.AddSingleton<IClock, SystemClock>();
 builder.Services.AddHttpContextAccessor();
 builder.Services.AddScoped<IOperatorContext, HttpOperatorContext>();
 builder.Services.AddScoped<IOperatorAuditService, OperatorAuditService>();
+builder.Services.AddScoped<IOperatorPermissionService, OperatorPermissionService>();
+builder.Services.AddScoped<IApprovalWorkflowService, ApprovalWorkflowService>();
+builder.Services.AddSingleton(new GovernanceOptions(
+    builder.Configuration.GetValue("Governance:FourEyesEnabled", true),
+    builder.Configuration.GetValue("Governance:RequireApprovalForRiskActivation", true),
+    builder.Configuration.GetValue("Governance:RequireApprovalForRiskRetirement", true),
+    builder.Configuration.GetValue("Governance:RequireApprovalForKillSwitchClear", true),
+    builder.Configuration.GetValue("Governance:RequireApprovalForWaiveBlockingException", true),
+    builder.Configuration.GetValue("Governance:RequireApprovalForFalsePositiveBlockingException", true),
+    builder.Configuration.GetValue("Governance:RequireApprovalForResolveCriticalException", true),
+    builder.Configuration.GetValue("Governance:ApprovalExpiryMinutes", 1440)));
+builder.Services.AddSingleton(new OperatorContextOptions(
+    builder.Configuration.GetValue("OperatorContext:DefaultOperatorId", "local-admin") ?? "local-admin",
+    builder.Configuration.GetValue("OperatorContext:AllowHeaderOperatorOverride", true)));
 builder.Services.AddSingleton(new FakeLmaxOptions());
 builder.Services.AddSingleton<IVenueExecutionGateway, FakeLmaxGateway>();
 builder.Services.AddSingleton<IMarketDataProvider, FakeMarketDataProvider>();
@@ -53,6 +67,7 @@ if (string.Equals(persistenceProvider, "SqlServerLocal", StringComparison.Ordina
     builder.Services.AddScoped<IModelWeightBatchRepository, SqlServerModelWeightBatchRepository>();
     builder.Services.AddScoped<ILmaxEodReportRepository, SqlServerLmaxEodReportRepository>();
     builder.Services.AddScoped<IOperatorAuditRepository, SqlServerOperatorAuditRepository>();
+    builder.Services.AddScoped<IOperatorGovernanceRepository, SqlServerOperatorGovernanceRepository>();
     builder.Services.AddScoped<IExceptionCaseRepository, SqlServerExceptionCaseRepository>();
     builder.Services.AddScoped<IBrokerPositionProvider, SqlServerFakeBrokerPositionProvider>();
     builder.Services.AddScoped<IBarBuilderService, BarBuilderService>();
@@ -69,6 +84,7 @@ else if (string.Equals(persistenceProvider, "InMemory", StringComparison.Ordinal
     builder.Services.AddSingleton<IModelWeightBatchRepository, InMemoryModelWeightBatchRepository>();
     builder.Services.AddSingleton<ILmaxEodReportRepository, InMemoryLmaxEodReportRepository>();
     builder.Services.AddSingleton<IOperatorAuditRepository, InMemoryOperatorAuditRepository>();
+    builder.Services.AddSingleton<IOperatorGovernanceRepository, InMemoryOperatorGovernanceRepository>();
     builder.Services.AddSingleton<IExceptionCaseRepository, InMemoryExceptionCaseRepository>();
     builder.Services.AddSingleton<IBrokerPositionProvider, FakeBrokerPositionProvider>();
     builder.Services.AddSingleton<IBarBuilderService, BarBuilderService>();
@@ -657,10 +673,24 @@ app.MapPost("/risk/limit-sets", async (CreateRiskLimitSetRequest request, IRiskC
     Results.Created("/risk/limit-sets", ToRiskLimitSetDto(await service.CreateDraftRiskLimitSetAsync(request.FundCode ?? "QQ_MASTER", request.ModelName ?? "IntradayFxModel", request.Name, request.Description, request.Reason, cancellationToken))));
 app.MapPost("/risk/limit-sets/{id:guid}/clone", async (Guid id, ReasonRequest request, IRiskControlService service, CancellationToken cancellationToken) =>
     Results.Ok(ToRiskLimitSetDto(await service.CloneRiskLimitSetAsync(id, request.Reason, cancellationToken))));
-app.MapPost("/risk/limit-sets/{id:guid}/activate", async (Guid id, ReasonRequest request, IRiskControlService service, CancellationToken cancellationToken) =>
-    Results.Ok(ToRiskLimitSetDto(await service.ActivateRiskLimitSetAsync(id, request.Reason, cancellationToken))));
-app.MapPost("/risk/limit-sets/{id:guid}/retire", async (Guid id, ReasonRequest request, IRiskControlService service, CancellationToken cancellationToken) =>
-    Results.Ok(ToRiskLimitSetDto(await service.RetireRiskLimitSetAsync(id, request.Reason, cancellationToken))));
+app.MapPost("/risk/limit-sets/{id:guid}/activate", async (Guid id, ReasonRequest request, IRiskControlService service, IApprovalWorkflowService approvals, GovernanceOptions governance, IOperatorContext operatorContext, CancellationToken cancellationToken) =>
+{
+    if (governance.FourEyesEnabled && governance.RequireApprovalForRiskActivation)
+    {
+        var approval = await approvals.CreateApprovalRequestAsync(new CreateApprovalRequestRequest(ApprovalRequestType.ActivateRiskLimitSet, "RiskLimitSet", id.ToString("D"), request.Reason, new { riskLimitSetId = id, action = "ActivateRiskLimitSet" }), cancellationToken);
+        return Results.Ok(ToGovernedActionResultDto(PendingResult(approval, operatorContext)));
+    }
+    return Results.Ok(ToRiskLimitSetDto(await service.ActivateRiskLimitSetAsync(id, request.Reason, cancellationToken)));
+});
+app.MapPost("/risk/limit-sets/{id:guid}/retire", async (Guid id, ReasonRequest request, IRiskControlService service, IApprovalWorkflowService approvals, GovernanceOptions governance, IOperatorContext operatorContext, CancellationToken cancellationToken) =>
+{
+    if (governance.FourEyesEnabled && governance.RequireApprovalForRiskRetirement)
+    {
+        var approval = await approvals.CreateApprovalRequestAsync(new CreateApprovalRequestRequest(ApprovalRequestType.RetireRiskLimitSet, "RiskLimitSet", id.ToString("D"), request.Reason, new { riskLimitSetId = id, action = "RetireRiskLimitSet" }), cancellationToken);
+        return Results.Ok(ToGovernedActionResultDto(PendingResult(approval, operatorContext)));
+    }
+    return Results.Ok(ToRiskLimitSetDto(await service.RetireRiskLimitSetAsync(id, request.Reason, cancellationToken)));
+});
 app.MapGet("/risk/limits", async (Guid riskLimitSetId, IIntradayRepository repository, CancellationToken cancellationToken) =>
 {
     var state = await repository.LoadStateAsync(cancellationToken);
@@ -721,12 +751,75 @@ app.MapGet("/admin/kill-switch", async (IIntradayRepository repository, Cancella
     var state = await repository.LoadStateAsync(cancellationToken);
     return Results.Ok(ToKillSwitchDto(state.KillSwitch));
 });
-app.MapPost("/admin/kill-switch/clear", async (IIntradayRepository repository, IOperatorAuditService audit, CancellationToken cancellationToken) =>
+app.MapPost("/admin/kill-switch/clear", async (KillSwitchRequest? request, IIntradayRepository repository, IOperatorAuditService audit, IApprovalWorkflowService approvals, GovernanceOptions governance, IOperatorContext operatorContext, CancellationToken cancellationToken) =>
 {
+    var reason = request?.Reason ?? "Clear local kill switch";
+    if (governance.FourEyesEnabled && governance.RequireApprovalForKillSwitchClear)
+    {
+        var approval = await approvals.CreateApprovalRequestAsync(new CreateApprovalRequestRequest(ApprovalRequestType.ClearKillSwitch, "KillSwitch", "global", reason, new { action = "ClearKillSwitch" }), cancellationToken);
+        return Results.Ok(ToGovernedActionResultDto(PendingResult(approval, operatorContext)));
+    }
     await repository.SetKillSwitchAsync(false, null, cancellationToken);
     await audit.RecordSucceededAsync(OperatorAuditEventType.KillSwitchCleared, "Api", "Kill switch cleared.", "KillSwitch", "global", cancellationToken: cancellationToken);
     return Results.Ok(new { active = false });
 });
+
+app.MapGet("/operators/current", async (IOperatorPermissionService permissions, CancellationToken cancellationToken) =>
+{
+    var current = await permissions.GetCurrentOperatorAsync(cancellationToken);
+    if (current is null) return Results.NotFound();
+    var roles = await permissions.GetRolesAsync(current.Id, cancellationToken);
+    var perms = await permissions.GetPermissionsAsync(current.Id, cancellationToken);
+    return Results.Ok(ToOperatorUserDto(current, roles, perms));
+});
+app.MapGet("/operators", async (IOperatorGovernanceRepository repository, IOperatorPermissionService permissions, CancellationToken cancellationToken) =>
+{
+    var users = await repository.GetOperatorsAsync(cancellationToken);
+    var rows = new List<OperatorUserDto>();
+    foreach (var user in users)
+    {
+        var roles = await permissions.GetRolesAsync(user.Id, cancellationToken);
+        var perms = await permissions.GetPermissionsAsync(user.Id, cancellationToken);
+        rows.Add(ToOperatorUserDto(user, roles, perms));
+    }
+    return Results.Ok(rows);
+});
+app.MapGet("/operators/{operatorId}", async (string operatorId, IOperatorGovernanceRepository repository, IOperatorPermissionService permissions, CancellationToken cancellationToken) =>
+{
+    var user = await repository.GetOperatorByIdAsync(operatorId, cancellationToken);
+    if (user is null) return Results.NotFound();
+    var roles = await permissions.GetRolesAsync(user.Id, cancellationToken);
+    var perms = await permissions.GetPermissionsAsync(user.Id, cancellationToken);
+    return Results.Ok(ToOperatorUserDto(user, roles, perms));
+});
+app.MapGet("/operators/{operatorId}/permissions", async (string operatorId, IOperatorGovernanceRepository repository, IOperatorPermissionService permissions, CancellationToken cancellationToken) =>
+{
+    var user = await repository.GetOperatorByIdAsync(operatorId, cancellationToken);
+    if (user is null) return Results.NotFound();
+    var perms = await permissions.GetPermissionsAsync(user.Id, cancellationToken);
+    return Results.Ok(perms.Select(x => x.ToString()).OrderBy(x => x));
+});
+
+app.MapGet("/approvals", async (string? status, string? type, string? requestedBy, string? entityType, string? entityId, int? limit, IApprovalWorkflowService approvals, CancellationToken cancellationToken) =>
+{
+    var rows = await approvals.GetApprovalRequestsAsync(new ApprovalRequestFilter(ClampLimit(limit), ParseEnum<ApprovalRequestStatus>(status), ParseEnum<ApprovalRequestType>(type), requestedBy, entityType, entityId), cancellationToken);
+    return Results.Ok(rows.Select(ToApprovalRequestDto));
+});
+app.MapGet("/approvals/{id:guid}", async (Guid id, IApprovalWorkflowService approvals, CancellationToken cancellationToken) =>
+{
+    var approval = await approvals.GetApprovalRequestAsync(new ApprovalRequestId(id), cancellationToken);
+    return approval is null ? Results.NotFound() : Results.Ok(ToApprovalRequestDto(approval));
+});
+app.MapPost("/approvals/{id:guid}/approve", async (Guid id, ReasonRequest request, IApprovalWorkflowService approvals, CancellationToken cancellationToken) =>
+    Results.Ok(ToApprovalRequestDto(await approvals.ApproveAsync(new ApprovalRequestId(id), request.Reason, cancellationToken))));
+app.MapPost("/approvals/{id:guid}/reject", async (Guid id, ReasonRequest request, IApprovalWorkflowService approvals, CancellationToken cancellationToken) =>
+    Results.Ok(ToApprovalRequestDto(await approvals.RejectAsync(new ApprovalRequestId(id), request.Reason, cancellationToken))));
+app.MapPost("/approvals/{id:guid}/cancel", async (Guid id, ReasonRequest request, IApprovalWorkflowService approvals, CancellationToken cancellationToken) =>
+    Results.Ok(ToApprovalRequestDto(await approvals.CancelAsync(new ApprovalRequestId(id), request.Reason, cancellationToken))));
+app.MapPost("/approvals/{id:guid}/execute", async (Guid id, IApprovalWorkflowService approvals, CancellationToken cancellationToken) =>
+    Results.Ok(ToGovernedActionResultDto(await approvals.ExecuteApprovedAsync(new ApprovalRequestId(id), cancellationToken))));
+app.MapGet("/approvals/{id:guid}/decisions", async (Guid id, IApprovalWorkflowService approvals, CancellationToken cancellationToken) =>
+    Results.Ok((await approvals.GetDecisionsAsync(new ApprovalRequestId(id), cancellationToken)).Select(ToApprovalDecisionDto)));
 
 app.MapGet("/audit/events", async (IOperatorAuditService audit, int? limit, string? severity, string? eventType, string? entityType, string? entityId, string? correlationId, DateTimeOffset? fromUtc, DateTimeOffset? toUtc, CancellationToken cancellationToken) =>
 {
@@ -823,14 +916,41 @@ app.MapPost("/exceptions/{id:guid}/assign", async (Guid id, ExceptionCaseAssignR
 app.MapPost("/exceptions/{id:guid}/investigate", async (Guid id, ExceptionCaseReasonRequest request, IExceptionCaseService service, CancellationToken cancellationToken) =>
     Results.Ok(ToExceptionCaseDto(await service.MarkInvestigatingAsync(new ExceptionCaseId(id), request.Reason, cancellationToken))));
 
-app.MapPost("/exceptions/{id:guid}/resolve", async (Guid id, ExceptionCaseReasonRequest request, IExceptionCaseService service, CancellationToken cancellationToken) =>
-    Results.Ok(ToExceptionCaseDto(await service.ResolveAsync(new ExceptionCaseId(id), request.Reason ?? string.Empty, cancellationToken))));
+app.MapPost("/exceptions/{id:guid}/resolve", async (Guid id, ExceptionCaseReasonRequest request, IExceptionCaseService service, IApprovalWorkflowService approvals, GovernanceOptions governance, IOperatorContext operatorContext, CancellationToken cancellationToken) =>
+{
+    var current = await service.GetCaseAsync(new ExceptionCaseId(id), cancellationToken);
+    if (current is null) return Results.NotFound();
+    if (governance.FourEyesEnabled && governance.RequireApprovalForResolveCriticalException && current.Severity is ExceptionCaseSeverity.Critical or ExceptionCaseSeverity.Blocking)
+    {
+        var approval = await approvals.CreateApprovalRequestAsync(new CreateApprovalRequestRequest(ApprovalRequestType.ResolveCriticalException, "ExceptionCase", id.ToString("D"), request.Reason ?? string.Empty, new { exceptionCaseId = id, action = "ResolveCriticalException", current.Severity }), cancellationToken);
+        return Results.Ok(ToGovernedActionResultDto(PendingResult(approval, operatorContext)));
+    }
+    return Results.Ok(ToExceptionCaseDto(await service.ResolveAsync(new ExceptionCaseId(id), request.Reason ?? string.Empty, cancellationToken)));
+});
 
-app.MapPost("/exceptions/{id:guid}/false-positive", async (Guid id, ExceptionCaseReasonRequest request, IExceptionCaseService service, CancellationToken cancellationToken) =>
-    Results.Ok(ToExceptionCaseDto(await service.MarkFalsePositiveAsync(new ExceptionCaseId(id), request.Reason ?? string.Empty, cancellationToken))));
+app.MapPost("/exceptions/{id:guid}/false-positive", async (Guid id, ExceptionCaseReasonRequest request, IExceptionCaseService service, IApprovalWorkflowService approvals, GovernanceOptions governance, IOperatorContext operatorContext, CancellationToken cancellationToken) =>
+{
+    var current = await service.GetCaseAsync(new ExceptionCaseId(id), cancellationToken);
+    if (current is null) return Results.NotFound();
+    if (governance.FourEyesEnabled && governance.RequireApprovalForFalsePositiveBlockingException && current.Severity is ExceptionCaseSeverity.Critical or ExceptionCaseSeverity.Blocking)
+    {
+        var approval = await approvals.CreateApprovalRequestAsync(new CreateApprovalRequestRequest(ApprovalRequestType.MarkExceptionFalsePositive, "ExceptionCase", id.ToString("D"), request.Reason ?? string.Empty, new { exceptionCaseId = id, action = "MarkExceptionFalsePositive", current.Severity }), cancellationToken);
+        return Results.Ok(ToGovernedActionResultDto(PendingResult(approval, operatorContext)));
+    }
+    return Results.Ok(ToExceptionCaseDto(await service.MarkFalsePositiveAsync(new ExceptionCaseId(id), request.Reason ?? string.Empty, cancellationToken)));
+});
 
-app.MapPost("/exceptions/{id:guid}/waive", async (Guid id, ExceptionCaseReasonRequest request, IExceptionCaseService service, CancellationToken cancellationToken) =>
-    Results.Ok(ToExceptionCaseDto(await service.WaiveAsync(new ExceptionCaseId(id), request.Reason ?? string.Empty, cancellationToken))));
+app.MapPost("/exceptions/{id:guid}/waive", async (Guid id, ExceptionCaseReasonRequest request, IExceptionCaseService service, IApprovalWorkflowService approvals, GovernanceOptions governance, IOperatorContext operatorContext, CancellationToken cancellationToken) =>
+{
+    var current = await service.GetCaseAsync(new ExceptionCaseId(id), cancellationToken);
+    if (current is null) return Results.NotFound();
+    if (governance.FourEyesEnabled && governance.RequireApprovalForWaiveBlockingException && current.Severity is ExceptionCaseSeverity.Critical or ExceptionCaseSeverity.Blocking)
+    {
+        var approval = await approvals.CreateApprovalRequestAsync(new CreateApprovalRequestRequest(ApprovalRequestType.WaiveException, "ExceptionCase", id.ToString("D"), request.Reason ?? string.Empty, new { exceptionCaseId = id, action = "WaiveException", current.Severity }), cancellationToken);
+        return Results.Ok(ToGovernedActionResultDto(PendingResult(approval, operatorContext)));
+    }
+    return Results.Ok(ToExceptionCaseDto(await service.WaiveAsync(new ExceptionCaseId(id), request.Reason ?? string.Empty, cancellationToken)));
+});
 
 app.MapPost("/exceptions/{id:guid}/reopen", async (Guid id, ExceptionCaseReasonRequest request, IExceptionCaseService service, CancellationToken cancellationToken) =>
     Results.Ok(ToExceptionCaseDto(await service.ReopenAsync(new ExceptionCaseId(id), request.Reason, cancellationToken))));
@@ -1246,6 +1366,45 @@ static OperatorAuditEventDto ToOperatorAuditEventDto(OperatorAuditEvent x)
         x.AfterJson,
         x.MetadataJson);
 
+static OperatorUserDto ToOperatorUserDto(OperatorUser user, IReadOnlySet<OperatorRole> roles, IReadOnlySet<OperatorPermission> permissions)
+    => new(user.Id.Value.ToString("D"), user.OperatorId, user.DisplayName, user.Email, user.IsEnabled, user.CreatedAtUtc, user.UpdatedAtUtc, roles.Select(x => x.ToString()).OrderBy(x => x).ToList(), permissions.Select(x => x.ToString()).OrderBy(x => x).ToList());
+
+static ApprovalRequestDto ToApprovalRequestDto(ApprovalRequest x)
+    => new(
+        x.Id.Value.ToString("D"),
+        x.Type.ToString(),
+        x.Status.ToString(),
+        x.RequestedByOperatorId,
+        x.RequestedByDisplayName,
+        x.RequestedAtUtc,
+        x.RequiredApproverRole.ToString(),
+        x.EntityType,
+        x.EntityId,
+        x.Reason,
+        x.PayloadJson,
+        x.BeforeJson,
+        x.AfterJson,
+        x.CorrelationId,
+        x.ExpiresAtUtc,
+        x.ApprovedAtUtc,
+        x.ApprovedByOperatorId,
+        x.RejectedAtUtc,
+        x.RejectedByOperatorId,
+        x.ExecutedAtUtc,
+        x.ExecutedByOperatorId,
+        x.ResultMessage,
+        x.CreatedAtUtc,
+        x.UpdatedAtUtc);
+
+static ApprovalDecisionDto ToApprovalDecisionDto(ApprovalDecision x)
+    => new(x.Id.Value.ToString("D"), x.ApprovalRequestId.Value.ToString("D"), x.Decision.ToString(), x.DecidedByOperatorId, x.DecidedByDisplayName, x.Reason, x.DecidedAtUtc, x.CorrelationId);
+
+static GovernedActionResult PendingResult(ApprovalRequest approval, IOperatorContext context)
+    => new(false, true, approval.Id, approval.Status.ToString(), "Approval request created. The action has not been executed.", approval.EntityId, null, context.CorrelationId);
+
+static GovernedActionResultDto ToGovernedActionResultDto(GovernedActionResult x)
+    => new(x.Executed, x.ApprovalRequired, x.ApprovalRequestId?.Value.ToString("D"), x.Status, x.Message, x.EntityId, x.ResultEntityId, x.CorrelationId);
+
 static ExceptionCaseDto ToExceptionCaseDto(ExceptionCase x)
     => new(
         x.Id.Value.ToString("D"),
@@ -1344,6 +1503,10 @@ public sealed record FillDto(string Id, string BrokerExecutionId, string ChildOr
 public sealed record MarketDataSnapshotDto(string Id, string InstrumentId, string? Symbol, string VenueId, string? VenueName, decimal Bid, decimal Ask, decimal Mid, decimal Spread, string Source, DateTimeOffset SourceTimestampUtc, DateTimeOffset ReceivedAtUtc, long? SequenceNumber, bool IsSynthetic, DateTimeOffset CreatedAtUtc);
 public sealed record MarketDataBarDto(string Id, string InstrumentId, string? Symbol, string VenueId, string? VenueName, string Timeframe, DateTimeOffset BarStartUtc, DateTimeOffset BarEndUtc, string Source, decimal BidOpen, decimal BidHigh, decimal BidLow, decimal BidClose, decimal AskOpen, decimal AskHigh, decimal AskLow, decimal AskClose, decimal MidOpen, decimal MidHigh, decimal MidLow, decimal MidClose, decimal SpreadOpen, decimal SpreadHigh, decimal SpreadLow, decimal SpreadClose, decimal SpreadAverage, int ObservationCount, DateTimeOffset? FirstSnapshotUtc, DateTimeOffset? LastSnapshotUtc, bool IsComplete, string QualityStatus, string? BuildRunId, string BuilderVersion, DateTimeOffset CreatedAtUtc);
 public sealed record OperatorAuditEventDto(string Id, DateTimeOffset OccurredAtUtc, string ActorType, string ActorId, string ActorDisplayName, string EventType, string Severity, string Result, string? EntityType, string? EntityId, string? CorrelationId, string? CausationId, string? RequestId, string Source, string Description, string? Reason, string? BeforeJson, string? AfterJson, string? MetadataJson);
+public sealed record OperatorUserDto(string Id, string OperatorId, string DisplayName, string? Email, bool IsEnabled, DateTimeOffset CreatedAtUtc, DateTimeOffset? UpdatedAtUtc, IReadOnlyList<string> Roles, IReadOnlyList<string> Permissions);
+public sealed record ApprovalRequestDto(string Id, string Type, string Status, string RequestedByOperatorId, string RequestedByDisplayName, DateTimeOffset RequestedAtUtc, string RequiredApproverRole, string EntityType, string EntityId, string Reason, string PayloadJson, string? BeforeJson, string? AfterJson, string? CorrelationId, DateTimeOffset? ExpiresAtUtc, DateTimeOffset? ApprovedAtUtc, string? ApprovedByOperatorId, DateTimeOffset? RejectedAtUtc, string? RejectedByOperatorId, DateTimeOffset? ExecutedAtUtc, string? ExecutedByOperatorId, string? ResultMessage, DateTimeOffset CreatedAtUtc, DateTimeOffset? UpdatedAtUtc);
+public sealed record ApprovalDecisionDto(string Id, string ApprovalRequestId, string Decision, string DecidedByOperatorId, string DecidedByDisplayName, string Reason, DateTimeOffset DecidedAtUtc, string? CorrelationId);
+public sealed record GovernedActionResultDto(bool Executed, bool ApprovalRequired, string? ApprovalRequestId, string Status, string Message, string EntityId, string? ResultEntityId, string? CorrelationId);
 public sealed record ExceptionCaseDto(string Id, DateTimeOffset CreatedAtUtc, DateTimeOffset UpdatedAtUtc, string Status, string Severity, string Type, string Source, string Title, string Description, string? EntityType, string? EntityId, string? InstrumentId, string? Symbol, string? CorrelationId, string? AssignedTo, DateTimeOffset? AcknowledgedAtUtc, string? AcknowledgedBy, DateTimeOffset? ResolvedAtUtc, string? ResolvedBy, string? ResolutionReason, string? WaiverReason, string? MetadataJson);
 public sealed record ExceptionCaseActionDto(string Id, string CaseId, string ActionType, string ActorId, string ActorDisplayName, DateTimeOffset OccurredAtUtc, string? FromStatus, string? ToStatus, string? Reason, string? Note, string? MetadataJson, string? CorrelationId);
 public sealed record ExceptionCaseNoteDto(string Id, string CaseId, DateTimeOffset CreatedAtUtc, string CreatedBy, string Note, string? CorrelationId);
@@ -1383,18 +1546,18 @@ public sealed record OrdersResponse(IReadOnlyList<ParentOrderDto> ParentOrders, 
 public sealed record ParentOrderDto(string Id, string TradeIntentId, string? InstrumentId, string ClientOrderId, string Side, decimal BaseQuantity, string Algo, string Status, DateTimeOffset CreatedAtUtc);
 public sealed record ChildOrderDto(string Id, string ParentOrderId, string VenueId, string? InstrumentId, string ClientOrderId, string? BrokerOrderId, string Side, string OrderType, string TimeInForce, decimal BaseQuantity, decimal VenueQuantity, string Status, DateTimeOffset CreatedAtUtc);
 
-public sealed class HttpOperatorContext(IHttpContextAccessor accessor) : IOperatorContext
+public sealed class HttpOperatorContext(IHttpContextAccessor accessor, OperatorContextOptions options) : IOperatorContext
 {
     public OperatorIdentity Current
     {
         get
         {
             var context = accessor.HttpContext;
-            var actorId = context?.Request.Headers["X-Operator-Id"].FirstOrDefault();
+            var actorId = options.AllowHeaderOperatorOverride ? context?.Request.Headers["X-Operator-Id"].FirstOrDefault() : null;
             var actorName = context?.Request.Headers["X-Operator-Name"].FirstOrDefault();
-            actorId = string.IsNullOrWhiteSpace(actorId) ? "local-dev" : actorId;
+            actorId = string.IsNullOrWhiteSpace(actorId) ? options.DefaultOperatorId : actorId;
             actorName = string.IsNullOrWhiteSpace(actorName)
-                ? Environment.UserName is { Length: > 0 } userName ? userName : "local-dev"
+                ? actorId
                 : actorName;
             return new OperatorIdentity(OperatorAuditActorType.Operator, actorId, actorName);
         }

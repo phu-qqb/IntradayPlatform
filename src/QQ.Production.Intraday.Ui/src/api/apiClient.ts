@@ -32,6 +32,10 @@ import type {
   ModelWeightValidationIssueDto,
   OrdersDto,
   OperatorAuditEventDto,
+  OperatorUserDto,
+  ApprovalRequestDto,
+  ApprovalDecisionDto,
+  GovernedActionResultDto,
   PositionDto,
   ProcessModelRunResult,
   ReconciliationBreakDto,
@@ -51,6 +55,15 @@ import type {
 
 const configuredBaseUrl = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:5050';
 export const API_BASE_URL = String(configuredBaseUrl).replace(/\/$/, '');
+const OPERATOR_STORAGE_KEY = 'qq.operatorId';
+
+export function getSelectedOperatorId(): string {
+  return window.localStorage.getItem(OPERATOR_STORAGE_KEY) || 'local-admin';
+}
+
+export function setSelectedOperatorId(operatorId: string): void {
+  window.localStorage.setItem(OPERATOR_STORAGE_KEY, operatorId);
+}
 
 export class ApiError extends Error {
   constructor(
@@ -74,9 +87,11 @@ function assertLocalUrl(url: string): void {
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   assertLocalUrl(API_BASE_URL);
+  const operatorId = getSelectedOperatorId();
   const response = await fetch(`${API_BASE_URL}${path}`, {
     headers: {
       'Content-Type': 'application/json',
+      'X-Operator-Id': operatorId,
       ...(init?.headers ?? {})
     },
     ...init
@@ -139,9 +154,9 @@ export const apiClient = {
   cloneRiskLimitSet: (id: string, reason: string) =>
     request<RiskLimitSetDto>(`/risk/limit-sets/${id}/clone`, { method: 'POST', body: JSON.stringify({ reason }) }),
   activateRiskLimitSet: (id: string, reason: string) =>
-    request<RiskLimitSetDto>(`/risk/limit-sets/${id}/activate`, { method: 'POST', body: JSON.stringify({ reason }) }),
+    request<RiskLimitSetDto | GovernedActionResultDto>(`/risk/limit-sets/${id}/activate`, { method: 'POST', body: JSON.stringify({ reason }) }),
   retireRiskLimitSet: (id: string, reason: string) =>
-    request<RiskLimitSetDto>(`/risk/limit-sets/${id}/retire`, { method: 'POST', body: JSON.stringify({ reason }) }),
+    request<RiskLimitSetDto | GovernedActionResultDto>(`/risk/limit-sets/${id}/retire`, { method: 'POST', body: JSON.stringify({ reason }) }),
   getRiskLimits: (riskLimitSetId: string) => request<RiskLimitDto[]>(`/risk/limits${query({ riskLimitSetId })}`),
   updateRiskLimit: (id: string, body: { value: number; unit?: string; isEnabled?: boolean; reason: string }) =>
     request<RiskLimitDto>(`/risk/limits/${id}`, { method: 'PUT', body: JSON.stringify(body) }),
@@ -170,7 +185,7 @@ export const apiClient = {
   buildBars: (body: BuildBarsRequest) => request<{ runId: string; barsCreated: number; barsUpdated: number; status: string; errorMessage?: string | null }>('/market-data/build-bars', { method: 'POST', body: JSON.stringify(body) }),
   getKillSwitch: () => request<KillSwitchDto>('/admin/kill-switch'),
   activateKillSwitch: (reason: string) => request<{ active: boolean; reason?: string | null }>('/admin/kill-switch', { method: 'POST', body: JSON.stringify({ reason }) }),
-  clearKillSwitch: () => request<{ active: boolean }>('/admin/kill-switch/clear', { method: 'POST' }),
+  clearKillSwitch: (reason = 'Clear local kill switch') => request<{ active: boolean } | GovernedActionResultDto>('/admin/kill-switch/clear', { method: 'POST', body: JSON.stringify({ reason }) }),
   getInstruments: () => request<InstrumentDto[]>('/instruments'),
   getVenues: () => request<VenueDto[]>('/venues')
   ,
@@ -188,9 +203,9 @@ export const apiClient = {
   acknowledgeExceptionCase: (id: string, reason?: string) => request<ExceptionCaseDto>(`/exceptions/${id}/acknowledge`, { method: 'POST', body: JSON.stringify({ reason }) }),
   assignExceptionCase: (id: string, assignedTo: string) => request<ExceptionCaseDto>(`/exceptions/${id}/assign`, { method: 'POST', body: JSON.stringify({ assignedTo }) }),
   investigateExceptionCase: (id: string, reason?: string) => request<ExceptionCaseDto>(`/exceptions/${id}/investigate`, { method: 'POST', body: JSON.stringify({ reason }) }),
-  resolveExceptionCase: (id: string, reason: string) => request<ExceptionCaseDto>(`/exceptions/${id}/resolve`, { method: 'POST', body: JSON.stringify({ reason }) }),
-  falsePositiveExceptionCase: (id: string, reason: string) => request<ExceptionCaseDto>(`/exceptions/${id}/false-positive`, { method: 'POST', body: JSON.stringify({ reason }) }),
-  waiveExceptionCase: (id: string, reason: string) => request<ExceptionCaseDto>(`/exceptions/${id}/waive`, { method: 'POST', body: JSON.stringify({ reason }) }),
+  resolveExceptionCase: (id: string, reason: string) => request<ExceptionCaseDto | GovernedActionResultDto>(`/exceptions/${id}/resolve`, { method: 'POST', body: JSON.stringify({ reason }) }),
+  falsePositiveExceptionCase: (id: string, reason: string) => request<ExceptionCaseDto | GovernedActionResultDto>(`/exceptions/${id}/false-positive`, { method: 'POST', body: JSON.stringify({ reason }) }),
+  waiveExceptionCase: (id: string, reason: string) => request<ExceptionCaseDto | GovernedActionResultDto>(`/exceptions/${id}/waive`, { method: 'POST', body: JSON.stringify({ reason }) }),
   reopenExceptionCase: (id: string, reason?: string) => request<ExceptionCaseDto>(`/exceptions/${id}/reopen`, { method: 'POST', body: JSON.stringify({ reason }) }),
   addExceptionCaseNote: (id: string, note: string) => request<ExceptionCaseNoteDto>(`/exceptions/${id}/notes`, { method: 'POST', body: JSON.stringify({ note }) }),
   getLmaxEodImportRuns: () => request<LmaxReportImportRunDto[]>('/lmax-eod/import-runs?limit=100'),
@@ -203,5 +218,16 @@ export const apiClient = {
   runEodReconciliation: (body: { reportDate: string; venueName?: string; brokerAccountCode?: string }) => request<{ runId: string; breakCount: number; blockingBreakCount: number; breaks: EodReconciliationBreakDto[] }>('/eod-reconciliation/run', { method: 'POST', body: JSON.stringify(body) }),
   getEodReconciliationRuns: (reportDate?: string) => request<EodReconciliationRunDto[]>(`/eod-reconciliation/runs${query({ limit: 100, reportDate })}`),
   getEodReconciliationBreaks: (reportDate?: string) => request<EodReconciliationBreakDto[]>(`/eod-reconciliation/breaks${query({ limit: 100, reportDate })}`),
-  getEodPnlSummary: (reportDate: string, venueName = 'LMAX', brokerAccountCode = 'LMAX_DEMO_LOCAL') => request<EodPnlSummaryDto>(`/eod-pnl/summary${query({ reportDate, venueName, brokerAccountCode })}`)
+  getEodPnlSummary: (reportDate: string, venueName = 'LMAX', brokerAccountCode = 'LMAX_DEMO_LOCAL') => request<EodPnlSummaryDto>(`/eod-pnl/summary${query({ reportDate, venueName, brokerAccountCode })}`),
+  getCurrentOperator: () => request<OperatorUserDto>('/operators/current'),
+  getOperators: () => request<OperatorUserDto[]>('/operators'),
+  getOperatorPermissions: (operatorId: string) => request<string[]>(`/operators/${encodeURIComponent(operatorId)}/permissions`),
+  getApprovals: (params: { limit?: number; status?: string; type?: string; requestedBy?: string; entityType?: string; entityId?: string } = {}) =>
+    request<ApprovalRequestDto[]>(`/approvals${query({ limit: 100, ...params })}`),
+  getApproval: (id: string) => request<ApprovalRequestDto>(`/approvals/${id}`),
+  getApprovalDecisions: (id: string) => request<ApprovalDecisionDto[]>(`/approvals/${id}/decisions`),
+  approveApproval: (id: string, reason: string) => request<ApprovalRequestDto>(`/approvals/${id}/approve`, { method: 'POST', body: JSON.stringify({ reason }) }),
+  rejectApproval: (id: string, reason: string) => request<ApprovalRequestDto>(`/approvals/${id}/reject`, { method: 'POST', body: JSON.stringify({ reason }) }),
+  cancelApproval: (id: string, reason: string) => request<ApprovalRequestDto>(`/approvals/${id}/cancel`, { method: 'POST', body: JSON.stringify({ reason }) }),
+  executeApproval: (id: string) => request<GovernedActionResultDto>(`/approvals/${id}/execute`, { method: 'POST' })
 };

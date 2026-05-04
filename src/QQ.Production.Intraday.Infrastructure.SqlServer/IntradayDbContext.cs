@@ -51,6 +51,10 @@ public sealed class IntradayDbContext(DbContextOptions<IntradayDbContext> option
     public DbSet<ExceptionCaseNote> ExceptionCaseNotes => Set<ExceptionCaseNote>();
     public DbSet<ExceptionCaseLink> ExceptionCaseLinks => Set<ExceptionCaseLink>();
     public DbSet<OperatorAuditEvent> OperatorAuditEvents => Set<OperatorAuditEvent>();
+    public DbSet<OperatorUser> OperatorUsers => Set<OperatorUser>();
+    public DbSet<OperatorUserRole> OperatorUserRoles => Set<OperatorUserRole>();
+    public DbSet<ApprovalRequest> ApprovalRequests => Set<ApprovalRequest>();
+    public DbSet<ApprovalDecision> ApprovalDecisions => Set<ApprovalDecision>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -101,6 +105,10 @@ public sealed class IntradayDbContext(DbContextOptions<IntradayDbContext> option
         modelBuilder.Entity<ExceptionCaseNote>().HasKey(x => x.Id);
         modelBuilder.Entity<ExceptionCaseLink>().HasKey(x => x.Id);
         modelBuilder.Entity<OperatorAuditEvent>().HasKey(x => x.Id);
+        modelBuilder.Entity<OperatorUser>().HasKey(x => x.Id);
+        modelBuilder.Entity<OperatorUserRole>().HasKey(x => x.Id);
+        modelBuilder.Entity<ApprovalRequest>().HasKey(x => x.Id);
+        modelBuilder.Entity<ApprovalDecision>().HasKey(x => x.Id);
 
         modelBuilder.Entity<ModelRun>().HasIndex(x => x.Id).IsUnique();
         modelBuilder.Entity<Fund>().HasIndex(x => x.Name).IsUnique().HasFilter("[IsEnabled] = 1");
@@ -165,6 +173,15 @@ public sealed class IntradayDbContext(DbContextOptions<IntradayDbContext> option
         modelBuilder.Entity<ExceptionCaseAction>().HasIndex(x => new { x.CaseId, x.OccurredAtUtc });
         modelBuilder.Entity<ExceptionCaseNote>().HasIndex(x => new { x.CaseId, x.CreatedAtUtc });
         modelBuilder.Entity<ExceptionCaseLink>().HasIndex(x => new { x.SourceEntityType, x.SourceEntityId }).IsUnique();
+        modelBuilder.Entity<OperatorUser>().HasIndex(x => x.OperatorId).IsUnique();
+        modelBuilder.Entity<OperatorUserRole>().HasIndex(x => new { x.OperatorUserId, x.Role }).IsUnique();
+        modelBuilder.Entity<ApprovalRequest>().HasIndex(x => x.Status);
+        modelBuilder.Entity<ApprovalRequest>().HasIndex(x => x.Type);
+        modelBuilder.Entity<ApprovalRequest>().HasIndex(x => x.RequestedByOperatorId);
+        modelBuilder.Entity<ApprovalRequest>().HasIndex(x => new { x.EntityType, x.EntityId });
+        modelBuilder.Entity<ApprovalRequest>().HasIndex(x => x.CorrelationId);
+        modelBuilder.Entity<ApprovalRequest>().HasIndex(x => x.CreatedAtUtc);
+        modelBuilder.Entity<ApprovalDecision>().HasIndex(x => new { x.ApprovalRequestId, x.DecidedAtUtc });
 
         modelBuilder.Entity<BrokerAccount>().HasOne<Fund>().WithMany().HasForeignKey(x => x.FundId).OnDelete(DeleteBehavior.Restrict);
         modelBuilder.Entity<NavSnapshot>().HasOne<Fund>().WithMany().HasForeignKey(x => x.FundId).OnDelete(DeleteBehavior.Restrict);
@@ -232,6 +249,8 @@ public sealed class IntradayDbContext(DbContextOptions<IntradayDbContext> option
         modelBuilder.Entity<ExceptionCaseAction>().HasOne<ExceptionCase>().WithMany().HasForeignKey(x => x.CaseId).OnDelete(DeleteBehavior.Restrict);
         modelBuilder.Entity<ExceptionCaseNote>().HasOne<ExceptionCase>().WithMany().HasForeignKey(x => x.CaseId).OnDelete(DeleteBehavior.Restrict);
         modelBuilder.Entity<ExceptionCaseLink>().HasOne<ExceptionCase>().WithMany().HasForeignKey(x => x.CaseId).OnDelete(DeleteBehavior.Restrict);
+        modelBuilder.Entity<OperatorUserRole>().HasOne<OperatorUser>().WithMany().HasForeignKey(x => x.OperatorUserId).OnDelete(DeleteBehavior.Restrict);
+        modelBuilder.Entity<ApprovalDecision>().HasOne<ApprovalRequest>().WithMany().HasForeignKey(x => x.ApprovalRequestId).OnDelete(DeleteBehavior.Restrict);
 
         modelBuilder.Entity<OperatorAuditEvent>().Property(x => x.ActorId).HasMaxLength(128);
         modelBuilder.Entity<OperatorAuditEvent>().Property(x => x.ActorDisplayName).HasMaxLength(256);
@@ -362,6 +381,12 @@ public sealed class IntradayDbContext(DbContextOptions<IntradayDbContext> option
         modelBuilder.Entity<ExceptionCaseNote>().Property(x => x.CaseId).HasConversion(x => x.Value, x => new ExceptionCaseId(x));
         modelBuilder.Entity<ExceptionCaseLink>().Property(x => x.CaseId).HasConversion(x => x.Value, x => new ExceptionCaseId(x));
         modelBuilder.Entity<OperatorAuditEvent>().Property(x => x.Id).HasConversion(x => x.Value, x => new OperatorAuditEventId(x));
+        modelBuilder.Entity<OperatorUser>().Property(x => x.Id).HasConversion(x => x.Value, x => new OperatorUserId(x));
+        modelBuilder.Entity<OperatorUserRole>().Property(x => x.Id).HasConversion(x => x.Value, x => new OperatorUserRoleId(x));
+        modelBuilder.Entity<OperatorUserRole>().Property(x => x.OperatorUserId).HasConversion(x => x.Value, x => new OperatorUserId(x));
+        modelBuilder.Entity<ApprovalRequest>().Property(x => x.Id).HasConversion(x => x.Value, x => new ApprovalRequestId(x));
+        modelBuilder.Entity<ApprovalDecision>().Property(x => x.Id).HasConversion(x => x.Value, x => new ApprovalDecisionId(x));
+        modelBuilder.Entity<ApprovalDecision>().Property(x => x.ApprovalRequestId).HasConversion(x => x.Value, x => new ApprovalRequestId(x));
     }
 }
 
@@ -524,6 +549,10 @@ public sealed class SqlServerIntradayRepository(IntradayDbContext dbContext) : I
         state.ExceptionCaseNotes.AddRange(await dbContext.ExceptionCaseNotes.AsNoTracking().ToListAsync(cancellationToken));
         state.ExceptionCaseLinks.AddRange(await dbContext.ExceptionCaseLinks.AsNoTracking().ToListAsync(cancellationToken));
         state.OperatorAuditEvents.AddRange(await dbContext.OperatorAuditEvents.AsNoTracking().ToListAsync(cancellationToken));
+        state.OperatorUsers.AddRange(await dbContext.OperatorUsers.AsNoTracking().ToListAsync(cancellationToken));
+        state.OperatorUserRoles.AddRange(await dbContext.OperatorUserRoles.AsNoTracking().ToListAsync(cancellationToken));
+        state.ApprovalRequests.AddRange(await dbContext.ApprovalRequests.AsNoTracking().ToListAsync(cancellationToken));
+        state.ApprovalDecisions.AddRange(await dbContext.ApprovalDecisions.AsNoTracking().ToListAsync(cancellationToken));
         state.KillSwitch = state.KillSwitchStates.OrderByDescending(x => x.UpdatedAtUtc).FirstOrDefault() ?? state.KillSwitch;
         return state;
     }

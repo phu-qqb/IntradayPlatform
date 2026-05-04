@@ -437,6 +437,10 @@ public sealed class PlatformState
     public List<ExceptionCaseNote> ExceptionCaseNotes { get; } = [];
     public List<ExceptionCaseLink> ExceptionCaseLinks { get; } = [];
     public List<OperatorAuditEvent> OperatorAuditEvents { get; } = [];
+    public List<OperatorUser> OperatorUsers { get; } = [];
+    public List<OperatorUserRole> OperatorUserRoles { get; } = [];
+    public List<ApprovalRequest> ApprovalRequests { get; } = [];
+    public List<ApprovalDecision> ApprovalDecisions { get; } = [];
     public KillSwitchState KillSwitch { get; set; } = new(Guid.NewGuid(), false, null, DateTimeOffset.UnixEpoch);
 }
 
@@ -2553,8 +2557,30 @@ public static class SeedData
         state.TradingWindows.Add(new TradingWindow(intradayTradingWindowId, fundId, "IntradayFxModel", "UTC", now.DayOfWeek, TimeOnly.MinValue, new TimeOnly(23, 59, 59), new TimeOnly(23, 59, 59), null));
         state.KillSwitch = new KillSwitchState(killSwitchId, false, null, now);
         state.KillSwitchStates.Add(state.KillSwitch);
+        SeedOperators(state, now);
         state.ModelRuns.Add(new ModelRun(runId, fundId, "Sample FX Intraday", now.AddMinutes(-1), now, now, 15, 1_000_000m, ModelRunStatus.Received, "sample", "sample.csv", false));
         state.TargetWeights.Add(new TargetWeight(runId, instrumentId, -0.10m, "EURUSD"));
         return state;
+    }
+
+    private static void SeedOperators(PlatformState state, DateTimeOffset now)
+    {
+        AddOperator(state, "00000000-0000-0000-0000-000000000101", "local-viewer", "Local Viewer", now, [OperatorRole.Viewer]);
+        AddOperator(state, "00000000-0000-0000-0000-000000000102", "local-operator", "Local Operator", now, [OperatorRole.Operator]);
+        AddOperator(state, "00000000-0000-0000-0000-000000000103", "local-risk", "Local Risk Manager", now, [OperatorRole.RiskManager]);
+        AddOperator(state, "00000000-0000-0000-0000-000000000104", "local-approver", "Local Approver", now, [OperatorRole.Approver]);
+        AddOperator(state, "00000000-0000-0000-0000-000000000105", "local-admin", "Local Admin", now, [OperatorRole.Admin, OperatorRole.Approver, OperatorRole.RiskManager, OperatorRole.Operator]);
+        AddOperator(state, "00000000-0000-0000-0000-000000000106", "system", "System", now, [OperatorRole.System]);
+    }
+
+    private static void AddOperator(PlatformState state, string id, string operatorId, string displayName, DateTimeOffset now, IReadOnlyList<OperatorRole> roles)
+    {
+        var userId = new OperatorUserId(Guid.Parse(id));
+        state.OperatorUsers.Add(new OperatorUser(userId, operatorId, displayName, null, true, now));
+        for (var i = 0; i < roles.Count; i++)
+        {
+            var roleId = new OperatorUserRoleId(Guid.Parse($"00000000-0000-0000-0000-{int.Parse(id[^3..]) * 10 + i:D12}"));
+            state.OperatorUserRoles.Add(new OperatorUserRole(roleId, userId, roles[i], now));
+        }
     }
 }
