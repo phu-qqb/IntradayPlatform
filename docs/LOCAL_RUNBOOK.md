@@ -110,13 +110,15 @@ The UI shell is organized for operator workflows:
 - EMS for execution state, local market data, fills, and future execution-quality views
 - Exceptions for acknowledging, assigning, investigating, resolving, waiving, and documenting operational breaks
 - Reconciliation and LMAX EOD for intraday breaks, EOD reports, wallet/PnL, and audit
-- Risk & Admin for kill switch and reference data
+- Risk Control Center for active risk profile, versioned risk limit sets, trading windows, instrument/venue controls, kill switch, and recent risk decisions
 - Audit Journal for append-only operator/system action history and correlation IDs
 - Connectivity Lab for read-only script guidance only
 
 The top status bar is always visible and must show `FakeLmaxGateway`, `FakeMarketDataProvider`, `liveTradingEnabled=false`, and `externalConnectionsEnabled=false` during normal local operation.
 
 The comfort/readability pass groups the UI into calmer operator sections: the safety bar separates Runtime, Safety, Data, and Reference state; the left navigation is grouped by Operations, Trading, Data, and Control; tables shorten technical IDs and keep full values in row details; the right drawer groups Summary, IDs, Timestamps, Details, and Raw JSON. These changes are UI-only and do not add live trading controls, credential forms, real LMAX controls, or any new backend execution path.
+
+Mutating and longer-running UI actions now provide visible feedback. Buttons show running labels such as `Creating...`, `Promoting...`, `Processing...`, `Reconciling...`, disable while pending, and expose `aria-busy`. A global operation toast shows the latest action, success/failure outcome, elapsed “still working” messaging after a short delay, and expandable API error details. This applies to model weights, model runs, market data, LMAX EOD, exceptions, risk lifecycle actions, and kill switch actions.
 
 If the browser shows CORS errors, confirm the API is running in `Development` and the UI is using `http://localhost:5173` or `http://127.0.0.1:5173`.
 
@@ -162,6 +164,27 @@ Invoke-RestMethod -Method Post -ContentType "application/json" -Body '{"reason":
 ```
 
 In the UI, open the Exceptions page to filter cases, select a case, view its action timeline and notes, and perform operator actions. Every action writes both case history and an audit event. Local operator headers remain attribution only; there is no real authentication or four-eyes approval yet.
+
+## Risk Control Center
+
+Open the Risk Control Center from the Control navigation group. It is local-only and cannot enable live trading, external connections, credentials, or a real LMAX gateway.
+
+The page shows:
+
+- active risk profile name/version/status and key staleness/exposure thresholds
+- risk limit set lifecycle rows: `Draft`, `Active`, `Retired`, `Archived`
+- clone, activate, and retire actions with required operator reasons
+- global risk limits, instrument risk limits, venue risk limits, and trading windows
+- instrument and venue control flags for trading, report import, and market data
+- kill switch state and recent risk decisions with observed-vs-limit detail
+
+Active risk profiles are read-only in the cockpit. To change safety-critical settings, clone the active set, make controlled draft changes through the API or UI support that exists for draft rows, then activate the draft with a reason. Activation retires the previous active set for the same fund/model and writes audit events. Retiring a set also requires a reason.
+
+Risk decisions reference the risk limit set used and include check-level detail rows. Normal risk outcomes such as stale data, trading-window closure, no-new-orders cutoff, kill switch active, or limit exceeded remain operational `Blocked`/`Rejected` results, not HTTP 500s.
+
+Interpret risk observed/limit columns as the key check selected by the backend. Rejected/blocked decisions summarize the first failing check. Approved decisions summarize a numeric utilization check when possible and still include passed detail rows such as model staleness, market-data staleness, max trade notional, exposure limits, and trading-window status. Select a risk decision in the UI to inspect the full checks table. Older historical rows may have no details and will show a clear fallback instead of a misleading `None` message.
+
+Execution permission and report-import permission are separate. A known LMAX report alias may import historical EOD rows even if the instrument is disabled for trading. Trading-disabled instruments still block new orders. Current limitations: local operator identity is attribution only, no real authentication, no four-eyes approval, and risk configuration changes affect only local/FakeLmax processing.
 
 ## Reference Data Integrity
 

@@ -5,7 +5,7 @@ export type Tone = 'ok' | 'info' | 'warning' | 'danger' | 'neutral';
 
 export function toneForStatus(status?: string | null): Tone {
   const normalized = (status ?? '').toLowerCase();
-  if (['approved', 'processed', 'promoted', 'imported', 'completed', 'filled', 'acked', 'ok', 'complete', 'resolved'].includes(normalized)) return 'ok';
+  if (['approved', 'processed', 'promoted', 'imported', 'completed', 'filled', 'acked', 'ok', 'complete', 'resolved', 'active'].includes(normalized)) return 'ok';
   if (['failed', 'rejected', 'riskrejected', 'critical', 'blocking', 'positionmismatch', 'brokerfillmissinginternally', 'internalfillmissinginbrokerreport', 'killswitchactive', 'referencedatainvalid'].includes(normalized)) return 'danger';
   if (['blocked', 'requiresmanualapproval', 'warning', 'sparsedata', 'incomplete', 'waived', 'acknowledged', 'investigating', 'open'].includes(normalized)) return 'warning';
   if (['noactionrequired', 'nodrift', 'alreadyprocessed', 'received', 'created', 'draft', 'ready', 'started', 'info', 'skipped'].includes(normalized)) return 'info';

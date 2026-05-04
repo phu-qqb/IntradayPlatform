@@ -20,6 +20,7 @@ builder.Services.AddSingleton(new BarBuilderOptions());
 builder.Services.AddScoped<ProcessModelRunService>();
 builder.Services.AddScoped<IReferenceDataIntegrityService, ReferenceDataIntegrityService>();
 builder.Services.AddScoped<IExceptionCaseService, ExceptionCaseService>();
+builder.Services.AddScoped<IRiskControlService, RiskControlService>();
 builder.Services.AddScoped<IModelWeightPromotionService, ModelWeightPromotionService>();
 builder.Services.AddScoped<IFakeModelWeightGenerator, FakeModelWeightGenerator>();
 builder.Services.AddSingleton(new LmaxEodReportOptions());
@@ -470,10 +471,39 @@ app.MapGet("/risk-decisions", async (IIntradayRepository repository, int? limit,
     var state = await repository.LoadStateAsync(cancellationToken);
     var intents = state.TradeIntents.ToDictionary(x => x.Id);
     var symbols = state.Instruments.ToDictionary(x => x.Id, x => x.Symbol);
+    var venues = state.Venues.ToDictionary(x => x.Id, x => x.Name);
+    var riskSets = state.RiskLimitSets.ToDictionary(x => x.Id);
+    var details = state.RiskDecisionDetails.GroupBy(x => x.RiskDecisionId).ToDictionary(x => x.Key, x => x.ToList());
     var query = state.RiskDecisions.AsEnumerable();
     if (!string.IsNullOrWhiteSpace(status)) query = query.Where(x => x.Status.ToString().Equals(status, StringComparison.OrdinalIgnoreCase));
     if (modelRunId is not null) query = query.Where(x => intents.TryGetValue(x.TradeIntentId, out var intent) && intent.ModelRunId.Value == modelRunId.Value);
-    return query.OrderByDescending(x => x.CreatedAtUtc).Take(ClampLimit(limit)).Select(x => ToRiskDecisionDto(x, intents, symbols));
+    return query.OrderByDescending(x => x.CreatedAtUtc).Take(ClampLimit(limit)).Select(x => ToRiskDecisionDto(x, intents, symbols, venues, riskSets, details.GetValueOrDefault(x.Id) ?? []));
+});
+app.MapGet("/risk/decisions", async (IIntradayRepository repository, int? limit, string? status, Guid? modelRunId, CancellationToken cancellationToken) =>
+{
+    var state = await repository.LoadStateAsync(cancellationToken);
+    var intents = state.TradeIntents.ToDictionary(x => x.Id);
+    var symbols = state.Instruments.ToDictionary(x => x.Id, x => x.Symbol);
+    var venues = state.Venues.ToDictionary(x => x.Id, x => x.Name);
+    var riskSets = state.RiskLimitSets.ToDictionary(x => x.Id);
+    var details = state.RiskDecisionDetails.GroupBy(x => x.RiskDecisionId).ToDictionary(x => x.Key, x => x.ToList());
+    var query = state.RiskDecisions.AsEnumerable();
+    if (!string.IsNullOrWhiteSpace(status)) query = query.Where(x => x.Status.ToString().Equals(status, StringComparison.OrdinalIgnoreCase));
+    if (modelRunId is not null) query = query.Where(x => intents.TryGetValue(x.TradeIntentId, out var intent) && intent.ModelRunId.Value == modelRunId.Value);
+    return query.OrderByDescending(x => x.CreatedAtUtc).Take(ClampLimit(limit)).Select(x => ToRiskDecisionDto(x, intents, symbols, venues, riskSets, details.GetValueOrDefault(x.Id) ?? []));
+});
+app.MapGet("/risk/decisions/{id:guid}", async (Guid id, IIntradayRepository repository, CancellationToken cancellationToken) =>
+{
+    var state = await repository.LoadStateAsync(cancellationToken);
+    var decision = state.RiskDecisions.FirstOrDefault(x => x.Id == id);
+    if (decision is null) return Results.NotFound();
+    return Results.Ok(ToRiskDecisionDto(
+        decision,
+        state.TradeIntents.ToDictionary(x => x.Id),
+        state.Instruments.ToDictionary(x => x.Id, x => x.Symbol),
+        state.Venues.ToDictionary(x => x.Id, x => x.Name),
+        state.RiskLimitSets.ToDictionary(x => x.Id),
+        state.RiskDecisionDetails.Where(x => x.RiskDecisionId == decision.Id).ToList()));
 });
 app.MapGet("/orders", async (IIntradayRepository repository, CancellationToken cancellationToken) =>
 {
@@ -611,6 +641,75 @@ app.MapPost("/market-data/build-bars", async (BuildBarsRequest request, IIntrada
     var venue = state.Venues.Single(x => x.Name == (request.VenueName ?? "LMAX"));
     return Results.Ok(await builderService.BuildBarsAsync(venue.Id, request.Timeframe, request.StartUtc, request.EndUtc, cancellationToken));
 });
+app.MapGet("/risk/limit-sets", async (IRiskControlService service, CancellationToken cancellationToken) =>
+    (await service.GetRiskLimitSetsAsync(cancellationToken)).Select(ToRiskLimitSetDto));
+app.MapGet("/risk/limit-sets/{id:guid}", async (Guid id, IRiskControlService service, CancellationToken cancellationToken) =>
+{
+    var set = await service.GetRiskLimitSetAsync(id, cancellationToken);
+    return set is null ? Results.NotFound() : Results.Ok(ToRiskLimitSetDto(set));
+});
+app.MapGet("/risk/limit-sets/active", async (string? fundCode, string? modelName, IRiskControlService service, CancellationToken cancellationToken) =>
+{
+    var set = await service.GetActiveRiskLimitSetAsync(string.IsNullOrWhiteSpace(fundCode) ? "QQ_MASTER" : fundCode, string.IsNullOrWhiteSpace(modelName) ? "IntradayFxModel" : modelName, cancellationToken);
+    return set is null ? Results.NotFound() : Results.Ok(ToRiskLimitSetDto(set));
+});
+app.MapPost("/risk/limit-sets", async (CreateRiskLimitSetRequest request, IRiskControlService service, CancellationToken cancellationToken) =>
+    Results.Created("/risk/limit-sets", ToRiskLimitSetDto(await service.CreateDraftRiskLimitSetAsync(request.FundCode ?? "QQ_MASTER", request.ModelName ?? "IntradayFxModel", request.Name, request.Description, request.Reason, cancellationToken))));
+app.MapPost("/risk/limit-sets/{id:guid}/clone", async (Guid id, ReasonRequest request, IRiskControlService service, CancellationToken cancellationToken) =>
+    Results.Ok(ToRiskLimitSetDto(await service.CloneRiskLimitSetAsync(id, request.Reason, cancellationToken))));
+app.MapPost("/risk/limit-sets/{id:guid}/activate", async (Guid id, ReasonRequest request, IRiskControlService service, CancellationToken cancellationToken) =>
+    Results.Ok(ToRiskLimitSetDto(await service.ActivateRiskLimitSetAsync(id, request.Reason, cancellationToken))));
+app.MapPost("/risk/limit-sets/{id:guid}/retire", async (Guid id, ReasonRequest request, IRiskControlService service, CancellationToken cancellationToken) =>
+    Results.Ok(ToRiskLimitSetDto(await service.RetireRiskLimitSetAsync(id, request.Reason, cancellationToken))));
+app.MapGet("/risk/limits", async (Guid riskLimitSetId, IIntradayRepository repository, CancellationToken cancellationToken) =>
+{
+    var state = await repository.LoadStateAsync(cancellationToken);
+    return state.RiskLimits.Where(x => x.RiskLimitSetId == riskLimitSetId).OrderBy(x => x.Name).Select(ToRiskLimitDto);
+});
+app.MapPut("/risk/limits/{id:guid}", async (Guid id, UpdateRiskLimitRequest request, IRiskControlService service, CancellationToken cancellationToken) =>
+    Results.Ok(ToRiskLimitDto(await service.UpdateRiskLimitAsync(id, request.Value, request.Unit, request.Reason, cancellationToken))));
+app.MapGet("/risk/instrument-limits", async (Guid riskLimitSetId, IIntradayRepository repository, CancellationToken cancellationToken) =>
+{
+    var state = await repository.LoadStateAsync(cancellationToken);
+    var symbols = state.Instruments.ToDictionary(x => x.Id, x => x.Symbol);
+    return state.InstrumentRiskLimits.Where(x => x.RiskLimitSetId == riskLimitSetId).OrderBy(x => symbols.GetValueOrDefault(x.InstrumentId)).Select(x => ToInstrumentRiskLimitDto(x, symbols));
+});
+app.MapPut("/risk/instrument-limits/{id:guid}", async (Guid id, UpdateInstrumentRiskLimitRequest request, IRiskControlService service, CancellationToken cancellationToken) =>
+{
+    var state = await service.UpdateInstrumentRiskLimitAsync(id, request.MaxTradeNotionalUsd, request.MaxExposureUsd, request.MinTradeQuantity, request.MaxOrdersPerDay, request.IsTradingEnabled, request.Reason, cancellationToken);
+    return Results.Ok(ToInstrumentRiskLimitDto(state, new Dictionary<InstrumentId, string>()));
+});
+app.MapGet("/risk/venue-limits", async (Guid riskLimitSetId, IIntradayRepository repository, CancellationToken cancellationToken) =>
+{
+    var state = await repository.LoadStateAsync(cancellationToken);
+    var venues = state.Venues.ToDictionary(x => x.Id, x => x.Name);
+    return state.VenueRiskLimits.Where(x => x.RiskLimitSetId == riskLimitSetId).OrderBy(x => venues.GetValueOrDefault(x.VenueId)).Select(x => ToVenueRiskLimitDto(x, venues));
+});
+app.MapPut("/risk/venue-limits/{id:guid}", async (Guid id, UpdateVenueRiskLimitRequest request, IRiskControlService service, CancellationToken cancellationToken) =>
+    Results.Ok(ToVenueRiskLimitDto(await service.UpdateVenueRiskLimitAsync(id, request.MaxTradeNotionalUsd, request.MaxDailyTurnoverUsd, request.MaxOrdersPerMinute, request.IsVenueEnabled, request.Reason, cancellationToken), new Dictionary<VenueId, string>())));
+app.MapGet("/risk/trading-windows", async (IIntradayRepository repository, string? modelName, CancellationToken cancellationToken) =>
+{
+    var state = await repository.LoadStateAsync(cancellationToken);
+    var query = state.TradingWindows.AsEnumerable();
+    if (!string.IsNullOrWhiteSpace(modelName)) query = query.Where(x => x.ModelName.Equals(modelName, StringComparison.OrdinalIgnoreCase));
+    return query.OrderBy(x => x.ModelName).ThenBy(x => x.DayOfWeek).Select(ToTradingWindowDto);
+});
+app.MapPut("/risk/trading-windows/{id:guid}", async (Guid id, UpdateTradingWindowRequest request, IRiskControlService service, CancellationToken cancellationToken) =>
+    Results.Ok(ToTradingWindowDto(await service.UpdateTradingWindowAsync(id, request.OpensAtUtc, request.ClosesAtUtc, request.NoNewOrdersAfterUtc, request.FlattenAtUtc, request.TradingEnabled, request.Reason, cancellationToken))));
+app.MapGet("/risk/instruments", async (IIntradayRepository repository, CancellationToken cancellationToken) =>
+{
+    var state = await repository.LoadStateAsync(cancellationToken);
+    return state.Instruments.OrderBy(x => x.Symbol).Select(x => ToRiskInstrumentDto(x, state.InstrumentAliases.Where(a => a.InstrumentId == x.Id).ToList(), state.VenueInstrumentMappings.Where(m => m.InstrumentId == x.Id).ToList()));
+});
+app.MapPut("/risk/instruments/{id:guid}/controls", async (Guid id, UpdateInstrumentControlsRequest request, IRiskControlService service, CancellationToken cancellationToken) =>
+    Results.Ok(ToInstrumentDto(await service.UpdateInstrumentControlsAsync(new InstrumentId(id), request.IsTradingEnabled, request.IsReportImportEnabled, request.IsMarketDataEnabled, request.Reason, cancellationToken))));
+app.MapGet("/risk/venues", async (IIntradayRepository repository, CancellationToken cancellationToken) =>
+{
+    var state = await repository.LoadStateAsync(cancellationToken);
+    return state.Venues.OrderBy(x => x.Name).Select(ToRiskVenueDto);
+});
+app.MapPut("/risk/venues/{id:guid}/controls", async (Guid id, UpdateVenueControlsRequest request, IRiskControlService service, CancellationToken cancellationToken) =>
+    Results.Ok(ToVenueDto(await service.UpdateVenueControlsAsync(new VenueId(id), request.IsTradingEnabled, request.IsReportImportEnabled, request.IsMarketDataEnabled, request.Reason, cancellationToken))));
 app.MapPost("/admin/kill-switch", async (KillSwitchRequest request, IIntradayRepository repository, IOperatorAuditService audit, CancellationToken cancellationToken) =>
 {
     await repository.SetKillSwitchAsync(true, request.Reason, cancellationToken);
@@ -974,10 +1073,10 @@ static CreateFakeModelWeightBatchRequest ToApplicationRequest(CreateFakeModelWei
             : [new CreateFakeModelWeightRowRequest("EURUSD", "EURUSD", -0.10m)]);
 
 static InstrumentDto ToInstrumentDto(Instrument x)
-    => new(x.Id.Value.ToString("D"), x.Symbol, x.AssetClass.ToString(), x.BaseCurrency.ToString(), x.QuoteCurrency.ToString(), x.PricePrecision, x.QuantityPrecision, x.IsEnabled);
+    => new(x.Id.Value.ToString("D"), x.Symbol, x.AssetClass.ToString(), x.BaseCurrency.ToString(), x.QuoteCurrency.ToString(), x.PricePrecision, x.QuantityPrecision, x.IsEnabled, x.IsTradingEnabled, x.IsReportImportEnabled, x.IsMarketDataEnabled);
 
 static VenueDto ToVenueDto(Venue x)
-    => new(x.Id.Value.ToString("D"), x.Name, x.VenueType.ToString(), x.IsEnabled);
+    => new(x.Id.Value.ToString("D"), x.Name, x.VenueType.ToString(), x.IsEnabled, x.IsTradingEnabled, x.IsReportImportEnabled, x.IsMarketDataEnabled);
 
 static KillSwitchDto ToKillSwitchDto(KillSwitchState x)
     => new(x.Id.ToString("D"), x.IsActive, x.Reason, x.UpdatedAtUtc);
@@ -1003,20 +1102,84 @@ static ReconciliationBreakDto ToReconciliationBreakDto(ReconciliationBreak x, IR
 static TradeIntentDto ToTradeIntentDto(TradeIntent x, IReadOnlyDictionary<InstrumentId, string> symbols)
     => new(x.Id.Value.ToString("D"), x.ModelRunId.Value.ToString("D"), x.FundId.Value.ToString("D"), x.InstrumentId.Value.ToString("D"), symbols.GetValueOrDefault(x.InstrumentId), x.Side.ToString(), x.RequestedBaseQuantity, x.RequestedVenueQuantity, x.Reason, x.Status.ToString(), x.CreatedAtUtc);
 
-static RiskDecisionDto ToRiskDecisionDto(RiskDecision x, IReadOnlyDictionary<TradeIntentId, TradeIntent> intents, IReadOnlyDictionary<InstrumentId, string> symbols)
+static RiskDecisionDto ToRiskDecisionDto(
+    RiskDecision x,
+    IReadOnlyDictionary<TradeIntentId, TradeIntent> intents,
+    IReadOnlyDictionary<InstrumentId, string> symbols,
+    IReadOnlyDictionary<VenueId, string> venues,
+    IReadOnlyDictionary<Guid, RiskLimitSet> riskSets,
+    IReadOnlyList<RiskDecisionDetail> details)
 {
     intents.TryGetValue(x.TradeIntentId, out var intent);
+    var instrumentId = x.InstrumentId ?? intent?.InstrumentId;
+    var summary = SelectRiskDecisionSummary(x, details);
+    var message = string.Equals(x.Explanation, RiskRejectReason.None.ToString(), StringComparison.OrdinalIgnoreCase)
+        ? "All configured risk checks passed."
+        : x.Explanation;
+    RiskLimitSet? riskSet = null;
+    if (x.RiskLimitSetId is Guid riskLimitSetId)
+    {
+        riskSets.TryGetValue(riskLimitSetId, out riskSet);
+    }
     return new RiskDecisionDto(
         x.Id.ToString("D"),
         x.TradeIntentId.Value.ToString("D"),
-        intent?.ModelRunId.Value.ToString("D"),
-        intent?.InstrumentId.Value.ToString("D"),
-        intent is null ? null : symbols.GetValueOrDefault(intent.InstrumentId),
+        x.ModelRunId?.Value.ToString("D") ?? intent?.ModelRunId.Value.ToString("D"),
+        instrumentId?.Value.ToString("D"),
+        instrumentId is null ? null : symbols.GetValueOrDefault(instrumentId.Value),
+        x.VenueId?.Value.ToString("D"),
+        x.VenueId is null ? null : venues.GetValueOrDefault(x.VenueId.Value),
+        x.RiskLimitSetId?.ToString("D"),
+        riskSet?.Name,
+        riskSet?.Version,
         x.Status.ToString(),
-        x.RejectReason.ToString(),
-        x.Explanation,
-        x.CreatedAtUtc);
+        x.RejectReason == RiskRejectReason.None ? null : x.RejectReason.ToString(),
+        message,
+        x.CreatedAtUtc,
+        summary?.ObservedValue,
+        summary?.LimitValue,
+        summary?.Unit,
+        summary?.CheckName,
+        details.OrderBy(d => d.CreatedAtUtc).Select(ToRiskDecisionDetailDto).ToList());
 }
+
+static RiskDecisionDetail? SelectRiskDecisionSummary(RiskDecision decision, IReadOnlyList<RiskDecisionDetail> details)
+{
+    var failed = details.FirstOrDefault(x => x.Status is RiskDecisionCheckStatus.Failed or RiskDecisionCheckStatus.Blocked);
+    if (failed is not null) return failed;
+
+    var numeric = details
+        .Where(x => x.ObservedValue is not null && x.LimitValue is not null && x.LimitValue != 0)
+        .OrderByDescending(x => Math.Abs(x.ObservedValue!.Value / x.LimitValue!.Value))
+        .FirstOrDefault();
+    if (numeric is not null) return numeric;
+
+    return details.FirstOrDefault();
+}
+
+static RiskDecisionDetailDto ToRiskDecisionDetailDto(RiskDecisionDetail x)
+    => new(x.Id.ToString("D"), x.RiskDecisionId.ToString("D"), x.CheckName, x.Status.ToString(), x.RejectReason?.ToString(), x.ObservedValue, x.LimitValue, x.Unit, x.Message, x.CreatedAtUtc);
+
+static RiskLimitSetDto ToRiskLimitSetDto(RiskLimitSet x)
+    => new(x.Id.ToString("D"), x.FundId.Value.ToString("D"), x.ModelName, x.Name, x.Version, x.Status.ToString(), x.IsActive, x.EffectiveFromUtc, x.EffectiveToUtc, x.CreatedAtUtc, x.CreatedBy, x.ActivatedAtUtc, x.ActivatedBy, x.RetiredAtUtc, x.RetiredBy, x.Description, x.GlobalTradingEnabled, x.MaxGrossExposureUsd, (int)x.MaxModelRunAge.TotalSeconds, (int)x.MaxMarketDataAge.TotalSeconds, x.PositionToleranceBaseQuantity, x.MinDriftVenueQuantity);
+
+static RiskLimitDto ToRiskLimitDto(RiskLimit x)
+    => new(x.Id.ToString("D"), x.RiskLimitSetId.ToString("D"), x.Name, x.Value, x.Unit, x.Scope, x.IsEnabled);
+
+static InstrumentRiskLimitDto ToInstrumentRiskLimitDto(InstrumentRiskLimit x, IReadOnlyDictionary<InstrumentId, string> symbols)
+    => new(x.Id.ToString("D"), x.RiskLimitSetId.ToString("D"), x.InstrumentId.Value.ToString("D"), symbols.GetValueOrDefault(x.InstrumentId), x.MaxTradeNotionalUsd, x.MaxExposureUsd, x.MinTradeQuantity, x.MaxOrdersPerDay, x.IsEnabled, x.IsTradingEnabled);
+
+static VenueRiskLimitDto ToVenueRiskLimitDto(VenueRiskLimit x, IReadOnlyDictionary<VenueId, string> venues)
+    => new(x.Id.ToString("D"), x.RiskLimitSetId.ToString("D"), x.VenueId.Value.ToString("D"), venues.GetValueOrDefault(x.VenueId), x.MaxTradeNotionalUsd, x.MaxDailyTurnoverUsd, x.MaxOrdersPerMinute, x.IsEnabled, x.IsVenueEnabled);
+
+static TradingWindowDto ToTradingWindowDto(TradingWindow x)
+    => new(x.Id.ToString("D"), x.FundId.Value.ToString("D"), x.ModelName, x.DayOfWeek.ToString(), x.TimeZoneId, x.OpensAtUtc.ToString("HH:mm:ss"), x.ClosesAtUtc.ToString("HH:mm:ss"), x.NoNewOrdersAfterUtc.ToString("HH:mm:ss"), x.FlattenAtUtc?.ToString("HH:mm:ss"), x.IsEnabled, x.TradingEnabled, x.ScheduleName, x.Version, x.CreatedAtUtc, x.UpdatedAtUtc);
+
+static RiskInstrumentDto ToRiskInstrumentDto(Instrument x, IReadOnlyList<InstrumentAlias> aliases, IReadOnlyList<VenueInstrumentMapping> mappings)
+    => new(ToInstrumentDto(x), aliases.Select(a => new InstrumentAliasDto(a.Id.Value.ToString("D"), a.Source, a.ExternalSymbol, a.ExternalInstrumentId, a.IsEnabled)).ToList(), mappings.Select(m => new VenueInstrumentMappingDto(m.Id.Value.ToString("D"), m.VenueId.Value.ToString("D"), m.VenueSymbol, m.VenueInstrumentCode, m.IsEnabled)).ToList());
+
+static RiskVenueDto ToRiskVenueDto(Venue x)
+    => new(ToVenueDto(x));
 
 static FillDto ToFillDto(Fill x, IReadOnlyDictionary<InstrumentId, string> symbols, IReadOnlyDictionary<VenueId, string> venues)
     => new(x.Id.Value.ToString("D"), x.BrokerExecutionId, x.ChildOrderId.Value.ToString("D"), x.InstrumentId.Value.ToString("D"), symbols.GetValueOrDefault(x.InstrumentId), x.VenueId.Value.ToString("D"), venues.GetValueOrDefault(x.VenueId), x.Side.ToString(), x.BaseQuantity, x.VenueQuantity, x.Price, x.TradeDateUtc, x.ReceivedAtUtc);
@@ -1151,7 +1314,32 @@ public sealed record DriftSnapshotDto(string ModelRunId, string InstrumentId, st
 public sealed record PositionDto(string InstrumentId, string? Symbol, decimal BaseQuantity, DateTimeOffset? AsOfUtc);
 public sealed record ReconciliationBreakDto(string Id, string ReconciliationRunId, string? ModelRunId, string? Phase, string Type, string Severity, string Status, string? InstrumentId, string? Symbol, string Description, DateTimeOffset? CreatedAtUtc);
 public sealed record TradeIntentDto(string Id, string ModelRunId, string FundId, string InstrumentId, string? Symbol, string Side, decimal RequestedBaseQuantity, decimal RequestedVenueQuantity, string Reason, string Status, DateTimeOffset CreatedAtUtc);
-public sealed record RiskDecisionDto(string Id, string TradeIntentId, string? ModelRunId, string? InstrumentId, string? Symbol, string Status, string RejectReason, string Explanation, DateTimeOffset CreatedAtUtc);
+public sealed record RiskDecisionDto(
+    string Id,
+    string TradeIntentId,
+    string? ModelRunId,
+    string? InstrumentId,
+    string? Symbol,
+    string? VenueId,
+    string? VenueName,
+    string? RiskLimitSetId,
+    string? RiskLimitSetName,
+    int? RiskLimitSetVersion,
+    string Status,
+    string? RejectReason,
+    string Message,
+    DateTimeOffset CreatedAtUtc,
+    decimal? SummaryObservedValue,
+    decimal? SummaryLimitValue,
+    string? SummaryUnit,
+    string? SummaryCheckName,
+    IReadOnlyList<RiskDecisionDetailDto> Details);
+public sealed record RiskDecisionDetailDto(string Id, string RiskDecisionId, string CheckName, string Status, string? RejectReason, decimal? ObservedValue, decimal? LimitValue, string? Unit, string Message, DateTimeOffset CreatedAtUtc);
+public sealed record RiskLimitSetDto(string Id, string FundId, string? ModelName, string Name, int Version, string Status, bool IsActive, DateTimeOffset? EffectiveFromUtc, DateTimeOffset? EffectiveToUtc, DateTimeOffset? CreatedAtUtc, string? CreatedBy, DateTimeOffset? ActivatedAtUtc, string? ActivatedBy, DateTimeOffset? RetiredAtUtc, string? RetiredBy, string? Description, bool GlobalTradingEnabled, decimal MaxGrossExposureUsd, int ModelStalenessSeconds, int MarketDataStalenessSeconds, decimal PositionToleranceBaseQuantity, decimal MinDriftVenueQuantity);
+public sealed record RiskLimitDto(string Id, string RiskLimitSetId, string Name, decimal Value, string Unit, string Scope, bool IsEnabled);
+public sealed record InstrumentRiskLimitDto(string Id, string RiskLimitSetId, string InstrumentId, string? Symbol, decimal MaxTradeNotionalUsd, decimal MaxExposureUsd, decimal MinTradeQuantity, int MaxOrdersPerDay, bool IsEnabled, bool IsTradingEnabled);
+public sealed record VenueRiskLimitDto(string Id, string RiskLimitSetId, string VenueId, string? VenueName, decimal MaxTradeNotionalUsd, decimal MaxDailyTurnoverUsd, int MaxOrdersPerMinute, bool IsEnabled, bool IsVenueEnabled);
+public sealed record TradingWindowDto(string Id, string FundId, string ModelName, string DayOfWeek, string TimeZoneId, string OpensAtUtc, string ClosesAtUtc, string NoNewOrdersAfterUtc, string? FlattenAtUtc, bool IsEnabled, bool TradingEnabled, string ScheduleName, int Version, DateTimeOffset? CreatedAtUtc, DateTimeOffset? UpdatedAtUtc);
 public sealed record FillDto(string Id, string BrokerExecutionId, string ChildOrderId, string InstrumentId, string? Symbol, string VenueId, string? VenueName, string Side, decimal BaseQuantity, decimal VenueQuantity, decimal Price, DateTimeOffset TradeDateUtc, DateTimeOffset ReceivedAtUtc);
 public sealed record MarketDataSnapshotDto(string Id, string InstrumentId, string? Symbol, string VenueId, string? VenueName, decimal Bid, decimal Ask, decimal Mid, decimal Spread, string Source, DateTimeOffset SourceTimestampUtc, DateTimeOffset ReceivedAtUtc, long? SequenceNumber, bool IsSynthetic, DateTimeOffset CreatedAtUtc);
 public sealed record MarketDataBarDto(string Id, string InstrumentId, string? Symbol, string VenueId, string? VenueName, string Timeframe, DateTimeOffset BarStartUtc, DateTimeOffset BarEndUtc, string Source, decimal BidOpen, decimal BidHigh, decimal BidLow, decimal BidClose, decimal AskOpen, decimal AskHigh, decimal AskLow, decimal AskClose, decimal MidOpen, decimal MidHigh, decimal MidLow, decimal MidClose, decimal SpreadOpen, decimal SpreadHigh, decimal SpreadLow, decimal SpreadClose, decimal SpreadAverage, int ObservationCount, DateTimeOffset? FirstSnapshotUtc, DateTimeOffset? LastSnapshotUtc, bool IsComplete, string QualityStatus, string? BuildRunId, string BuilderVersion, DateTimeOffset CreatedAtUtc);
@@ -1160,8 +1348,20 @@ public sealed record ExceptionCaseDto(string Id, DateTimeOffset CreatedAtUtc, Da
 public sealed record ExceptionCaseActionDto(string Id, string CaseId, string ActionType, string ActorId, string ActorDisplayName, DateTimeOffset OccurredAtUtc, string? FromStatus, string? ToStatus, string? Reason, string? Note, string? MetadataJson, string? CorrelationId);
 public sealed record ExceptionCaseNoteDto(string Id, string CaseId, DateTimeOffset CreatedAtUtc, string CreatedBy, string Note, string? CorrelationId);
 public sealed record KillSwitchDto(string Id, bool IsActive, string? Reason, DateTimeOffset UpdatedAtUtc);
-public sealed record InstrumentDto(string Id, string Symbol, string AssetClass, string BaseCurrency, string QuoteCurrency, int PricePrecision, int QuantityPrecision, bool IsEnabled);
-public sealed record VenueDto(string Id, string Name, string VenueType, bool IsEnabled);
+public sealed record InstrumentDto(string Id, string Symbol, string AssetClass, string BaseCurrency, string QuoteCurrency, int PricePrecision, int QuantityPrecision, bool IsEnabled, bool IsTradingEnabled, bool IsReportImportEnabled, bool IsMarketDataEnabled);
+public sealed record VenueDto(string Id, string Name, string VenueType, bool IsEnabled, bool IsTradingEnabled, bool IsReportImportEnabled, bool IsMarketDataEnabled);
+public sealed record InstrumentAliasDto(string Id, string Source, string ExternalSymbol, string? ExternalInstrumentId, bool IsEnabled);
+public sealed record VenueInstrumentMappingDto(string Id, string VenueId, string VenueSymbol, string VenueInstrumentCode, bool IsEnabled);
+public sealed record RiskInstrumentDto(InstrumentDto Instrument, IReadOnlyList<InstrumentAliasDto> Aliases, IReadOnlyList<VenueInstrumentMappingDto> VenueMappings);
+public sealed record RiskVenueDto(VenueDto Venue);
+public sealed record ReasonRequest(string Reason);
+public sealed record CreateRiskLimitSetRequest(string? FundCode, string? ModelName, string Name, string? Description, string Reason);
+public sealed record UpdateRiskLimitRequest(decimal Value, string? Unit, string Reason);
+public sealed record UpdateInstrumentRiskLimitRequest(decimal? MaxTradeNotionalUsd, decimal? MaxExposureUsd, decimal? MinTradeQuantity, int? MaxOrdersPerDay, bool? IsTradingEnabled, string Reason);
+public sealed record UpdateVenueRiskLimitRequest(decimal? MaxTradeNotionalUsd, decimal? MaxDailyTurnoverUsd, int? MaxOrdersPerMinute, bool? IsVenueEnabled, string Reason);
+public sealed record UpdateTradingWindowRequest(TimeOnly? OpensAtUtc, TimeOnly? ClosesAtUtc, TimeOnly? NoNewOrdersAfterUtc, TimeOnly? FlattenAtUtc, bool? TradingEnabled, string Reason);
+public sealed record UpdateInstrumentControlsRequest(bool? IsTradingEnabled, bool? IsReportImportEnabled, bool? IsMarketDataEnabled, string Reason);
+public sealed record UpdateVenueControlsRequest(bool? IsTradingEnabled, bool? IsReportImportEnabled, bool? IsMarketDataEnabled, string Reason);
 public sealed record CreateModelRunRequest(string? ModelName, string? Symbol, decimal? Weight, decimal NavUsd, TargetQuantityMode TargetQuantityMode, DateTimeOffset? AsOfUtc, DateTimeOffset? EffectiveAtUtc, int FrequencyMinutes, string? InputHash, string? SourceFileName, List<ModelRunWeightRequest>? Weights);
 public sealed record ModelRunWeightRequest(string Symbol, decimal Weight, string? RawSecurityId);
 public sealed record CreateFakeModelWeightBatchApiRequest(string? ExternalBatchId, ModelWeightSourceSystem SourceSystem, string FundCode, string ModelName, DateTimeOffset? AsOfUtc, DateTimeOffset? EffectiveAtUtc, int FrequencyMinutes, decimal NavUsd, TargetQuantityMode TargetQuantityMode, ModelWeightBatchStatus Status, List<CreateFakeModelWeightRowApiRequest>? Weights);

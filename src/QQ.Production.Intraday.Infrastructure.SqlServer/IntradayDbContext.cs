@@ -28,6 +28,7 @@ public sealed class IntradayDbContext(DbContextOptions<IntradayDbContext> option
     public DbSet<ReconciliationBreak> ReconciliationBreaks => Set<ReconciliationBreak>();
     public DbSet<TradeIntent> TradeIntents => Set<TradeIntent>();
     public DbSet<RiskDecision> RiskDecisions => Set<RiskDecision>();
+    public DbSet<RiskDecisionDetail> RiskDecisionDetails => Set<RiskDecisionDetail>();
     public DbSet<ParentOrder> ParentOrders => Set<ParentOrder>();
     public DbSet<ChildOrder> ChildOrders => Set<ChildOrder>();
     public DbSet<ExecutionReport> ExecutionReports => Set<ExecutionReport>();
@@ -77,6 +78,7 @@ public sealed class IntradayDbContext(DbContextOptions<IntradayDbContext> option
         modelBuilder.Entity<ReconciliationBreak>().HasKey(x => x.Id);
         modelBuilder.Entity<TradeIntent>().HasKey(x => x.Id);
         modelBuilder.Entity<RiskDecision>().HasKey(x => x.Id);
+        modelBuilder.Entity<RiskDecisionDetail>().HasKey(x => x.Id);
         modelBuilder.Entity<ParentOrder>().HasKey(x => x.Id);
         modelBuilder.Entity<ChildOrder>().HasKey(x => x.Id);
         modelBuilder.Entity<ExecutionReport>().HasKey(x => x.Id);
@@ -109,11 +111,16 @@ public sealed class IntradayDbContext(DbContextOptions<IntradayDbContext> option
         modelBuilder.Entity<Venue>().HasIndex(x => x.Name).IsUnique().HasFilter("[IsEnabled] = 1");
         modelBuilder.Entity<VenueInstrumentMapping>().HasIndex(x => new { x.VenueId, x.InstrumentId }).IsUnique().HasFilter("[IsEnabled] = 1");
         modelBuilder.Entity<VenueInstrumentMapping>().HasIndex(x => new { x.VenueId, x.VenueSymbol }).IsUnique().HasFilter("[IsEnabled] = 1");
-        modelBuilder.Entity<RiskLimitSet>().HasIndex(x => x.FundId).IsUnique();
+        modelBuilder.Entity<RiskLimitSet>().HasIndex(x => new { x.FundId, x.ModelName, x.Status });
+        modelBuilder.Entity<RiskLimitSet>().HasIndex(x => new { x.FundId, x.ModelName, x.IsActive }).IsUnique().HasFilter("[IsActive] = 1");
         modelBuilder.Entity<RiskLimit>().HasIndex(x => new { x.RiskLimitSetId, x.Name }).IsUnique();
         modelBuilder.Entity<InstrumentRiskLimit>().HasIndex(x => new { x.RiskLimitSetId, x.InstrumentId }).IsUnique().HasFilter("[IsEnabled] = 1");
         modelBuilder.Entity<VenueRiskLimit>().HasIndex(x => new { x.RiskLimitSetId, x.VenueId }).IsUnique().HasFilter("[IsEnabled] = 1");
         modelBuilder.Entity<TradingWindow>().HasIndex(x => new { x.FundId, x.ModelName, x.DayOfWeek }).IsUnique().HasFilter("[IsEnabled] = 1");
+        modelBuilder.Entity<RiskDecision>().HasIndex(x => x.RiskLimitSetId);
+        modelBuilder.Entity<RiskDecision>().HasIndex(x => x.TradeIntentId);
+        modelBuilder.Entity<RiskDecision>().HasIndex(x => x.CreatedAtUtc);
+        modelBuilder.Entity<RiskDecisionDetail>().HasIndex(x => new { x.RiskDecisionId, x.CheckName });
         modelBuilder.Entity<Fill>().HasIndex(x => new { x.VenueId, x.BrokerExecutionId }).IsUnique();
         modelBuilder.Entity<ParentOrder>().HasIndex(x => x.ClientOrderId).IsUnique();
         modelBuilder.Entity<ChildOrder>().HasIndex(x => x.ClientOrderId).IsUnique();
@@ -189,6 +196,7 @@ public sealed class IntradayDbContext(DbContextOptions<IntradayDbContext> option
         modelBuilder.Entity<TradeIntent>().HasOne<Fund>().WithMany().HasForeignKey(x => x.FundId).OnDelete(DeleteBehavior.Restrict);
         modelBuilder.Entity<TradeIntent>().HasOne<Instrument>().WithMany().HasForeignKey(x => x.InstrumentId).OnDelete(DeleteBehavior.Restrict);
         modelBuilder.Entity<RiskDecision>().HasOne<TradeIntent>().WithMany().HasForeignKey(x => x.TradeIntentId).OnDelete(DeleteBehavior.Restrict);
+        modelBuilder.Entity<RiskDecisionDetail>().HasOne<RiskDecision>().WithMany().HasForeignKey(x => x.RiskDecisionId).OnDelete(DeleteBehavior.Restrict);
         modelBuilder.Entity<ParentOrder>().HasOne<TradeIntent>().WithMany().HasForeignKey(x => x.TradeIntentId).OnDelete(DeleteBehavior.Restrict);
         modelBuilder.Entity<ChildOrder>().HasOne<ParentOrder>().WithMany().HasForeignKey(x => x.ParentOrderId).OnDelete(DeleteBehavior.Restrict);
         modelBuilder.Entity<ChildOrder>().HasOne<Venue>().WithMany().HasForeignKey(x => x.VenueId).OnDelete(DeleteBehavior.Restrict);
@@ -198,6 +206,7 @@ public sealed class IntradayDbContext(DbContextOptions<IntradayDbContext> option
         modelBuilder.Entity<Fill>().HasOne<Instrument>().WithMany().HasForeignKey(x => x.InstrumentId).OnDelete(DeleteBehavior.Restrict);
         modelBuilder.Entity<Fill>().HasOne<Venue>().WithMany().HasForeignKey(x => x.VenueId).OnDelete(DeleteBehavior.Restrict);
         modelBuilder.Entity<RiskLimitSet>().HasOne<Fund>().WithMany().HasForeignKey(x => x.FundId).OnDelete(DeleteBehavior.Restrict);
+        modelBuilder.Entity<RiskDecision>().HasOne<RiskLimitSet>().WithMany().HasForeignKey(x => x.RiskLimitSetId).OnDelete(DeleteBehavior.Restrict);
         modelBuilder.Entity<InstrumentRiskLimit>().HasOne<Instrument>().WithMany().HasForeignKey(x => x.InstrumentId).OnDelete(DeleteBehavior.Restrict);
         modelBuilder.Entity<VenueRiskLimit>().HasOne<Venue>().WithMany().HasForeignKey(x => x.VenueId).OnDelete(DeleteBehavior.Restrict);
         modelBuilder.Entity<TradingWindow>().HasOne<Fund>().WithMany().HasForeignKey(x => x.FundId).OnDelete(DeleteBehavior.Restrict);
@@ -300,6 +309,9 @@ public sealed class IntradayDbContext(DbContextOptions<IntradayDbContext> option
         modelBuilder.Entity<TradeIntent>().Property(x => x.FundId).HasConversion(x => x.Value, x => new FundId(x));
         modelBuilder.Entity<TradeIntent>().Property(x => x.InstrumentId).HasConversion(x => x.Value, x => new InstrumentId(x));
         modelBuilder.Entity<RiskDecision>().Property(x => x.TradeIntentId).HasConversion(x => x.Value, x => new TradeIntentId(x));
+        modelBuilder.Entity<RiskDecision>().Property(x => x.ModelRunId).HasConversion(x => x.HasValue ? x.Value.Value : (Guid?)null, x => x.HasValue ? new ModelRunId(x.Value) : null);
+        modelBuilder.Entity<RiskDecision>().Property(x => x.InstrumentId).HasConversion(x => x.HasValue ? x.Value.Value : (Guid?)null, x => x.HasValue ? new InstrumentId(x.Value) : null);
+        modelBuilder.Entity<RiskDecision>().Property(x => x.VenueId).HasConversion(x => x.HasValue ? x.Value.Value : (Guid?)null, x => x.HasValue ? new VenueId(x.Value) : null);
         modelBuilder.Entity<ParentOrder>().Property(x => x.Id).HasConversion(x => x.Value, x => new ParentOrderId(x));
         modelBuilder.Entity<ParentOrder>().Property(x => x.TradeIntentId).HasConversion(x => x.Value, x => new TradeIntentId(x));
         modelBuilder.Entity<ParentOrder>().Property(x => x.ClientOrderId).HasConversion(x => x.Value, x => new ClientOrderId(x));
@@ -489,6 +501,7 @@ public sealed class SqlServerIntradayRepository(IntradayDbContext dbContext) : I
         state.ReconciliationBreaks.AddRange(await dbContext.ReconciliationBreaks.AsNoTracking().ToListAsync(cancellationToken));
         state.TradeIntents.AddRange(await dbContext.TradeIntents.AsNoTracking().ToListAsync(cancellationToken));
         state.RiskDecisions.AddRange(await dbContext.RiskDecisions.AsNoTracking().ToListAsync(cancellationToken));
+        state.RiskDecisionDetails.AddRange(await dbContext.RiskDecisionDetails.AsNoTracking().ToListAsync(cancellationToken));
         state.ParentOrders.AddRange(await dbContext.ParentOrders.AsNoTracking().ToListAsync(cancellationToken));
         state.ChildOrders.AddRange(await dbContext.ChildOrders.AsNoTracking().ToListAsync(cancellationToken));
         state.ExecutionReports.AddRange(await dbContext.ExecutionReports.AsNoTracking().ToListAsync(cancellationToken));
@@ -573,7 +586,7 @@ public sealed class SqlServerIntradayRepository(IntradayDbContext dbContext) : I
         await dbContext.SaveChangesAsync(cancellationToken);
     }
 
-    public async Task AddRiskDecisionAsync(RiskDecision decision, CancellationToken cancellationToken)
+    public async Task AddRiskDecisionAsync(RiskDecision decision, IReadOnlyList<RiskDecisionDetail>? details, CancellationToken cancellationToken)
     {
         if (await dbContext.RiskDecisions.AnyAsync(x => x.TradeIntentId == decision.TradeIntentId, cancellationToken))
         {
@@ -581,6 +594,10 @@ public sealed class SqlServerIntradayRepository(IntradayDbContext dbContext) : I
         }
 
         dbContext.RiskDecisions.Add(decision);
+        if (details is not null)
+        {
+            dbContext.RiskDecisionDetails.AddRange(details);
+        }
         await dbContext.SaveChangesAsync(cancellationToken);
     }
 
@@ -645,6 +662,46 @@ public sealed class SqlServerIntradayRepository(IntradayDbContext dbContext) : I
     public async Task SetKillSwitchAsync(bool isActive, string? reason, CancellationToken cancellationToken)
     {
         dbContext.KillSwitchStates.Add(new KillSwitchState(Guid.NewGuid(), isActive, reason, DateTimeOffset.UtcNow));
+        await dbContext.SaveChangesAsync(cancellationToken);
+    }
+
+    public Task UpsertRiskLimitSetAsync(RiskLimitSet riskLimitSet, CancellationToken cancellationToken)
+        => UpsertAsync(dbContext.RiskLimitSets, riskLimitSet, cancellationToken);
+
+    public Task UpsertRiskLimitAsync(RiskLimit riskLimit, CancellationToken cancellationToken)
+        => UpsertAsync(dbContext.RiskLimits, riskLimit, cancellationToken);
+
+    public Task UpsertInstrumentRiskLimitAsync(InstrumentRiskLimit instrumentRiskLimit, CancellationToken cancellationToken)
+        => UpsertAsync(dbContext.InstrumentRiskLimits, instrumentRiskLimit, cancellationToken);
+
+    public Task UpsertVenueRiskLimitAsync(VenueRiskLimit venueRiskLimit, CancellationToken cancellationToken)
+        => UpsertAsync(dbContext.VenueRiskLimits, venueRiskLimit, cancellationToken);
+
+    public Task UpsertTradingWindowAsync(TradingWindow tradingWindow, CancellationToken cancellationToken)
+        => UpsertAsync(dbContext.TradingWindows, tradingWindow, cancellationToken);
+
+    public Task UpsertInstrumentAsync(Instrument instrument, CancellationToken cancellationToken)
+        => UpsertAsync(dbContext.Instruments, instrument, cancellationToken);
+
+    public Task UpsertVenueAsync(Venue venue, CancellationToken cancellationToken)
+        => UpsertAsync(dbContext.Venues, venue, cancellationToken);
+
+    private async Task UpsertAsync<TEntity>(DbSet<TEntity> set, TEntity entity, CancellationToken cancellationToken)
+        where TEntity : class
+    {
+        var entry = dbContext.Entry(entity);
+        var key = dbContext.Model.FindEntityType(typeof(TEntity))?.FindPrimaryKey() ?? throw new InvalidOperationException($"No key configured for {typeof(TEntity).Name}.");
+        var keyValues = key.Properties.Select(x => entry.Property(x.Name).CurrentValue).ToArray();
+        var existing = await set.FindAsync(keyValues, cancellationToken);
+        if (existing is null)
+        {
+            set.Add(entity);
+        }
+        else
+        {
+            dbContext.Entry(existing).CurrentValues.SetValues(entity);
+        }
+
         await dbContext.SaveChangesAsync(cancellationToken);
     }
 }

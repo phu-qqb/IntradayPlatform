@@ -1,5 +1,6 @@
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
+import { ActionButton, ActionToast } from './ActionFeedback';
 import { DataTable } from './DataTable';
 import { TopStatusBar } from './TopStatusBar';
 import { SeverityBadge, StatusChip, processResultTone, toneForStatus } from './primitives';
@@ -137,5 +138,63 @@ describe('cockpit UI primitives', () => {
     expect(screen.getByText(/read-only/i)).toBeTruthy();
     expect(screen.queryByLabelText(/password/i)).toBeNull();
     expect(screen.queryByRole('button', { name: /submit order/i })).toBeNull();
+  });
+
+  it('renders risk control center lifecycle and active profile language', () => {
+    render(
+      <div>
+        <h1>Risk Control Center</h1>
+        <span>Active Risk Profile</span>
+        <span>Draft / active / retired lifecycle; activation and retirement require a reason.</span>
+        <span>No endpoint here can enable live trading or external connections.</span>
+      </div>
+    );
+
+    expect(screen.getByText('Risk Control Center')).toBeTruthy();
+    expect(screen.getByText('Active Risk Profile')).toBeTruthy();
+    expect(screen.getByText(/activation and retirement require a reason/i)).toBeTruthy();
+    expect(screen.getByText(/No endpoint here can enable live trading or external connections/i)).toBeTruthy();
+  });
+
+  it('renders risk decision explainability with observed and limit values', () => {
+    render(
+      <DataTable
+        rows={[{ id: 'risk-1', checkName: 'MaxTradeNotionalUsd', observedValue: 1500000, limitValue: 1000000, unit: 'USD' }]}
+        getRowKey={(row) => row.id}
+        columns={[
+          { key: 'check', header: 'Check', render: (row) => row.checkName },
+          { key: 'observed', header: 'Observed', render: (row) => String(row.observedValue), sortValue: (row) => row.observedValue },
+          { key: 'limit', header: 'Limit', render: (row) => String(row.limitValue), sortValue: (row) => row.limitValue },
+          { key: 'unit', header: 'Unit', render: (row) => row.unit }
+        ]}
+      />
+    );
+
+    expect(screen.getByText('MaxTradeNotionalUsd')).toBeTruthy();
+    expect(screen.getByText('1500000')).toBeTruthy();
+    expect(screen.getByText('1000000')).toBeTruthy();
+  });
+
+  it('action button shows loading state and disables while running', async () => {
+    let resolveAction!: () => void;
+    const action = new Promise<void>((resolve) => { resolveAction = resolve; });
+    render(<ActionButton idleLabel="Process Model Run" runningLabel="Processing..." onAction={() => action} />);
+
+    fireEvent.click(screen.getByRole('button', { name: /Process Model Run/i }));
+
+    expect(screen.getByRole('button', { name: /Processing/i }).hasAttribute('disabled')).toBe(true);
+    resolveAction();
+    await waitFor(() => expect(screen.getByRole('button').hasAttribute('disabled')).toBe(false));
+  });
+
+  it('renders success and error action toasts', () => {
+    const { rerender } = render(<ActionToast action={{ label: 'Promote', status: 'succeeded', message: 'Promoted batch.' }} />);
+
+    expect(screen.getByText('Promoted batch.')).toBeTruthy();
+
+    rerender(<ActionToast action={{ label: 'Promote', status: 'failed', message: 'Promote failed.', error: '409 Conflict: duplicate batch' }} />);
+
+    expect(screen.getByText('Promote failed.')).toBeTruthy();
+    expect(screen.getByText(/Details/i)).toBeTruthy();
   });
 });

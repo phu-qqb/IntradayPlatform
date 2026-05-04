@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import type { CreateFakeModelWeightBatchRequest, ModelWeightBatchDto, ModelWeightPromotionResultDto, ModelWeightRowDto, ModelWeightValidationIssueDto } from '../api/types';
+import { ActionButton } from './ActionFeedback';
 import { DataTable } from './DataTable';
 
 type WeightRow = { rawSecurityId: string; symbol: string; weight: number };
@@ -80,8 +81,8 @@ export function ModelWeightsPanel({
       ))}
       <div className="button-row">
         <button onClick={() => setWeights([...weights, { rawSecurityId: 'EURUSD', symbol: 'EURUSD', weight: 0 }])}>Add Row</button>
-        <button className="primary" onClick={createFake}>Create Fake Weight Batch</button>
-        <button onClick={() => onPromoteReady().then(setResult)}>Promote Ready</button>
+        <ActionButton className="primary" idleLabel="Create Fake Weight Batch" runningLabel="Creating..." onAction={createFake} />
+        <ActionButton idleLabel="Promote Ready" runningLabel="Promoting..." onAction={async () => setResult(await onPromoteReady())} />
       </div>
 
       <DataTable rows={batches} getRowKey={(row) => row.id} columns={[
@@ -94,9 +95,9 @@ export function ModelWeightsPanel({
         { key: 'promoted', header: 'Promoted ModelRun', render: (row) => row.promotedModelRunId ? <code>{row.promotedModelRunId}</code> : '' },
         { key: 'actions', header: 'Actions', render: (row) => (
           <div className="button-row">
-            <button onClick={() => void selectBatch(row.id)}>Rows</button>
-            <button onClick={() => onValidate(row.id).then(setResult)}>Validate</button>
-            <button onClick={() => onPromote(row.id).then(setResult)}>Promote</button>
+            <ActionButton idleLabel="Rows" runningLabel="Loading..." onAction={() => selectBatch(row.id)} />
+            <ActionButton idleLabel="Validate" runningLabel="Validating..." onAction={async () => setResult(await onValidate(row.id))} />
+            <ActionButton idleLabel="Promote" runningLabel="Promoting..." onAction={async () => setResult(await onPromote(row.id))} />
           </div>
         ) }
       ]} />

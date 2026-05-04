@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 import type { BuildBarsRequest, FakeSnapshotsRequest, MarketDataBarDto, MarketDataSnapshotDto } from '../api/types';
+import { ActionButton } from './ActionFeedback';
 import { DataTable } from './DataTable';
 
 function previousCompletedBar() {
@@ -47,13 +48,13 @@ export function MarketDataPanel({
         <label>Count<input type="number" value={snapshotForm.count} onChange={(event) => setSnapshotForm({ ...snapshotForm, count: Number(event.target.value) })} /></label>
         <label>Bid<input type="number" step="0.00001" value={snapshotForm.bid} onChange={(event) => setSnapshotForm({ ...snapshotForm, bid: Number(event.target.value) })} /></label>
         <label>Ask<input type="number" step="0.00001" value={snapshotForm.ask} onChange={(event) => setSnapshotForm({ ...snapshotForm, ask: Number(event.target.value) })} /></label>
-        <button onClick={() => onCreateFakeSnapshots(snapshotForm).then(setMessage).catch((error) => setMessage(String(error)))}>Create Fake Snapshots</button>
+        <ActionButton idleLabel="Create Fake Snapshots" runningLabel="Creating..." onAction={async () => setMessage(await onCreateFakeSnapshots(snapshotForm))} />
       </div>
       <div className="form-grid">
         <label>Bar Start UTC<input value={barForm.startUtc} onChange={(event) => setBarForm({ ...barForm, startUtc: event.target.value })} /></label>
         <label>Bar End UTC<input value={barForm.endUtc} onChange={(event) => setBarForm({ ...barForm, endUtc: event.target.value })} /></label>
         <label>Timeframe<input value={barForm.timeframe} onChange={(event) => setBarForm({ ...barForm, timeframe: event.target.value })} /></label>
-        <button onClick={() => onBuildBars(barForm).then(setMessage).catch((error) => setMessage(String(error)))}>Build 15m Bars</button>
+        <ActionButton idleLabel="Build 15m Bars" runningLabel="Building..." onAction={async () => setMessage(await onBuildBars(barForm))} />
       </div>
       <h3>Latest Snapshots</h3>
       <DataTable rows={snapshots} getRowKey={(row) => row.id} columns={[

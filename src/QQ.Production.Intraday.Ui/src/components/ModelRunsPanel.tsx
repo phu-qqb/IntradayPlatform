@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import type { CreateModelRunRequest, ModelRunDto, ProcessModelRunResult } from '../api/types';
+import { ActionButton } from './ActionFeedback';
 import { DataTable } from './DataTable';
 
 type WeightRow = { symbol: string; weight: number; rawSecurityId: string };
@@ -82,7 +83,7 @@ export function ModelRunsPanel({
       ))}
       <div className="button-row">
         <button onClick={() => setWeights([...weights, { symbol: 'EURUSD', weight: 0, rawSecurityId: 'EURUSD' }])}>Add Weight</button>
-        <button className="primary" onClick={submit}>Create Local Model Run</button>
+        <ActionButton className="primary" idleLabel="Create Local Model Run" runningLabel="Creating..." onAction={submit} />
       </div>
       <DataTable rows={modelRuns} getRowKey={(row) => row.id} columns={[
         { key: 'id', header: 'ID', render: (row) => <code>{row.id}</code> },
@@ -92,7 +93,7 @@ export function ModelRunsPanel({
         { key: 'mode', header: 'Mode', render: (row) => row.targetQuantityMode },
         { key: 'status', header: 'Status', render: (row) => row.status },
         { key: 'processed', header: 'Processed', render: (row) => String(row.isProcessed) },
-        { key: 'action', header: 'Action', render: (row) => <button onClick={() => onProcess(row.id).then(setResult)}>Process</button> }
+        { key: 'action', header: 'Action', render: (row) => <ActionButton idleLabel="Process" runningLabel="Processing..." onAction={async () => setResult(await onProcess(row.id))} /> }
       ]} />
     </section>
   );

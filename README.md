@@ -218,11 +218,13 @@ The cockpit is now organized as a PMS/OMS/EMS operator shell:
 - Exceptions: operator workflow for breaks and operational exceptions
 - Reconciliation: intraday and EOD breaks
 - LMAX EOD: import runs, validation issues, individual trades, trade summaries, currency wallets, PnL, and EOD breaks
-- Risk & Admin: kill switch, reference integrity, instruments, and venues
+- Risk Control Center: active risk profile, versioned limit sets, trading windows, instrument/venue controls, kill switch, and recent explainable risk decisions
 - Audit Journal: append-only operator/system action journal with correlation IDs
 - Connectivity Lab: read-only script guidance only; no credential forms or live controls
 
 The UI comfort pass keeps the same local-only backend behavior while making the cockpit calmer and easier to read for intraday use. The top safety bar groups runtime, safety, data, and reference-integrity state and shows `SAFE LOCAL` only when the FakeLmax boundary is intact. Tables now prioritize human-readable fields, shorten long technical IDs, keep headers sticky, and move full record detail into the right-side drawer. The drawer groups summary, IDs, timestamps, details, and raw JSON so operators can inspect records without turning every blotter into a wall of identifiers.
+
+Long-running UI actions now show explicit operator feedback. Mutating buttons switch to labels such as `Creating...`, `Promoting...`, or `Processing...`, show a spinner, and disable themselves while the request is pending. The shell also shows a calm operation toast with success/failure state, elapsed “still working” feedback after a short delay, and expandable API error details when a request fails.
 
 Development CORS allows only `http://localhost:5173` and `http://127.0.0.1:5173`; wildcard CORS is not enabled for production-like environments.
 
@@ -258,6 +260,18 @@ curl -X POST "http://localhost:5050/exceptions/<id>/resolve" -H "Content-Type: a
 ```
 
 The cockpit has an Exceptions page plus Command Center exception counts. Local operator headers are attribution only; real authentication and approval workflows are not implemented yet.
+
+## Risk Control Center
+
+The platform now exposes a local-only Risk Control Center so risk configuration is visible, versioned, and audited before any future live integration. Risk limit sets support `Draft`, `Active`, `Retired`, and `Archived` lifecycle states. Only one active set is selected per fund/model; activating a draft retires the prior active set for that scope.
+
+Risk/config mutations require a reason and create `OperatorAuditEvent` records with before/after metadata where practical. The cockpit shows the active risk profile, global limits, instrument limits, venue limits, trading windows, instrument/venue control flags, kill switch state, and recent risk decisions. Active and archived profiles are treated as read-only from the UI; clone an active set to a draft before editing and then activate the draft with a reason.
+
+Risk decisions now retain the active `RiskLimitSetId` and check-level details such as observed value, limit value, unit, check name, and message. A rejected decision can therefore explain outcomes like `MaxTradeNotionalUsd exceeded: observed > limit` without turning normal risk blocks into HTTP 500s.
+
+Approved decisions also keep passed check rows. The UI shows a summary observed/limit pair in the Risk table and a check-detail table when a decision is selected. Older historical rows that predate detail persistence may show “No check details available for this historical decision.”
+
+Instrument controls distinguish execution and reporting permissions. `IsTradingEnabled` gates order generation, while `IsReportImportEnabled` allows historical LMAX EOD import for known aliases even when an instrument is not tradable. Current limitations: no real authentication, no four-eyes approval workflow, and risk changes affect only the local/FakeLmax runtime.
 
 ## DB Model Weight Source
 

@@ -355,13 +355,112 @@ export type TradeIntentDto = {
 export type RiskDecisionDto = {
   id: string;
   tradeIntentId: string;
+  riskLimitSetId?: string | null;
+  riskLimitSetName?: string | null;
+  riskLimitSetVersion?: number | null;
   modelRunId?: string | null;
   instrumentId?: string | null;
+  venueId?: string | null;
+  venueName?: string | null;
   symbol?: string | null;
   status: string;
-  rejectReason: string;
-  explanation: string;
+  rejectReason?: string | null;
+  message: string;
   createdAtUtc: string;
+  summaryObservedValue?: number | null;
+  summaryLimitValue?: number | null;
+  summaryUnit?: string | null;
+  summaryCheckName?: string | null;
+  details?: RiskDecisionDetailDto[];
+};
+
+export type RiskDecisionDetailDto = {
+  id: string;
+  riskDecisionId: string;
+  checkName: string;
+  status: string;
+  rejectReason?: string | null;
+  observedValue?: number | null;
+  limitValue?: number | null;
+  unit?: string | null;
+  message: string;
+  createdAtUtc: string;
+};
+
+export type RiskLimitSetDto = {
+  id: string;
+  fundId: string;
+  modelName?: string | null;
+  name: string;
+  version: number;
+  status: string;
+  isActive: boolean;
+  effectiveFromUtc?: string | null;
+  effectiveToUtc?: string | null;
+  createdAtUtc?: string | null;
+  createdBy?: string | null;
+  activatedAtUtc?: string | null;
+  activatedBy?: string | null;
+  retiredAtUtc?: string | null;
+  retiredBy?: string | null;
+  description?: string | null;
+  globalTradingEnabled: boolean;
+  maxGrossExposureUsd: number;
+  maxModelRunAgeSeconds: number;
+  maxMarketDataAgeSeconds: number;
+  positionToleranceBaseQuantity: number;
+  minDriftVenueQuantity: number;
+};
+
+export type RiskLimitDto = {
+  id: string;
+  riskLimitSetId: string;
+  name: string;
+  value: number;
+  unit: string;
+  scope: string;
+  isEnabled: boolean;
+};
+
+export type InstrumentRiskLimitDto = {
+  id: string;
+  riskLimitSetId: string;
+  instrumentId: string;
+  symbol?: string | null;
+  maxTradeNotionalUsd: number;
+  maxPositionUsd: number;
+  minTradeQuantity: number;
+  maxOrdersPerDay: number;
+  isTradingEnabled: boolean;
+};
+
+export type VenueRiskLimitDto = {
+  id: string;
+  riskLimitSetId: string;
+  venueId: string;
+  venueName?: string | null;
+  maxTradeNotionalUsd: number;
+  maxDailyTurnoverUsd: number;
+  maxOrdersPerMinute: number;
+  isVenueEnabled: boolean;
+};
+
+export type TradingWindowDto = {
+  id: string;
+  fundId: string;
+  modelName: string;
+  dayOfWeek: string;
+  timeZoneId: string;
+  tradingEnabled: boolean;
+  openTime: string;
+  closeTime: string;
+  noNewOrdersAfter: string;
+  flattenTime?: string | null;
+  isActive: boolean;
+  scheduleName: string;
+  version: number;
+  createdAtUtc?: string | null;
+  updatedAtUtc?: string | null;
 };
 
 export type OrdersDto = {
@@ -484,6 +583,9 @@ export type InstrumentDto = {
   pricePrecision: number;
   quantityPrecision: number;
   isEnabled: boolean;
+  isTradingEnabled: boolean;
+  isReportImportEnabled: boolean;
+  isMarketDataEnabled: boolean;
 };
 
 export type VenueDto = {
@@ -491,6 +593,36 @@ export type VenueDto = {
   name: string;
   venueType: string;
   isEnabled: boolean;
+  isTradingEnabled: boolean;
+  isReportImportEnabled: boolean;
+  isMarketDataEnabled: boolean;
+};
+
+export type InstrumentAliasDto = {
+  id: string;
+  source: string;
+  externalSymbol: string;
+  externalInstrumentId?: string | null;
+  isEnabled: boolean;
+};
+
+export type VenueInstrumentMappingDto = {
+  id: string;
+  venueId: string;
+  venueName?: string | null;
+  venueSymbol: string;
+  venueInstrumentId?: string | null;
+  isEnabled: boolean;
+};
+
+export type RiskInstrumentDto = {
+  instrument: InstrumentDto;
+  aliases: InstrumentAliasDto[];
+  venueMappings: VenueInstrumentMappingDto[];
+};
+
+export type RiskVenueDto = {
+  venue: VenueDto;
 };
 
 export type FakeSnapshotsRequest = {

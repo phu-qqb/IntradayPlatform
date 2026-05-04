@@ -30,11 +30,19 @@ import type {
   ReconciliationBreakDto,
   ReferenceDataIntegrityDto,
   RiskDecisionDto,
+  RiskInstrumentDto,
+  RiskLimitDto,
+  RiskLimitSetDto,
+  RiskVenueDto,
+  InstrumentRiskLimitDto,
   TargetPositionDto,
   TradeIntentDto,
+  TradingWindowDto,
+  VenueRiskLimitDto,
   VenueDto
 } from './api/types';
 import { AdminPanel } from './components/AdminPanel';
+import { ActionButton, ActionToast, useAsyncAction } from './components/ActionFeedback';
 import { DataTable } from './components/DataTable';
 import { DriftPanel } from './components/DriftPanel';
 import { ErrorState } from './components/ErrorState';
@@ -85,6 +93,14 @@ type DashboardState = {
   eodPnlSummary?: EodPnlSummaryDto;
   exceptionCases: ExceptionCaseDto[];
   auditEvents: OperatorAuditEventDto[];
+  activeRiskLimitSet?: RiskLimitSetDto;
+  riskLimitSets: RiskLimitSetDto[];
+  riskLimits: RiskLimitDto[];
+  instrumentRiskLimits: InstrumentRiskLimitDto[];
+  venueRiskLimits: VenueRiskLimitDto[];
+  tradingWindows: TradingWindowDto[];
+  riskInstruments: RiskInstrumentDto[];
+  riskVenues: RiskVenueDto[];
 };
 
 type PageId = 'command' | 'pms' | 'weights' | 'oms' | 'ems' | 'market' | 'exceptions' | 'recon' | 'lmax-eod' | 'risk-admin' | 'audit' | 'connectivity';
@@ -114,7 +130,14 @@ const emptyDashboard: DashboardState = {
   eodReconciliationRuns: [],
   eodReconciliationBreaks: [],
   exceptionCases: [],
-  auditEvents: []
+  auditEvents: [],
+  riskLimitSets: [],
+  riskLimits: [],
+  instrumentRiskLimits: [],
+  venueRiskLimits: [],
+  tradingWindows: [],
+  riskInstruments: [],
+  riskVenues: []
 };
 
 const navSections: Array<{ label: string; items: Array<{ id: PageId; label: string; icon: typeof Activity }> }> = [
@@ -160,12 +183,13 @@ export default function App() {
   const [dashboard, setDashboard] = useState<DashboardState>(emptyDashboard);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string>();
+  const { action: latestAction, elapsedSeconds, runAction, clearAction } = useAsyncAction();
 
   const loadHealth = useCallback(async () => setHealth(await apiClient.getHealth()), []);
   const loadIntegrity = useCallback(async () => setIntegrity(await apiClient.getReferenceDataIntegrity()), []);
 
   const loadDashboard = useCallback(async () => {
-    const [modelRuns, modelWeightBatches, targets, drifts, internalPositions, brokerPositions, reconciliationBreaks, tradeIntents, riskDecisions, orders, fills, snapshots, bars, killSwitch, instruments, venues, lmaxImportRuns, lmaxValidationIssues, lmaxIndividualTrades, lmaxTradeSummaries, lmaxCurrencyWallets, eodReconciliationRuns, eodReconciliationBreaks, exceptionCases, auditEvents] = await Promise.all([
+    const [modelRuns, modelWeightBatches, targets, drifts, internalPositions, brokerPositions, reconciliationBreaks, tradeIntents, riskDecisions, orders, fills, snapshots, bars, killSwitch, instruments, venues, lmaxImportRuns, lmaxValidationIssues, lmaxIndividualTrades, lmaxTradeSummaries, lmaxCurrencyWallets, eodReconciliationRuns, eodReconciliationBreaks, exceptionCases, auditEvents, riskLimitSets, activeRiskLimitSet, tradingWindows, riskInstruments, riskVenues] = await Promise.all([
       apiClient.getModelRuns(),
       apiClient.getModelWeightBatches(),
       apiClient.getTargetPositions(),
@@ -190,10 +214,23 @@ export default function App() {
       apiClient.getEodReconciliationRuns(),
       apiClient.getEodReconciliationBreaks(),
       apiClient.getExceptionCases(),
-      apiClient.getAuditEvents({ limit: 100 })
+      apiClient.getAuditEvents({ limit: 100 }),
+      apiClient.getRiskLimitSets(),
+      apiClient.getActiveRiskLimitSet().catch(() => undefined),
+      apiClient.getTradingWindows(),
+      apiClient.getRiskInstruments(),
+      apiClient.getRiskVenues()
     ]);
 
-    setDashboard((current) => ({ ...current, modelRuns, modelWeightBatches, targets, drifts, internalPositions, brokerPositions, reconciliationBreaks, tradeIntents, riskDecisions, orders, fills, snapshots, bars, killSwitch, instruments, venues, lmaxImportRuns, lmaxValidationIssues, lmaxIndividualTrades, lmaxTradeSummaries, lmaxCurrencyWallets, eodReconciliationRuns, eodReconciliationBreaks, exceptionCases, auditEvents }));
+    const [riskLimits, instrumentRiskLimits, venueRiskLimits] = activeRiskLimitSet
+      ? await Promise.all([
+          apiClient.getRiskLimits(activeRiskLimitSet.id),
+          apiClient.getInstrumentRiskLimits(activeRiskLimitSet.id),
+          apiClient.getVenueRiskLimits(activeRiskLimitSet.id)
+        ])
+      : [[], [], []];
+
+    setDashboard((current) => ({ ...current, modelRuns, modelWeightBatches, targets, drifts, internalPositions, brokerPositions, reconciliationBreaks, tradeIntents, riskDecisions, orders, fills, snapshots, bars, killSwitch, instruments, venues, lmaxImportRuns, lmaxValidationIssues, lmaxIndividualTrades, lmaxTradeSummaries, lmaxCurrencyWallets, eodReconciliationRuns, eodReconciliationBreaks, exceptionCases, auditEvents, riskLimitSets, activeRiskLimitSet, riskLimits, instrumentRiskLimits, venueRiskLimits, tradingWindows, riskInstruments, riskVenues }));
   }, []);
 
   const refreshAll = useCallback(async () => {
@@ -221,18 +258,19 @@ export default function App() {
 
   const actions = useMemo(() => ({
     refreshAll,
+    runOperation: runAction,
     setSelected,
     onCreateModelRun: async (request: Parameters<typeof apiClient.createModelRun>[0]) => {
-      await apiClient.createModelRun(request);
+      await runAction('Creating local model run', () => apiClient.createModelRun(request), (run) => `Created model run ${formatIdShort(run.id)}.`);
       await refreshAll();
     },
     onProcessModelRun: async (id: string) => {
-      const result = await apiClient.processModelRun(id);
+      const result = await runAction('Processing model run', () => apiClient.processModelRun(id), (processed) => `Process result: ${formatStatus(processed.status)}${processed.blockedReason ? ` (${formatStatus(processed.blockedReason)})` : ''}.`);
       setSelected(result);
       await refreshAll();
       return result;
     }
-  }), [refreshAll]);
+  }), [refreshAll, runAction]);
 
   const page = renderPage(activePage, dashboard, health, integrity, actions);
 
@@ -248,6 +286,7 @@ export default function App() {
         </main>
         <DetailDrawer item={selected} onClose={() => setSelected(undefined)} />
       </div>
+      <ActionToast action={latestAction} elapsedSeconds={elapsedSeconds} onClear={clearAction} />
       <AuditStrip health={health} dashboard={dashboard} />
     </div>
   );
@@ -273,7 +312,7 @@ function LeftNavigation({ activePage, onSelect }: { activePage: PageId; onSelect
   );
 }
 
-function renderPage(page: PageId, dashboard: DashboardState, health: HealthDto | undefined, integrity: ReferenceDataIntegrityDto | undefined, actions: { refreshAll: () => Promise<void>; setSelected: (item: unknown) => void; onCreateModelRun: (request: Parameters<typeof apiClient.createModelRun>[0]) => Promise<void>; onProcessModelRun: (id: string) => Promise<Awaited<ReturnType<typeof apiClient.processModelRun>>> }) {
+function renderPage(page: PageId, dashboard: DashboardState, health: HealthDto | undefined, integrity: ReferenceDataIntegrityDto | undefined, actions: { refreshAll: () => Promise<void>; runOperation: <T>(label: string, work: () => Promise<T>, successMessage?: (result: T) => string | undefined) => Promise<T>; setSelected: (item: unknown) => void; onCreateModelRun: (request: Parameters<typeof apiClient.createModelRun>[0]) => Promise<void>; onProcessModelRun: (id: string) => Promise<Awaited<ReturnType<typeof apiClient.processModelRun>>> }) {
   switch (page) {
     case 'pms':
       return <PmsPage dashboard={dashboard} />;
@@ -322,11 +361,16 @@ function CommandCenter({ dashboard, health, integrity, actions }: { dashboard: D
   const blockingExceptions = openExceptions.filter((item) => ['Blocking', 'Critical'].includes(item.severity)).length;
   const mismatchCount = obviousPositionMismatchCount(dashboard.internalPositions, dashboard.brokerPositions);
   const latestEod = dashboard.eodReconciliationRuns[0];
+  const recentRiskBlocks = dashboard.riskDecisions.filter((item) => ['Rejected', 'Blocked'].includes(item.status));
+  const activeWindow = dashboard.tradingWindows.find((item) => item.isActive && item.tradingEnabled);
   return (
     <section className="workspace-page">
       <SectionHeader title="Command Center" eyebrow="Operational overview" actions={<CommandButton tone="info" onClick={() => actions.setSelected(dashboard.auditEvents[0])}>Latest Event</CommandButton>} />
       <div className="metric-grid">
         <MetricCard label="Runtime Safety" value={health?.executionGateway === 'FakeLmaxGateway' && !health.liveTradingEnabled && !health.externalConnectionsEnabled ? 'Safe Local' : 'Attention'} sublabel="FakeLmax-only runtime boundary" tone={health?.executionGateway === 'FakeLmaxGateway' && !health.liveTradingEnabled && !health.externalConnectionsEnabled ? 'ok' : 'danger'} />
+        <MetricCard label="Active Risk Set" value={dashboard.activeRiskLimitSet ? `v${dashboard.activeRiskLimitSet.version}` : '-'} sublabel={dashboard.activeRiskLimitSet?.name ?? 'No active profile loaded'} tone={dashboard.activeRiskLimitSet?.isActive ? 'ok' : 'danger'} />
+        <MetricCard label="Trading Window" value={activeWindow ? `${activeWindow.openTime}-${activeWindow.closeTime}` : '-'} sublabel={activeWindow ? `No new orders after ${activeWindow.noNewOrdersAfter} ${activeWindow.timeZoneId}` : 'No active window loaded'} tone={activeWindow ? 'info' : 'warning'} />
+        <MetricCard label="Risk Blocks" value={recentRiskBlocks.length} sublabel={recentRiskBlocks[0]?.rejectReason ? `Latest: ${formatStatus(recentRiskBlocks[0].rejectReason)}` : 'Recent decisions loaded'} tone={recentRiskBlocks.length ? 'warning' : 'ok'} />
         <MetricCard label="Latest Weight Batch" value={dashboard.modelWeightBatches[0]?.status ?? '-'} sublabel={formatIdShort(dashboard.modelWeightBatches[0]?.id)} tone={toneForStatus(dashboard.modelWeightBatches[0]?.status)} />
         <MetricCard label="Latest Model Run" value={dashboard.modelRuns[0]?.status ?? '-'} sublabel={formatIdShort(dashboard.modelRuns[0]?.id)} tone={toneForStatus(dashboard.modelRuns[0]?.status)} />
         <MetricCard label="Open Exceptions" value={openExceptions.length} sublabel={`${blockingExceptions} blocking/critical`} tone={blockingExceptions ? 'danger' : openExceptions.length ? 'warning' : 'ok'} />
@@ -364,7 +408,7 @@ function PmsPage({ dashboard }: { dashboard: DashboardState }) {
   );
 }
 
-function WeightsPage({ dashboard, actions }: { dashboard: DashboardState; actions: { refreshAll: () => Promise<void> } }) {
+function WeightsPage({ dashboard, actions }: { dashboard: DashboardState; actions: { refreshAll: () => Promise<void>; runOperation: <T>(label: string, work: () => Promise<T>, successMessage?: (result: T) => string | undefined) => Promise<T> } }) {
   return (
     <section className="workspace-page">
       <SectionHeader title="Model Weights" eyebrow="DB-staged weight batches before canonical model runs" />
@@ -378,21 +422,21 @@ function WeightsPage({ dashboard, actions }: { dashboard: DashboardState; action
           await actions.refreshAll();
         }}
         onCreateFake={async (request) => {
-          await apiClient.createFakeModelWeightBatch(request);
+          await actions.runOperation('Creating fake weight batch', () => apiClient.createFakeModelWeightBatch(request), (batch) => `Created fake weight batch ${formatIdShort(batch.id)}.`);
           await actions.refreshAll();
         }}
         onValidate={async (id) => {
-          const result = await apiClient.validateModelWeightBatch(id);
+          const result = await actions.runOperation('Validating weight batch', () => apiClient.validateModelWeightBatch(id), (validated) => validated.message);
           await actions.refreshAll();
           return result;
         }}
         onPromote={async (id) => {
-          const result = await apiClient.promoteModelWeightBatch(id);
+          const result = await actions.runOperation('Promoting weight batch', () => apiClient.promoteModelWeightBatch(id), (promoted) => promoted.modelRunId ? `Promoted to model run ${formatIdShort(promoted.modelRunId)}.` : promoted.message);
           await actions.refreshAll();
           return result;
         }}
         onPromoteReady={async () => {
-          const result = await apiClient.promoteReadyModelWeightBatches();
+          const result = await actions.runOperation('Promoting ready weight batches', () => apiClient.promoteReadyModelWeightBatches(), (promoted) => `Promote-ready completed for ${promoted.length} batch result(s).`);
           await actions.refreshAll();
           return result;
         }}
@@ -446,7 +490,7 @@ function EmsPage({ dashboard, health }: { dashboard: DashboardState; health?: He
   );
 }
 
-function MarketPage({ dashboard, actions }: { dashboard: DashboardState; actions: { refreshAll: () => Promise<void> } }) {
+function MarketPage({ dashboard, actions }: { dashboard: DashboardState; actions: { refreshAll: () => Promise<void>; runOperation: <T>(label: string, work: () => Promise<T>, successMessage?: (result: T) => string | undefined) => Promise<T> } }) {
   return (
     <section className="workspace-page">
       <SectionHeader title="Market Data" eyebrow="Fake/local snapshots and derived 15-minute bars" />
@@ -454,12 +498,12 @@ function MarketPage({ dashboard, actions }: { dashboard: DashboardState; actions
         snapshots={dashboard.snapshots}
         bars={dashboard.bars}
         onCreateFakeSnapshots={async (request) => {
-          const result = await apiClient.createFakeSnapshots(request);
+          const result = await actions.runOperation('Creating fake snapshots', () => apiClient.createFakeSnapshots(request), (created) => `Created ${created.created} local fake snapshots.`);
           await actions.refreshAll();
           return `Created ${result.created} local fake snapshots.`;
         }}
         onBuildBars={async (request) => {
-          const result = await apiClient.buildBars(request);
+          const result = await actions.runOperation('Building 15-minute bars', () => apiClient.buildBars(request), (built) => `Bar build ${built.status}: created ${built.barsCreated}, updated ${built.barsUpdated}.`);
           await actions.refreshAll();
           return `Bar build ${result.status}: created ${result.barsCreated}, updated ${result.barsUpdated}.`;
         }}
@@ -478,7 +522,7 @@ function ReconPage({ dashboard }: { dashboard: DashboardState }) {
   );
 }
 
-function ExceptionsPage({ dashboard, actions }: { dashboard: DashboardState; actions: { refreshAll: () => Promise<void>; setSelected: (item: unknown) => void } }) {
+function ExceptionsPage({ dashboard, actions }: { dashboard: DashboardState; actions: { refreshAll: () => Promise<void>; runOperation: <T>(label: string, work: () => Promise<T>, successMessage?: (result: T) => string | undefined) => Promise<T>; setSelected: (item: unknown) => void } }) {
   const [selected, setSelected] = useState<ExceptionCaseDto | undefined>(dashboard.exceptionCases[0]);
   const [caseActions, setCaseActions] = useState<ExceptionCaseActionDto[]>([]);
   const [notes, setNotes] = useState<ExceptionCaseNoteDto[]>([]);
@@ -502,7 +546,7 @@ function ExceptionsPage({ dashboard, actions }: { dashboard: DashboardState; act
     const reason = requireReason ? window.prompt(`${label} reason`) : window.prompt(`${label} reason (optional)`);
     if (requireReason && !reason?.trim()) return;
     if (label === 'Waive' && ['Blocking', 'Critical'].includes(selected.severity) && !window.confirm('Waive this blocking or critical exception case?')) return;
-    await callback(reason ?? undefined);
+    await actions.runOperation(`${label} exception case`, () => callback(reason ?? undefined), () => `${label} completed.`);
     await actions.refreshAll();
     const refreshed = await apiClient.getExceptionCases({ limit: 100 });
     const updated = refreshed.find((item) => item.id === selected.id);
@@ -563,7 +607,7 @@ function ExceptionsPage({ dashboard, actions }: { dashboard: DashboardState; act
                 <CommandButton tone="info" onClick={() => void runAction('Acknowledge', (reason) => apiClient.acknowledgeExceptionCase(selected.id, reason))}>Acknowledge</CommandButton>
                 <CommandButton onClick={() => {
                   const assignedTo = window.prompt('Assign to');
-                  if (assignedTo?.trim()) void apiClient.assignExceptionCase(selected.id, assignedTo.trim()).then(actions.refreshAll);
+                  if (assignedTo?.trim()) void actions.runOperation('Assigning exception case', () => apiClient.assignExceptionCase(selected.id, assignedTo.trim()), () => 'Exception case assigned.').then(actions.refreshAll);
                 }}>Assign</CommandButton>
                 <CommandButton tone="warning" onClick={() => void runAction('Investigate', (reason) => apiClient.investigateExceptionCase(selected.id, reason))}>Investigating</CommandButton>
                 <CommandButton tone="ok" onClick={() => void runAction('Resolve', (reason) => apiClient.resolveExceptionCase(selected.id, reason ?? ''), true)}>Resolve</CommandButton>
@@ -572,7 +616,7 @@ function ExceptionsPage({ dashboard, actions }: { dashboard: DashboardState; act
                 <CommandButton onClick={() => void runAction('Reopen', (reason) => apiClient.reopenExceptionCase(selected.id, reason))}>Reopen</CommandButton>
                 <CommandButton onClick={() => {
                   const note = window.prompt('Add note');
-                  if (note?.trim()) void apiClient.addExceptionCaseNote(selected.id, note.trim()).then(() => loadDetail(selected));
+                  if (note?.trim()) void actions.runOperation('Adding exception note', () => apiClient.addExceptionCaseNote(selected.id, note.trim()), () => 'Exception note added.').then(() => loadDetail(selected));
                 }}>Add Note</CommandButton>
               </div>
             </div>
@@ -589,7 +633,7 @@ function ExceptionsPage({ dashboard, actions }: { dashboard: DashboardState; act
   );
 }
 
-function LmaxEodPage({ dashboard, actions }: { dashboard: DashboardState; actions: { refreshAll: () => Promise<void> } }) {
+function LmaxEodPage({ dashboard, actions }: { dashboard: DashboardState; actions: { refreshAll: () => Promise<void>; runOperation: <T>(label: string, work: () => Promise<T>, successMessage?: (result: T) => string | undefined) => Promise<T> } }) {
   return (
     <section className="workspace-page">
       <SectionHeader title="LMAX EOD" eyebrow="Report import, rollup control, wallet/PnL, EOD recon" />
@@ -611,22 +655,22 @@ function LmaxEodPage({ dashboard, actions }: { dashboard: DashboardState; action
         reconciliationRuns={dashboard.eodReconciliationRuns}
         eodBreaks={dashboard.eodReconciliationBreaks}
         onGenerateFake={async (request) => {
-          const result = await apiClient.generateFakeLmaxEod(request);
+          const result = await actions.runOperation('Generating fake LMAX EOD reports', () => apiClient.generateFakeLmaxEod(request), (generated) => `Generated ${generated.individualTradeCount} individual trades, ${generated.tradeSummaryCount} summaries, ${generated.currencyWalletCount} wallets.`);
           await actions.refreshAll();
           return result;
         }}
         onImportGenerated={async (request) => {
-          const result = await apiClient.importGeneratedLmaxEod(request);
+          const result = await actions.runOperation('Importing generated LMAX EOD reports', () => apiClient.importGeneratedLmaxEod(request), (imported) => `Import ${imported.status}: ${imported.rowCount} rows, ${imported.blockingIssueCount} blocking issues.`);
           await actions.refreshAll();
           return result;
         }}
         onRunReconciliation={async (request) => {
-          const result = await apiClient.runEodReconciliation(request);
+          const result = await actions.runOperation('Running EOD reconciliation', () => apiClient.runEodReconciliation(request), (run) => `EOD reconciliation: ${run.breakCount} breaks, ${run.blockingBreakCount} blocking.`);
           await actions.refreshAll();
           return result;
         }}
         onLoadPnl={async (reportDate, venueName, brokerAccountCode) => {
-          const eodPnlSummary = await apiClient.getEodPnlSummary(reportDate, venueName, brokerAccountCode);
+          const eodPnlSummary = await actions.runOperation('Loading EOD PnL summary', () => apiClient.getEodPnlSummary(reportDate, venueName, brokerAccountCode), (summary) => `Loaded EOD net PnL ${formatUsd(summary.totalNetPnlUsd)}.`);
           void eodPnlSummary;
           await actions.refreshAll();
         }}
@@ -635,24 +679,198 @@ function LmaxEodPage({ dashboard, actions }: { dashboard: DashboardState; action
   );
 }
 
-function RiskAdminPage({ dashboard, health, integrity, actions }: { dashboard: DashboardState; health?: HealthDto; integrity?: ReferenceDataIntegrityDto; actions: { refreshAll: () => Promise<void> } }) {
+function RiskAdminPage({ dashboard, health, integrity, actions }: { dashboard: DashboardState; health?: HealthDto; integrity?: ReferenceDataIntegrityDto; actions: { refreshAll: () => Promise<void>; runOperation: <T>(label: string, work: () => Promise<T>, successMessage?: (result: T) => string | undefined) => Promise<T> } }) {
+  const [selectedSetId, setSelectedSetId] = useState<string | undefined>(dashboard.activeRiskLimitSet?.id);
+  const selectedSet = dashboard.riskLimitSets.find((item) => item.id === selectedSetId) ?? dashboard.activeRiskLimitSet ?? dashboard.riskLimitSets[0];
+  const riskLimits = selectedSet?.id === dashboard.activeRiskLimitSet?.id ? dashboard.riskLimits : [];
+  const instrumentLimits = selectedSet?.id === dashboard.activeRiskLimitSet?.id ? dashboard.instrumentRiskLimits : [];
+  const venueLimits = selectedSet?.id === dashboard.activeRiskLimitSet?.id ? dashboard.venueRiskLimits : [];
+  const blockedRiskDecisions = dashboard.riskDecisions.filter((item) => ['Rejected', 'Blocked'].includes(item.status));
+
+  const requireReason = (label: string) => {
+    const reason = window.prompt(`${label} reason`);
+    return reason?.trim() ? reason.trim() : undefined;
+  };
+
+  const cloneSet = async (set: RiskLimitSetDto) => {
+    const reason = requireReason('Clone risk limit set');
+    if (!reason) return;
+    const cloned = await actions.runOperation('Cloning risk set', () => apiClient.cloneRiskLimitSet(set.id, reason), (draft) => `Cloned draft risk set ${draft.name} v${draft.version}.`);
+    setSelectedSetId(cloned.id);
+    await actions.refreshAll();
+  };
+
+  const activateSet = async (set: RiskLimitSetDto) => {
+    const reason = requireReason('Activate draft risk limit set');
+    if (!reason || !window.confirm(`Activate ${set.name} v${set.version} and retire the prior active profile?`)) return;
+    const activated = await actions.runOperation('Activating risk set', () => apiClient.activateRiskLimitSet(set.id, reason), (active) => `Activated risk set ${active.name} v${active.version}.`);
+    setSelectedSetId(activated.id);
+    await actions.refreshAll();
+  };
+
+  const retireSet = async (set: RiskLimitSetDto) => {
+    const reason = requireReason('Retire risk limit set');
+    if (!reason || !window.confirm(`Retire ${set.name} v${set.version}?`)) return;
+    await actions.runOperation('Retiring risk set', () => apiClient.retireRiskLimitSet(set.id, reason), (retired) => `Retired risk set ${retired.name} v${retired.version}.`);
+    await actions.refreshAll();
+  };
+
+  const updateInstrumentControl = async (row: RiskInstrumentDto, field: 'isTradingEnabled' | 'isReportImportEnabled' | 'isMarketDataEnabled') => {
+    const reason = requireReason(`Update ${row.instrument.symbol} ${field}`);
+    if (!reason) return;
+    await actions.runOperation('Updating instrument controls', () => apiClient.updateRiskInstrumentControls(row.instrument.id, { [field]: !row.instrument[field], reason }), () => `Updated ${row.instrument.symbol} controls.`);
+    await actions.refreshAll();
+  };
+
+  const updateVenueControl = async (row: RiskVenueDto, field: 'isTradingEnabled' | 'isReportImportEnabled' | 'isMarketDataEnabled') => {
+    const reason = requireReason(`Update ${row.venue.name} ${field}`);
+    if (!reason) return;
+    await actions.runOperation('Updating venue controls', () => apiClient.updateRiskVenueControls(row.venue.id, { [field]: !row.venue[field], reason }), () => `Updated ${row.venue.name} controls.`);
+    await actions.refreshAll();
+  };
+
   return (
     <section className="workspace-page">
-      <SectionHeader title="Risk & Admin" eyebrow="Kill switch, reference data, instruments, venues" />
+      <SectionHeader title="Risk Control Center" eyebrow="Versioned risk profile, trading windows, controls, decisions" />
+      <div className="metric-grid">
+        <MetricCard label="Active Risk Profile" value={dashboard.activeRiskLimitSet ? `v${dashboard.activeRiskLimitSet.version}` : 'Missing'} sublabel={dashboard.activeRiskLimitSet?.name ?? 'No active set loaded'} tone={dashboard.activeRiskLimitSet ? 'ok' : 'danger'} />
+        <MetricCard label="Risk Sets" value={dashboard.riskLimitSets.length} sublabel={`${dashboard.riskLimitSets.filter((item) => item.status === 'Draft').length} draft`} tone="neutral" />
+        <MetricCard label="Trading Windows" value={dashboard.tradingWindows.filter((item) => item.isActive).length} sublabel="Active schedule rows" tone={dashboard.tradingWindows.some((item) => item.isActive) ? 'info' : 'warning'} />
+        <MetricCard label="Kill Switch" value={dashboard.killSwitch?.isActive ? 'Active' : 'Clear'} sublabel={dashboard.killSwitch?.reason ?? 'Local safety control'} tone={dashboard.killSwitch?.isActive ? 'danger' : 'ok'} />
+        <MetricCard label="Blocked Risk Decisions" value={blockedRiskDecisions.length} sublabel={blockedRiskDecisions[0]?.rejectReason ? formatStatus(blockedRiskDecisions[0].rejectReason) : 'Recent decisions'} tone={blockedRiskDecisions.length ? 'warning' : 'ok'} />
+      </div>
       <div className="page-grid two">
         <SafetyPanel health={health} />
         <ReferenceDataPanel integrity={integrity} />
+      </div>
+      <div className="panel wide">
+        <SectionHeader title="Active Risk Profile" eyebrow="Active set selection controls simulated/FakeLmax processing only." actions={dashboard.activeRiskLimitSet && <StatusChip label={dashboard.activeRiskLimitSet.status} tone={toneForStatus(dashboard.activeRiskLimitSet.status)} />} />
+        <div className="detail-grid">
+          <div>
+            <p><strong>Name:</strong> {dashboard.activeRiskLimitSet?.name ?? '-'}</p>
+            <p><strong>Fund:</strong> {formatIdShort(dashboard.activeRiskLimitSet?.fundId)} <strong>Model:</strong> {dashboard.activeRiskLimitSet?.modelName ?? '-'}</p>
+            <p><strong>Version:</strong> {dashboard.activeRiskLimitSet?.version ?? '-'} <strong>Activated:</strong> {formatUtc(dashboard.activeRiskLimitSet?.activatedAtUtc)}</p>
+            <p><strong>Description:</strong> {dashboard.activeRiskLimitSet?.description ?? '-'}</p>
+          </div>
+          <div>
+            <p><strong>Max Gross Exposure:</strong> {formatUsd(dashboard.activeRiskLimitSet?.maxGrossExposureUsd)}</p>
+            <p><strong>Model Staleness:</strong> {dashboard.activeRiskLimitSet?.maxModelRunAgeSeconds ?? '-'} seconds</p>
+            <p><strong>Market Data Staleness:</strong> {dashboard.activeRiskLimitSet?.maxMarketDataAgeSeconds ?? '-'} seconds</p>
+            <p><strong>Position Tolerance:</strong> {formatQuantity(dashboard.activeRiskLimitSet?.positionToleranceBaseQuantity)}</p>
+          </div>
+        </div>
+      </div>
+      <div className="panel wide">
+        <SectionHeader title="Risk Limit Sets" eyebrow="Draft / active / retired lifecycle; activation and retirement require a reason." />
+        <DataTable rows={dashboard.riskLimitSets} getRowKey={(row) => row.id} onRowClick={(row) => setSelectedSetId(row.id)} emptyLabel="No risk limit sets loaded" columns={[
+          { key: 'name', header: 'Name', render: (row) => row.name, sortValue: (row) => row.name },
+          { key: 'version', header: 'Version', render: (row) => `v${row.version}`, sortValue: (row) => row.version },
+          { key: 'status', header: 'Status', render: (row) => <StatusChip label={row.status} tone={toneForStatus(row.status)} />, sortValue: (row) => row.status },
+          { key: 'active', header: 'Active', render: (row) => row.isActive ? <StatusChip label="Active" tone="ok" /> : <StatusChip label="Inactive" tone="neutral" />, sortValue: (row) => row.isActive },
+          { key: 'model', header: 'Model', render: (row) => row.modelName ?? '-' },
+          { key: 'activated', header: 'Activated', render: (row) => formatUtc(row.activatedAtUtc), sortValue: (row) => row.activatedAtUtc ?? '' },
+          { key: 'actions', header: 'Actions', render: (row) => (
+            <div className="button-row compact">
+              <ActionButton idleLabel="Clone" runningLabel="Cloning..." onClick={(event) => event.stopPropagation()} onAction={() => cloneSet(row)} />
+              <ActionButton className="command-button warning" idleLabel="Activate" runningLabel="Activating..." disabled={row.status !== 'Draft'} onClick={(event) => event.stopPropagation()} onAction={() => activateSet(row)} />
+              <ActionButton className="command-button danger" idleLabel="Retire" runningLabel="Retiring..." disabled={row.status === 'Retired' || row.status === 'Archived'} onClick={(event) => event.stopPropagation()} onAction={() => retireSet(row)} />
+            </div>
+          ) }
+        ]} />
+      </div>
+      <div className="info-box">Active and archived risk sets are read-only from the operator cockpit. Clone an active set to a draft before changing limits, then activate the draft with a reason. No endpoint here can enable live trading or external connections.</div>
+      <div className="page-grid two">
+        <div className="panel wide">
+          <SectionHeader title="Global Limits" eyebrow={selectedSet ? `${selectedSet.name} v${selectedSet.version}` : 'Select a risk set'} />
+          <DataTable rows={riskLimits} getRowKey={(row) => row.id} emptyLabel={selectedSet?.id === dashboard.activeRiskLimitSet?.id ? 'No global limits' : 'Limit rows are loaded for the active set only'} columns={[
+            { key: 'name', header: 'Limit', render: (row) => formatStatus(row.name), sortValue: (row) => row.name },
+            { key: 'scope', header: 'Scope', render: (row) => row.scope },
+            { key: 'value', header: 'Value', render: (row) => formatQuantity(row.value), sortValue: (row) => row.value, className: 'numeric' },
+            { key: 'unit', header: 'Unit', render: (row) => row.unit },
+            { key: 'enabled', header: 'Enabled', render: (row) => <StatusChip label={row.isEnabled ? 'Enabled' : 'Disabled'} tone={row.isEnabled ? 'ok' : 'warning'} /> }
+          ]} />
+        </div>
+        <div className="panel wide">
+          <SectionHeader title="Trading Windows" eyebrow="No-new-orders and cutoff visibility" />
+          <DataTable rows={dashboard.tradingWindows} getRowKey={(row) => row.id} emptyLabel="No trading windows loaded" columns={[
+            { key: 'day', header: 'Day', render: (row) => row.dayOfWeek, sortValue: (row) => row.dayOfWeek },
+            { key: 'schedule', header: 'Schedule', render: (row) => row.scheduleName },
+            { key: 'tz', header: 'Time Zone', render: (row) => row.timeZoneId },
+            { key: 'open', header: 'Open', render: (row) => row.openTime },
+            { key: 'close', header: 'Close', render: (row) => row.closeTime },
+            { key: 'cutoff', header: 'No New Orders', render: (row) => row.noNewOrdersAfter },
+            { key: 'enabled', header: 'Enabled', render: (row) => <StatusChip label={row.tradingEnabled ? 'Enabled' : 'Disabled'} tone={row.tradingEnabled ? 'ok' : 'warning'} /> }
+          ]} />
+        </div>
+      </div>
+      <div className="page-grid two">
+        <div className="panel wide">
+          <SectionHeader title="Instrument Limits" eyebrow="Trading-enabled is separate from report-import-enabled." />
+          <DataTable rows={instrumentLimits} getRowKey={(row) => row.id} emptyLabel="Instrument limits are loaded for the active set only" columns={[
+            { key: 'symbol', header: 'Symbol', render: (row) => row.symbol ?? formatIdShort(row.instrumentId), sortValue: (row) => row.symbol ?? row.instrumentId },
+            { key: 'trade', header: 'Max Trade USD', render: (row) => formatUsd(row.maxTradeNotionalUsd), sortValue: (row) => row.maxTradeNotionalUsd, className: 'numeric' },
+            { key: 'position', header: 'Max Position USD', render: (row) => formatUsd(row.maxPositionUsd), sortValue: (row) => row.maxPositionUsd, className: 'numeric' },
+            { key: 'minQty', header: 'Min Qty', render: (row) => formatQuantity(row.minTradeQuantity), sortValue: (row) => row.minTradeQuantity, className: 'numeric' },
+            { key: 'enabled', header: 'Trading', render: (row) => <StatusChip label={row.isTradingEnabled ? 'Enabled' : 'Disabled'} tone={row.isTradingEnabled ? 'ok' : 'warning'} /> }
+          ]} />
+        </div>
+        <div className="panel wide">
+          <SectionHeader title="Venue Limits" eyebrow="Venue controls affect future local/FakeLmax processing only." />
+          <DataTable rows={venueLimits} getRowKey={(row) => row.id} emptyLabel="Venue limits are loaded for the active set only" columns={[
+            { key: 'venue', header: 'Venue', render: (row) => row.venueName ?? formatIdShort(row.venueId), sortValue: (row) => row.venueName ?? row.venueId },
+            { key: 'trade', header: 'Max Trade USD', render: (row) => formatUsd(row.maxTradeNotionalUsd), sortValue: (row) => row.maxTradeNotionalUsd, className: 'numeric' },
+            { key: 'turnover', header: 'Daily Turnover USD', render: (row) => formatUsd(row.maxDailyTurnoverUsd), sortValue: (row) => row.maxDailyTurnoverUsd, className: 'numeric' },
+            { key: 'rate', header: 'Orders / Min', render: (row) => row.maxOrdersPerMinute, sortValue: (row) => row.maxOrdersPerMinute, className: 'numeric' },
+            { key: 'enabled', header: 'Venue', render: (row) => <StatusChip label={row.isVenueEnabled ? 'Enabled' : 'Disabled'} tone={row.isVenueEnabled ? 'ok' : 'warning'} /> }
+          ]} />
+        </div>
+      </div>
+      <div className="page-grid two">
+        <div className="panel wide">
+          <SectionHeader title="Instrument Controls" eyebrow="Known report aliases may import even when trading is disabled." />
+          <DataTable rows={dashboard.riskInstruments} getRowKey={(row) => row.instrument.id} emptyLabel="No instruments loaded" columns={[
+            { key: 'symbol', header: 'Symbol', render: (row) => row.instrument.symbol, sortValue: (row) => row.instrument.symbol },
+            { key: 'trading', header: 'Trading', render: (row) => <button className="link-button" onClick={(event) => { event.stopPropagation(); void updateInstrumentControl(row, 'isTradingEnabled'); }}>{row.instrument.isTradingEnabled ? 'Enabled' : 'Disabled'}</button> },
+            { key: 'report', header: 'Report Import', render: (row) => <button className="link-button" onClick={(event) => { event.stopPropagation(); void updateInstrumentControl(row, 'isReportImportEnabled'); }}>{row.instrument.isReportImportEnabled ? 'Enabled' : 'Disabled'}</button> },
+            { key: 'market', header: 'Market Data', render: (row) => <button className="link-button" onClick={(event) => { event.stopPropagation(); void updateInstrumentControl(row, 'isMarketDataEnabled'); }}>{row.instrument.isMarketDataEnabled ? 'Enabled' : 'Disabled'}</button> },
+            { key: 'aliases', header: 'Aliases', render: (row) => row.aliases.map((alias) => alias.externalSymbol).join(', ') || '-' }
+          ]} />
+        </div>
+        <div className="panel wide">
+          <SectionHeader title="Venue Controls" eyebrow="No real LMAX runtime controls are exposed." />
+          <DataTable rows={dashboard.riskVenues} getRowKey={(row) => row.venue.id} emptyLabel="No venues loaded" columns={[
+            { key: 'venue', header: 'Venue', render: (row) => row.venue.name, sortValue: (row) => row.venue.name },
+            { key: 'trading', header: 'Trading', render: (row) => <button className="link-button" onClick={(event) => { event.stopPropagation(); void updateVenueControl(row, 'isTradingEnabled'); }}>{row.venue.isTradingEnabled ? 'Enabled' : 'Disabled'}</button> },
+            { key: 'report', header: 'Report Import', render: (row) => <button className="link-button" onClick={(event) => { event.stopPropagation(); void updateVenueControl(row, 'isReportImportEnabled'); }}>{row.venue.isReportImportEnabled ? 'Enabled' : 'Disabled'}</button> },
+            { key: 'market', header: 'Market Data', render: (row) => <button className="link-button" onClick={(event) => { event.stopPropagation(); void updateVenueControl(row, 'isMarketDataEnabled'); }}>{row.venue.isMarketDataEnabled ? 'Enabled' : 'Disabled'}</button> }
+          ]} />
+        </div>
+      </div>
+      <div className="panel wide">
+        <SectionHeader title="Recent Risk Decisions" eyebrow="Observed values, limits, and check-level explanations" />
+        <DataTable rows={dashboard.riskDecisions.slice(0, 25)} getRowKey={(row) => row.id} emptyLabel="No risk decisions loaded" columns={[
+          { key: 'created', header: 'Created', render: (row) => formatUtc(row.createdAtUtc), sortValue: (row) => row.createdAtUtc },
+          { key: 'status', header: 'Status', render: (row) => <StatusChip label={formatStatus(row.status)} tone={toneForStatus(row.status)} />, sortValue: (row) => row.status },
+          { key: 'reason', header: 'Reason', render: (row) => row.rejectReason ? formatStatus(row.rejectReason) : '-' },
+          { key: 'symbol', header: 'Symbol', render: (row) => row.symbol ?? formatIdShort(row.instrumentId) },
+          { key: 'riskSet', header: 'Risk Set', render: (row) => row.riskLimitSetName ? `${row.riskLimitSetName} v${row.riskLimitSetVersion ?? '-'}` : formatIdShort(row.riskLimitSetId) },
+          { key: 'check', header: 'Key Check', render: (row) => {
+            const failed = row.details?.find((item) => ['Failed', 'Blocked'].includes(item.status));
+            const detail = failed ?? row.details?.[0];
+            return detail ? `${formatStatus(detail.checkName)}: ${detail.message}` : row.message;
+          } }
+        ]} />
       </div>
       <AdminPanel
         killSwitch={dashboard.killSwitch}
         instruments={dashboard.instruments}
         venues={dashboard.venues}
         onActivateKillSwitch={async (reason) => {
-          await apiClient.activateKillSwitch(reason);
+          await actions.runOperation('Activating kill switch', () => apiClient.activateKillSwitch(reason), () => 'Kill switch activated.');
           await actions.refreshAll();
         }}
         onClearKillSwitch={async () => {
-          await apiClient.clearKillSwitch();
+          await actions.runOperation('Clearing kill switch', () => apiClient.clearKillSwitch(), () => 'Kill switch cleared.');
           await actions.refreshAll();
         }}
       />

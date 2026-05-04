@@ -599,6 +599,15 @@ namespace QQ.Production.Intraday.Infrastructure.SqlServer.Migrations
                     b.Property<bool>("IsEnabled")
                         .HasColumnType("bit");
 
+                    b.Property<bool>("IsMarketDataEnabled")
+                        .HasColumnType("bit");
+
+                    b.Property<bool>("IsReportImportEnabled")
+                        .HasColumnType("bit");
+
+                    b.Property<bool>("IsTradingEnabled")
+                        .HasColumnType("bit");
+
                     b.Property<int>("PricePrecision")
                         .HasColumnType("int");
 
@@ -675,11 +684,21 @@ namespace QQ.Production.Intraday.Infrastructure.SqlServer.Migrations
                     b.Property<bool>("IsEnabled")
                         .HasColumnType("bit");
 
+                    b.Property<bool>("IsTradingEnabled")
+                        .HasColumnType("bit");
+
                     b.Property<decimal>("MaxExposureUsd")
                         .HasPrecision(28, 10)
                         .HasColumnType("decimal(28,10)");
 
+                    b.Property<int>("MaxOrdersPerDay")
+                        .HasColumnType("int");
+
                     b.Property<decimal>("MaxTradeNotionalUsd")
+                        .HasPrecision(28, 10)
+                        .HasColumnType("decimal(28,10)");
+
+                    b.Property<decimal>("MinTradeQuantity")
                         .HasPrecision(28, 10)
                         .HasColumnType("decimal(28,10)");
 
@@ -1792,8 +1811,17 @@ namespace QQ.Production.Intraday.Infrastructure.SqlServer.Migrations
                         .IsRequired()
                         .HasColumnType("nvarchar(max)");
 
+                    b.Property<Guid?>("InstrumentId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid?>("ModelRunId")
+                        .HasColumnType("uniqueidentifier");
+
                     b.Property<int>("RejectReason")
                         .HasColumnType("int");
+
+                    b.Property<Guid?>("RiskLimitSetId")
+                        .HasColumnType("uniqueidentifier");
 
                     b.Property<int>("Status")
                         .HasColumnType("int");
@@ -1801,11 +1829,62 @@ namespace QQ.Production.Intraday.Infrastructure.SqlServer.Migrations
                     b.Property<Guid>("TradeIntentId")
                         .HasColumnType("uniqueidentifier");
 
+                    b.Property<Guid?>("VenueId")
+                        .HasColumnType("uniqueidentifier");
+
                     b.HasKey("Id");
+
+                    b.HasIndex("CreatedAtUtc");
+
+                    b.HasIndex("RiskLimitSetId");
 
                     b.HasIndex("TradeIntentId");
 
                     b.ToTable("RiskDecisions");
+                });
+
+            modelBuilder.Entity("QQ.Production.Intraday.Domain.RiskDecisionDetail", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("CheckName")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(450)");
+
+                    b.Property<DateTimeOffset>("CreatedAtUtc")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<decimal?>("LimitValue")
+                        .HasPrecision(28, 10)
+                        .HasColumnType("decimal(28,10)");
+
+                    b.Property<string>("Message")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<decimal?>("ObservedValue")
+                        .HasPrecision(28, 10)
+                        .HasColumnType("decimal(28,10)");
+
+                    b.Property<int?>("RejectReason")
+                        .HasColumnType("int");
+
+                    b.Property<Guid>("RiskDecisionId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<int>("Status")
+                        .HasColumnType("int");
+
+                    b.Property<string>("Unit")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("RiskDecisionId", "CheckName");
+
+                    b.ToTable("RiskDecisionDetails");
                 });
 
             modelBuilder.Entity("QQ.Production.Intraday.Domain.RiskLimit", b =>
@@ -1814,12 +1893,23 @@ namespace QQ.Production.Intraday.Infrastructure.SqlServer.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uniqueidentifier");
 
+                    b.Property<bool>("IsEnabled")
+                        .HasColumnType("bit");
+
                     b.Property<string>("Name")
                         .IsRequired()
                         .HasColumnType("nvarchar(450)");
 
                     b.Property<Guid>("RiskLimitSetId")
                         .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("Scope")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("Unit")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
 
                     b.Property<decimal>("Value")
                         .HasPrecision(28, 10)
@@ -1839,10 +1929,34 @@ namespace QQ.Production.Intraday.Infrastructure.SqlServer.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uniqueidentifier");
 
+                    b.Property<DateTimeOffset?>("ActivatedAtUtc")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<string>("ActivatedBy")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<DateTimeOffset?>("CreatedAtUtc")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<string>("CreatedBy")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("Description")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<DateTimeOffset?>("EffectiveFromUtc")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<DateTimeOffset?>("EffectiveToUtc")
+                        .HasColumnType("datetimeoffset");
+
                     b.Property<Guid>("FundId")
                         .HasColumnType("uniqueidentifier");
 
                     b.Property<bool>("GlobalTradingEnabled")
+                        .HasColumnType("bit");
+
+                    b.Property<bool>("IsActive")
                         .HasColumnType("bit");
 
                     b.Property<decimal>("MaxGrossExposureUsd")
@@ -1859,14 +1973,36 @@ namespace QQ.Production.Intraday.Infrastructure.SqlServer.Migrations
                         .HasPrecision(28, 10)
                         .HasColumnType("decimal(28,10)");
 
+                    b.Property<string>("ModelName")
+                        .HasColumnType("nvarchar(450)");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
                     b.Property<decimal>("PositionToleranceBaseQuantity")
                         .HasPrecision(28, 10)
                         .HasColumnType("decimal(28,10)");
 
+                    b.Property<DateTimeOffset?>("RetiredAtUtc")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<string>("RetiredBy")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<int>("Status")
+                        .HasColumnType("int");
+
+                    b.Property<int>("Version")
+                        .HasColumnType("int");
+
                     b.HasKey("Id");
 
-                    b.HasIndex("FundId")
-                        .IsUnique();
+                    b.HasIndex("FundId", "ModelName", "IsActive")
+                        .IsUnique()
+                        .HasFilter("[IsActive] = 1");
+
+                    b.HasIndex("FundId", "ModelName", "Status");
 
                     b.ToTable("RiskLimitSets");
                 });
@@ -1979,6 +2115,9 @@ namespace QQ.Production.Intraday.Infrastructure.SqlServer.Migrations
                     b.Property<TimeOnly>("ClosesAtUtc")
                         .HasColumnType("time");
 
+                    b.Property<DateTimeOffset?>("CreatedAtUtc")
+                        .HasColumnType("datetimeoffset");
+
                     b.Property<int>("DayOfWeek")
                         .HasColumnType("int");
 
@@ -2001,12 +2140,22 @@ namespace QQ.Production.Intraday.Infrastructure.SqlServer.Migrations
                     b.Property<TimeOnly>("OpensAtUtc")
                         .HasColumnType("time");
 
+                    b.Property<string>("ScheduleName")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
                     b.Property<string>("TimeZoneId")
                         .IsRequired()
                         .HasColumnType("nvarchar(max)");
 
                     b.Property<bool>("TradingEnabled")
                         .HasColumnType("bit");
+
+                    b.Property<DateTimeOffset?>("UpdatedAtUtc")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<int>("Version")
+                        .HasColumnType("int");
 
                     b.HasKey("Id");
 
@@ -2023,6 +2172,15 @@ namespace QQ.Production.Intraday.Infrastructure.SqlServer.Migrations
                         .HasColumnType("uniqueidentifier");
 
                     b.Property<bool>("IsEnabled")
+                        .HasColumnType("bit");
+
+                    b.Property<bool>("IsMarketDataEnabled")
+                        .HasColumnType("bit");
+
+                    b.Property<bool>("IsReportImportEnabled")
+                        .HasColumnType("bit");
+
+                    b.Property<bool>("IsTradingEnabled")
                         .HasColumnType("bit");
 
                     b.Property<string>("Name")
@@ -2102,6 +2260,16 @@ namespace QQ.Production.Intraday.Infrastructure.SqlServer.Migrations
 
                     b.Property<bool>("IsEnabled")
                         .HasColumnType("bit");
+
+                    b.Property<bool>("IsVenueEnabled")
+                        .HasColumnType("bit");
+
+                    b.Property<decimal>("MaxDailyTurnoverUsd")
+                        .HasPrecision(28, 10)
+                        .HasColumnType("decimal(28,10)");
+
+                    b.Property<int>("MaxOrdersPerMinute")
+                        .HasColumnType("int");
 
                     b.Property<decimal>("MaxTradeNotionalUsd")
                         .HasPrecision(28, 10)
@@ -2511,9 +2679,23 @@ namespace QQ.Production.Intraday.Infrastructure.SqlServer.Migrations
 
             modelBuilder.Entity("QQ.Production.Intraday.Domain.RiskDecision", b =>
                 {
+                    b.HasOne("QQ.Production.Intraday.Domain.RiskLimitSet", null)
+                        .WithMany()
+                        .HasForeignKey("RiskLimitSetId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
                     b.HasOne("QQ.Production.Intraday.Domain.TradeIntent", null)
                         .WithMany()
                         .HasForeignKey("TradeIntentId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("QQ.Production.Intraday.Domain.RiskDecisionDetail", b =>
+                {
+                    b.HasOne("QQ.Production.Intraday.Domain.RiskDecision", null)
+                        .WithMany()
+                        .HasForeignKey("RiskDecisionId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
                 });

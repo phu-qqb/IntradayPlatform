@@ -61,11 +61,19 @@ public sealed class LocalDatabaseInitializer(IntradayDbContext dbContext, IClock
         }
 
         var seedRiskLimitSet = seeded.RiskLimitSets.Single();
-        var riskLimitSet = await dbContext.RiskLimitSets.FirstOrDefaultAsync(x => x.FundId == fund.Id, cancellationToken);
+        var riskLimitSet = await dbContext.RiskLimitSets.FirstOrDefaultAsync(x => x.FundId == fund.Id && x.ModelName == seedRiskLimitSet.ModelName && x.IsActive, cancellationToken);
         if (riskLimitSet is null)
         {
             riskLimitSet = seedRiskLimitSet with { FundId = fund.Id };
             dbContext.RiskLimitSets.Add(riskLimitSet);
+        }
+
+        foreach (var seedRiskLimit in seeded.RiskLimits)
+        {
+            if (!await dbContext.RiskLimits.AnyAsync(x => x.RiskLimitSetId == riskLimitSet.Id && x.Name == seedRiskLimit.Name, cancellationToken))
+            {
+                dbContext.RiskLimits.Add(seedRiskLimit with { RiskLimitSetId = riskLimitSet.Id });
+            }
         }
 
         var seedInstrumentRiskLimit = seeded.InstrumentRiskLimits.Single();
@@ -191,7 +199,10 @@ public sealed class LocalDatabaseInitializer(IntradayDbContext dbContext, IClock
                     new Currency(seed.QuoteCurrency),
                     seed.QuoteCurrency == "JPY" ? 3 : 5,
                     2,
-                    IsEnabled: seed.InternalSymbol == "EURUSD");
+                    IsEnabled: seed.InternalSymbol == "EURUSD",
+                    IsTradingEnabled: seed.InternalSymbol == "EURUSD",
+                    IsReportImportEnabled: true,
+                    IsMarketDataEnabled: seed.InternalSymbol == "EURUSD");
                 dbContext.Instruments.Add(instrument);
             }
 

@@ -228,6 +228,47 @@ code, .id-token, .mono { font-family: "Cascadia Mono", "SFMono-Regular", Consola
 .info-box { border: 1px solid var(--info-border); background: rgba(56, 139, 253, 0.12); color: var(--info); }
 .warning-box { border: 1px solid var(--warning-border); background: rgba(183, 121, 31, 0.16); color: var(--warning); }
 .loading-state, .empty-state { color: var(--text-muted); border: 1px dashed var(--border-strong); background: rgba(13, 20, 29, .35); }
+.action-toast {
+  position: fixed;
+  right: var(--space-4);
+  bottom: calc(var(--space-4) + 42px);
+  z-index: 50;
+  display: grid;
+  grid-template-columns: auto minmax(240px, 520px) auto;
+  gap: var(--space-3);
+  align-items: start;
+  border-radius: var(--radius-md);
+  padding: var(--space-3);
+  border: 1px solid var(--border-strong);
+  background: var(--surface-elevated);
+  box-shadow: var(--shadow-lg);
+}
+.action-toast.ok { border-color: var(--success-border); }
+.action-toast.info { border-color: var(--info-border); }
+.action-toast.danger { border-color: var(--danger-border); }
+.action-toast small { display: block; margin-top: var(--space-1); color: var(--text-muted); }
+.action-toast pre { max-width: 480px; white-space: pre-wrap; }
+.spinner {
+  display: inline-block;
+  width: .9em;
+  height: .9em;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 999px;
+  animation: spin .8s linear infinite;
+  margin-right: var(--space-1);
+  vertical-align: -1px;
+}
+.status-dot {
+  display: inline-block;
+  width: .65rem;
+  height: .65rem;
+  border-radius: 999px;
+  background: currentColor;
+  margin-top: .45rem;
+}
+button.is-running { cursor: progress; opacity: .8; }
+@keyframes spin { to { transform: rotate(360deg); } }
 
 .data-table-shell { display: grid; gap: var(--space-2); }
 .table-filter { max-width: 340px; background: #101925; }
@@ -341,6 +382,18 @@ tr.selected-row td { background: var(--bg-row-selected); }
 .timeline-item.danger { border-color: var(--danger-border); }
 .detail-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(300px, .8fr); gap: var(--space-4); }
 .inline-controls, .button-row { display: flex; gap: var(--space-2); flex-wrap: wrap; }
+.button-row.compact { gap: var(--space-1); }
+.button-row.compact .command-button { padding: 4px 8px; font-size: var(--font-xs); }
+.link-button {
+  border: 0;
+  background: transparent;
+  color: var(--info);
+  padding: 0;
+  font: inherit;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.link-button:hover { color: var(--text-primary); }
 .inline-controls select { min-width: 165px; }
 .note-row {
   border: 1px solid var(--border-strong);

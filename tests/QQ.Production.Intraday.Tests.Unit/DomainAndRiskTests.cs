@@ -154,6 +154,99 @@ public sealed class DomainAndRiskTests
         Assert.Equal(RiskRejectReason.MaxTradeNotionalExceeded, rejected.RejectReason);
     }
 
+    [Fact]
+    public void Risk_engine_records_limit_set_and_observed_limit_details()
+    {
+        var state = SeedData.Create(Now);
+        var intent = NewIntent(state, requestedBaseQuantity: 91_000m);
+        var context = NewRiskContext(state, Now);
+        var limits = state.RiskLimitSets.Single();
+        var instrumentLimit = state.InstrumentRiskLimits.Single() with { MaxTradeNotionalUsd = 1m };
+        var window = state.TradingWindows.Single(x => x.ModelName == "Sample FX Intraday");
+
+        var result = new RiskEngine().EvaluateDetailed(intent, context, limits, instrumentLimit, state.VenueRiskLimits.Single(), window, state.KillSwitch);
+
+        Assert.Equal(limits.Id, result.Decision.RiskLimitSetId);
+        Assert.Equal(context.ModelRun.Id, result.Decision.ModelRunId);
+        Assert.Equal(context.Instrument.Id, result.Decision.InstrumentId);
+        Assert.Contains(result.Details, x =>
+            x.CheckName == "MaxTradeNotionalUsd" &&
+            x.Status == RiskDecisionCheckStatus.Failed &&
+            x.ObservedValue > x.LimitValue &&
+            x.Unit == "USD");
+    }
+
+    [Fact]
+    public void Approved_risk_decision_contains_passed_detail_rows()
+    {
+        var state = SeedData.Create(Now);
+        var intent = NewIntent(state, requestedBaseQuantity: 91_000m);
+        var context = NewRiskContext(state, Now);
+        var window = state.TradingWindows.Single(x => x.ModelName == "Sample FX Intraday");
+
+        var result = new RiskEngine().EvaluateDetailed(intent, context, state.RiskLimitSets.Single(), state.InstrumentRiskLimits.Single(), state.VenueRiskLimits.Single(), window, state.KillSwitch);
+
+        Assert.Equal(RiskDecisionStatus.Approved, result.Decision.Status);
+        Assert.NotEmpty(result.Details);
+        Assert.Contains(result.Details, x => x.CheckName == "MaxTradeNotionalUsd" && x.Status == RiskDecisionCheckStatus.Passed && x.ObservedValue is not null && x.LimitValue is not null);
+        Assert.Contains(result.Details, x => x.CheckName == "TradingWindow" && x.Status == RiskDecisionCheckStatus.Passed);
+    }
+
+    [Fact]
+    public void Stale_market_data_failure_contains_observed_and_limit_values()
+    {
+        var state = SeedData.Create(Now);
+        var intent = NewIntent(state, requestedBaseQuantity: 91_000m);
+        var context = NewRiskContext(state, Now) with { MarketData = state.MarketData.Single() with { ReceivedAtUtc = Now.AddHours(-2) } };
+        var window = state.TradingWindows.Single(x => x.ModelName == "Sample FX Intraday");
+
+        var result = new RiskEngine().EvaluateDetailed(intent, context, state.RiskLimitSets.Single(), state.InstrumentRiskLimits.Single(), state.VenueRiskLimits.Single(), window, state.KillSwitch);
+
+        Assert.Equal(RiskRejectReason.StaleMarketData, result.Decision.RejectReason);
+        Assert.Contains(result.Details, x =>
+            x.CheckName == "MarketDataStalenessSeconds" &&
+            x.Status == RiskDecisionCheckStatus.Failed &&
+            x.ObservedValue > x.LimitValue &&
+            x.Unit == "seconds");
+    }
+
+    [Fact]
+    public async Task Risk_control_activation_retires_prior_active_set_and_audits()
+    {
+        var state = SeedData.Create(Now);
+        var repository = new InMemoryIntradayRepository(state);
+        var auditRepository = new InMemoryOperatorAuditRepository(state);
+        var context = new StaticOperatorContext(OperatorAuditActorType.Operator, "local-dev", "Local Dev", "corr-risk");
+        var audit = new OperatorAuditService(auditRepository, context, Clock);
+        var service = new RiskControlService(repository, audit, context, Clock);
+
+        var active = await service.GetActiveRiskLimitSetAsync("QQ_MASTER", "IntradayFxModel", CancellationToken.None);
+        Assert.NotNull(active);
+
+        var draft = await service.CloneRiskLimitSetAsync(active.Id, "prepare safer thresholds", CancellationToken.None);
+        var activated = await service.ActivateRiskLimitSetAsync(draft.Id, "activate tested draft profile", CancellationToken.None);
+        var loaded = await repository.LoadStateAsync(CancellationToken.None);
+
+        Assert.Equal(RiskLimitSetStatus.Active, activated.Status);
+        Assert.Single(loaded.RiskLimitSets, x => x.FundId == active.FundId && x.ModelName == active.ModelName && x.IsActive && x.Status == RiskLimitSetStatus.Active);
+        Assert.Contains(loaded.RiskLimitSets, x => x.Id == active.Id && x.Status == RiskLimitSetStatus.Retired && !x.IsActive);
+        Assert.Contains(loaded.OperatorAuditEvents, x => x.EventType == OperatorAuditEventType.RiskLimitSetActivated && x.Reason == "activate tested draft profile");
+    }
+
+    [Fact]
+    public async Task Risk_control_mutations_require_reasons_and_active_limits_are_read_only()
+    {
+        var state = SeedData.Create(Now);
+        var repository = new InMemoryIntradayRepository(state);
+        var auditRepository = new InMemoryOperatorAuditRepository(state);
+        var context = new StaticOperatorContext(OperatorAuditActorType.Operator, "local-dev", "Local Dev");
+        var service = new RiskControlService(repository, new OperatorAuditService(auditRepository, context, Clock), context, Clock);
+        var activeLimit = state.RiskLimits.Single(x => x.Name == "MaxTradeNotionalUsd");
+
+        await Assert.ThrowsAsync<DomainRuleViolationException>(() => service.CloneRiskLimitSetAsync(state.RiskLimitSets.Single().Id, "", CancellationToken.None));
+        await Assert.ThrowsAsync<DomainRuleViolationException>(() => service.UpdateRiskLimitAsync(activeLimit.Id, 2m, "USD", "direct active edit", CancellationToken.None));
+    }
+
     private static TradeIntent NewIntent(PlatformState state, decimal requestedBaseQuantity)
         => new(TradeIntentId.New(), state.ModelRuns.Single().Id, state.Funds.Single().Id, state.Instruments.Single().Id, TradeSide.Buy, requestedBaseQuantity, requestedBaseQuantity / 10_000m, "test", TradeIntentStatus.Created, Now);
 

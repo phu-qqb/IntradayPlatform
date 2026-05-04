@@ -175,12 +175,19 @@ public interface IIntradayRepository
     Task SaveReconciliationAsync(ReconciliationRun run, IReadOnlyList<ReconciliationBreak> breaks, CancellationToken cancellationToken);
     Task SaveTargetAndDriftAsync(TargetPosition targetPosition, DriftSnapshot driftSnapshot, CancellationToken cancellationToken);
     Task AddTradeIntentAsync(TradeIntent intent, CancellationToken cancellationToken);
-    Task AddRiskDecisionAsync(RiskDecision decision, CancellationToken cancellationToken);
+    Task AddRiskDecisionAsync(RiskDecision decision, IReadOnlyList<RiskDecisionDetail>? details, CancellationToken cancellationToken);
     Task AddOrdersAsync(ParentOrder parentOrder, ChildOrder childOrder, CancellationToken cancellationToken);
     Task AddExecutionReportAsync(ExecutionReport report, CancellationToken cancellationToken);
     Task<bool> TryAddFillAsync(Fill fill, CancellationToken cancellationToken);
     Task AddPositionLedgerEventAsync(PositionLedgerEvent ledgerEvent, CancellationToken cancellationToken);
     Task SetKillSwitchAsync(bool isActive, string? reason, CancellationToken cancellationToken);
+    Task UpsertRiskLimitSetAsync(RiskLimitSet riskLimitSet, CancellationToken cancellationToken);
+    Task UpsertRiskLimitAsync(RiskLimit riskLimit, CancellationToken cancellationToken);
+    Task UpsertInstrumentRiskLimitAsync(InstrumentRiskLimit instrumentRiskLimit, CancellationToken cancellationToken);
+    Task UpsertVenueRiskLimitAsync(VenueRiskLimit venueRiskLimit, CancellationToken cancellationToken);
+    Task UpsertTradingWindowAsync(TradingWindow tradingWindow, CancellationToken cancellationToken);
+    Task UpsertInstrumentAsync(Instrument instrument, CancellationToken cancellationToken);
+    Task UpsertVenueAsync(Venue venue, CancellationToken cancellationToken);
 }
 
 public interface IMarketDataSnapshotRepository
@@ -288,6 +295,23 @@ public interface IFakeLmaxEodReportGenerator
     Task<FakeLmaxEodReportGenerationResult> GenerateAsync(DateOnly reportDate, string venueName, string brokerAccountCode, LmaxEodMutationMode mutationMode, CancellationToken cancellationToken);
 }
 
+public interface IRiskControlService
+{
+    Task<IReadOnlyList<RiskLimitSet>> GetRiskLimitSetsAsync(CancellationToken cancellationToken);
+    Task<RiskLimitSet?> GetRiskLimitSetAsync(Guid id, CancellationToken cancellationToken);
+    Task<RiskLimitSet?> GetActiveRiskLimitSetAsync(string fundCode, string? modelName, CancellationToken cancellationToken);
+    Task<RiskLimitSet> CreateDraftRiskLimitSetAsync(string fundCode, string? modelName, string name, string? description, string reason, CancellationToken cancellationToken);
+    Task<RiskLimitSet> CloneRiskLimitSetAsync(Guid id, string reason, CancellationToken cancellationToken);
+    Task<RiskLimitSet> ActivateRiskLimitSetAsync(Guid id, string reason, CancellationToken cancellationToken);
+    Task<RiskLimitSet> RetireRiskLimitSetAsync(Guid id, string reason, CancellationToken cancellationToken);
+    Task<RiskLimit> UpdateRiskLimitAsync(Guid id, decimal value, string? unit, string reason, CancellationToken cancellationToken);
+    Task<InstrumentRiskLimit> UpdateInstrumentRiskLimitAsync(Guid id, decimal? maxTradeNotionalUsd, decimal? maxExposureUsd, decimal? minTradeQuantity, int? maxOrdersPerDay, bool? isTradingEnabled, string reason, CancellationToken cancellationToken);
+    Task<VenueRiskLimit> UpdateVenueRiskLimitAsync(Guid id, decimal? maxTradeNotionalUsd, decimal? maxDailyTurnoverUsd, int? maxOrdersPerMinute, bool? isVenueEnabled, string reason, CancellationToken cancellationToken);
+    Task<TradingWindow> UpdateTradingWindowAsync(Guid id, TimeOnly? opensAtUtc, TimeOnly? closesAtUtc, TimeOnly? noNewOrdersAfterUtc, TimeOnly? flattenAtUtc, bool? tradingEnabled, string reason, CancellationToken cancellationToken);
+    Task<Instrument> UpdateInstrumentControlsAsync(InstrumentId id, bool? isTradingEnabled, bool? isReportImportEnabled, bool? isMarketDataEnabled, string reason, CancellationToken cancellationToken);
+    Task<Venue> UpdateVenueControlsAsync(VenueId id, bool? isTradingEnabled, bool? isReportImportEnabled, bool? isMarketDataEnabled, string reason, CancellationToken cancellationToken);
+}
+
 public sealed record BarUpsertResult(bool Created);
 public sealed record BarBuildResult(BarBuildRunId RunId, int BarsCreated, int BarsUpdated, BarBuildRunStatus Status, string? ErrorMessage = null);
 public sealed record CreateFakeModelWeightRowRequest(string RawSecurityId, string Symbol, decimal Weight);
@@ -390,6 +414,7 @@ public sealed class PlatformState
     public List<ReconciliationBreak> ReconciliationBreaks { get; } = [];
     public List<TradeIntent> TradeIntents { get; } = [];
     public List<RiskDecision> RiskDecisions { get; } = [];
+    public List<RiskDecisionDetail> RiskDecisionDetails { get; } = [];
     public List<ParentOrder> ParentOrders { get; } = [];
     public List<ChildOrder> ChildOrders { get; } = [];
     public List<ExecutionReport> ExecutionReports { get; } = [];
@@ -519,6 +544,185 @@ public sealed class OperatorAuditService(IOperatorAuditRepository repository, IO
 
     private static bool IsSecretKey(string key)
         => SecretKeyFragments.Any(fragment => key.Replace("-", "", StringComparison.Ordinal).Contains(fragment, StringComparison.OrdinalIgnoreCase));
+}
+
+public sealed class RiskControlService(IIntradayRepository repository, IOperatorAuditService audit, IOperatorContext context, IClock clock) : IRiskControlService
+{
+    public async Task<IReadOnlyList<RiskLimitSet>> GetRiskLimitSetsAsync(CancellationToken cancellationToken)
+        => (await repository.LoadStateAsync(cancellationToken)).RiskLimitSets.OrderByDescending(x => x.IsActive).ThenByDescending(x => x.Version).ToList();
+
+    public async Task<RiskLimitSet?> GetRiskLimitSetAsync(Guid id, CancellationToken cancellationToken)
+        => (await repository.LoadStateAsync(cancellationToken)).RiskLimitSets.FirstOrDefault(x => x.Id == id);
+
+    public async Task<RiskLimitSet?> GetActiveRiskLimitSetAsync(string fundCode, string? modelName, CancellationToken cancellationToken)
+    {
+        var state = await repository.LoadStateAsync(cancellationToken);
+        var fund = ResolveFund(state, fundCode);
+        return fund is null ? null : SelectActive(state, fund.Id, modelName);
+    }
+
+    public async Task<RiskLimitSet> CreateDraftRiskLimitSetAsync(string fundCode, string? modelName, string name, string? description, string reason, CancellationToken cancellationToken)
+    {
+        RequireReason(reason);
+        var state = await repository.LoadStateAsync(cancellationToken);
+        var fund = ResolveFund(state, fundCode) ?? throw new DomainRuleViolationException($"Fund '{fundCode}' was not found.");
+        var now = clock.UtcNow;
+        var version = state.RiskLimitSets.Where(x => x.FundId == fund.Id && string.Equals(x.ModelName, modelName, StringComparison.OrdinalIgnoreCase)).Select(x => x.Version).DefaultIfEmpty(0).Max() + 1;
+        var draft = new RiskLimitSet(Guid.NewGuid(), fund.Id, true, 2_000_000m, TimeSpan.FromHours(24), TimeSpan.FromMinutes(30), 0.0001m, 0.1m, modelName, name, version, RiskLimitSetStatus.Draft, false, null, null, now, context.Current.ActorId, null, null, null, null, description);
+        await repository.UpsertRiskLimitSetAsync(draft, cancellationToken);
+        await AuditRiskChangeAsync(OperatorAuditEventType.RiskLimitSetCreated, "Risk limit set draft created.", "RiskLimitSet", draft.Id.ToString("D"), reason, null, draft, new { draft.Name, draft.Version, draft.ModelName }, cancellationToken);
+        return draft;
+    }
+
+    public async Task<RiskLimitSet> CloneRiskLimitSetAsync(Guid id, string reason, CancellationToken cancellationToken)
+    {
+        RequireReason(reason);
+        var state = await repository.LoadStateAsync(cancellationToken);
+        var source = state.RiskLimitSets.FirstOrDefault(x => x.Id == id) ?? throw new DomainRuleViolationException("Risk limit set not found.");
+        var now = clock.UtcNow;
+        var version = state.RiskLimitSets.Where(x => x.FundId == source.FundId && string.Equals(x.ModelName, source.ModelName, StringComparison.OrdinalIgnoreCase)).Select(x => x.Version).DefaultIfEmpty(0).Max() + 1;
+        var clone = source with { Id = Guid.NewGuid(), Version = version, Name = $"{source.Name} Draft v{version}", Status = RiskLimitSetStatus.Draft, IsActive = false, CreatedAtUtc = now, CreatedBy = context.Current.ActorId, ActivatedAtUtc = null, ActivatedBy = null, RetiredAtUtc = null, RetiredBy = null };
+        await repository.UpsertRiskLimitSetAsync(clone, cancellationToken);
+        foreach (var limit in state.RiskLimits.Where(x => x.RiskLimitSetId == source.Id).ToList())
+        {
+            await repository.UpsertRiskLimitAsync(limit with { Id = Guid.NewGuid(), RiskLimitSetId = clone.Id }, cancellationToken);
+        }
+        foreach (var limit in state.InstrumentRiskLimits.Where(x => x.RiskLimitSetId == source.Id).ToList())
+        {
+            await repository.UpsertInstrumentRiskLimitAsync(limit with { Id = Guid.NewGuid(), RiskLimitSetId = clone.Id }, cancellationToken);
+        }
+        foreach (var limit in state.VenueRiskLimits.Where(x => x.RiskLimitSetId == source.Id).ToList())
+        {
+            await repository.UpsertVenueRiskLimitAsync(limit with { Id = Guid.NewGuid(), RiskLimitSetId = clone.Id }, cancellationToken);
+        }
+        await AuditRiskChangeAsync(OperatorAuditEventType.RiskLimitSetCloned, "Risk limit set cloned to draft.", "RiskLimitSet", clone.Id.ToString("D"), reason, source, clone, new { sourceRiskLimitSetId = source.Id, clone.Version }, cancellationToken);
+        return clone;
+    }
+
+    public async Task<RiskLimitSet> ActivateRiskLimitSetAsync(Guid id, string reason, CancellationToken cancellationToken)
+    {
+        RequireReason(reason);
+        var state = await repository.LoadStateAsync(cancellationToken);
+        var draft = state.RiskLimitSets.FirstOrDefault(x => x.Id == id) ?? throw new DomainRuleViolationException("Risk limit set not found.");
+        if (draft.Status == RiskLimitSetStatus.Archived) throw new DomainRuleViolationException("Archived risk limit sets are read-only.");
+        var now = clock.UtcNow;
+        foreach (var active in state.RiskLimitSets.Where(x => x.Id != draft.Id && x.FundId == draft.FundId && string.Equals(x.ModelName, draft.ModelName, StringComparison.OrdinalIgnoreCase) && x.IsActive).ToList())
+        {
+            await repository.UpsertRiskLimitSetAsync(active with { IsActive = false, Status = RiskLimitSetStatus.Retired, RetiredAtUtc = now, RetiredBy = context.Current.ActorId, EffectiveToUtc = now }, cancellationToken);
+        }
+        var activated = draft with { IsActive = true, Status = RiskLimitSetStatus.Active, ActivatedAtUtc = now, ActivatedBy = context.Current.ActorId, EffectiveFromUtc = now, RetiredAtUtc = null, RetiredBy = null, EffectiveToUtc = null };
+        await repository.UpsertRiskLimitSetAsync(activated, cancellationToken);
+        await AuditRiskChangeAsync(OperatorAuditEventType.RiskLimitSetActivated, "Risk limit set activated.", "RiskLimitSet", activated.Id.ToString("D"), reason, draft, activated, new { activated.Name, activated.Version }, cancellationToken);
+        return activated;
+    }
+
+    public async Task<RiskLimitSet> RetireRiskLimitSetAsync(Guid id, string reason, CancellationToken cancellationToken)
+    {
+        RequireReason(reason);
+        var state = await repository.LoadStateAsync(cancellationToken);
+        var current = state.RiskLimitSets.FirstOrDefault(x => x.Id == id) ?? throw new DomainRuleViolationException("Risk limit set not found.");
+        if (current.Status == RiskLimitSetStatus.Archived) throw new DomainRuleViolationException("Archived risk limit sets are read-only.");
+        var retired = current with { IsActive = false, Status = RiskLimitSetStatus.Retired, RetiredAtUtc = clock.UtcNow, RetiredBy = context.Current.ActorId, EffectiveToUtc = clock.UtcNow };
+        await repository.UpsertRiskLimitSetAsync(retired, cancellationToken);
+        await AuditRiskChangeAsync(OperatorAuditEventType.RiskLimitSetRetired, "Risk limit set retired.", "RiskLimitSet", retired.Id.ToString("D"), reason, current, retired, new { retired.Name, retired.Version }, cancellationToken);
+        return retired;
+    }
+
+    public async Task<RiskLimit> UpdateRiskLimitAsync(Guid id, decimal value, string? unit, string reason, CancellationToken cancellationToken)
+    {
+        RequireReason(reason);
+        var state = await repository.LoadStateAsync(cancellationToken);
+        var current = state.RiskLimits.FirstOrDefault(x => x.Id == id) ?? throw new DomainRuleViolationException("Risk limit not found.");
+        EnsureDraft(state, current.RiskLimitSetId);
+        var updated = current with { Value = value, Unit = string.IsNullOrWhiteSpace(unit) ? current.Unit : unit };
+        await repository.UpsertRiskLimitAsync(updated, cancellationToken);
+        await AuditRiskChangeAsync(OperatorAuditEventType.RiskLimitUpdated, "Risk limit updated.", "RiskLimit", id.ToString("D"), reason, current, updated, null, cancellationToken);
+        return updated;
+    }
+
+    public async Task<InstrumentRiskLimit> UpdateInstrumentRiskLimitAsync(Guid id, decimal? maxTradeNotionalUsd, decimal? maxExposureUsd, decimal? minTradeQuantity, int? maxOrdersPerDay, bool? isTradingEnabled, string reason, CancellationToken cancellationToken)
+    {
+        RequireReason(reason);
+        var state = await repository.LoadStateAsync(cancellationToken);
+        var current = state.InstrumentRiskLimits.FirstOrDefault(x => x.Id == id) ?? throw new DomainRuleViolationException("Instrument risk limit not found.");
+        EnsureDraft(state, current.RiskLimitSetId);
+        var updated = current with { MaxTradeNotionalUsd = maxTradeNotionalUsd ?? current.MaxTradeNotionalUsd, MaxExposureUsd = maxExposureUsd ?? current.MaxExposureUsd, MinTradeQuantity = minTradeQuantity ?? current.MinTradeQuantity, MaxOrdersPerDay = maxOrdersPerDay ?? current.MaxOrdersPerDay, IsTradingEnabled = isTradingEnabled ?? current.IsTradingEnabled };
+        await repository.UpsertInstrumentRiskLimitAsync(updated, cancellationToken);
+        await AuditRiskChangeAsync(OperatorAuditEventType.InstrumentRiskLimitUpdated, "Instrument risk limit updated.", "InstrumentRiskLimit", id.ToString("D"), reason, current, updated, null, cancellationToken);
+        return updated;
+    }
+
+    public async Task<VenueRiskLimit> UpdateVenueRiskLimitAsync(Guid id, decimal? maxTradeNotionalUsd, decimal? maxDailyTurnoverUsd, int? maxOrdersPerMinute, bool? isVenueEnabled, string reason, CancellationToken cancellationToken)
+    {
+        RequireReason(reason);
+        var state = await repository.LoadStateAsync(cancellationToken);
+        var current = state.VenueRiskLimits.FirstOrDefault(x => x.Id == id) ?? throw new DomainRuleViolationException("Venue risk limit not found.");
+        EnsureDraft(state, current.RiskLimitSetId);
+        var updated = current with { MaxTradeNotionalUsd = maxTradeNotionalUsd ?? current.MaxTradeNotionalUsd, MaxDailyTurnoverUsd = maxDailyTurnoverUsd ?? current.MaxDailyTurnoverUsd, MaxOrdersPerMinute = maxOrdersPerMinute ?? current.MaxOrdersPerMinute, IsVenueEnabled = isVenueEnabled ?? current.IsVenueEnabled };
+        await repository.UpsertVenueRiskLimitAsync(updated, cancellationToken);
+        await AuditRiskChangeAsync(OperatorAuditEventType.VenueRiskLimitUpdated, "Venue risk limit updated.", "VenueRiskLimit", id.ToString("D"), reason, current, updated, null, cancellationToken);
+        return updated;
+    }
+
+    public async Task<TradingWindow> UpdateTradingWindowAsync(Guid id, TimeOnly? opensAtUtc, TimeOnly? closesAtUtc, TimeOnly? noNewOrdersAfterUtc, TimeOnly? flattenAtUtc, bool? tradingEnabled, string reason, CancellationToken cancellationToken)
+    {
+        RequireReason(reason);
+        var state = await repository.LoadStateAsync(cancellationToken);
+        var current = state.TradingWindows.FirstOrDefault(x => x.Id == id) ?? throw new DomainRuleViolationException("Trading window not found.");
+        var updated = current with { OpensAtUtc = opensAtUtc ?? current.OpensAtUtc, ClosesAtUtc = closesAtUtc ?? current.ClosesAtUtc, NoNewOrdersAfterUtc = noNewOrdersAfterUtc ?? current.NoNewOrdersAfterUtc, FlattenAtUtc = flattenAtUtc ?? current.FlattenAtUtc, TradingEnabled = tradingEnabled ?? current.TradingEnabled, UpdatedAtUtc = clock.UtcNow };
+        await repository.UpsertTradingWindowAsync(updated, cancellationToken);
+        await AuditRiskChangeAsync(OperatorAuditEventType.TradingWindowUpdated, "Trading window updated.", "TradingWindow", id.ToString("D"), reason, current, updated, null, cancellationToken);
+        return updated;
+    }
+
+    public async Task<Instrument> UpdateInstrumentControlsAsync(InstrumentId id, bool? isTradingEnabled, bool? isReportImportEnabled, bool? isMarketDataEnabled, string reason, CancellationToken cancellationToken)
+    {
+        RequireReason(reason);
+        var state = await repository.LoadStateAsync(cancellationToken);
+        var current = state.Instruments.FirstOrDefault(x => x.Id == id) ?? throw new DomainRuleViolationException("Instrument not found.");
+        var updated = current with { IsTradingEnabled = isTradingEnabled ?? current.IsTradingEnabled, IsReportImportEnabled = isReportImportEnabled ?? current.IsReportImportEnabled, IsMarketDataEnabled = isMarketDataEnabled ?? current.IsMarketDataEnabled };
+        await repository.UpsertInstrumentAsync(updated, cancellationToken);
+        await AuditRiskChangeAsync(OperatorAuditEventType.InstrumentControlUpdated, "Instrument controls updated.", "Instrument", id.Value.ToString("D"), reason, current, updated, null, cancellationToken);
+        return updated;
+    }
+
+    public async Task<Venue> UpdateVenueControlsAsync(VenueId id, bool? isTradingEnabled, bool? isReportImportEnabled, bool? isMarketDataEnabled, string reason, CancellationToken cancellationToken)
+    {
+        RequireReason(reason);
+        var state = await repository.LoadStateAsync(cancellationToken);
+        var current = state.Venues.FirstOrDefault(x => x.Id == id) ?? throw new DomainRuleViolationException("Venue not found.");
+        var updated = current with { IsTradingEnabled = isTradingEnabled ?? current.IsTradingEnabled, IsReportImportEnabled = isReportImportEnabled ?? current.IsReportImportEnabled, IsMarketDataEnabled = isMarketDataEnabled ?? current.IsMarketDataEnabled };
+        await repository.UpsertVenueAsync(updated, cancellationToken);
+        await AuditRiskChangeAsync(OperatorAuditEventType.VenueControlUpdated, "Venue controls updated.", "Venue", id.Value.ToString("D"), reason, current, updated, null, cancellationToken);
+        return updated;
+    }
+
+    private Task AuditRiskChangeAsync(OperatorAuditEventType eventType, string description, string entityType, string entityId, string reason, object? before, object? after, object? metadata, CancellationToken cancellationToken)
+        => audit.RecordAsync(new OperatorAuditRecordRequest(eventType, OperatorAuditSeverity.Info, OperatorAuditResult.Succeeded, "Api", description, entityType, entityId, reason, before, after, metadata), cancellationToken);
+
+    private static Fund? ResolveFund(PlatformState state, string fundCode)
+        => state.Funds.FirstOrDefault(x => x.Name.Equals(fundCode, StringComparison.OrdinalIgnoreCase) && x.IsEnabled)
+            ?? (fundCode.Equals("QQ_MASTER", StringComparison.OrdinalIgnoreCase) ? state.Funds.FirstOrDefault(x => x.IsEnabled) : null);
+
+    private static RiskLimitSet? SelectActive(PlatformState state, FundId fundId, string? modelName)
+        => state.RiskLimitSets.Where(x => x.FundId == fundId && x.IsActive && x.Status == RiskLimitSetStatus.Active && (string.IsNullOrWhiteSpace(modelName) || string.Equals(x.ModelName, modelName, StringComparison.OrdinalIgnoreCase))).OrderByDescending(x => x.Version).FirstOrDefault();
+
+    private static void EnsureDraft(PlatformState state, Guid riskLimitSetId)
+    {
+        var set = state.RiskLimitSets.FirstOrDefault(x => x.Id == riskLimitSetId) ?? throw new DomainRuleViolationException("Risk limit set not found.");
+        if (set.Status != RiskLimitSetStatus.Draft || set.IsActive)
+        {
+            throw new DomainRuleViolationException("Only draft inactive risk limit sets can be edited. Clone the active set first.");
+        }
+    }
+
+    private static void RequireReason(string reason)
+    {
+        if (string.IsNullOrWhiteSpace(reason))
+        {
+            throw new DomainRuleViolationException("A reason is required for risk configuration changes.");
+        }
+    }
 }
 
 public sealed class InMemoryOperatorAuditRepository(PlatformState state) : IOperatorAuditRepository
@@ -1006,7 +1210,7 @@ public sealed class InMemoryIntradayRepository(PlatformState state) : IIntradayR
         return Task.CompletedTask;
     }
 
-    public Task AddRiskDecisionAsync(RiskDecision decision, CancellationToken cancellationToken)
+    public Task AddRiskDecisionAsync(RiskDecision decision, IReadOnlyList<RiskDecisionDetail>? details, CancellationToken cancellationToken)
     {
         lock (_sync)
         {
@@ -1016,6 +1220,10 @@ public sealed class InMemoryIntradayRepository(PlatformState state) : IIntradayR
             }
 
             state.RiskDecisions.Add(decision);
+            if (details is not null)
+            {
+                state.RiskDecisionDetails.AddRange(details);
+            }
         }
 
         return Task.CompletedTask;
@@ -1108,6 +1316,55 @@ public sealed class InMemoryIntradayRepository(PlatformState state) : IIntradayR
         }
 
         return Task.CompletedTask;
+    }
+
+    public Task UpsertRiskLimitSetAsync(RiskLimitSet riskLimitSet, CancellationToken cancellationToken)
+    {
+        lock (_sync) Upsert(state.RiskLimitSets, riskLimitSet, x => x.Id == riskLimitSet.Id);
+        return Task.CompletedTask;
+    }
+
+    public Task UpsertRiskLimitAsync(RiskLimit riskLimit, CancellationToken cancellationToken)
+    {
+        lock (_sync) Upsert(state.RiskLimits, riskLimit, x => x.Id == riskLimit.Id);
+        return Task.CompletedTask;
+    }
+
+    public Task UpsertInstrumentRiskLimitAsync(InstrumentRiskLimit instrumentRiskLimit, CancellationToken cancellationToken)
+    {
+        lock (_sync) Upsert(state.InstrumentRiskLimits, instrumentRiskLimit, x => x.Id == instrumentRiskLimit.Id);
+        return Task.CompletedTask;
+    }
+
+    public Task UpsertVenueRiskLimitAsync(VenueRiskLimit venueRiskLimit, CancellationToken cancellationToken)
+    {
+        lock (_sync) Upsert(state.VenueRiskLimits, venueRiskLimit, x => x.Id == venueRiskLimit.Id);
+        return Task.CompletedTask;
+    }
+
+    public Task UpsertTradingWindowAsync(TradingWindow tradingWindow, CancellationToken cancellationToken)
+    {
+        lock (_sync) Upsert(state.TradingWindows, tradingWindow, x => x.Id == tradingWindow.Id);
+        return Task.CompletedTask;
+    }
+
+    public Task UpsertInstrumentAsync(Instrument instrument, CancellationToken cancellationToken)
+    {
+        lock (_sync) Upsert(state.Instruments, instrument, x => x.Id == instrument.Id);
+        return Task.CompletedTask;
+    }
+
+    public Task UpsertVenueAsync(Venue venue, CancellationToken cancellationToken)
+    {
+        lock (_sync) Upsert(state.Venues, venue, x => x.Id == venue.Id);
+        return Task.CompletedTask;
+    }
+
+    private static void Upsert<T>(List<T> rows, T row, Func<T, bool> predicate)
+    {
+        var index = rows.FindIndex(x => predicate(x));
+        if (index >= 0) rows[index] = row;
+        else rows.Add(row);
     }
 }
 
@@ -1474,7 +1731,7 @@ public sealed class ReferenceDataIntegrityService(IIntradayRepository repository
         AddDuplicateIssues(issues, state.Venues.Where(x => x.IsEnabled), x => x.Name, ReferenceDataIntegrityIssueType.DuplicateVenue, "enabled venue", now);
         AddDuplicateIssues(issues, state.VenueInstrumentMappings.Where(x => x.IsEnabled), x => $"{x.VenueId.Value:N}|{x.InstrumentId.Value:N}", ReferenceDataIntegrityIssueType.DuplicateVenueInstrumentMapping, "enabled venue/instrument mapping", now);
         AddDuplicateIssues(issues, state.VenueInstrumentMappings.Where(x => x.IsEnabled), x => $"{x.VenueId.Value:N}|{x.VenueSymbol}", ReferenceDataIntegrityIssueType.DuplicateVenueInstrumentMapping, "enabled venue symbol mapping", now);
-        AddDuplicateIssues(issues, state.RiskLimitSets, x => x.FundId.Value.ToString("N"), ReferenceDataIntegrityIssueType.DuplicateRiskLimitSet, "risk limit set", now);
+        AddDuplicateIssues(issues, state.RiskLimitSets.Where(x => x.IsActive && x.Status == RiskLimitSetStatus.Active), x => $"{x.FundId.Value:N}|{x.ModelName}", ReferenceDataIntegrityIssueType.DuplicateRiskLimitSet, "active risk limit set", now);
         AddDuplicateIssues(issues, state.RiskLimits, x => $"{x.RiskLimitSetId:N}|{x.Name}", ReferenceDataIntegrityIssueType.DuplicateRiskLimit, "risk limit", now);
         AddDuplicateIssues(issues, state.InstrumentRiskLimits.Where(x => x.IsEnabled), x => $"{x.RiskLimitSetId:N}|{x.InstrumentId.Value:N}", ReferenceDataIntegrityIssueType.DuplicateInstrumentRiskLimit, "enabled instrument risk limit", now);
         AddDuplicateIssues(issues, state.VenueRiskLimits.Where(x => x.IsEnabled), x => $"{x.RiskLimitSetId:N}|{x.VenueId.Value:N}", ReferenceDataIntegrityIssueType.DuplicateVenueRiskLimit, "enabled venue risk limit", now);
@@ -1488,7 +1745,7 @@ public sealed class ReferenceDataIntegrityService(IIntradayRepository repository
         if (fund is not null)
         {
             RequireExactlyOne(issues, state.BrokerAccounts.Where(x => x.FundId == fund.Id).ToList(), x => x.IsEnabled, $"BrokerAccount:{fund.Id.Value:N}", ReferenceDataIntegrityIssueType.DuplicateBrokerAccount, now);
-            RequireExactlyOne(issues, state.RiskLimitSets.Where(x => x.FundId == fund.Id).ToList(), _ => true, $"RiskLimitSet:{fund.Id.Value:N}", ReferenceDataIntegrityIssueType.DuplicateRiskLimitSet, now);
+            RequireExactlyOne(issues, state.RiskLimitSets.Where(x => x.FundId == fund.Id && x.ModelName == "IntradayFxModel" && x.IsActive && x.Status == RiskLimitSetStatus.Active).ToList(), _ => true, $"RiskLimitSet:{fund.Id.Value:N}:IntradayFxModel", ReferenceDataIntegrityIssueType.DuplicateRiskLimitSet, now);
             RequireAtLeastOne(issues, state.TradingWindows.Where(x => x.FundId == fund.Id && x.ModelName == "IntradayFxModel" && x.IsEnabled), "TradingWindow:IntradayFxModel", now);
         }
 
@@ -1816,20 +2073,25 @@ public sealed record RiskContext(Fund Fund, Venue Venue, Instrument Instrument, 
 public sealed class RiskEngine
 {
     public RiskDecision Evaluate(TradeIntent intent, RiskContext context, RiskLimitSet limitSet, InstrumentRiskLimit instrumentLimit, VenueRiskLimit venueLimit, TradingWindow tradingWindow, KillSwitchState killSwitch)
+        => EvaluateDetailed(intent, context, limitSet, instrumentLimit, venueLimit, tradingWindow, killSwitch).Decision;
+
+    public (RiskDecision Decision, IReadOnlyList<RiskDecisionDetail> Details) EvaluateDetailed(TradeIntent intent, RiskContext context, RiskLimitSet limitSet, InstrumentRiskLimit instrumentLimit, VenueRiskLimit venueLimit, TradingWindow tradingWindow, KillSwitchState killSwitch)
     {
         var reject = RiskRejectReason.None;
         var status = RiskDecisionStatus.Approved;
-        var notional = intent.RequestedBaseQuantity * context.MarketData.Mid;
+        var notional = Math.Abs(intent.RequestedBaseQuantity * context.MarketData.Mid);
+        var details = new List<RiskDecisionDetail>();
 
         if (!limitSet.GlobalTradingEnabled) reject = RiskRejectReason.GlobalTradingDisabled;
         else if (killSwitch.IsActive) reject = RiskRejectReason.KillSwitchActive;
         else if (!context.Fund.IsEnabled) reject = RiskRejectReason.FundDisabled;
-        else if (!context.Venue.IsEnabled) reject = RiskRejectReason.VenueDisabled;
-        else if (!context.Instrument.IsEnabled) reject = RiskRejectReason.InstrumentDisabled;
+        else if (!context.Venue.IsEnabled || !context.Venue.IsTradingEnabled || !venueLimit.IsVenueEnabled) reject = RiskRejectReason.VenueDisabled;
+        else if (!context.Instrument.IsEnabled || !context.Instrument.IsTradingEnabled || !instrumentLimit.IsTradingEnabled) reject = RiskRejectReason.InstrumentDisabled;
         else if (!context.PositionsMatch) reject = RiskRejectReason.PositionMismatch;
         else if (context.Now - context.ModelRun.AsOfUtc > limitSet.MaxModelRunAge) reject = RiskRejectReason.StaleModelRun;
         else if (context.MarketData.IsStale(limitSet.MaxMarketDataAge, context.Now)) reject = RiskRejectReason.StaleMarketData;
         else if (intent.RequestedBaseQuantity <= 0 || intent.RequestedVenueQuantity <= 0) reject = RiskRejectReason.InvalidQuantity;
+        else if (intent.RequestedBaseQuantity < instrumentLimit.MinTradeQuantity) reject = RiskRejectReason.InvalidQuantity;
         else if (notional > instrumentLimit.MaxTradeNotionalUsd || notional > venueLimit.MaxTradeNotionalUsd) reject = RiskRejectReason.MaxTradeNotionalExceeded;
         else if (Math.Abs(context.CurrentBaseQuantity * context.MarketData.Mid) + notional > instrumentLimit.MaxExposureUsd) reject = RiskRejectReason.MaxInstrumentExposureExceeded;
         else if (context.ExistingGrossExposureUsd + notional > limitSet.MaxGrossExposureUsd) reject = RiskRejectReason.MaxGrossExposureExceeded;
@@ -1840,7 +2102,33 @@ public sealed class RiskEngine
             status = reject is RiskRejectReason.PositionMismatch or RiskRejectReason.KillSwitchActive ? RiskDecisionStatus.Blocked : RiskDecisionStatus.Rejected;
         }
 
-        return new RiskDecision(Guid.NewGuid(), intent.Id, status, reject, reject.ToString(), context.Now);
+        var decision = new RiskDecision(Guid.NewGuid(), intent.Id, status, reject, reject.ToString(), context.Now, limitSet.Id, intent.ModelRunId, intent.InstrumentId, context.Venue.Id);
+        details.Add(Detail(decision.Id, "GlobalTradingEnabled", limitSet.GlobalTradingEnabled, limitSet.GlobalTradingEnabled ? "Global trading enabled." : "Global trading disabled.", context.Now));
+        details.Add(Detail(decision.Id, "KillSwitch", !killSwitch.IsActive, killSwitch.IsActive ? "Kill switch is active." : "Kill switch is off.", context.Now));
+        details.Add(Detail(decision.Id, "InstrumentTradingEnabled", context.Instrument.IsEnabled && context.Instrument.IsTradingEnabled && instrumentLimit.IsTradingEnabled, "Instrument trading flag and limit flag checked.", context.Now));
+        details.Add(Detail(decision.Id, "VenueTradingEnabled", context.Venue.IsEnabled && context.Venue.IsTradingEnabled && venueLimit.IsVenueEnabled, "Venue trading flag and limit flag checked.", context.Now));
+        details.Add(Detail(decision.Id, "PositionMatch", context.PositionsMatch, "Internal and broker positions matched within tolerance before risk.", context.Now));
+        details.Add(Compare(decision.Id, "ModelStalenessSeconds", (decimal)(context.Now - context.ModelRun.AsOfUtc).TotalSeconds, (decimal)limitSet.MaxModelRunAge.TotalSeconds, "seconds", RiskRejectReason.StaleModelRun, context.Now));
+        details.Add(Compare(decision.Id, "MarketDataStalenessSeconds", (decimal)(context.Now - context.MarketData.ReceivedAtUtc).TotalSeconds, (decimal)limitSet.MaxMarketDataAge.TotalSeconds, "seconds", RiskRejectReason.StaleMarketData, context.Now));
+        details.Add(Compare(decision.Id, "MinInstrumentTradeQuantity", intent.RequestedBaseQuantity, instrumentLimit.MinTradeQuantity, "baseQuantity", RiskRejectReason.InvalidQuantity, context.Now, greaterThanOrEqual: true));
+        details.Add(Compare(decision.Id, "MaxTradeNotionalUsd", notional, Math.Min(instrumentLimit.MaxTradeNotionalUsd, venueLimit.MaxTradeNotionalUsd), "USD", RiskRejectReason.MaxTradeNotionalExceeded, context.Now));
+        details.Add(Compare(decision.Id, "MaxInstrumentExposureUsd", Math.Abs(context.CurrentBaseQuantity * context.MarketData.Mid) + notional, instrumentLimit.MaxExposureUsd, "USD", RiskRejectReason.MaxInstrumentExposureExceeded, context.Now));
+        details.Add(Compare(decision.Id, "MaxGrossExposureUsd", context.ExistingGrossExposureUsd + notional, limitSet.MaxGrossExposureUsd, "USD", RiskRejectReason.MaxGrossExposureExceeded, context.Now));
+        details.Add(Detail(decision.Id, "TradingWindow", IsTradingWindowOpen(tradingWindow, context.Now), "Trading window and no-new-orders cutoff checked.", context.Now));
+        return (decision, details);
+    }
+
+    private static RiskDecisionDetail Detail(Guid decisionId, string name, bool passed, string message, DateTimeOffset now)
+        => new(Guid.NewGuid(), decisionId, name, passed ? RiskDecisionCheckStatus.Passed : RiskDecisionCheckStatus.Failed, passed ? null : RiskRejectReason.RiskConfigMissing, null, null, null, message, now);
+
+    private static RiskDecisionDetail Compare(Guid decisionId, string name, decimal observed, decimal limit, string unit, RiskRejectReason reason, DateTimeOffset now, bool greaterThanOrEqual = false)
+    {
+        var passed = greaterThanOrEqual ? observed >= limit : observed <= limit;
+        var comparator = greaterThanOrEqual ? ">=" : "<=";
+        var message = passed
+            ? $"{name} passed: observed {observed:0.##########} {comparator} limit {limit:0.##########}."
+            : $"{name} exceeded: observed {observed:0.##########} {(greaterThanOrEqual ? "<" : ">")} limit {limit:0.##########}.";
+        return new RiskDecisionDetail(Guid.NewGuid(), decisionId, name, passed ? RiskDecisionCheckStatus.Passed : RiskDecisionCheckStatus.Failed, passed ? null : reason, observed, limit, unit, message, now);
     }
 
     private static bool IsTradingWindowOpen(TradingWindow window, DateTimeOffset now)
@@ -1939,7 +2227,14 @@ public sealed class ProcessModelRunService(IIntradayRepository repository, IVenu
         var fund = state.Funds.SingleOrDefault(x => x.Id == run.FundId && x.IsEnabled);
         var brokerAccount = fund is null ? null : state.BrokerAccounts.SingleOrDefault(x => x.FundId == fund.Id && x.IsEnabled);
         var venue = state.Venues.SingleOrDefault(x => x.Name == "LMAX" && x.IsEnabled);
-        var riskLimitSet = fund is null ? null : state.RiskLimitSets.SingleOrDefault(x => x.FundId == fund.Id);
+        var riskLimitSet = fund is null ? null : state.RiskLimitSets
+            .Where(x => x.FundId == fund.Id && x.ModelName == run.ModelName && x.IsActive && x.Status == RiskLimitSetStatus.Active)
+            .OrderByDescending(x => x.Version)
+            .FirstOrDefault()
+            ?? state.RiskLimitSets
+                .Where(x => x.FundId == fund.Id && x.IsActive && x.Status == RiskLimitSetStatus.Active)
+                .OrderByDescending(x => x.Version)
+                .FirstOrDefault();
         if (fund is null || brokerAccount is null || venue is null || riskLimitSet is null)
         {
             return BuildResult(state, run.Id, false, ProcessModelRunStatus.Blocked, ProcessModelRunBlockedReason.ReferenceDataInvalid, "Required enabled reference data is missing.", false, now);
@@ -2023,12 +2318,12 @@ public sealed class ProcessModelRunService(IIntradayRepository repository, IVenu
             if (instrumentLimit is null || venueLimit is null)
             {
                 state = await repository.LoadStateAsync(cancellationToken);
-                return BuildResult(state, run.Id, false, ProcessModelRunStatus.Blocked, ProcessModelRunBlockedReason.Other, "Risk configuration is missing for the requested instrument or venue.", false, now);
+                return BuildResult(state, run.Id, false, ProcessModelRunStatus.Blocked, ProcessModelRunBlockedReason.ReferenceDataInvalid, "Risk configuration is missing for the requested instrument or venue.", false, now);
             }
 
             var riskContext = new RiskContext(fund, venue, instrument, run, marketData, currentBase, true, CalculateGrossExposure(state, fund.Id, marketData.Mid), now);
-            var decision = riskEngine.Evaluate(intent, riskContext, riskLimitSet, instrumentLimit, venueLimit, tradingWindow, state.KillSwitch);
-            await repository.AddRiskDecisionAsync(decision, cancellationToken);
+            var (decision, details) = riskEngine.EvaluateDetailed(intent, riskContext, riskLimitSet, instrumentLimit, venueLimit, tradingWindow, state.KillSwitch);
+            await repository.AddRiskDecisionAsync(decision, details, cancellationToken);
             if (decision.Status != RiskDecisionStatus.Approved)
             {
                 state = await repository.LoadStateAsync(cancellationToken);
@@ -2189,7 +2484,9 @@ public sealed class ProcessModelRunService(IIntradayRepository repository, IVenu
             RiskRejectReason.PositionMismatch => ProcessModelRunBlockedReason.PositionMismatch,
             RiskRejectReason.UnknownCurrentPosition => ProcessModelRunBlockedReason.UnknownCurrentPosition,
             RiskRejectReason.TradingWindowClosed => ProcessModelRunBlockedReason.TradingWindowClosed,
+            RiskRejectReason.NoNewOrdersAfter => ProcessModelRunBlockedReason.TradingWindowClosed,
             RiskRejectReason.KillSwitchActive => ProcessModelRunBlockedReason.KillSwitchActive,
+            RiskRejectReason.RiskConfigMissing => ProcessModelRunBlockedReason.ReferenceDataInvalid,
             _ => ProcessModelRunBlockedReason.RiskRejected
         };
 
@@ -2199,8 +2496,10 @@ public sealed class ProcessModelRunService(IIntradayRepository repository, IVenu
             RiskRejectReason.StaleModelRun => "Model run is stale.",
             RiskRejectReason.StaleMarketData => "Market data is stale.",
             RiskRejectReason.TradingWindowClosed => "Trading window is closed.",
+            RiskRejectReason.NoNewOrdersAfter => "No-new-orders cutoff has passed.",
             RiskRejectReason.KillSwitchActive => "Kill switch is active.",
             RiskRejectReason.PositionMismatch => "Positions do not match.",
+            RiskRejectReason.RiskConfigMissing => "Risk configuration is missing.",
             _ => $"Risk rejected the trade: {reason}."
         };
 }
@@ -2235,7 +2534,19 @@ public static class SeedData
         state.NavSnapshots.Add(new NavSnapshot(fundId, 1_000_000m, NavSource.Seed, now));
         state.MarketData.Add(new MarketDataSnapshot(seedMarketDataSnapshotId, instrumentId, venueId, 1.09995m, 1.10005m, null, "Seed", now, now) { IsSynthetic = true, CreatedAtUtc = now });
         state.PositionLedger.Add(new PositionLedgerEvent(startOfDayEventId, fundId, instrumentId, PositionLedgerEventType.StartOfDay, 0m, "SOD", now.AddHours(-1)));
-        state.RiskLimitSets.Add(new RiskLimitSet(limitSetId, fundId, true, 2_000_000m, TimeSpan.FromHours(24), TimeSpan.FromMinutes(30), 0.0001m, 0.1m));
+        state.RiskLimitSets.Add(new RiskLimitSet(limitSetId, fundId, true, 2_000_000m, TimeSpan.FromHours(24), TimeSpan.FromMinutes(30), 0.0001m, 0.1m, "IntradayFxModel", "Default Conservative Intraday Risk", 1, RiskLimitSetStatus.Active, true, now, null, now, "seed", now, "seed"));
+        state.RiskLimits.AddRange([
+            new RiskLimit(Guid.Parse("99999999-9999-9999-9999-999999999901"), limitSetId, "MaxTradeNotionalUsd", 500_000m, "USD"),
+            new RiskLimit(Guid.Parse("99999999-9999-9999-9999-999999999902"), limitSetId, "MaxGrossExposureUsd", 2_000_000m, "USD"),
+            new RiskLimit(Guid.Parse("99999999-9999-9999-9999-999999999903"), limitSetId, "MaxNetExposureUsd", 2_000_000m, "USD"),
+            new RiskLimit(Guid.Parse("99999999-9999-9999-9999-999999999904"), limitSetId, "MaxDailyTurnoverUsd", 1_000_000m, "USD"),
+            new RiskLimit(Guid.Parse("99999999-9999-9999-9999-999999999905"), limitSetId, "MaxOrdersPerMinute", 10m, "count"),
+            new RiskLimit(Guid.Parse("99999999-9999-9999-9999-999999999906"), limitSetId, "MaxSlippageBps", 5m, "bps"),
+            new RiskLimit(Guid.Parse("99999999-9999-9999-9999-999999999907"), limitSetId, "MinRebalanceBaseQuantity", 0.1m, "baseQuantity"),
+            new RiskLimit(Guid.Parse("99999999-9999-9999-9999-999999999908"), limitSetId, "PositionMatchToleranceBaseQuantity", 0.0001m, "baseQuantity"),
+            new RiskLimit(Guid.Parse("99999999-9999-9999-9999-999999999909"), limitSetId, "ModelStalenessSeconds", 86400m, "seconds"),
+            new RiskLimit(Guid.Parse("99999999-9999-9999-9999-999999999910"), limitSetId, "MarketDataStalenessSeconds", 1800m, "seconds")
+        ]);
         state.InstrumentRiskLimits.Add(new InstrumentRiskLimit(instrumentRiskLimitId, limitSetId, instrumentId, 500_000m, 1_500_000m));
         state.VenueRiskLimits.Add(new VenueRiskLimit(venueRiskLimitId, limitSetId, venueId, 500_000m));
         state.TradingWindows.Add(new TradingWindow(tradingWindowId, fundId, "Sample FX Intraday", "UTC", now.DayOfWeek, TimeOnly.MinValue, new TimeOnly(23, 59, 59), new TimeOnly(23, 59, 59), null));

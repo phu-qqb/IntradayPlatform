@@ -11,6 +11,7 @@ import type {
   LmaxReportValidationIssueDto,
   LmaxTradeSummaryDto
 } from '../api/types';
+import { ActionButton } from './ActionFeedback';
 import { DataTable } from './DataTable';
 
 const mutationModes = [
@@ -75,10 +76,22 @@ export function LmaxEodReportsPanel({
         <label>Mutation<select value={form.mutationMode} onChange={(event) => setForm({ ...form, mutationMode: event.target.value })}>{mutationModes.map((mode) => <option key={mode}>{mode}</option>)}</select></label>
       </div>
       <div className="button-row">
-        <button onClick={() => onGenerateFake(form).then((result) => setMessage(`Generated ${result.individualTradeCount} individual trades, ${result.tradeSummaryCount} summaries, ${result.currencyWalletCount} wallets.`))}>Generate Fake LMAX EOD Reports</button>
-        <button onClick={() => onImportGenerated(form).then((result) => setMessage(`Import ${result.status}: ${result.rowCount} rows, ${result.blockingIssueCount} blocking issues.`))}>Import Generated Reports</button>
-        <button onClick={() => onRunReconciliation(form).then((result) => setMessage(`EOD reconciliation: ${result.breakCount} breaks, ${result.blockingBreakCount} blocking.`))}>Run EOD Reconciliation</button>
-        <button onClick={() => onLoadPnl(form.reportDate, form.venueName, form.brokerAccountCode).then(() => setMessage('PnL summary loaded.'))}>Load PnL Summary</button>
+        <ActionButton idleLabel="Generate Fake LMAX EOD Reports" runningLabel="Generating..." onAction={async () => {
+          const result = await onGenerateFake(form);
+          setMessage(`Generated ${result.individualTradeCount} individual trades, ${result.tradeSummaryCount} summaries, ${result.currencyWalletCount} wallets.`);
+        }} />
+        <ActionButton idleLabel="Import Generated Reports" runningLabel="Importing..." onAction={async () => {
+          const result = await onImportGenerated(form);
+          setMessage(`Import ${result.status}: ${result.rowCount} rows, ${result.blockingIssueCount} blocking issues.`);
+        }} />
+        <ActionButton idleLabel="Run EOD Reconciliation" runningLabel="Reconciling..." onAction={async () => {
+          const result = await onRunReconciliation(form);
+          setMessage(`EOD reconciliation: ${result.breakCount} breaks, ${result.blockingBreakCount} blocking.`);
+        }} />
+        <ActionButton idleLabel="Load PnL Summary" runningLabel="Loading..." onAction={async () => {
+          await onLoadPnl(form.reportDate, form.venueName, form.brokerAccountCode);
+          setMessage('PnL summary loaded.');
+        }} />
       </div>
 
       {pnlSummary && (

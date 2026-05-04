@@ -154,9 +154,12 @@ public sealed record Instrument(
     Currency QuoteCurrency,
     int PricePrecision,
     int QuantityPrecision,
-    bool IsEnabled = true);
+    bool IsEnabled = true,
+    bool IsTradingEnabled = true,
+    bool IsReportImportEnabled = true,
+    bool IsMarketDataEnabled = true);
 
-public sealed record Venue(VenueId Id, string Name, VenueType VenueType, bool IsEnabled = true);
+public sealed record Venue(VenueId Id, string Name, VenueType VenueType, bool IsEnabled = true, bool IsTradingEnabled = true, bool IsReportImportEnabled = true, bool IsMarketDataEnabled = true);
 
 public sealed record VenueInstrumentMapping(
     VenueInstrumentId Id,
@@ -535,6 +538,16 @@ public enum OperatorAuditEventType
     ExceptionCaseWaived,
     ExceptionCaseReopened,
     ExceptionCaseNoteAdded,
+    RiskLimitSetCreated,
+    RiskLimitSetCloned,
+    RiskLimitSetActivated,
+    RiskLimitSetRetired,
+    RiskLimitUpdated,
+    InstrumentRiskLimitUpdated,
+    VenueRiskLimitUpdated,
+    TradingWindowUpdated,
+    InstrumentControlUpdated,
+    VenueControlUpdated,
     Unknown
 }
 
@@ -794,11 +807,36 @@ public enum TradeIntentStatus { Created, RiskApproved, RiskRejected, Ordered, Ca
 public enum TradeSide { Buy, Sell }
 public sealed record TradeIntent(TradeIntentId Id, ModelRunId ModelRunId, FundId FundId, InstrumentId InstrumentId, TradeSide Side, decimal RequestedBaseQuantity, decimal RequestedVenueQuantity, string Reason, TradeIntentStatus Status, DateTimeOffset CreatedAtUtc);
 
-public sealed record RiskLimitSet(Guid Id, FundId FundId, bool GlobalTradingEnabled, decimal MaxGrossExposureUsd, TimeSpan MaxModelRunAge, TimeSpan MaxMarketDataAge, decimal PositionToleranceBaseQuantity, decimal MinDriftVenueQuantity);
-public sealed record RiskLimit(Guid Id, Guid RiskLimitSetId, string Name, decimal Value);
-public sealed record InstrumentRiskLimit(Guid Id, Guid RiskLimitSetId, InstrumentId InstrumentId, decimal MaxTradeNotionalUsd, decimal MaxExposureUsd, bool IsEnabled = true);
-public sealed record VenueRiskLimit(Guid Id, Guid RiskLimitSetId, VenueId VenueId, decimal MaxTradeNotionalUsd, bool IsEnabled = true);
-public sealed record TradingWindow(Guid Id, FundId FundId, string ModelName, string TimeZoneId, DayOfWeek DayOfWeek, TimeOnly OpensAtUtc, TimeOnly ClosesAtUtc, TimeOnly NoNewOrdersAfterUtc, TimeOnly? FlattenAtUtc, bool IsEnabled = true, bool TradingEnabled = true);
+public enum RiskLimitSetStatus { Draft, Active, Retired, Archived }
+
+public sealed record RiskLimitSet(
+    Guid Id,
+    FundId FundId,
+    bool GlobalTradingEnabled,
+    decimal MaxGrossExposureUsd,
+    TimeSpan MaxModelRunAge,
+    TimeSpan MaxMarketDataAge,
+    decimal PositionToleranceBaseQuantity,
+    decimal MinDriftVenueQuantity,
+    string? ModelName = "IntradayFxModel",
+    string Name = "Default Conservative Intraday Risk",
+    int Version = 1,
+    RiskLimitSetStatus Status = RiskLimitSetStatus.Active,
+    bool IsActive = true,
+    DateTimeOffset? EffectiveFromUtc = null,
+    DateTimeOffset? EffectiveToUtc = null,
+    DateTimeOffset? CreatedAtUtc = null,
+    string? CreatedBy = "seed",
+    DateTimeOffset? ActivatedAtUtc = null,
+    string? ActivatedBy = "seed",
+    DateTimeOffset? RetiredAtUtc = null,
+    string? RetiredBy = null,
+    string? Description = "Seeded conservative local-only risk profile.");
+
+public sealed record RiskLimit(Guid Id, Guid RiskLimitSetId, string Name, decimal Value, string Unit = "decimal", string Scope = "Global", bool IsEnabled = true);
+public sealed record InstrumentRiskLimit(Guid Id, Guid RiskLimitSetId, InstrumentId InstrumentId, decimal MaxTradeNotionalUsd, decimal MaxExposureUsd, bool IsEnabled = true, decimal MinTradeQuantity = 0m, int MaxOrdersPerDay = 100, bool IsTradingEnabled = true);
+public sealed record VenueRiskLimit(Guid Id, Guid RiskLimitSetId, VenueId VenueId, decimal MaxTradeNotionalUsd, bool IsEnabled = true, decimal MaxDailyTurnoverUsd = 1_000_000m, int MaxOrdersPerMinute = 10, bool IsVenueEnabled = true);
+public sealed record TradingWindow(Guid Id, FundId FundId, string ModelName, string TimeZoneId, DayOfWeek DayOfWeek, TimeOnly OpensAtUtc, TimeOnly ClosesAtUtc, TimeOnly NoNewOrdersAfterUtc, TimeOnly? FlattenAtUtc, bool IsEnabled = true, bool TradingEnabled = true, string ScheduleName = "Default Intraday", int Version = 1, DateTimeOffset? CreatedAtUtc = null, DateTimeOffset? UpdatedAtUtc = null);
 public sealed record KillSwitchState(Guid Id, bool IsActive, string? Reason, DateTimeOffset UpdatedAtUtc);
 
 public enum RiskDecisionStatus { Approved, Rejected, Blocked, RequiresManualApproval }
@@ -818,10 +856,14 @@ public enum RiskRejectReason
     MaxTradeNotionalExceeded,
     MaxInstrumentExposureExceeded,
     MaxGrossExposureExceeded,
-    TradingWindowClosed
+    TradingWindowClosed,
+    NoNewOrdersAfter,
+    RiskConfigMissing
 }
 
-public sealed record RiskDecision(Guid Id, TradeIntentId TradeIntentId, RiskDecisionStatus Status, RiskRejectReason RejectReason, string Explanation, DateTimeOffset CreatedAtUtc);
+public sealed record RiskDecision(Guid Id, TradeIntentId TradeIntentId, RiskDecisionStatus Status, RiskRejectReason RejectReason, string Explanation, DateTimeOffset CreatedAtUtc, Guid? RiskLimitSetId = null, ModelRunId? ModelRunId = null, InstrumentId? InstrumentId = null, VenueId? VenueId = null);
+public enum RiskDecisionCheckStatus { Passed, Failed, Blocked, Informational }
+public sealed record RiskDecisionDetail(Guid Id, Guid RiskDecisionId, string CheckName, RiskDecisionCheckStatus Status, RiskRejectReason? RejectReason, decimal? ObservedValue, decimal? LimitValue, string? Unit, string Message, DateTimeOffset CreatedAtUtc);
 
 public enum OrderStatus { Created, RiskRejected, PendingNew, Acked, PartiallyFilled, Filled, PendingCancel, Cancelled, Rejected, Expired, Unknown }
 public enum OrderSide { Buy, Sell }

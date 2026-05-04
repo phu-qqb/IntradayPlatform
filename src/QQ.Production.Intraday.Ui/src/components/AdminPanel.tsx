@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import type { InstrumentDto, KillSwitchDto, VenueDto } from '../api/types';
+import { ActionButton } from './ActionFeedback';
 import { DataTable } from './DataTable';
 
 export function AdminPanel({
@@ -26,8 +27,10 @@ export function AdminPanel({
       </div>
       <div className="form-grid">
         <label>Reason<input value={reason} onChange={(event) => setReason(event.target.value)} /></label>
-        <button onClick={() => onActivateKillSwitch(reason)}>Activate Kill Switch</button>
-        <button className="primary" onClick={() => window.confirm('Clear the local kill switch?') && onClearKillSwitch()}>Clear Kill Switch</button>
+        <ActionButton idleLabel="Activate Kill Switch" runningLabel="Activating..." onAction={() => onActivateKillSwitch(reason)} />
+        <ActionButton className="primary" idleLabel="Clear Kill Switch" runningLabel="Clearing..." onAction={async () => {
+          if (window.confirm('Clear the local kill switch?')) await onClearKillSwitch();
+        }} />
       </div>
       <h3>Instruments</h3>
       <DataTable rows={instruments} getRowKey={(row) => row.id} columns={[
