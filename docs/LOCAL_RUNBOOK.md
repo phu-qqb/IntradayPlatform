@@ -256,6 +256,54 @@ Run the local Daily Operations smoke after starting the API:
 
 The smoke validates health, FakeLmax-only safety, daily summary, reference check job, bar build job, ready-weight promotion job, pending model-run processing job, retry linkage, job history, and audit events. It skips EOD reconciliation clearly when no local LMAX EOD import run exists.
 
+## Operational Runbooks and Local Scheduler Foundation
+
+Operational runbooks organize the local Daily Operations jobs into institutional workflows. They are orchestration only: they call existing local jobs, preserve audit/exception/governance controls, and do not introduce live broker connectivity, real LMAX execution, live market data integration, credentials, or external scheduler dependencies.
+
+Default runbooks are seeded idempotently:
+
+- `StartOfDay`: reference-data integrity, latest bar build, active risk profile check, open exception check, and a manual operator confirmation gate.
+- `IntradayCycle`: promote ready weight batches, process pending model runs through `FakeLmaxGateway`, build latest bars, and check exceptions.
+- `EndOfDay`: generate fake LMAX EOD reports, import generated reports, run EOD reconciliation, calculate USD PnL summary, check EOD exceptions, and complete a manual operator confirmation gate.
+
+Manual gates pause the runbook with `WaitingForOperator`. The operator must complete the step with a reason before the runner continues. Failed required steps stop the runbook; continue-on-warning steps can leave the runbook `PartiallySucceeded` instead of turning a handled business warning into an infrastructure failure.
+
+Useful API calls:
+
+```powershell
+Invoke-RestMethod "http://localhost:5050/ops/runbooks/definitions"
+Invoke-RestMethod "http://localhost:5050/ops/runbooks/runs?limit=50"
+Invoke-RestMethod -Method Post -ContentType "application/json" -Body '{"runbookType":"StartOfDay","reason":"Manual SOD run","input":{}}' "http://localhost:5050/ops/runbooks/run"
+Invoke-RestMethod "http://localhost:5050/ops/schedules"
+```
+
+Run a runbook from PowerShell:
+
+```powershell
+.\scripts\run-runbook.ps1 -RunbookType StartOfDay -Reason "Manual start-of-day checks"
+```
+
+Run the local runbook smoke after starting the API:
+
+```powershell
+.\scripts\smoke-runbooks-local.ps1
+```
+
+The smoke validates health, default runbook definitions, Start-of-Day manual confirmation, linked job runs, Intraday and End-of-Day runbook execution paths, audit events, and scheduler disabled state. It uses local API calls only and does not call LMAX, Connectivity Lab commands, credentials, live trading, or external services.
+
+The local scheduler foundation is present but disabled by default:
+
+```json
+{
+  "LocalScheduler": {
+    "Enabled": false,
+    "PollIntervalSeconds": 30
+  }
+}
+```
+
+When disabled, the worker does not trigger scheduled runbooks. When explicitly enabled for local testing, it only evaluates enabled local `OperationalScheduleDefinitions` and triggers runbooks through the same audited runbook runner. It does not submit orders directly, does not call external services, does not invoke real LMAX or Connectivity Lab network commands, and does not bypass startup safety validation. Current limitations: no production scheduler, no Windows Service install, no cloud scheduler, no real LMAX account/position runbook steps, and fake/generated EOD jobs only.
+
 ## Risk Control Center
 
 Open the Risk Control Center from the Control navigation group. It is local-only and cannot enable live trading, external connections, credentials, or a real LMAX gateway.

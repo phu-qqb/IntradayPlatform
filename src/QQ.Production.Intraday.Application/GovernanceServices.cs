@@ -275,7 +275,7 @@ public sealed class ApprovalWorkflowService(
         await permissions.RequirePermissionAsync(OperatorPermission.ManageApprovals, cancellationToken);
         var current = await RequireCurrentOperatorAsync(cancellationToken);
         var request = await RequireRequestAsync(id, cancellationToken);
-        EnsurePending(request);
+        EnsurePending(request, clock.UtcNow);
         if (string.Equals(request.RequestedByOperatorId, current.OperatorId, StringComparison.OrdinalIgnoreCase))
         {
             throw new DomainRuleViolationException("Requester cannot approve their own approval request.");
@@ -299,7 +299,7 @@ public sealed class ApprovalWorkflowService(
         await permissions.RequirePermissionAsync(OperatorPermission.ManageApprovals, cancellationToken);
         var current = await RequireCurrentOperatorAsync(cancellationToken);
         var request = await RequireRequestAsync(id, cancellationToken);
-        EnsurePending(request);
+        EnsurePending(request, clock.UtcNow);
         var now = clock.UtcNow;
         var updated = request with { Status = ApprovalRequestStatus.Rejected, RejectedAtUtc = now, RejectedByOperatorId = current.OperatorId, ResultMessage = reason.Trim(), UpdatedAtUtc = now };
         await repository.UpdateApprovalRequestAsync(updated, cancellationToken);
@@ -313,7 +313,7 @@ public sealed class ApprovalWorkflowService(
         RequireText(reason, "A reason is required to cancel an approval request.");
         var current = await RequireCurrentOperatorAsync(cancellationToken);
         var request = await RequireRequestAsync(id, cancellationToken);
-        EnsurePending(request);
+        EnsurePending(request, clock.UtcNow);
         var roles = await permissions.GetRolesAsync(current.Id, cancellationToken);
         if (!roles.Contains(OperatorRole.Admin) && !string.Equals(request.RequestedByOperatorId, current.OperatorId, StringComparison.OrdinalIgnoreCase))
         {
@@ -392,10 +392,10 @@ public sealed class ApprovalWorkflowService(
     private async Task<ApprovalRequest> RequireRequestAsync(ApprovalRequestId id, CancellationToken cancellationToken)
         => await repository.GetApprovalRequestAsync(id, cancellationToken) ?? throw new DomainRuleViolationException("Approval request was not found.");
 
-    private static void EnsurePending(ApprovalRequest request)
+    private static void EnsurePending(ApprovalRequest request, DateTimeOffset now)
     {
         if (request.Status != ApprovalRequestStatus.Pending) throw new DomainRuleViolationException($"Approval request is {request.Status} and cannot be decided.");
-        if (request.ExpiresAtUtc is not null && request.ExpiresAtUtc < DateTimeOffset.UtcNow) throw new DomainRuleViolationException("Approval request has expired.");
+        if (request.ExpiresAtUtc is not null && request.ExpiresAtUtc < now) throw new DomainRuleViolationException("Approval request has expired.");
     }
 
     private Task AuditApprovalAsync(OperatorAuditEventType eventType, ApprovalRequest request, string reason, OperatorAuditResult result, CancellationToken cancellationToken)

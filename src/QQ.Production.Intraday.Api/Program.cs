@@ -1112,6 +1112,55 @@ app.MapPost("/ops/runbooks/runs/{id:guid}/retry", async (Guid id, ReasonRequest 
 app.MapGet("/ops/schedules", async (IOperationalRunbookRunner runner, LocalSchedulerOptions options, CancellationToken cancellationToken) =>
     Results.Ok(new { schedulerEnabled = options.Enabled, pollIntervalSeconds = options.PollIntervalSeconds, value = (await runner.GetSchedulesAsync(cancellationToken)).Select(ToOperationalScheduleDefinitionDto) }));
 
+app.MapPost("/ops/schedules", async (OperationalScheduleDefinitionRequest request, IOperationalRunbookRunner runner, IClock clock, CancellationToken cancellationToken) =>
+{
+    if (string.IsNullOrWhiteSpace(request.Reason)) return Results.BadRequest(new { message = "A reason is required to create a local schedule." });
+    if (!Guid.TryParse(request.RunbookDefinitionId, out var definitionId)) return Results.BadRequest(new { message = "RunbookDefinitionId must be a GUID." });
+    try
+    {
+        var now = clock.UtcNow;
+        var schedule = new OperationalScheduleDefinition(
+            OperationalScheduleDefinitionId.New(),
+            request.Name.Trim(),
+            new OperationalRunbookDefinitionId(definitionId),
+            request.IsEnabled,
+            request.CronExpression,
+            request.FixedIntervalMinutes,
+            string.IsNullOrWhiteSpace(request.TimeZoneId) ? "UTC" : request.TimeZoneId.Trim(),
+            request.NextRunAtUtc,
+            request.LastRunAtUtc,
+            now,
+            now);
+        return Results.Ok(ToOperationalScheduleDefinitionDto(await runner.UpsertScheduleAsync(schedule, request.Reason, cancellationToken)));
+    }
+    catch (DomainRuleViolationException ex) { return Results.BadRequest(new { message = ex.Message }); }
+});
+
+app.MapPut("/ops/schedules/{id:guid}", async (Guid id, OperationalScheduleDefinitionRequest request, IOperationalRunbookRunner runner, IClock clock, CancellationToken cancellationToken) =>
+{
+    if (string.IsNullOrWhiteSpace(request.Reason)) return Results.BadRequest(new { message = "A reason is required to update a local schedule." });
+    if (!Guid.TryParse(request.RunbookDefinitionId, out var definitionId)) return Results.BadRequest(new { message = "RunbookDefinitionId must be a GUID." });
+    try
+    {
+        var now = clock.UtcNow;
+        var existing = (await runner.GetSchedulesAsync(cancellationToken)).FirstOrDefault(x => x.Id.Value == id);
+        var schedule = new OperationalScheduleDefinition(
+            new OperationalScheduleDefinitionId(id),
+            request.Name.Trim(),
+            new OperationalRunbookDefinitionId(definitionId),
+            request.IsEnabled,
+            request.CronExpression,
+            request.FixedIntervalMinutes,
+            string.IsNullOrWhiteSpace(request.TimeZoneId) ? "UTC" : request.TimeZoneId.Trim(),
+            request.NextRunAtUtc,
+            request.LastRunAtUtc,
+            existing?.CreatedAtUtc ?? now,
+            now);
+        return Results.Ok(ToOperationalScheduleDefinitionDto(await runner.UpsertScheduleAsync(schedule, request.Reason, cancellationToken)));
+    }
+    catch (DomainRuleViolationException ex) { return Results.BadRequest(new { message = ex.Message }); }
+});
+
 app.MapGet("/instruments", async (IIntradayRepository repository, CancellationToken cancellationToken) =>
 {
     var state = await repository.LoadStateAsync(cancellationToken);
@@ -1733,6 +1782,7 @@ public sealed record OperationalRunbookStepDefinitionDto(string Id, string Runbo
 public sealed record OperationalRunbookRunDto(string Id, string RunbookDefinitionId, string RunbookType, string Name, string Status, string TriggerType, string? TriggeredByOperatorId, string? TriggeredByDisplayName, DateTimeOffset StartedAtUtc, DateTimeOffset? CompletedAtUtc, long? DurationMs, string? CorrelationId, string? Reason, string? InputJson, string? OutputJson, string? ErrorMessage, string? RetryOfRunbookRunId, int RetryCount, bool CanRetry, DateTimeOffset CreatedAtUtc, DateTimeOffset? UpdatedAtUtc);
 public sealed record OperationalRunbookStepRunDto(string Id, string RunbookRunId, string? StepDefinitionId, int StepOrder, string Name, string Status, string? JobRunId, DateTimeOffset? StartedAtUtc, DateTimeOffset? CompletedAtUtc, long? DurationMs, string? Message, string? InputJson, string? OutputJson, string? ErrorMessage, DateTimeOffset CreatedAtUtc, DateTimeOffset? UpdatedAtUtc);
 public sealed record OperationalScheduleDefinitionDto(string Id, string Name, string RunbookDefinitionId, bool IsEnabled, string? CronExpression, int? FixedIntervalMinutes, string TimeZoneId, DateTimeOffset? NextRunAtUtc, DateTimeOffset? LastRunAtUtc, DateTimeOffset CreatedAtUtc, DateTimeOffset? UpdatedAtUtc);
+public sealed record OperationalScheduleDefinitionRequest(string Name, string RunbookDefinitionId, bool IsEnabled, string? CronExpression, int? FixedIntervalMinutes, string? TimeZoneId, DateTimeOffset? NextRunAtUtc, DateTimeOffset? LastRunAtUtc, string Reason);
 public sealed record FillDto(string Id, string BrokerExecutionId, string ChildOrderId, string InstrumentId, string? Symbol, string VenueId, string? VenueName, string Side, decimal BaseQuantity, decimal VenueQuantity, decimal Price, DateTimeOffset TradeDateUtc, DateTimeOffset ReceivedAtUtc);
 public sealed record MarketDataSnapshotDto(string Id, string InstrumentId, string? Symbol, string VenueId, string? VenueName, decimal Bid, decimal Ask, decimal Mid, decimal Spread, string Source, DateTimeOffset SourceTimestampUtc, DateTimeOffset ReceivedAtUtc, long? SequenceNumber, bool IsSynthetic, DateTimeOffset CreatedAtUtc);
 public sealed record MarketDataBarDto(string Id, string InstrumentId, string? Symbol, string VenueId, string? VenueName, string Timeframe, DateTimeOffset BarStartUtc, DateTimeOffset BarEndUtc, string Source, decimal BidOpen, decimal BidHigh, decimal BidLow, decimal BidClose, decimal AskOpen, decimal AskHigh, decimal AskLow, decimal AskClose, decimal MidOpen, decimal MidHigh, decimal MidLow, decimal MidClose, decimal SpreadOpen, decimal SpreadHigh, decimal SpreadLow, decimal SpreadClose, decimal SpreadAverage, int ObservationCount, DateTimeOffset? FirstSnapshotUtc, DateTimeOffset? LastSnapshotUtc, bool IsComplete, string QualityStatus, string? BuildRunId, string BuilderVersion, DateTimeOffset CreatedAtUtc);

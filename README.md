@@ -130,6 +130,16 @@ Daily Operations adds `AddDailyOperationsJobControl` for persistent local operat
 
 Daily Operations job status semantics distinguish operational results from infrastructure failures. `Succeeded` means the wrapper completed as expected, `Skipped` means intentionally no work, `PartiallySucceeded` means completed with business warnings or handled blocks, and `Failed` is reserved for infrastructure/programming failures or critical controls such as blocking reference-data integrity. EOD reconciliation can succeed while reporting blocking breaks because those breaks remain reconciliation/exception workflow objects. Retries create new linked job runs with `RetryOfJobRunId`, require a reason, and are audited.
 
+Operational runbooks add `AddOperationalRunbooksAndLocalScheduler` for Start-of-Day, Intraday Cycle, End-of-Day, and disabled-by-default local schedule metadata:
+
+- `OperationalRunbookDefinitions`
+- `OperationalRunbookStepDefinitions`
+- `OperationalRunbookRuns`
+- `OperationalRunbookStepRuns`
+- `OperationalScheduleDefinitions`
+
+The seeded runbooks orchestrate existing local jobs only. Start of Day runs reference-data, bar-build, active-risk, exception, and manual confirmation checks. Intraday Cycle promotes ready weights, processes pending model runs through FakeLmax only, builds bars, and checks exceptions. End of Day uses fake/generated LMAX EOD reports, local import, reconciliation, USD PnL, EOD exception checks, and manual confirmation. The local scheduler foundation is disabled by default (`LocalScheduler:Enabled=false`), has no cloud dependency, does not install a Windows Service, and never calls real LMAX or Connectivity Lab network commands.
+
 ## Scripts
 
 - `scripts/check-env.ps1`
@@ -146,12 +156,14 @@ Daily Operations job status semantics distinguish operational results from infra
 - `scripts/smoke-governance-local.ps1`
 - `scripts/run-ops-job.ps1`
 - `scripts/smoke-daily-ops-local.ps1`
+- `scripts/run-runbook.ps1`
+- `scripts/smoke-runbooks-local.ps1`
 - `scripts/run-ui.ps1`
 - `scripts/run-local-stack.ps1`
 
 See [docs/LOCAL_RUNBOOK.md](docs/LOCAL_RUNBOOK.md) for the full local workflow.
 
-The smoke scripts use dynamic UTC timestamps and local-only APIs. `smoke-local.ps1` builds the previous completed 15-minute bar, adds fresh fake snapshots for execution freshness, creates a current model run, and processes it through `FakeLmaxGateway`. `smoke-daily-ops-local.ps1` validates Daily Operations summary/checklist/job history, exercises a safe retry, verifies audit events, and skips EOD reconciliation clearly when no local LMAX EOD import run exists. If a local API call fails, the scripts print the endpoint, safe request body, HTTP status, and response body.
+The smoke scripts use dynamic UTC timestamps and local-only APIs. `smoke-local.ps1` builds the previous completed 15-minute bar, adds fresh fake snapshots for execution freshness, creates a current model run, and processes it through `FakeLmaxGateway`. `smoke-daily-ops-local.ps1` validates Daily Operations summary/checklist/job history, exercises a safe retry, verifies audit events, and skips EOD reconciliation clearly when no local LMAX EOD import run exists. `smoke-runbooks-local.ps1` validates default runbook definitions, manual gates, linked job runs, runbook audit events, and that the local scheduler remains disabled by default. If a local API call fails, the scripts print the endpoint, safe request body, HTTP status, and response body.
 
 ## Run API
 

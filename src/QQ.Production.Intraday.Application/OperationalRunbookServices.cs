@@ -183,7 +183,7 @@ public sealed class OperationalRunbookRunner(
             {
                 var waiting = stepRun with { Status = OperationalRunbookStepStatus.WaitingForOperator, StartedAtUtc = clock.UtcNow, Message = "Waiting for local operator confirmation.", UpdatedAtUtc = clock.UtcNow };
                 await repository.UpdateStepRunAsync(waiting, cancellationToken);
-                var paused = run with { Status = OperationalRunbookStatus.WaitingForOperator, UpdatedAtUtc = clock.UtcNow, OutputJson = BuildOutputJson(run.Id, null) };
+                var paused = run with { Status = OperationalRunbookStatus.WaitingForOperator, UpdatedAtUtc = clock.UtcNow, OutputJson = await BuildOutputJsonAsync(run.Id, null, cancellationToken) };
                 await repository.UpdateRunAsync(paused, cancellationToken);
                 await audit.RecordAsync(new(OperatorAuditEventType.RunbookWaitingForOperator, OperatorAuditSeverity.Info, OperatorAuditResult.Blocked, "OperationalRunbookRunner", $"Runbook {run.RunbookType} is waiting for operator confirmation.", "OperationalRunbookRun", run.Id.Value.ToString("D"), reason, Metadata: new { stepRunId = waiting.Id.Value.ToString("D"), waiting.Name }), cancellationToken);
                 return paused;
@@ -199,7 +199,7 @@ public sealed class OperationalRunbookRunner(
             {
                 if (definition.IsRequired && !definition.ContinueOnFailure && definition.GateType != OperationalRunbookGateType.ContinueOnWarning)
                 {
-                    var failed = Complete(run, OperationalRunbookStatus.Failed, BuildOutputJson(run.Id, completed), completed.ErrorMessage ?? completed.Message);
+                    var failed = Complete(run, OperationalRunbookStatus.Failed, await BuildOutputJsonAsync(run.Id, completed, cancellationToken), completed.ErrorMessage ?? completed.Message);
                     await repository.UpdateRunAsync(failed, cancellationToken);
                     await audit.RecordAsync(new(OperatorAuditEventType.RunbookFailed, OperatorAuditSeverity.Critical, OperatorAuditResult.Failed, "OperationalRunbookRunner", $"Runbook {run.RunbookType} failed.", "OperationalRunbookRun", run.Id.Value.ToString("D"), failed.ErrorMessage, Metadata: new { failedStepRunId = completed.Id.Value.ToString("D"), completed.JobRunId }), cancellationToken);
                     await MaybeCreateExceptionAsync(failed, completed, cancellationToken);
@@ -210,7 +210,7 @@ public sealed class OperationalRunbookRunner(
 
         var allSteps = await repository.GetStepRunsAsync(run.Id, cancellationToken);
         var finalStatus = allSteps.Any(x => x.Status == OperationalRunbookStepStatus.Failed) ? OperationalRunbookStatus.PartiallySucceeded : OperationalRunbookStatus.Succeeded;
-        var finished = Complete(run, finalStatus, BuildOutputJson(run.Id, null), null);
+        var finished = Complete(run, finalStatus, await BuildOutputJsonAsync(run.Id, null, cancellationToken), null);
         await repository.UpdateRunAsync(finished, cancellationToken);
         await audit.RecordAsync(new(OperatorAuditEventType.RunbookCompleted, OperatorAuditSeverity.Info, finalStatus == OperationalRunbookStatus.Succeeded ? OperatorAuditResult.Succeeded : OperatorAuditResult.Blocked, "OperationalRunbookRunner", $"Runbook {run.RunbookType} completed with status {finalStatus}.", "OperationalRunbookRun", run.Id.Value.ToString("D"), reason, Metadata: new { finalStatus, stepCount = allSteps.Count }), cancellationToken);
         return finished;
@@ -279,9 +279,9 @@ public sealed class OperationalRunbookRunner(
         return run with { Status = status, CompletedAtUtc = completedAt, DurationMs = Duration(run.StartedAtUtc, completedAt), OutputJson = outputJson, ErrorMessage = error, UpdatedAtUtc = completedAt };
     }
 
-    private string BuildOutputJson(OperationalRunbookRunId runId, OperationalRunbookStepRun? lastStep)
+    private async Task<string> BuildOutputJsonAsync(OperationalRunbookRunId runId, OperationalRunbookStepRun? lastStep, CancellationToken cancellationToken)
     {
-        var steps = repository.GetStepRunsAsync(runId, CancellationToken.None).GetAwaiter().GetResult();
+        var steps = await repository.GetStepRunsAsync(runId, cancellationToken);
         return OperatorAuditService.SerializeSanitized(new { stepCount = steps.Count, succeeded = steps.Count(x => x.Status == OperationalRunbookStepStatus.Succeeded), failed = steps.Count(x => x.Status == OperationalRunbookStepStatus.Failed), waitingForOperator = steps.Count(x => x.Status == OperationalRunbookStepStatus.WaitingForOperator), lastStep = lastStep?.Name }) ?? "{}";
     }
 
