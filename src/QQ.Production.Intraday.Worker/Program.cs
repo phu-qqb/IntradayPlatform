@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using QQ.Production.Intraday.Application;
+using QQ.Production.Intraday.Domain;
 using QQ.Production.Intraday.Infrastructure.Simulator;
 using QQ.Production.Intraday.Infrastructure.SqlServer;
 using QQ.Production.Intraday.Worker;
@@ -7,14 +8,32 @@ using Serilog;
 
 var builder = Host.CreateApplicationBuilder(args);
 builder.Services.AddSingleton<IClock, SystemClock>();
+builder.Services.AddSingleton<IOperatorContext>(new StaticOperatorContext(OperatorAuditActorType.Worker, "worker", "Local Worker"));
+builder.Services.AddScoped<IOperatorAuditService, OperatorAuditService>();
+builder.Services.AddScoped<IOperatorPermissionService, OperatorPermissionService>();
+builder.Services.AddScoped<IApprovalWorkflowService, ApprovalWorkflowService>();
+builder.Services.AddSingleton(new GovernanceOptions());
+builder.Services.AddSingleton(new LocalSchedulerOptions(
+    builder.Configuration.GetValue("LocalScheduler:Enabled", false),
+    builder.Configuration.GetValue("LocalScheduler:PollIntervalSeconds", 30)));
 builder.Services.AddSingleton(new BarBuilderOptions());
 builder.Services.AddSingleton(new FakeLmaxOptions());
 builder.Services.AddSingleton<IVenueExecutionGateway, FakeLmaxGateway>();
 builder.Services.AddSingleton<IMarketDataProvider, FakeMarketDataProvider>();
 builder.Services.AddScoped<ProcessModelRunService>();
 builder.Services.AddScoped<IReferenceDataIntegrityService, ReferenceDataIntegrityService>();
+builder.Services.AddScoped<IExceptionCaseService, ExceptionCaseService>();
+builder.Services.AddScoped<IRiskControlService, RiskControlService>();
+builder.Services.AddScoped<IOperationalJobRunner, OperationalJobRunner>();
+builder.Services.AddScoped<IOperationalRunbookRunner, OperationalRunbookRunner>();
 builder.Services.AddScoped<IModelWeightPromotionService, ModelWeightPromotionService>();
 builder.Services.AddScoped<IFakeModelWeightGenerator, FakeModelWeightGenerator>();
+builder.Services.AddSingleton(new LmaxEodReportOptions());
+builder.Services.AddScoped<ILmaxEodReportImportService, LmaxEodReportImportService>();
+builder.Services.AddScoped<ILmaxReportPairConsistencyService, LmaxReportPairConsistencyService>();
+builder.Services.AddScoped<IEodReconciliationService, EodReconciliationService>();
+builder.Services.AddScoped<IEodPnlSummaryService, EodPnlSummaryService>();
+builder.Services.AddScoped<IFakeLmaxEodReportGenerator, FakeLmaxEodReportGenerator>();
 
 var persistenceProvider = builder.Configuration.GetValue("Persistence:Provider", "SqlServerLocal") ?? "SqlServerLocal";
 if (string.Equals(persistenceProvider, "SqlServerLocal", StringComparison.OrdinalIgnoreCase))
@@ -27,6 +46,12 @@ if (string.Equals(persistenceProvider, "SqlServerLocal", StringComparison.Ordina
     builder.Services.AddScoped<IMarketDataBarRepository, SqlServerMarketDataBarRepository>();
     builder.Services.AddScoped<IBarBuildRunRepository, SqlServerBarBuildRunRepository>();
     builder.Services.AddScoped<IModelWeightBatchRepository, SqlServerModelWeightBatchRepository>();
+    builder.Services.AddScoped<ILmaxEodReportRepository, SqlServerLmaxEodReportRepository>();
+    builder.Services.AddScoped<IOperatorAuditRepository, SqlServerOperatorAuditRepository>();
+    builder.Services.AddScoped<IOperatorGovernanceRepository, SqlServerOperatorGovernanceRepository>();
+    builder.Services.AddScoped<IExceptionCaseRepository, SqlServerExceptionCaseRepository>();
+    builder.Services.AddScoped<IOperationalJobRepository, SqlServerOperationalJobRepository>();
+    builder.Services.AddScoped<IOperationalRunbookRepository, SqlServerOperationalRunbookRepository>();
     builder.Services.AddScoped<IBrokerPositionProvider, SqlServerFakeBrokerPositionProvider>();
     builder.Services.AddScoped<IBarBuilderService, BarBuilderService>();
     builder.Services.AddScoped<LocalDatabaseInitializer>();
@@ -40,6 +65,12 @@ else if (string.Equals(persistenceProvider, "InMemory", StringComparison.Ordinal
     builder.Services.AddSingleton<IMarketDataBarRepository, InMemoryMarketDataBarRepository>();
     builder.Services.AddSingleton<IBarBuildRunRepository, InMemoryBarBuildRunRepository>();
     builder.Services.AddSingleton<IModelWeightBatchRepository, InMemoryModelWeightBatchRepository>();
+    builder.Services.AddSingleton<ILmaxEodReportRepository, InMemoryLmaxEodReportRepository>();
+    builder.Services.AddSingleton<IOperatorAuditRepository, InMemoryOperatorAuditRepository>();
+    builder.Services.AddSingleton<IOperatorGovernanceRepository, InMemoryOperatorGovernanceRepository>();
+    builder.Services.AddSingleton<IExceptionCaseRepository, InMemoryExceptionCaseRepository>();
+    builder.Services.AddSingleton<IOperationalJobRepository, InMemoryOperationalJobRepository>();
+    builder.Services.AddSingleton<IOperationalRunbookRepository, InMemoryOperationalRunbookRepository>();
     builder.Services.AddSingleton<IBrokerPositionProvider, FakeBrokerPositionProvider>();
     builder.Services.AddSingleton<IBarBuilderService, BarBuilderService>();
 }

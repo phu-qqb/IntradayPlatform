@@ -579,6 +579,19 @@ public enum OperatorAuditEventType
     OperationalJobSucceeded,
     OperationalJobFailed,
     OperationalJobRetried,
+    RunbookStarted,
+    RunbookStepStarted,
+    RunbookStepSucceeded,
+    RunbookStepFailed,
+    RunbookWaitingForOperator,
+    RunbookCompleted,
+    RunbookFailed,
+    RunbookCancelled,
+    RunbookRetried,
+    RunbookManualStepCompleted,
+    ScheduleCreated,
+    ScheduleUpdated,
+    ScheduleTriggered,
     DailyChecklistViewed,
     DailyOperationsSummaryViewed,
     Unknown
@@ -637,6 +650,12 @@ public enum OperatorPermission
     RunOperationalJobs,
     RetryOperationalJobs,
     ViewJobHistory,
+    ViewRunbooks,
+    RunRunbooks,
+    ManageRunbookSchedules,
+    CompleteRunbookManualGates,
+    CancelRunbooks,
+    RetryRunbooks,
     Admin
 }
 

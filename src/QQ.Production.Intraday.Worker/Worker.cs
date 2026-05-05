@@ -1,4 +1,5 @@
 using QQ.Production.Intraday.Application;
+using QQ.Production.Intraday.Domain;
 
 namespace QQ.Production.Intraday.Worker;
 
@@ -20,6 +21,7 @@ public sealed class Worker(IServiceScopeFactory scopeFactory, IConfiguration con
             await PromoteWeightsIfEnabled(stoppingToken);
             await ProcessOnce(stoppingToken);
             await BuildBarsIfEnabled(stoppingToken);
+            await RunLocalSchedulerIfEnabled(stoppingToken);
         }
     }
 
@@ -59,5 +61,29 @@ public sealed class Worker(IServiceScopeFactory scopeFactory, IConfiguration con
         var venue = state.Venues.Single(x => x.Name == venueName);
         var result = await builder.BuildLatestFifteenMinuteBarsAsync(venue.Id, cancellationToken);
         logger.LogInformation("Market data bar build result: Status={Status} Created={Created} Updated={Updated} Error={Error}", result.Status, result.BarsCreated, result.BarsUpdated, result.ErrorMessage);
+    }
+
+    private async Task RunLocalSchedulerIfEnabled(CancellationToken cancellationToken)
+    {
+        if (!configuration.GetValue("LocalScheduler:Enabled", false))
+        {
+            return;
+        }
+
+        using var scope = scopeFactory.CreateScope();
+        var runner = scope.ServiceProvider.GetRequiredService<IOperationalRunbookRunner>();
+        var now = scope.ServiceProvider.GetRequiredService<IClock>().UtcNow;
+        var schedules = await runner.GetSchedulesAsync(cancellationToken);
+        foreach (var schedule in schedules.Where(x => x.IsEnabled && x.NextRunAtUtc is not null && x.NextRunAtUtc <= now))
+        {
+            var definition = await runner.GetRunbookDefinitionAsync(schedule.RunbookDefinitionId, cancellationToken);
+            if (definition is null || !definition.IsEnabled)
+            {
+                continue;
+            }
+
+            await runner.RunRunbookAsync(new RunOperationalRunbookRequest(definition.RunbookType, $"Local scheduler triggered schedule '{schedule.Name}'.", TriggerType: OperationalRunbookTriggerType.LocalScheduler), cancellationToken);
+            logger.LogInformation("Local scheduler triggered runbook {RunbookType} from schedule {ScheduleName}", definition.RunbookType, schedule.Name);
+        }
     }
 }

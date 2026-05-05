@@ -138,6 +138,7 @@ public sealed class OperatorPermissionService(
                     set.Add(OperatorPermission.ManageApprovals);
                     set.Add(OperatorPermission.ViewOperations);
                     set.Add(OperatorPermission.ViewJobHistory);
+                    set.Add(OperatorPermission.ViewRunbooks);
                     break;
                 case OperatorRole.RiskManager:
                     set.Add(OperatorPermission.ViewDashboard);
@@ -156,6 +157,9 @@ public sealed class OperatorPermissionService(
                     set.Add(OperatorPermission.ViewJobHistory);
                     set.Add(OperatorPermission.RunOperationalJobs);
                     set.Add(OperatorPermission.RetryOperationalJobs);
+                    set.Add(OperatorPermission.ViewRunbooks);
+                    set.Add(OperatorPermission.RunRunbooks);
+                    set.Add(OperatorPermission.CompleteRunbookManualGates);
                     break;
                 case OperatorRole.Operator:
                     set.Add(OperatorPermission.ViewDashboard);
@@ -169,12 +173,16 @@ public sealed class OperatorPermissionService(
                     set.Add(OperatorPermission.ViewOperations);
                     set.Add(OperatorPermission.ViewJobHistory);
                     set.Add(OperatorPermission.RunOperationalJobs);
+                    set.Add(OperatorPermission.ViewRunbooks);
+                    set.Add(OperatorPermission.RunRunbooks);
+                    set.Add(OperatorPermission.CompleteRunbookManualGates);
                     break;
                 case OperatorRole.Viewer:
                     set.Add(OperatorPermission.ViewDashboard);
                     set.Add(OperatorPermission.ViewRiskConfig);
                     set.Add(OperatorPermission.ViewOperations);
                     set.Add(OperatorPermission.ViewJobHistory);
+                    set.Add(OperatorPermission.ViewRunbooks);
                     break;
             }
         }

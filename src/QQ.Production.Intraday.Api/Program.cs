@@ -36,7 +36,11 @@ builder.Services.AddScoped<IReferenceDataIntegrityService, ReferenceDataIntegrit
 builder.Services.AddScoped<IExceptionCaseService, ExceptionCaseService>();
 builder.Services.AddScoped<IRiskControlService, RiskControlService>();
 builder.Services.AddScoped<IOperationalJobRunner, OperationalJobRunner>();
+builder.Services.AddScoped<IOperationalRunbookRunner, OperationalRunbookRunner>();
 builder.Services.AddScoped<IDailyOperationsService, DailyOperationsService>();
+builder.Services.AddSingleton(new LocalSchedulerOptions(
+    builder.Configuration.GetValue("LocalScheduler:Enabled", false),
+    builder.Configuration.GetValue("LocalScheduler:PollIntervalSeconds", 30)));
 builder.Services.AddScoped<IModelWeightPromotionService, ModelWeightPromotionService>();
 builder.Services.AddScoped<IFakeModelWeightGenerator, FakeModelWeightGenerator>();
 builder.Services.AddSingleton(new LmaxEodReportOptions());
@@ -72,6 +76,7 @@ if (string.Equals(persistenceProvider, "SqlServerLocal", StringComparison.Ordina
     builder.Services.AddScoped<IOperatorGovernanceRepository, SqlServerOperatorGovernanceRepository>();
     builder.Services.AddScoped<IExceptionCaseRepository, SqlServerExceptionCaseRepository>();
     builder.Services.AddScoped<IOperationalJobRepository, SqlServerOperationalJobRepository>();
+    builder.Services.AddScoped<IOperationalRunbookRepository, SqlServerOperationalRunbookRepository>();
     builder.Services.AddScoped<IBrokerPositionProvider, SqlServerFakeBrokerPositionProvider>();
     builder.Services.AddScoped<IBarBuilderService, BarBuilderService>();
     builder.Services.AddScoped<LocalDatabaseInitializer>();
@@ -90,6 +95,7 @@ else if (string.Equals(persistenceProvider, "InMemory", StringComparison.Ordinal
     builder.Services.AddSingleton<IOperatorGovernanceRepository, InMemoryOperatorGovernanceRepository>();
     builder.Services.AddSingleton<IExceptionCaseRepository, InMemoryExceptionCaseRepository>();
     builder.Services.AddSingleton<IOperationalJobRepository, InMemoryOperationalJobRepository>();
+    builder.Services.AddSingleton<IOperationalRunbookRepository, InMemoryOperationalRunbookRepository>();
     builder.Services.AddSingleton<IBrokerPositionProvider, FakeBrokerPositionProvider>();
     builder.Services.AddSingleton<IBarBuilderService, BarBuilderService>();
 }
@@ -1034,6 +1040,78 @@ app.MapPost("/ops/process-pending-model-runs", async (ReasonRequest request, IOp
 app.MapPost("/ops/run-eod-reconciliation", async (ReasonRequest request, IOperationalJobRunner runner, CancellationToken cancellationToken) =>
     Results.Ok(ToOperationalJobRunDto(await runner.RunJobAsync(new RunOperationalJobRequest(OperationalJobType.RunEodReconciliation, request.Reason), cancellationToken))));
 
+app.MapGet("/ops/runbooks/definitions", async (IOperationalRunbookRunner runner, CancellationToken cancellationToken) =>
+    Results.Ok((await runner.GetRunbookDefinitionsAsync(cancellationToken)).Select(ToOperationalRunbookDefinitionDto)));
+
+app.MapGet("/ops/runbooks/definitions/{id:guid}", async (Guid id, IOperationalRunbookRunner runner, CancellationToken cancellationToken) =>
+{
+    var definition = await runner.GetRunbookDefinitionAsync(new OperationalRunbookDefinitionId(id), cancellationToken);
+    if (definition is null) return Results.NotFound();
+    var steps = await runner.GetRunbookStepDefinitionsAsync(definition.Id, cancellationToken);
+    return Results.Ok(new { definition = ToOperationalRunbookDefinitionDto(definition), steps = steps.Select(ToOperationalRunbookStepDefinitionDto) });
+});
+
+app.MapGet("/ops/runbooks/runs", async (IOperationalRunbookRunner runner, string? runbookType, string? status, DateTimeOffset? fromUtc, DateTimeOffset? toUtc, int? limit, CancellationToken cancellationToken) =>
+{
+    var filter = new OperationalRunbookRunFilter(ClampLimit(limit), ParseEnum<OperationalRunbookType>(runbookType), ParseEnum<OperationalRunbookStatus>(status), fromUtc, toUtc);
+    return Results.Ok((await runner.GetRunbookRunsAsync(filter, cancellationToken)).Select(ToOperationalRunbookRunDto));
+});
+
+app.MapGet("/ops/runbooks/runs/{id:guid}", async (Guid id, IOperationalRunbookRunner runner, CancellationToken cancellationToken) =>
+{
+    var run = await runner.GetRunbookRunAsync(new OperationalRunbookRunId(id), cancellationToken);
+    return run is null ? Results.NotFound() : Results.Ok(ToOperationalRunbookRunDto(run));
+});
+
+app.MapGet("/ops/runbooks/runs/{id:guid}/steps", async (Guid id, IOperationalRunbookRunner runner, CancellationToken cancellationToken) =>
+    Results.Ok((await runner.GetRunbookStepRunsAsync(new OperationalRunbookRunId(id), cancellationToken)).Select(ToOperationalRunbookStepRunDto)));
+
+app.MapPost("/ops/runbooks/run", async (RunOperationalRunbookApiRequest request, IOperationalRunbookRunner runner, CancellationToken cancellationToken) =>
+{
+    if (string.IsNullOrWhiteSpace(request.Reason)) return Results.BadRequest(new { message = "A reason is required to run an operational runbook." });
+    if (!Enum.TryParse<OperationalRunbookType>(request.RunbookType, true, out var type)) return Results.BadRequest(new { message = $"Unknown runbook type '{request.RunbookType}'." });
+    try
+    {
+        return Results.Ok(ToOperationalRunbookRunDto(await runner.RunRunbookAsync(new RunOperationalRunbookRequest(type, request.Reason, request.Input), cancellationToken)));
+    }
+    catch (DomainRuleViolationException ex)
+    {
+        return Results.BadRequest(new { message = ex.Message });
+    }
+});
+
+app.MapPost("/ops/runbooks/runs/{id:guid}/run-next-step", async (Guid id, ReasonRequest request, IOperationalRunbookRunner runner, CancellationToken cancellationToken) =>
+{
+    if (string.IsNullOrWhiteSpace(request.Reason)) return Results.BadRequest(new { message = "A reason is required to continue an operational runbook." });
+    try { return Results.Ok(ToOperationalRunbookRunDto(await runner.RunNextStepAsync(new OperationalRunbookRunId(id), request.Reason, cancellationToken))); }
+    catch (DomainRuleViolationException ex) { return Results.BadRequest(new { message = ex.Message }); }
+});
+
+app.MapPost("/ops/runbooks/runs/{id:guid}/complete-manual-step", async (Guid id, CompleteManualRunbookStepRequest request, IOperationalRunbookRunner runner, CancellationToken cancellationToken) =>
+{
+    if (string.IsNullOrWhiteSpace(request.Reason)) return Results.BadRequest(new { message = "A reason is required to complete a manual runbook step." });
+    if (!Guid.TryParse(request.StepRunId, out var stepRunId)) return Results.BadRequest(new { message = "A valid stepRunId is required." });
+    try { return Results.Ok(ToOperationalRunbookRunDto(await runner.CompleteManualStepAsync(new OperationalRunbookRunId(id), new OperationalRunbookStepRunId(stepRunId), request.Reason, cancellationToken))); }
+    catch (DomainRuleViolationException ex) { return Results.BadRequest(new { message = ex.Message }); }
+});
+
+app.MapPost("/ops/runbooks/runs/{id:guid}/cancel", async (Guid id, ReasonRequest request, IOperationalRunbookRunner runner, CancellationToken cancellationToken) =>
+{
+    if (string.IsNullOrWhiteSpace(request.Reason)) return Results.BadRequest(new { message = "A reason is required to cancel an operational runbook." });
+    try { return Results.Ok(ToOperationalRunbookRunDto(await runner.CancelRunbookAsync(new OperationalRunbookRunId(id), request.Reason, cancellationToken))); }
+    catch (DomainRuleViolationException ex) { return Results.BadRequest(new { message = ex.Message }); }
+});
+
+app.MapPost("/ops/runbooks/runs/{id:guid}/retry", async (Guid id, ReasonRequest request, IOperationalRunbookRunner runner, CancellationToken cancellationToken) =>
+{
+    if (string.IsNullOrWhiteSpace(request.Reason)) return Results.BadRequest(new { message = "A reason is required to retry an operational runbook." });
+    try { return Results.Ok(ToOperationalRunbookRunDto(await runner.RetryRunbookAsync(new OperationalRunbookRunId(id), request.Reason, cancellationToken))); }
+    catch (DomainRuleViolationException ex) { return Results.BadRequest(new { message = ex.Message }); }
+});
+
+app.MapGet("/ops/schedules", async (IOperationalRunbookRunner runner, LocalSchedulerOptions options, CancellationToken cancellationToken) =>
+    Results.Ok(new { schedulerEnabled = options.Enabled, pollIntervalSeconds = options.PollIntervalSeconds, value = (await runner.GetSchedulesAsync(cancellationToken)).Select(ToOperationalScheduleDefinitionDto) }));
+
 app.MapGet("/instruments", async (IIntradayRepository repository, CancellationToken cancellationToken) =>
 {
     var state = await repository.LoadStateAsync(cancellationToken);
@@ -1431,6 +1509,21 @@ static DailyOperationsSummaryDto ToDailyOperationsSummaryDto(DailyOperationsSumm
 static DailyChecklistItemDto ToDailyChecklistItemDto(DailyChecklistItem x)
     => new(x.Name, x.Status.ToString(), x.Message, x.RelatedEntityType, x.RelatedEntityId);
 
+static OperationalRunbookDefinitionDto ToOperationalRunbookDefinitionDto(OperationalRunbookDefinition x)
+    => new(x.Id.Value.ToString("D"), x.Name, x.RunbookType.ToString(), x.Description, x.IsEnabled, x.IsRerunnable, x.CreatedAtUtc, x.UpdatedAtUtc);
+
+static OperationalRunbookStepDefinitionDto ToOperationalRunbookStepDefinitionDto(OperationalRunbookStepDefinition x)
+    => new(x.Id.Value.ToString("D"), x.RunbookDefinitionId.Value.ToString("D"), x.StepOrder, x.Name, x.Description, x.JobType?.ToString(), x.GateType.ToString(), x.IsRequired, x.ContinueOnFailure, x.InputTemplateJson, x.CreatedAtUtc, x.UpdatedAtUtc);
+
+static OperationalRunbookRunDto ToOperationalRunbookRunDto(OperationalRunbookRun x)
+    => new(x.Id.Value.ToString("D"), x.RunbookDefinitionId.Value.ToString("D"), x.RunbookType.ToString(), x.Name, x.Status.ToString(), x.TriggerType.ToString(), x.TriggeredByOperatorId, x.TriggeredByDisplayName, x.StartedAtUtc, x.CompletedAtUtc, x.DurationMs, x.CorrelationId, x.Reason, x.InputJson, x.OutputJson, x.ErrorMessage, x.RetryOfRunbookRunId?.Value.ToString("D"), x.RetryCount, x.CanRetry, x.CreatedAtUtc, x.UpdatedAtUtc);
+
+static OperationalRunbookStepRunDto ToOperationalRunbookStepRunDto(OperationalRunbookStepRun x)
+    => new(x.Id.Value.ToString("D"), x.RunbookRunId.Value.ToString("D"), x.StepDefinitionId?.Value.ToString("D"), x.StepOrder, x.Name, x.Status.ToString(), x.JobRunId?.Value.ToString("D"), x.StartedAtUtc, x.CompletedAtUtc, x.DurationMs, x.Message, x.InputJson, x.OutputJson, x.ErrorMessage, x.CreatedAtUtc, x.UpdatedAtUtc);
+
+static OperationalScheduleDefinitionDto ToOperationalScheduleDefinitionDto(OperationalScheduleDefinition x)
+    => new(x.Id.Value.ToString("D"), x.Name, x.RunbookDefinitionId.Value.ToString("D"), x.IsEnabled, x.CronExpression, x.FixedIntervalMinutes, x.TimeZoneId, x.NextRunAtUtc, x.LastRunAtUtc, x.CreatedAtUtc, x.UpdatedAtUtc);
+
 static FillDto ToFillDto(Fill x, IReadOnlyDictionary<InstrumentId, string> symbols, IReadOnlyDictionary<VenueId, string> venues)
     => new(x.Id.Value.ToString("D"), x.BrokerExecutionId, x.ChildOrderId.Value.ToString("D"), x.InstrumentId.Value.ToString("D"), symbols.GetValueOrDefault(x.InstrumentId), x.VenueId.Value.ToString("D"), venues.GetValueOrDefault(x.VenueId), x.Side.ToString(), x.BaseQuantity, x.VenueQuantity, x.Price, x.TradeDateUtc, x.ReceivedAtUtc);
 
@@ -1635,6 +1728,11 @@ public sealed record OperationalJobStepDto(string Id, string JobRunId, string St
 public sealed record OperationalJobRunEventDto(string Id, string JobRunId, DateTimeOffset OccurredAtUtc, string Severity, string Message, string? MetadataJson);
 public sealed record DailyOperationsSummaryDto(DateOnly Date, OperationalJobRunDto? LatestReferenceIntegrity, OperationalJobRunDto? LatestMarketDataBars, OperationalJobRunDto? LatestWeightPromotion, OperationalJobRunDto? LatestModelRunProcessing, OperationalJobRunDto? LatestEodImport, OperationalJobRunDto? LatestEodReconciliation, OperationalJobRunDto? LatestPnlSummary, int OpenExceptionCount, int OpenBlockingExceptionCount, int FailedJobCount, int PendingApprovalCount);
 public sealed record DailyChecklistItemDto(string Name, string Status, string Message, string? RelatedEntityType, string? RelatedEntityId);
+public sealed record OperationalRunbookDefinitionDto(string Id, string Name, string RunbookType, string Description, bool IsEnabled, bool IsRerunnable, DateTimeOffset CreatedAtUtc, DateTimeOffset? UpdatedAtUtc);
+public sealed record OperationalRunbookStepDefinitionDto(string Id, string RunbookDefinitionId, int StepOrder, string Name, string Description, string? JobType, string GateType, bool IsRequired, bool ContinueOnFailure, string? InputTemplateJson, DateTimeOffset CreatedAtUtc, DateTimeOffset? UpdatedAtUtc);
+public sealed record OperationalRunbookRunDto(string Id, string RunbookDefinitionId, string RunbookType, string Name, string Status, string TriggerType, string? TriggeredByOperatorId, string? TriggeredByDisplayName, DateTimeOffset StartedAtUtc, DateTimeOffset? CompletedAtUtc, long? DurationMs, string? CorrelationId, string? Reason, string? InputJson, string? OutputJson, string? ErrorMessage, string? RetryOfRunbookRunId, int RetryCount, bool CanRetry, DateTimeOffset CreatedAtUtc, DateTimeOffset? UpdatedAtUtc);
+public sealed record OperationalRunbookStepRunDto(string Id, string RunbookRunId, string? StepDefinitionId, int StepOrder, string Name, string Status, string? JobRunId, DateTimeOffset? StartedAtUtc, DateTimeOffset? CompletedAtUtc, long? DurationMs, string? Message, string? InputJson, string? OutputJson, string? ErrorMessage, DateTimeOffset CreatedAtUtc, DateTimeOffset? UpdatedAtUtc);
+public sealed record OperationalScheduleDefinitionDto(string Id, string Name, string RunbookDefinitionId, bool IsEnabled, string? CronExpression, int? FixedIntervalMinutes, string TimeZoneId, DateTimeOffset? NextRunAtUtc, DateTimeOffset? LastRunAtUtc, DateTimeOffset CreatedAtUtc, DateTimeOffset? UpdatedAtUtc);
 public sealed record FillDto(string Id, string BrokerExecutionId, string ChildOrderId, string InstrumentId, string? Symbol, string VenueId, string? VenueName, string Side, decimal BaseQuantity, decimal VenueQuantity, decimal Price, DateTimeOffset TradeDateUtc, DateTimeOffset ReceivedAtUtc);
 public sealed record MarketDataSnapshotDto(string Id, string InstrumentId, string? Symbol, string VenueId, string? VenueName, decimal Bid, decimal Ask, decimal Mid, decimal Spread, string Source, DateTimeOffset SourceTimestampUtc, DateTimeOffset ReceivedAtUtc, long? SequenceNumber, bool IsSynthetic, DateTimeOffset CreatedAtUtc);
 public sealed record MarketDataBarDto(string Id, string InstrumentId, string? Symbol, string VenueId, string? VenueName, string Timeframe, DateTimeOffset BarStartUtc, DateTimeOffset BarEndUtc, string Source, decimal BidOpen, decimal BidHigh, decimal BidLow, decimal BidClose, decimal AskOpen, decimal AskHigh, decimal AskLow, decimal AskClose, decimal MidOpen, decimal MidHigh, decimal MidLow, decimal MidClose, decimal SpreadOpen, decimal SpreadHigh, decimal SpreadLow, decimal SpreadClose, decimal SpreadAverage, int ObservationCount, DateTimeOffset? FirstSnapshotUtc, DateTimeOffset? LastSnapshotUtc, bool IsComplete, string QualityStatus, string? BuildRunId, string BuilderVersion, DateTimeOffset CreatedAtUtc);
@@ -1655,6 +1753,8 @@ public sealed record RiskInstrumentDto(InstrumentDto Instrument, IReadOnlyList<I
 public sealed record RiskVenueDto(VenueDto Venue);
 public sealed record ReasonRequest(string Reason);
 public sealed record RunOperationalJobApiRequest(string JobType, string Reason, object? Input);
+public sealed record RunOperationalRunbookApiRequest(string RunbookType, string Reason, object? Input);
+public sealed record CompleteManualRunbookStepRequest(string StepRunId, string Reason);
 public sealed record CreateRiskLimitSetRequest(string? FundCode, string? ModelName, string Name, string? Description, string Reason);
 public sealed record UpdateRiskLimitRequest(decimal Value, string? Unit, string Reason);
 public sealed record UpdateInstrumentRiskLimitRequest(decimal? MaxTradeNotionalUsd, decimal? MaxExposureUsd, decimal? MinTradeQuantity, int? MaxOrdersPerDay, bool? IsTradingEnabled, string Reason);

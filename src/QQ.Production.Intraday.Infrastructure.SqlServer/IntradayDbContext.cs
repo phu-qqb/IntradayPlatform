@@ -59,6 +59,11 @@ public sealed class IntradayDbContext(DbContextOptions<IntradayDbContext> option
     public DbSet<OperationalJobRun> OperationalJobRuns => Set<OperationalJobRun>();
     public DbSet<OperationalJobStep> OperationalJobSteps => Set<OperationalJobStep>();
     public DbSet<OperationalJobRunEvent> OperationalJobRunEvents => Set<OperationalJobRunEvent>();
+    public DbSet<OperationalRunbookDefinition> OperationalRunbookDefinitions => Set<OperationalRunbookDefinition>();
+    public DbSet<OperationalRunbookStepDefinition> OperationalRunbookStepDefinitions => Set<OperationalRunbookStepDefinition>();
+    public DbSet<OperationalRunbookRun> OperationalRunbookRuns => Set<OperationalRunbookRun>();
+    public DbSet<OperationalRunbookStepRun> OperationalRunbookStepRuns => Set<OperationalRunbookStepRun>();
+    public DbSet<OperationalScheduleDefinition> OperationalScheduleDefinitions => Set<OperationalScheduleDefinition>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -117,6 +122,11 @@ public sealed class IntradayDbContext(DbContextOptions<IntradayDbContext> option
         modelBuilder.Entity<OperationalJobRun>().HasKey(x => x.Id);
         modelBuilder.Entity<OperationalJobStep>().HasKey(x => x.Id);
         modelBuilder.Entity<OperationalJobRunEvent>().HasKey(x => x.Id);
+        modelBuilder.Entity<OperationalRunbookDefinition>().HasKey(x => x.Id);
+        modelBuilder.Entity<OperationalRunbookStepDefinition>().HasKey(x => x.Id);
+        modelBuilder.Entity<OperationalRunbookRun>().HasKey(x => x.Id);
+        modelBuilder.Entity<OperationalRunbookStepRun>().HasKey(x => x.Id);
+        modelBuilder.Entity<OperationalScheduleDefinition>().HasKey(x => x.Id);
 
         modelBuilder.Entity<ModelRun>().HasIndex(x => x.Id).IsUnique();
         modelBuilder.Entity<Fund>().HasIndex(x => x.Name).IsUnique().HasFilter("[IsEnabled] = 1");
@@ -196,6 +206,13 @@ public sealed class IntradayDbContext(DbContextOptions<IntradayDbContext> option
         modelBuilder.Entity<OperationalJobRun>().HasIndex(x => x.TriggeredByOperatorId);
         modelBuilder.Entity<OperationalJobRun>().HasIndex(x => x.RetryOfJobRunId);
         modelBuilder.Entity<OperationalJobStep>().HasIndex(x => x.JobRunId);
+        modelBuilder.Entity<OperationalRunbookDefinition>().HasIndex(x => new { x.RunbookType, x.IsEnabled });
+        modelBuilder.Entity<OperationalRunbookRun>().HasIndex(x => new { x.RunbookType, x.StartedAtUtc });
+        modelBuilder.Entity<OperationalRunbookRun>().HasIndex(x => x.Status);
+        modelBuilder.Entity<OperationalRunbookRun>().HasIndex(x => x.CorrelationId);
+        modelBuilder.Entity<OperationalRunbookRun>().HasIndex(x => x.RetryOfRunbookRunId);
+        modelBuilder.Entity<OperationalRunbookStepRun>().HasIndex(x => x.RunbookRunId);
+        modelBuilder.Entity<OperationalScheduleDefinition>().HasIndex(x => new { x.IsEnabled, x.NextRunAtUtc });
 
         modelBuilder.Entity<BrokerAccount>().HasOne<Fund>().WithMany().HasForeignKey(x => x.FundId).OnDelete(DeleteBehavior.Restrict);
         modelBuilder.Entity<NavSnapshot>().HasOne<Fund>().WithMany().HasForeignKey(x => x.FundId).OnDelete(DeleteBehavior.Restrict);
@@ -271,6 +288,13 @@ public sealed class IntradayDbContext(DbContextOptions<IntradayDbContext> option
         modelBuilder.Entity<OperationalJobRun>().HasOne<OperationalJobRun>().WithMany().HasForeignKey(x => x.RetryOfJobRunId).OnDelete(DeleteBehavior.Restrict);
         modelBuilder.Entity<OperationalJobStep>().HasOne<OperationalJobRun>().WithMany().HasForeignKey(x => x.JobRunId).OnDelete(DeleteBehavior.Restrict);
         modelBuilder.Entity<OperationalJobRunEvent>().HasOne<OperationalJobRun>().WithMany().HasForeignKey(x => x.JobRunId).OnDelete(DeleteBehavior.Restrict);
+        modelBuilder.Entity<OperationalRunbookStepDefinition>().HasOne<OperationalRunbookDefinition>().WithMany().HasForeignKey(x => x.RunbookDefinitionId).OnDelete(DeleteBehavior.Restrict);
+        modelBuilder.Entity<OperationalRunbookRun>().HasOne<OperationalRunbookDefinition>().WithMany().HasForeignKey(x => x.RunbookDefinitionId).OnDelete(DeleteBehavior.Restrict);
+        modelBuilder.Entity<OperationalRunbookRun>().HasOne<OperationalRunbookRun>().WithMany().HasForeignKey(x => x.RetryOfRunbookRunId).OnDelete(DeleteBehavior.Restrict);
+        modelBuilder.Entity<OperationalRunbookStepRun>().HasOne<OperationalRunbookRun>().WithMany().HasForeignKey(x => x.RunbookRunId).OnDelete(DeleteBehavior.Restrict);
+        modelBuilder.Entity<OperationalRunbookStepRun>().HasOne<OperationalRunbookStepDefinition>().WithMany().HasForeignKey(x => x.StepDefinitionId).OnDelete(DeleteBehavior.Restrict);
+        modelBuilder.Entity<OperationalRunbookStepRun>().HasOne<OperationalJobRun>().WithMany().HasForeignKey(x => x.JobRunId).OnDelete(DeleteBehavior.Restrict);
+        modelBuilder.Entity<OperationalScheduleDefinition>().HasOne<OperationalRunbookDefinition>().WithMany().HasForeignKey(x => x.RunbookDefinitionId).OnDelete(DeleteBehavior.Restrict);
 
         modelBuilder.Entity<OperatorAuditEvent>().Property(x => x.ActorId).HasMaxLength(128);
         modelBuilder.Entity<OperatorAuditEvent>().Property(x => x.ActorDisplayName).HasMaxLength(256);
@@ -294,6 +318,22 @@ public sealed class IntradayDbContext(DbContextOptions<IntradayDbContext> option
         modelBuilder.Entity<OperationalJobStep>().Property(x => x.Message).HasMaxLength(1000);
         modelBuilder.Entity<OperationalJobStep>().Property(x => x.ErrorMessage).HasMaxLength(4000);
         modelBuilder.Entity<OperationalJobRunEvent>().Property(x => x.Message).HasMaxLength(2000);
+        modelBuilder.Entity<OperationalRunbookDefinition>().Property(x => x.Name).HasMaxLength(160);
+        modelBuilder.Entity<OperationalRunbookDefinition>().Property(x => x.Description).HasMaxLength(1000);
+        modelBuilder.Entity<OperationalRunbookStepDefinition>().Property(x => x.Name).HasMaxLength(160);
+        modelBuilder.Entity<OperationalRunbookStepDefinition>().Property(x => x.Description).HasMaxLength(1000);
+        modelBuilder.Entity<OperationalRunbookRun>().Property(x => x.Name).HasMaxLength(160);
+        modelBuilder.Entity<OperationalRunbookRun>().Property(x => x.TriggeredByOperatorId).HasMaxLength(128);
+        modelBuilder.Entity<OperationalRunbookRun>().Property(x => x.TriggeredByDisplayName).HasMaxLength(256);
+        modelBuilder.Entity<OperationalRunbookRun>().Property(x => x.CorrelationId).HasMaxLength(128);
+        modelBuilder.Entity<OperationalRunbookRun>().Property(x => x.Reason).HasMaxLength(1000);
+        modelBuilder.Entity<OperationalRunbookRun>().Property(x => x.ErrorMessage).HasMaxLength(4000);
+        modelBuilder.Entity<OperationalRunbookStepRun>().Property(x => x.Name).HasMaxLength(160);
+        modelBuilder.Entity<OperationalRunbookStepRun>().Property(x => x.Message).HasMaxLength(1000);
+        modelBuilder.Entity<OperationalRunbookStepRun>().Property(x => x.ErrorMessage).HasMaxLength(4000);
+        modelBuilder.Entity<OperationalScheduleDefinition>().Property(x => x.Name).HasMaxLength(160);
+        modelBuilder.Entity<OperationalScheduleDefinition>().Property(x => x.CronExpression).HasMaxLength(160);
+        modelBuilder.Entity<OperationalScheduleDefinition>().Property(x => x.TimeZoneId).HasMaxLength(128);
 
         foreach (var entityType in modelBuilder.Model.GetEntityTypes())
         {
@@ -428,6 +468,18 @@ public sealed class IntradayDbContext(DbContextOptions<IntradayDbContext> option
         modelBuilder.Entity<OperationalJobStep>().Property(x => x.Id).HasConversion(x => x.Value, x => new OperationalJobStepId(x));
         modelBuilder.Entity<OperationalJobStep>().Property(x => x.JobRunId).HasConversion(x => x.Value, x => new OperationalJobRunId(x));
         modelBuilder.Entity<OperationalJobRunEvent>().Property(x => x.JobRunId).HasConversion(x => x.Value, x => new OperationalJobRunId(x));
+        modelBuilder.Entity<OperationalRunbookDefinition>().Property(x => x.Id).HasConversion(x => x.Value, x => new OperationalRunbookDefinitionId(x));
+        modelBuilder.Entity<OperationalRunbookStepDefinition>().Property(x => x.Id).HasConversion(x => x.Value, x => new OperationalRunbookStepDefinitionId(x));
+        modelBuilder.Entity<OperationalRunbookStepDefinition>().Property(x => x.RunbookDefinitionId).HasConversion(x => x.Value, x => new OperationalRunbookDefinitionId(x));
+        modelBuilder.Entity<OperationalRunbookRun>().Property(x => x.Id).HasConversion(x => x.Value, x => new OperationalRunbookRunId(x));
+        modelBuilder.Entity<OperationalRunbookRun>().Property(x => x.RunbookDefinitionId).HasConversion(x => x.Value, x => new OperationalRunbookDefinitionId(x));
+        modelBuilder.Entity<OperationalRunbookRun>().Property(x => x.RetryOfRunbookRunId).HasConversion(x => x.HasValue ? x.Value.Value : (Guid?)null, x => x.HasValue ? new OperationalRunbookRunId(x.Value) : null);
+        modelBuilder.Entity<OperationalRunbookStepRun>().Property(x => x.Id).HasConversion(x => x.Value, x => new OperationalRunbookStepRunId(x));
+        modelBuilder.Entity<OperationalRunbookStepRun>().Property(x => x.RunbookRunId).HasConversion(x => x.Value, x => new OperationalRunbookRunId(x));
+        modelBuilder.Entity<OperationalRunbookStepRun>().Property(x => x.StepDefinitionId).HasConversion(x => x.HasValue ? x.Value.Value : (Guid?)null, x => x.HasValue ? new OperationalRunbookStepDefinitionId(x.Value) : null);
+        modelBuilder.Entity<OperationalRunbookStepRun>().Property(x => x.JobRunId).HasConversion(x => x.HasValue ? x.Value.Value : (Guid?)null, x => x.HasValue ? new OperationalJobRunId(x.Value) : null);
+        modelBuilder.Entity<OperationalScheduleDefinition>().Property(x => x.Id).HasConversion(x => x.Value, x => new OperationalScheduleDefinitionId(x));
+        modelBuilder.Entity<OperationalScheduleDefinition>().Property(x => x.RunbookDefinitionId).HasConversion(x => x.Value, x => new OperationalRunbookDefinitionId(x));
     }
 }
 
@@ -598,6 +650,11 @@ public sealed class SqlServerIntradayRepository(IntradayDbContext dbContext) : I
         state.OperationalJobRuns.AddRange(await dbContext.OperationalJobRuns.AsNoTracking().ToListAsync(cancellationToken));
         state.OperationalJobSteps.AddRange(await dbContext.OperationalJobSteps.AsNoTracking().ToListAsync(cancellationToken));
         state.OperationalJobRunEvents.AddRange(await dbContext.OperationalJobRunEvents.AsNoTracking().ToListAsync(cancellationToken));
+        state.OperationalRunbookDefinitions.AddRange(await dbContext.OperationalRunbookDefinitions.AsNoTracking().ToListAsync(cancellationToken));
+        state.OperationalRunbookStepDefinitions.AddRange(await dbContext.OperationalRunbookStepDefinitions.AsNoTracking().ToListAsync(cancellationToken));
+        state.OperationalRunbookRuns.AddRange(await dbContext.OperationalRunbookRuns.AsNoTracking().ToListAsync(cancellationToken));
+        state.OperationalRunbookStepRuns.AddRange(await dbContext.OperationalRunbookStepRuns.AsNoTracking().ToListAsync(cancellationToken));
+        state.OperationalScheduleDefinitions.AddRange(await dbContext.OperationalScheduleDefinitions.AsNoTracking().ToListAsync(cancellationToken));
         state.KillSwitch = state.KillSwitchStates.OrderByDescending(x => x.UpdatedAtUtc).FirstOrDefault() ?? state.KillSwitch;
         return state;
     }
@@ -1143,4 +1200,93 @@ public sealed class SqlServerOperationalJobRepository(IntradayDbContext dbContex
             .Where(x => x.JobRunId == jobRunId)
             .OrderBy(x => x.OccurredAtUtc)
             .ToListAsync(cancellationToken);
+}
+
+public sealed class SqlServerOperationalRunbookRepository(IntradayDbContext dbContext) : IOperationalRunbookRepository
+{
+    public async Task AddDefinitionAsync(OperationalRunbookDefinition definition, IReadOnlyList<OperationalRunbookStepDefinition> steps, CancellationToken cancellationToken)
+    {
+        if (!await dbContext.OperationalRunbookDefinitions.AnyAsync(x => x.Id == definition.Id, cancellationToken))
+        {
+            dbContext.OperationalRunbookDefinitions.Add(definition);
+        }
+
+        foreach (var step in steps)
+        {
+            if (!await dbContext.OperationalRunbookStepDefinitions.AnyAsync(x => x.Id == step.Id, cancellationToken))
+            {
+                dbContext.OperationalRunbookStepDefinitions.Add(step);
+            }
+        }
+
+        await dbContext.SaveChangesAsync(cancellationToken);
+    }
+
+    public async Task<IReadOnlyList<OperationalRunbookDefinition>> GetDefinitionsAsync(CancellationToken cancellationToken)
+        => await dbContext.OperationalRunbookDefinitions.AsNoTracking().OrderBy(x => x.RunbookType).ToListAsync(cancellationToken);
+
+    public Task<OperationalRunbookDefinition?> GetDefinitionAsync(OperationalRunbookDefinitionId id, CancellationToken cancellationToken)
+        => dbContext.OperationalRunbookDefinitions.AsNoTracking().FirstOrDefaultAsync(x => x.Id == id, cancellationToken);
+
+    public Task<OperationalRunbookDefinition?> GetDefinitionByTypeAsync(OperationalRunbookType runbookType, CancellationToken cancellationToken)
+        => dbContext.OperationalRunbookDefinitions.AsNoTracking().FirstOrDefaultAsync(x => x.RunbookType == runbookType, cancellationToken);
+
+    public async Task<IReadOnlyList<OperationalRunbookStepDefinition>> GetStepDefinitionsAsync(OperationalRunbookDefinitionId definitionId, CancellationToken cancellationToken)
+        => await dbContext.OperationalRunbookStepDefinitions.AsNoTracking()
+            .Where(x => x.RunbookDefinitionId == definitionId)
+            .OrderBy(x => x.StepOrder)
+            .ToListAsync(cancellationToken);
+
+    public async Task AddRunAsync(OperationalRunbookRun run, IReadOnlyList<OperationalRunbookStepRun> steps, CancellationToken cancellationToken)
+    {
+        dbContext.OperationalRunbookRuns.Add(run);
+        dbContext.OperationalRunbookStepRuns.AddRange(steps);
+        await dbContext.SaveChangesAsync(cancellationToken);
+    }
+
+    public async Task UpdateRunAsync(OperationalRunbookRun run, CancellationToken cancellationToken)
+    {
+        var existing = await dbContext.OperationalRunbookRuns.FirstOrDefaultAsync(x => x.Id == run.Id, cancellationToken);
+        if (existing is null) return;
+        dbContext.Entry(existing).CurrentValues.SetValues(run);
+        await dbContext.SaveChangesAsync(cancellationToken);
+    }
+
+    public Task<OperationalRunbookRun?> GetRunAsync(OperationalRunbookRunId id, CancellationToken cancellationToken)
+        => dbContext.OperationalRunbookRuns.AsNoTracking().FirstOrDefaultAsync(x => x.Id == id, cancellationToken);
+
+    public async Task<IReadOnlyList<OperationalRunbookRun>> GetRunsAsync(OperationalRunbookRunFilter filter, CancellationToken cancellationToken)
+    {
+        var query = dbContext.OperationalRunbookRuns.AsNoTracking().AsQueryable();
+        if (filter.RunbookType is not null) query = query.Where(x => x.RunbookType == filter.RunbookType);
+        if (filter.Status is not null) query = query.Where(x => x.Status == filter.Status);
+        if (filter.FromUtc is not null) query = query.Where(x => x.StartedAtUtc >= filter.FromUtc);
+        if (filter.ToUtc is not null) query = query.Where(x => x.StartedAtUtc <= filter.ToUtc);
+        return await query.OrderByDescending(x => x.StartedAtUtc).Take(Math.Clamp(filter.Limit, 1, 500)).ToListAsync(cancellationToken);
+    }
+
+    public async Task UpdateStepRunAsync(OperationalRunbookStepRun step, CancellationToken cancellationToken)
+    {
+        var existing = await dbContext.OperationalRunbookStepRuns.FirstOrDefaultAsync(x => x.Id == step.Id, cancellationToken);
+        if (existing is null) return;
+        dbContext.Entry(existing).CurrentValues.SetValues(step);
+        await dbContext.SaveChangesAsync(cancellationToken);
+    }
+
+    public async Task<IReadOnlyList<OperationalRunbookStepRun>> GetStepRunsAsync(OperationalRunbookRunId runId, CancellationToken cancellationToken)
+        => await dbContext.OperationalRunbookStepRuns.AsNoTracking()
+            .Where(x => x.RunbookRunId == runId)
+            .OrderBy(x => x.StepOrder)
+            .ToListAsync(cancellationToken);
+
+    public async Task<IReadOnlyList<OperationalScheduleDefinition>> GetSchedulesAsync(CancellationToken cancellationToken)
+        => await dbContext.OperationalScheduleDefinitions.AsNoTracking().OrderBy(x => x.Name).ToListAsync(cancellationToken);
+
+    public async Task UpsertScheduleAsync(OperationalScheduleDefinition schedule, CancellationToken cancellationToken)
+    {
+        var existing = await dbContext.OperationalScheduleDefinitions.FirstOrDefaultAsync(x => x.Id == schedule.Id, cancellationToken);
+        if (existing is null) dbContext.OperationalScheduleDefinitions.Add(schedule);
+        else dbContext.Entry(existing).CurrentValues.SetValues(schedule);
+        await dbContext.SaveChangesAsync(cancellationToken);
+    }
 }

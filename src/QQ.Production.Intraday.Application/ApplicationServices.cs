@@ -445,6 +445,11 @@ public sealed class PlatformState
     public List<OperationalJobRun> OperationalJobRuns { get; } = [];
     public List<OperationalJobStep> OperationalJobSteps { get; } = [];
     public List<OperationalJobRunEvent> OperationalJobRunEvents { get; } = [];
+    public List<OperationalRunbookDefinition> OperationalRunbookDefinitions { get; } = [];
+    public List<OperationalRunbookStepDefinition> OperationalRunbookStepDefinitions { get; } = [];
+    public List<OperationalRunbookRun> OperationalRunbookRuns { get; } = [];
+    public List<OperationalRunbookStepRun> OperationalRunbookStepRuns { get; } = [];
+    public List<OperationalScheduleDefinition> OperationalScheduleDefinitions { get; } = [];
     public KillSwitchState KillSwitch { get; set; } = new(Guid.NewGuid(), false, null, DateTimeOffset.UnixEpoch);
 }
 
