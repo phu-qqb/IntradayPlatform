@@ -367,6 +367,100 @@ export type DailyChecklistItemDto = {
   relatedEntityId?: string | null;
 };
 
+export type OperationalRunbookDefinitionDto = {
+  id: string;
+  name: string;
+  runbookType: string;
+  description: string;
+  isEnabled: boolean;
+  isRerunnable: boolean;
+  createdAtUtc: string;
+  updatedAtUtc?: string | null;
+};
+
+export type OperationalRunbookStepDefinitionDto = {
+  id: string;
+  runbookDefinitionId: string;
+  stepOrder: number;
+  name: string;
+  description: string;
+  jobType?: string | null;
+  gateType: string;
+  isRequired: boolean;
+  continueOnFailure: boolean;
+  inputTemplateJson?: string | null;
+  createdAtUtc: string;
+  updatedAtUtc?: string | null;
+};
+
+export type OperationalRunbookDefinitionDetailDto = {
+  definition: OperationalRunbookDefinitionDto;
+  steps: OperationalRunbookStepDefinitionDto[];
+};
+
+export type OperationalRunbookRunDto = {
+  id: string;
+  runbookDefinitionId: string;
+  runbookType: string;
+  name: string;
+  status: string;
+  triggerType: string;
+  triggeredByOperatorId?: string | null;
+  triggeredByDisplayName?: string | null;
+  startedAtUtc: string;
+  completedAtUtc?: string | null;
+  durationMs?: number | null;
+  correlationId?: string | null;
+  reason?: string | null;
+  inputJson?: string | null;
+  outputJson?: string | null;
+  errorMessage?: string | null;
+  retryOfRunbookRunId?: string | null;
+  retryCount: number;
+  canRetry: boolean;
+  createdAtUtc: string;
+  updatedAtUtc?: string | null;
+};
+
+export type OperationalRunbookStepRunDto = {
+  id: string;
+  runbookRunId: string;
+  stepDefinitionId?: string | null;
+  stepOrder: number;
+  name: string;
+  status: string;
+  jobRunId?: string | null;
+  startedAtUtc?: string | null;
+  completedAtUtc?: string | null;
+  durationMs?: number | null;
+  message?: string | null;
+  inputJson?: string | null;
+  outputJson?: string | null;
+  errorMessage?: string | null;
+  createdAtUtc: string;
+  updatedAtUtc?: string | null;
+};
+
+export type OperationalScheduleDefinitionDto = {
+  id: string;
+  name: string;
+  runbookDefinitionId: string;
+  isEnabled: boolean;
+  cronExpression?: string | null;
+  fixedIntervalMinutes?: number | null;
+  timeZoneId: string;
+  nextRunAtUtc?: string | null;
+  lastRunAtUtc?: string | null;
+  createdAtUtc: string;
+  updatedAtUtc?: string | null;
+};
+
+export type OperationalScheduleListDto = {
+  schedulerEnabled: boolean;
+  pollIntervalSeconds: number;
+  value: OperationalScheduleDefinitionDto[];
+};
+
 export type CreateFakeModelWeightBatchRequest = {
   externalBatchId?: string;
   sourceSystem: string;

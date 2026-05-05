@@ -261,7 +261,9 @@ public sealed class OperationalRunbookRunner(
         }
 
         var openBlocking = (await exceptions.GetCasesAsync(new ExceptionCaseFilter(500), cancellationToken))
-            .Count(x => x.Status is ExceptionCaseStatus.Open or ExceptionCaseStatus.Acknowledged or ExceptionCaseStatus.Investigating && x.Severity is ExceptionCaseSeverity.Blocking or ExceptionCaseSeverity.Critical);
+            .Count(x =>
+                (x.Status is ExceptionCaseStatus.Open or ExceptionCaseStatus.Acknowledged or ExceptionCaseStatus.Investigating)
+                && (x.Severity is ExceptionCaseSeverity.Blocking or ExceptionCaseSeverity.Critical));
         return new { status = openBlocking > 0 ? "Failed" : "Succeeded", openBlockingExceptionCount = openBlocking, message = openBlocking > 0 ? "Open blocking or critical exceptions exist." : "No open blocking exceptions." };
     }
 

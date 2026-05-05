@@ -212,8 +212,12 @@ describe('cockpit UI primitives', () => {
     render(
       <div>
         <h1>Daily Operations</h1>
+        <span>Runbook Runner</span>
+        <span>Runbook Definitions</span>
+        <span>Local Scheduler</span>
         <span>Daily Checklist</span>
         <span>Job Runs</span>
+        <button>Run Start Of Day</button>
         <button>Run Reference Check</button>
         <button>Build Latest 15m Bars</button>
         <button>Promote Ready Weights</button>
@@ -221,10 +225,33 @@ describe('cockpit UI primitives', () => {
     );
 
     expect(screen.getByText('Daily Operations')).toBeTruthy();
+    expect(screen.getByText('Runbook Runner')).toBeTruthy();
+    expect(screen.getByText('Runbook Definitions')).toBeTruthy();
+    expect(screen.getByText('Local Scheduler')).toBeTruthy();
     expect(screen.getByText('Daily Checklist')).toBeTruthy();
     expect(screen.getByText('Job Runs')).toBeTruthy();
     expect(screen.queryByRole('button', { name: /real lmax/i })).toBeNull();
     expect(screen.queryByRole('button', { name: /enable live trading/i })).toBeNull();
+  });
+
+  it('renders runbook manual gate and disabled scheduler concepts safely', () => {
+    render(
+      <div>
+        <span>Start of Day</span>
+        <span>Intraday Cycle</span>
+        <span>End of Day</span>
+        <span>WaitingForOperator</span>
+        <button>Complete</button>
+        <span>Scheduler Disabled</span>
+      </div>
+    );
+
+    expect(screen.getByText('Start of Day')).toBeTruthy();
+    expect(screen.getByText('WaitingForOperator')).toBeTruthy();
+    expect(screen.getByRole('button', { name: /complete/i })).toBeTruthy();
+    expect(screen.getByText('Scheduler Disabled')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /live trading/i })).toBeNull();
+    expect(screen.queryByLabelText(/credential/i)).toBeNull();
   });
 
   it('renders daily operations status, retry, and exception cues', () => {

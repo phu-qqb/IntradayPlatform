@@ -56,7 +56,12 @@ import type {
   OperationalJobStepDto,
   OperationalJobRunEventDto,
   DailyOperationsSummaryDto,
-  DailyChecklistItemDto
+  DailyChecklistItemDto,
+  OperationalRunbookDefinitionDto,
+  OperationalRunbookDefinitionDetailDto,
+  OperationalRunbookRunDto,
+  OperationalRunbookStepRunDto,
+  OperationalScheduleListDto
 } from './types';
 
 const configuredBaseUrl = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:5050';
@@ -208,6 +213,22 @@ export const apiClient = {
   getDailyOpsSummary: (date?: string) => request<DailyOperationsSummaryDto>(`/ops/daily-summary${query({ date })}`),
   getDailyOpsChecklist: (date?: string) => request<DailyChecklistItemDto[]>(`/ops/daily-checklist${query({ date })}`),
   getOpsTimeline: (date?: string) => request<unknown[]>(`/ops/timeline${query({ date })}`),
+  getRunbookDefinitions: () => request<OperationalRunbookDefinitionDto[]>('/ops/runbooks/definitions'),
+  getRunbookDefinition: (id: string) => request<OperationalRunbookDefinitionDetailDto>(`/ops/runbooks/definitions/${id}`),
+  getRunbookRuns: (params: { limit?: number; runbookType?: string; status?: string; fromUtc?: string; toUtc?: string } = {}) =>
+    request<OperationalRunbookRunDto[]>(`/ops/runbooks/runs${query({ limit: 100, ...params })}`),
+  getRunbookSteps: (id: string) => request<OperationalRunbookStepRunDto[]>(`/ops/runbooks/runs/${id}/steps`),
+  runRunbook: (body: { runbookType: string; reason: string; input?: unknown }) =>
+    request<OperationalRunbookRunDto>('/ops/runbooks/run', { method: 'POST', body: JSON.stringify(body) }),
+  runNextRunbookStep: (id: string, reason: string) =>
+    request<OperationalRunbookRunDto>(`/ops/runbooks/runs/${id}/run-next-step`, { method: 'POST', body: JSON.stringify({ reason }) }),
+  completeRunbookManualStep: (runbookRunId: string, stepRunId: string, reason: string) =>
+    request<OperationalRunbookRunDto>(`/ops/runbooks/runs/${runbookRunId}/complete-manual-step`, { method: 'POST', body: JSON.stringify({ stepRunId, reason }) }),
+  cancelRunbook: (id: string, reason: string) =>
+    request<OperationalRunbookRunDto>(`/ops/runbooks/runs/${id}/cancel`, { method: 'POST', body: JSON.stringify({ reason }) }),
+  retryRunbook: (id: string, reason: string) =>
+    request<OperationalRunbookRunDto>(`/ops/runbooks/runs/${id}/retry`, { method: 'POST', body: JSON.stringify({ reason }) }),
+  getSchedules: () => request<OperationalScheduleListDto>('/ops/schedules'),
   getAuditEvents: (params: { limit?: number; severity?: string; eventType?: string; entityType?: string; entityId?: string; correlationId?: string; fromUtc?: string; toUtc?: string } = {}) =>
     request<OperatorAuditEventDto[]>(`/audit/events${query({ limit: 100, ...params })}`),
   getAuditEventsByEntity: (entityType: string, entityId: string, limit = 100) =>

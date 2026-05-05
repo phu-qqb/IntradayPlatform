@@ -8,7 +8,7 @@ using Serilog;
 
 var builder = Host.CreateApplicationBuilder(args);
 builder.Services.AddSingleton<IClock, SystemClock>();
-builder.Services.AddSingleton<IOperatorContext>(new StaticOperatorContext(OperatorAuditActorType.Worker, "worker", "Local Worker"));
+builder.Services.AddSingleton<IOperatorContext>(new StaticOperatorContext(OperatorAuditActorType.Worker, "system", "Local Worker"));
 builder.Services.AddScoped<IOperatorAuditService, OperatorAuditService>();
 builder.Services.AddScoped<IOperatorPermissionService, OperatorPermissionService>();
 builder.Services.AddScoped<IApprovalWorkflowService, ApprovalWorkflowService>();

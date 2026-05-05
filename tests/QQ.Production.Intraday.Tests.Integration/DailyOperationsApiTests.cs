@@ -120,6 +120,75 @@ public sealed class DailyOperationsApiTests
         Assert.Contains(runs, x => x.Id == second.Id);
     }
 
+    [Fact]
+    public async Task Runbook_definitions_seed_and_start_of_day_pauses_for_manual_gate()
+    {
+        var state = SeedData.Create(Now);
+        await using var factory = CreateInMemoryFactory(state);
+        using var client = factory.CreateClient();
+
+        var definitions = await GetAsync<OperationalRunbookDefinitionDto[]>(client, "/ops/runbooks/definitions", "local-admin");
+        Assert.Contains(definitions, x => x.RunbookType == "StartOfDay");
+        Assert.Contains(definitions, x => x.RunbookType == "IntradayCycle");
+        Assert.Contains(definitions, x => x.RunbookType == "EndOfDay");
+
+        var startOfDay = definitions.Single(x => x.RunbookType == "StartOfDay");
+        var definitionDetail = await GetAsync<RunbookDefinitionDetailDto>(client, $"/ops/runbooks/definitions/{startOfDay.Id}", "local-admin");
+        Assert.Contains(definitionDetail.Steps, x => x.Name == "Reference Data Integrity Check" && x.JobType == "ReferenceDataIntegrityCheck");
+        Assert.Contains(definitionDetail.Steps, x => x.GateType == "ManualConfirmation");
+
+        var badRequest = await SendJsonAsync(client, HttpMethod.Post, "/ops/runbooks/run", "local-admin", new { runbookType = "StartOfDay", reason = "" });
+        Assert.Equal(HttpStatusCode.BadRequest, badRequest.StatusCode);
+
+        var run = await PostAsync<OperationalRunbookRunDto>(client, "/ops/runbooks/run", "local-admin", new { runbookType = "StartOfDay", reason = "Run SOD in integration test.", input = new { } });
+        Assert.Equal("StartOfDay", run.RunbookType);
+        Assert.Equal("WaitingForOperator", run.Status);
+
+        var steps = await GetAsync<OperationalRunbookStepRunDto[]>(client, $"/ops/runbooks/runs/{run.Id}/steps", "local-admin");
+        Assert.Contains(steps, x => x.JobRunId is not null && x.Name == "Reference Data Integrity Check" && x.Status == "Succeeded");
+        var manual = Assert.Single(steps, x => x.Status == "WaitingForOperator");
+
+        var completed = await PostAsync<OperationalRunbookRunDto>(client, $"/ops/runbooks/runs/{run.Id}/complete-manual-step", "local-admin", new { stepRunId = manual.Id, reason = "Operator confirmed SOD in integration test." });
+        Assert.Equal("Succeeded", completed.Status);
+
+        var audit = await GetAsync<OperatorAuditEventDto[]>(client, "/audit/events?limit=100", "local-admin");
+        Assert.Contains(audit, x => x.EventType == "RunbookStarted");
+        Assert.Contains(audit, x => x.EventType == "RunbookWaitingForOperator");
+        Assert.Contains(audit, x => x.EventType == "RunbookManualStepCompleted");
+        Assert.Contains(audit, x => x.EventType == "RunbookCompleted");
+    }
+
+    [Fact]
+    public async Task Runbook_permissions_retry_and_scheduler_defaults_are_safe()
+    {
+        var state = SeedData.Create(Now);
+        await using var factory = CreateInMemoryFactory(state);
+        using var client = factory.CreateClient();
+
+        var viewerDenied = await SendJsonAsync(client, HttpMethod.Post, "/ops/runbooks/run", "local-viewer", new { runbookType = "IntradayCycle", reason = "Viewer should not run runbooks.", input = new { } });
+        Assert.Equal(HttpStatusCode.BadRequest, viewerDenied.StatusCode);
+
+        var run = await PostAsync<OperationalRunbookRunDto>(client, "/ops/runbooks/run", "local-admin", new { runbookType = "IntradayCycle", reason = "Run intraday cycle in integration test.", input = new { } });
+        Assert.True(run.Status is "Succeeded" or "PartiallySucceeded");
+
+        var retry = await PostAsync<OperationalRunbookRunDto>(client, $"/ops/runbooks/runs/{run.Id}/retry", "local-admin", new { reason = "Retry intraday cycle in integration test." });
+        Assert.Equal(run.Id, retry.RetryOfRunbookRunId);
+        Assert.NotEqual(run.Id, retry.Id);
+        Assert.Equal(1, retry.RetryCount);
+
+        var runs = await GetAsync<OperationalRunbookRunDto[]>(client, "/ops/runbooks/runs?limit=20", "local-admin");
+        Assert.Contains(runs, x => x.Id == run.Id);
+        Assert.Contains(runs, x => x.Id == retry.Id);
+
+        var schedules = await GetAsync<ScheduleListDto>(client, "/ops/schedules", "local-admin");
+        Assert.False(schedules.SchedulerEnabled);
+        Assert.Empty(schedules.Value);
+
+        var audit = await GetAsync<OperatorAuditEventDto[]>(client, "/audit/events?limit=100", "local-admin");
+        Assert.Contains(audit, x => x.EventType == "RunbookRetried");
+        Assert.Contains(audit, x => x.EventType == "PermissionDenied");
+    }
+
     private static WebApplicationFactory<Program> CreateInMemoryFactory(PlatformState state)
         => new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
         {
@@ -194,4 +263,11 @@ public sealed class DailyOperationsApiTests
     private sealed record DailyChecklistItemDto(string Name, string Status);
     private sealed record OperatorAuditEventDto(string EventType, string? EntityType, string? EntityId, string? CorrelationId, string? Reason, string MetadataJson);
     private sealed record ExceptionCaseDto(string Id, string? EntityType, string? EntityId);
+    private sealed record OperationalRunbookDefinitionDto(string Id, string Name, string RunbookType, bool IsEnabled);
+    private sealed record OperationalRunbookStepDefinitionDto(string Id, int StepOrder, string Name, string? JobType, string GateType);
+    private sealed record RunbookDefinitionDetailDto(OperationalRunbookDefinitionDto Definition, OperationalRunbookStepDefinitionDto[] Steps);
+    private sealed record OperationalRunbookRunDto(string Id, string RunbookType, string Status, string? RetryOfRunbookRunId, int RetryCount);
+    private sealed record OperationalRunbookStepRunDto(string Id, string Name, string Status, string? JobRunId);
+    private sealed record ScheduleListDto(bool SchedulerEnabled, OperationalScheduleDefinitionDto[] Value);
+    private sealed record OperationalScheduleDefinitionDto(string Id, string Name, bool IsEnabled);
 }

@@ -47,7 +47,10 @@ import type {
   OperationalJobDefinitionDto,
   OperationalJobRunDto,
   DailyOperationsSummaryDto,
-  DailyChecklistItemDto
+  DailyChecklistItemDto,
+  OperationalRunbookDefinitionDto,
+  OperationalRunbookRunDto,
+  OperationalScheduleDefinitionDto
 } from './api/types';
 import { AdminPanel } from './components/AdminPanel';
 import { ActionButton, ActionToast, useAsyncAction } from './components/ActionFeedback';
@@ -114,6 +117,10 @@ type DashboardState = {
   approvalRequests: ApprovalRequestDto[];
   opsJobDefinitions: OperationalJobDefinitionDto[];
   opsJobRuns: OperationalJobRunDto[];
+  runbookDefinitions: OperationalRunbookDefinitionDto[];
+  runbookRuns: OperationalRunbookRunDto[];
+  schedules: OperationalScheduleDefinitionDto[];
+  schedulerEnabled: boolean;
   dailyOpsSummary?: DailyOperationsSummaryDto;
   dailyOpsChecklist: DailyChecklistItemDto[];
 };
@@ -157,6 +164,10 @@ const emptyDashboard: DashboardState = {
   approvalRequests: [],
   opsJobDefinitions: [],
   opsJobRuns: [],
+  runbookDefinitions: [],
+  runbookRuns: [],
+  schedules: [],
+  schedulerEnabled: false,
   dailyOpsChecklist: []
 };
 
@@ -211,7 +222,7 @@ export default function App() {
   const loadIntegrity = useCallback(async () => setIntegrity(await apiClient.getReferenceDataIntegrity()), []);
 
   const loadDashboard = useCallback(async () => {
-    const [modelRuns, modelWeightBatches, targets, drifts, internalPositions, brokerPositions, reconciliationBreaks, tradeIntents, riskDecisions, orders, fills, snapshots, bars, killSwitch, instruments, venues, lmaxImportRuns, lmaxValidationIssues, lmaxIndividualTrades, lmaxTradeSummaries, lmaxCurrencyWallets, eodReconciliationRuns, eodReconciliationBreaks, exceptionCases, auditEvents, riskLimitSets, activeRiskLimitSet, tradingWindows, riskInstruments, riskVenues, operators, currentOperator, approvalRequests, opsJobDefinitions, opsJobRuns, dailyOpsSummary, dailyOpsChecklist] = await Promise.all([
+    const [modelRuns, modelWeightBatches, targets, drifts, internalPositions, brokerPositions, reconciliationBreaks, tradeIntents, riskDecisions, orders, fills, snapshots, bars, killSwitch, instruments, venues, lmaxImportRuns, lmaxValidationIssues, lmaxIndividualTrades, lmaxTradeSummaries, lmaxCurrencyWallets, eodReconciliationRuns, eodReconciliationBreaks, exceptionCases, auditEvents, riskLimitSets, activeRiskLimitSet, tradingWindows, riskInstruments, riskVenues, operators, currentOperator, approvalRequests, opsJobDefinitions, opsJobRuns, runbookDefinitions, runbookRuns, scheduleList, dailyOpsSummary, dailyOpsChecklist] = await Promise.all([
       apiClient.getModelRuns(),
       apiClient.getModelWeightBatches(),
       apiClient.getTargetPositions(),
@@ -247,6 +258,9 @@ export default function App() {
       apiClient.getApprovals(),
       apiClient.getOpsJobDefinitions(),
       apiClient.getOpsJobRuns(),
+      apiClient.getRunbookDefinitions(),
+      apiClient.getRunbookRuns(),
+      apiClient.getSchedules(),
       apiClient.getDailyOpsSummary(),
       apiClient.getDailyOpsChecklist()
     ]);
@@ -259,7 +273,7 @@ export default function App() {
         ])
       : [[], [], []];
 
-    setDashboard((current) => ({ ...current, modelRuns, modelWeightBatches, targets, drifts, internalPositions, brokerPositions, reconciliationBreaks, tradeIntents, riskDecisions, orders, fills, snapshots, bars, killSwitch, instruments, venues, lmaxImportRuns, lmaxValidationIssues, lmaxIndividualTrades, lmaxTradeSummaries, lmaxCurrencyWallets, eodReconciliationRuns, eodReconciliationBreaks, exceptionCases, auditEvents, riskLimitSets, activeRiskLimitSet, riskLimits, instrumentRiskLimits, venueRiskLimits, tradingWindows, riskInstruments, riskVenues, operators, currentOperator, approvalRequests, opsJobDefinitions, opsJobRuns, dailyOpsSummary, dailyOpsChecklist }));
+    setDashboard((current) => ({ ...current, modelRuns, modelWeightBatches, targets, drifts, internalPositions, brokerPositions, reconciliationBreaks, tradeIntents, riskDecisions, orders, fills, snapshots, bars, killSwitch, instruments, venues, lmaxImportRuns, lmaxValidationIssues, lmaxIndividualTrades, lmaxTradeSummaries, lmaxCurrencyWallets, eodReconciliationRuns, eodReconciliationBreaks, exceptionCases, auditEvents, riskLimitSets, activeRiskLimitSet, riskLimits, instrumentRiskLimits, venueRiskLimits, tradingWindows, riskInstruments, riskVenues, operators, currentOperator, approvalRequests, opsJobDefinitions, opsJobRuns, runbookDefinitions, runbookRuns, schedules: scheduleList.value ?? [], schedulerEnabled: scheduleList.schedulerEnabled, dailyOpsSummary, dailyOpsChecklist }));
   }, []);
 
   const refreshAll = useCallback(async () => {
@@ -560,6 +574,48 @@ function DailyOperationsPage({ dashboard, actions }: { dashboard: DashboardState
     );
     await actions.refreshAll();
   };
+  const runRunbook = async (runbookType: string) => {
+    if (!reason.trim()) {
+      window.alert('A reason is required to run an operational runbook.');
+      return;
+    }
+    await actions.runOperation(
+      `Running ${formatStatus(runbookType)} runbook`,
+      () => apiClient.runRunbook({ runbookType, reason }),
+      (runbook) => `${formatStatus(runbook.runbookType)} is ${formatStatus(runbook.status)}.`
+    );
+    await actions.refreshAll();
+  };
+  const retryRunbook = async (runbook: OperationalRunbookRunDto) => {
+    if (!reason.trim()) {
+      window.alert('A reason is required to retry an operational runbook.');
+      return;
+    }
+    await actions.runOperation(
+      `Retrying ${formatStatus(runbook.runbookType)} runbook`,
+      () => apiClient.retryRunbook(runbook.id, reason),
+      (result) => `Retry created runbook ${formatIdShort(result.id)}.`
+    );
+    await actions.refreshAll();
+  };
+  const completeWaitingGate = async (runbook: OperationalRunbookRunDto) => {
+    if (!reason.trim()) {
+      window.alert('A reason is required to complete a manual runbook gate.');
+      return;
+    }
+    const steps = await apiClient.getRunbookSteps(runbook.id);
+    const waiting = steps.find((step) => step.status === 'WaitingForOperator');
+    if (!waiting) {
+      window.alert('No waiting manual gate was found for this runbook.');
+      return;
+    }
+    await actions.runOperation(
+      `Completing ${formatStatus(runbook.runbookType)} manual gate`,
+      () => apiClient.completeRunbookManualStep(runbook.id, waiting.id, reason),
+      (result) => `${formatStatus(result.runbookType)} is ${formatStatus(result.status)}.`
+    );
+    await actions.refreshAll();
+  };
 
   const summary = dashboard.dailyOpsSummary;
   const jobButtons = [
@@ -575,6 +631,11 @@ function DailyOperationsPage({ dashboard, actions }: { dashboard: DashboardState
     <section className="workspace-page">
       <SectionHeader title="Daily Operations" eyebrow="Persistent local job runs, checklist, audit, and safe reruns" />
       <div className="metric-grid">
+        <MetricCard label="Start of Day" value={dashboard.runbookRuns.find((run) => run.runbookType === 'StartOfDay')?.status ?? 'Not Started'} sublabel="Local readiness runbook" tone={toneForStatus(dashboard.runbookRuns.find((run) => run.runbookType === 'StartOfDay')?.status)} />
+        <MetricCard label="Intraday Cycle" value={dashboard.runbookRuns.find((run) => run.runbookType === 'IntradayCycle')?.status ?? 'Not Started'} sublabel="Promote/process/build loop" tone={toneForStatus(dashboard.runbookRuns.find((run) => run.runbookType === 'IntradayCycle')?.status)} />
+        <MetricCard label="End of Day" value={dashboard.runbookRuns.find((run) => run.runbookType === 'EndOfDay')?.status ?? 'Not Started'} sublabel="Fake local EOD flow only" tone={toneForStatus(dashboard.runbookRuns.find((run) => run.runbookType === 'EndOfDay')?.status)} />
+        <MetricCard label="Manual Gates" value={dashboard.runbookRuns.filter((run) => run.status === 'WaitingForOperator').length} sublabel="Waiting for operator confirmation" tone={dashboard.runbookRuns.some((run) => run.status === 'WaitingForOperator') ? 'warning' : 'ok'} />
+        <MetricCard label="Local Scheduler" value={dashboard.schedulerEnabled ? 'Enabled' : 'Disabled'} sublabel="Disabled by default; local-only schedules" tone={dashboard.schedulerEnabled ? 'warning' : 'ok'} />
         <MetricCard label="Reference Data" value={summary?.latestReferenceIntegrity?.status ?? 'Not Started'} sublabel={summary?.latestReferenceIntegrity ? formatUtc(summary.latestReferenceIntegrity.startedAtUtc) : 'Run the integrity check'} tone={toneForStatus(summary?.latestReferenceIntegrity?.status)} />
         <MetricCard label="Market Data Bars" value={summary?.latestMarketDataBars?.status ?? 'Not Started'} sublabel="Latest 15-minute bar build" tone={toneForStatus(summary?.latestMarketDataBars?.status)} />
         <MetricCard label="Weight Promotion" value={summary?.latestWeightPromotion?.status ?? 'Not Started'} sublabel="Ready DB batches to ModelRuns" tone={toneForStatus(summary?.latestWeightPromotion?.status)} />
@@ -584,6 +645,56 @@ function DailyOperationsPage({ dashboard, actions }: { dashboard: DashboardState
         <MetricCard label="Open Exceptions" value={summary?.openExceptionCount ?? 0} sublabel={`${summary?.openBlockingExceptionCount ?? 0} blocking/critical`} tone={summary?.openBlockingExceptionCount ? 'danger' : summary?.openExceptionCount ? 'warning' : 'ok'} />
         <MetricCard label="Pending Approvals" value={summary?.pendingApprovalCount ?? 0} tone={summary?.pendingApprovalCount ? 'warning' : 'ok'} />
         <MetricCard label="Failed Jobs Today" value={summary?.failedJobCount ?? 0} tone={summary?.failedJobCount ? 'danger' : 'ok'} />
+      </div>
+
+      <div className="panel wide">
+        <SectionHeader title="Runbook Runner" eyebrow="Start-of-day, intraday, and end-of-day orchestration. Existing local jobs remain the executable units." />
+        <div className="button-row">
+          {['StartOfDay', 'IntradayCycle', 'EndOfDay'].map((runbookType) => (
+            <ActionButton key={runbookType} idleLabel={`Run ${formatStatus(runbookType)}`} runningLabel="Running..." onAction={() => runRunbook(runbookType)} />
+          ))}
+        </div>
+        <div className="info-box">Runbooks are local-only. They do not call real LMAX, submit orders, persist live market data, or enable external connections.</div>
+      </div>
+
+      <div className="page-grid two">
+        <div className="panel wide">
+          <SectionHeader title="Runbook Definitions" eyebrow="Seeded institutional operating flows." />
+          <DataTable rows={dashboard.runbookDefinitions} getRowKey={(row) => row.id} onRowClick={(row) => actions.setSelected(row)} emptyLabel="No runbook definitions loaded" columns={[
+            { key: 'name', header: 'Name', render: (row) => row.name, sortValue: (row) => row.name },
+            { key: 'type', header: 'Type', render: (row) => formatStatus(row.runbookType), sortValue: (row) => row.runbookType },
+            { key: 'enabled', header: 'Enabled', render: (row) => <StatusChip label={row.isEnabled ? 'Enabled' : 'Disabled'} tone={row.isEnabled ? 'ok' : 'warning'} /> },
+            { key: 'retry', header: 'Rerun', render: (row) => row.isRerunnable ? 'Yes' : 'No' },
+            { key: 'description', header: 'Description', render: (row) => row.description }
+          ]} />
+        </div>
+        <div className="panel wide">
+          <SectionHeader title="Local Scheduler" eyebrow="Foundation only. Disabled by default and local-only." />
+          <div className="metric-grid compact">
+            <MetricCard label="Scheduler" value={dashboard.schedulerEnabled ? 'Enabled' : 'Disabled'} sublabel="LocalScheduler:Enabled default is false" tone={dashboard.schedulerEnabled ? 'warning' : 'ok'} />
+            <MetricCard label="Schedules" value={dashboard.schedules.length} sublabel="Only enabled schedules can trigger runbooks" tone="neutral" />
+          </div>
+          <DataTable rows={dashboard.schedules} getRowKey={(row) => row.id} emptyLabel="No local schedules are configured. Scheduler remains disabled by default." columns={[
+            { key: 'name', header: 'Name', render: (row) => row.name },
+            { key: 'enabled', header: 'Enabled', render: (row) => <StatusChip label={row.isEnabled ? 'Enabled' : 'Disabled'} tone={row.isEnabled ? 'warning' : 'ok'} /> },
+            { key: 'next', header: 'Next Run', render: (row) => formatUtc(row.nextRunAtUtc) },
+            { key: 'last', header: 'Last Run', render: (row) => formatUtc(row.lastRunAtUtc) }
+          ]} />
+        </div>
+      </div>
+
+      <div className="panel wide">
+        <SectionHeader title="Runbook Runs" eyebrow="Runbook history with linked job runs and manual gates." />
+        <DataTable rows={dashboard.runbookRuns} getRowKey={(row) => row.id} onRowClick={(row) => actions.setSelected(row)} emptyLabel="No operational runbooks have run yet" columns={[
+          { key: 'started', header: 'Started', render: (row) => formatUtc(row.startedAtUtc), sortValue: (row) => row.startedAtUtc },
+          { key: 'type', header: 'Runbook', render: (row) => formatStatus(row.runbookType), sortValue: (row) => row.runbookType },
+          { key: 'status', header: 'Status', render: (row) => <StatusChip label={row.status} tone={toneForStatus(row.status)} />, sortValue: (row) => row.status },
+          { key: 'duration', header: 'Duration', render: (row) => row.durationMs == null ? '-' : `${Math.round(row.durationMs / 1000)}s`, className: 'numeric' },
+          { key: 'reason', header: 'Reason', render: (row) => row.reason ?? '-' },
+          { key: 'retryOf', header: 'Retry Of', render: (row) => row.retryOfRunbookRunId ? <code title={row.retryOfRunbookRunId}>{formatIdShort(row.retryOfRunbookRunId)}</code> : '-' },
+          { key: 'manual', header: 'Manual Gate', render: (row) => row.status === 'WaitingForOperator' ? <ActionButton idleLabel="Complete" runningLabel="Completing..." onClick={(event) => event.stopPropagation()} onAction={() => completeWaitingGate(row)} /> : '-' },
+          { key: 'retry', header: 'Retry', render: (row) => row.canRetry ? <ActionButton idleLabel="Retry" runningLabel="Retrying..." onClick={(event) => event.stopPropagation()} onAction={() => retryRunbook(row)} /> : '-' }
+        ]} />
       </div>
 
       <div className="panel wide">
