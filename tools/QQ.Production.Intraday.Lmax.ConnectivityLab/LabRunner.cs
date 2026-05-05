@@ -266,7 +266,17 @@ public sealed class LmaxConnectivityLabRunner(
         Console.WriteLine($"RequestSent: {result.RequestSent}");
         Console.WriteLine($"AckReceived: {result.AckReceived}");
         Console.WriteLine($"AckAccepted: {result.AckAccepted}");
+        Console.WriteLine($"RequestRejected: {result.RequestRejected}");
         if (!string.IsNullOrWhiteSpace(result.AckRejectText)) Console.WriteLine($"AckRejectText: {result.AckRejectText}");
+        if (!string.IsNullOrWhiteSpace(result.RejectMsgType)) Console.WriteLine($"RejectMsgType: {result.RejectMsgType}");
+        if (!string.IsNullOrWhiteSpace(result.RejectRefTagId)) Console.WriteLine($"RejectRefTagId: {result.RejectRefTagId}");
+        if (!string.IsNullOrWhiteSpace(result.RejectRefMsgType)) Console.WriteLine($"RejectRefMsgType: {result.RejectRefMsgType}");
+        if (!string.IsNullOrWhiteSpace(result.RejectReasonCode)) Console.WriteLine($"RejectReasonCode: {result.RejectReasonCode}");
+        if (!string.IsNullOrWhiteSpace(result.RejectText)) Console.WriteLine($"RejectText: {result.RejectText}");
+        if (!string.IsNullOrWhiteSpace(result.LastReceivedMsgType)) Console.WriteLine($"LastReceivedMsgType: {result.LastReceivedMsgType}");
+        if (result.ExpectedTradeReportCount is not null) Console.WriteLine($"ExpectedTradeReportCount: {result.ExpectedTradeReportCount}");
+        Console.WriteLine($"NoMoreReports: {result.NoMoreReports}");
+        Console.WriteLine($"LogoutSent: {result.LogoutSent}");
         Console.WriteLine($"TradeReportCount: {result.TradeReportCount}");
         Console.WriteLine($"LastReportRequested: {result.LastReportRequested}");
         Console.WriteLine($"StartedAtUtc: {result.StartedAtUtc:O}");

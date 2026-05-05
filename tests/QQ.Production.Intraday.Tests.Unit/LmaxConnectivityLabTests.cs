@@ -592,6 +592,27 @@ public sealed class LmaxConnectivityLabTests
     }
 
     [Fact]
+    public void Trade_capture_request_id_generator_stays_within_lmax_limit()
+    {
+        var id = LmaxFixRecoveryCodec.GenerateTradeRequestId(new DateTimeOffset(2026, 5, 5, 16, 39, 51, TimeSpan.Zero), 1);
+
+        Assert.Equal("TC26050516395101", id);
+        Assert.True(id.Length <= 16);
+        Assert.All(id, ch => Assert.InRange(ch, (char)0, (char)127));
+        Assert.DoesNotContain(id, char.IsWhiteSpace);
+    }
+
+    [Fact]
+    public void Trade_capture_request_builder_rejects_long_trade_request_id_locally()
+    {
+        var options = LmaxFixTradeCaptureRequestOptions.From(DateTimeOffset.UtcNow, 60, null, null, null, 10, 50, false);
+
+        var ex = Assert.Throws<ArgumentException>(() => LmaxFixRecoveryCodec.BuildTradeCaptureReportRequest("SENDER", "LMXBD", 2, "QQTC-20260505163951923", options));
+
+        Assert.Contains("16 characters or fewer", ex.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Trade_capture_request_builder_omits_account_when_absent()
     {
         var options = LmaxFixTradeCaptureRequestOptions.From(DateTimeOffset.UtcNow, 60, null, null, null, 10, 50, false);
@@ -604,7 +625,7 @@ public sealed class LmaxConnectivityLabTests
     [Fact]
     public void Trade_capture_ack_parser_handles_accepted_and_rejected_acks()
     {
-        var accepted = FixMessage("35=AQ", "568=TCREQ1", "749=0", "750=0");
+        var accepted = FixMessage("35=AQ", "568=TCREQ1", "569=1", "263=0", "748=0", "749=0", "750=0");
         var rejected = FixMessage("35=AQ", "568=TCREQ2", "749=1", "750=2", "58=Rejected window");
 
         var acceptedAck = LmaxFixRecoveryCodec.ParseTradeCaptureAck(accepted);
@@ -613,9 +634,156 @@ public sealed class LmaxConnectivityLabTests
         Assert.True(acceptedAck.IsAck);
         Assert.True(acceptedAck.Accepted);
         Assert.Equal("TCREQ1", acceptedAck.RequestId);
+        Assert.Equal("1", acceptedAck.TradeRequestType);
+        Assert.Equal("0", acceptedAck.SubscriptionRequestType);
+        Assert.Equal(0, acceptedAck.TotNumTradeReports);
+        Assert.Equal("0", acceptedAck.Result);
+        Assert.Equal("0", acceptedAck.Status);
         Assert.True(rejectedAck.IsAck);
         Assert.False(rejectedAck.Accepted);
         Assert.Equal("Rejected window", rejectedAck.Text);
+    }
+
+    [Fact]
+    public void Trade_capture_ack_parser_handles_expected_report_count_and_missing_count()
+    {
+        var withReports = FixMessage("35=AQ", "568=TCREQ1", "748=2", "749=0", "750=0");
+        var missingCount = FixMessage("35=AQ", "568=TCREQ2", "749=0", "750=0");
+
+        var withReportsAck = LmaxFixRecoveryCodec.ParseTradeCaptureAck(withReports);
+        var missingCountAck = LmaxFixRecoveryCodec.ParseTradeCaptureAck(missingCount);
+
+        Assert.True(withReportsAck.Accepted);
+        Assert.Equal(2, withReportsAck.TotNumTradeReports);
+        Assert.True(missingCountAck.Accepted);
+        Assert.Null(missingCountAck.TotNumTradeReports);
+    }
+
+    [Fact]
+    public void Trade_capture_zero_report_ack_result_is_success_without_timeout()
+    {
+        var result = new LmaxFixTradeCaptureSmokeResult(
+            "fix-trade-capture-smoke",
+            "Ok",
+            Connected: true,
+            LoggedOn: true,
+            RequestSent: true,
+            AckReceived: true,
+            AckAccepted: true,
+            RequestRejected: false,
+            AckRejectText: null,
+            RejectMsgType: null,
+            RejectRefTagId: null,
+            RejectRefMsgType: null,
+            RejectReasonCode: null,
+            RejectText: null,
+            LastReceivedMsgType: "AQ",
+            ExpectedTradeReportCount: 0,
+            NoMoreReports: true,
+            LogoutSent: true,
+            TradeReportCount: 0,
+            LastReportRequested: true,
+            Reports: [],
+            StartedAtUtc: DateTimeOffset.UtcNow,
+            CompletedAtUtc: DateTimeOffset.UtcNow,
+            Message: "Trade capture request accepted; no trade reports returned for the requested window.",
+            SafetyDecisions: [],
+            Diagnostics: []);
+
+        Assert.Equal("Ok", result.Status);
+        Assert.True(result.AckAccepted);
+        Assert.Equal(0, result.ExpectedTradeReportCount);
+        Assert.True(result.NoMoreReports);
+        Assert.True(result.LogoutSent);
+        Assert.DoesNotContain("timeout", result.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Trade_capture_expected_reports_timeout_result_is_partial_and_clear()
+    {
+        var result = new LmaxFixTradeCaptureSmokeResult(
+            "fix-trade-capture-smoke",
+            "PartiallySucceeded",
+            Connected: true,
+            LoggedOn: true,
+            RequestSent: true,
+            AckReceived: true,
+            AckAccepted: true,
+            RequestRejected: false,
+            AckRejectText: null,
+            RejectMsgType: null,
+            RejectRefTagId: null,
+            RejectRefMsgType: null,
+            RejectReasonCode: null,
+            RejectText: null,
+            LastReceivedMsgType: "AE",
+            ExpectedTradeReportCount: 2,
+            NoMoreReports: false,
+            LogoutSent: true,
+            TradeReportCount: 1,
+            LastReportRequested: false,
+            Reports: [],
+            StartedAtUtc: DateTimeOffset.UtcNow,
+            CompletedAtUtc: DateTimeOffset.UtcNow,
+            Message: "Trade capture request accepted, but timed out after receiving 1 of 2 expected trade reports.",
+            SafetyDecisions: [],
+            Diagnostics: []);
+
+        Assert.Equal("PartiallySucceeded", result.Status);
+        Assert.Equal(2, result.ExpectedTradeReportCount);
+        Assert.Contains("1 of 2", result.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Session_reject_parser_extracts_trade_capture_reject_fields()
+    {
+        var message = FixMessage("35=3", "45=2", "371=568", "372=AD", "373=6", "58=Trade request id max length 16");
+
+        var reject = LmaxFixRecoveryCodec.ParseSessionReject(message);
+
+        Assert.True(reject.IsReject);
+        Assert.Equal("2", reject.RefSeqNum);
+        Assert.Equal("568", reject.RefTagId);
+        Assert.Equal("AD", reject.RefMsgType);
+        Assert.Equal("6", reject.SessionRejectReason);
+        Assert.Equal("Trade request id max length 16", reject.Text);
+    }
+
+    [Fact]
+    public void Trade_capture_result_can_report_session_reject_without_timeout_message()
+    {
+        var result = new LmaxFixTradeCaptureSmokeResult(
+            "fix-trade-capture-smoke",
+            "Failed",
+            Connected: true,
+            LoggedOn: true,
+            RequestSent: true,
+            AckReceived: false,
+            AckAccepted: false,
+            RequestRejected: true,
+            AckRejectText: "Trade request id max length 16",
+            RejectMsgType: "3",
+            RejectRefTagId: "568",
+            RejectRefMsgType: "AD",
+            RejectReasonCode: "6",
+            RejectText: "Trade request id max length 16",
+            LastReceivedMsgType: "3",
+            ExpectedTradeReportCount: null,
+            NoMoreReports: false,
+            LogoutSent: true,
+            TradeReportCount: 0,
+            LastReportRequested: false,
+            Reports: [],
+            StartedAtUtc: DateTimeOffset.UtcNow,
+            CompletedAtUtc: DateTimeOffset.UtcNow,
+            Message: "TradeCaptureReportRequest was rejected by FIX session reject: Trade request id max length 16",
+            SafetyDecisions: [],
+            Diagnostics: []);
+
+        Assert.True(result.RequestRejected);
+        Assert.Equal("3", result.LastReceivedMsgType);
+        Assert.Equal("568", result.RejectRefTagId);
+        Assert.DoesNotContain("timeout", result.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]

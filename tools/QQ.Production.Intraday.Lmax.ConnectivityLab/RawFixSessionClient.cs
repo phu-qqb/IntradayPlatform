@@ -147,7 +147,18 @@ public sealed class RawLmaxFixSessionClient(LmaxConnectivityLabSafetyValidator s
         var requestSent = false;
         var ackReceived = false;
         var ackAccepted = false;
+        var requestRejected = false;
         string? ackRejectText = null;
+        string? rejectMsgType = null;
+        string? rejectRefTagId = null;
+        string? rejectRefMsgType = null;
+        string? rejectReasonCode = null;
+        string? rejectText = null;
+        string? lastReceivedMsgType = null;
+        int? expectedTradeReportCount = null;
+        var noMoreReports = false;
+        var logoutSent = false;
+        var timedOutWaitingForReports = false;
         try
         {
             using var tcp = new TcpClient();
@@ -180,11 +191,21 @@ public sealed class RawLmaxFixSessionClient(LmaxConnectivityLabSafetyValidator s
 
             if (!loggedOn)
             {
-                return new("fix-trade-capture-smoke", "Failed", connected, false, false, false, false, null, 0, false, [], startedAt, DateTimeOffset.UtcNow, "FIX trading logon was not confirmed; trade capture request was not sent.", LmaxConnectivityLabSafetyValidator.DecisionsForExternalCommand(options), diagnostics);
+                return new("fix-trade-capture-smoke", "Failed", connected, false, false, false, false, false, null, null, null, null, null, null, null, null, false, false, 0, false, [], startedAt, DateTimeOffset.UtcNow, "FIX trading logon was not confirmed; trade capture request was not sent.", LmaxConnectivityLabSafetyValidator.DecisionsForExternalCommand(options), diagnostics);
             }
 
-            var tradeRequestId = $"QQTC-{DateTimeOffset.UtcNow:yyyyMMddHHmmssfff}";
+            var tradeRequestId = LmaxFixRecoveryCodec.GenerateTradeRequestId(DateTimeOffset.UtcNow, sequenceNumber);
+            try
+            {
+                LmaxFixRecoveryCodec.ValidateTradeRequestId(tradeRequestId);
+            }
+            catch (ArgumentException ex)
+            {
+                return new("fix-trade-capture-smoke", "Failed", connected, loggedOn, false, false, false, false, null, null, null, null, null, null, null, null, false, false, 0, false, [], startedAt, DateTimeOffset.UtcNow, $"Trade capture request was not sent because generated TradeRequestID is invalid: {ex.Message}", LmaxConnectivityLabSafetyValidator.DecisionsForExternalCommand(options), diagnostics);
+            }
+
             var request = LmaxFixRecoveryCodec.BuildTradeCaptureReportRequest(options.FixSenderCompId!, target, sequenceNumber++, tradeRequestId, requestOptions);
+            diagnostics.Add($"TradeRequestID={tradeRequestId}");
             if (requestOptions.ShowFixMessages) diagnostics.Add($"OUT {LmaxFixMarketDataCodec.SanitizeMessage(request)}");
             using (var wait = CreateTimeout(requestOptions.MaxWaitSeconds, cancellationToken))
             {
@@ -192,10 +213,22 @@ public sealed class RawLmaxFixSessionClient(LmaxConnectivityLabSafetyValidator s
                 requestSent = true;
                 while (!wait.IsCancellationRequested && reports.Count < requestOptions.MaxReports)
                 {
-                    var (message, nextSequence) = await ReadMarketDataResponseAsync(stream, options, target, sequenceNumber, wait.Token);
+                    string message;
+                    int nextSequence;
+                    try
+                    {
+                        (message, nextSequence) = await ReadMarketDataResponseAsync(stream, options, target, sequenceNumber, wait.Token);
+                    }
+                    catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+                    {
+                        timedOutWaitingForReports = true;
+                        break;
+                    }
+
                     sequenceNumber = nextSequence;
                     if (string.IsNullOrWhiteSpace(message)) break;
                     var msgType = LmaxFixMarketDataCodec.GetMsgType(message);
+                    lastReceivedMsgType = msgType;
                     if (requestOptions.ShowFixMessages) diagnostics.Add($"IN {LmaxFixMarketDataCodec.SanitizeMessage(message)}");
                     if (msgType == "AQ")
                     {
@@ -203,15 +236,39 @@ public sealed class RawLmaxFixSessionClient(LmaxConnectivityLabSafetyValidator s
                         ackReceived = true;
                         ackAccepted = ack.Accepted;
                         ackRejectText = ack.Text;
+                        expectedTradeReportCount = ack.TotNumTradeReports;
+                        diagnostics.Add($"TradeCaptureAck: TradeRequestID={ack.RequestId ?? "(missing)"} TotNumTradeReports={expectedTradeReportCount?.ToString(CultureInfo.InvariantCulture) ?? "(missing)"} Result={ack.Result ?? "(missing)"} Status={ack.Status ?? "(missing)"}");
+                        if (ackAccepted && expectedTradeReportCount == 0)
+                        {
+                            noMoreReports = true;
+                            break;
+                        }
+
                         if (!ackAccepted) break;
                     }
                     else if (msgType == "AE")
                     {
                         var report = LmaxFixRecoveryCodec.ParseTradeCaptureReport(message);
                         reports.Add(report);
-                        if (report.LastReportRequested) break;
+                        if (report.LastReportRequested || expectedTradeReportCount is not null && reports.Count >= expectedTradeReportCount.Value)
+                        {
+                            noMoreReports = true;
+                            break;
+                        }
                     }
-                    else if (msgType is "5" or "3")
+                    else if (msgType == "3")
+                    {
+                        var reject = LmaxFixRecoveryCodec.ParseSessionReject(message);
+                        rejectMsgType = "3";
+                        rejectRefTagId = reject.RefTagId;
+                        rejectRefMsgType = reject.RefMsgType;
+                        rejectReasonCode = reject.SessionRejectReason;
+                        rejectText = reject.Text;
+                        ackRejectText = reject.Text;
+                        requestRejected = string.Equals(reject.RefMsgType, "AD", StringComparison.Ordinal);
+                        break;
+                    }
+                    else if (msgType == "5")
                     {
                         ackRejectText = LmaxFixMarketDataCodec.GetTag(message, "58");
                         break;
@@ -219,22 +276,42 @@ public sealed class RawLmaxFixSessionClient(LmaxConnectivityLabSafetyValidator s
                 }
             }
 
-            await TrySendLogoutAsync(stream, options, target, sequenceNumber, diagnostics, "TradeCapture");
+            logoutSent = await TrySendLogoutAsync(stream, options, target, sequenceNumber, diagnostics, "TradeCapture");
             var lastRequested = reports.Any(x => x.LastReportRequested);
-            var status = ackReceived && ackAccepted ? "Ok" : ackReceived ? "Failed" : "Failed";
-            var messageText = ackReceived && ackAccepted
-                ? reports.Count == 0 ? "Trade capture request accepted; no reports received before timeout. No data was persisted." : "Trade capture reports received. No data was persisted."
-                : ackReceived ? "Trade capture request was rejected or not accepted." : "No TradeCaptureReportRequestAck was received before timeout.";
-            return new("fix-trade-capture-smoke", status, connected, loggedOn, requestSent, ackReceived, ackAccepted, ackRejectText, reports.Count, lastRequested, reports, startedAt, DateTimeOffset.UtcNow, messageText, LmaxConnectivityLabSafetyValidator.DecisionsForExternalCommand(options), diagnostics);
+            var status = ResolveTradeCaptureStatus(ackReceived, ackAccepted, requestRejected, expectedTradeReportCount, reports.Count, timedOutWaitingForReports);
+            var messageText = ResolveTradeCaptureMessage(ackReceived, ackAccepted, requestRejected, rejectText, expectedTradeReportCount, reports.Count, timedOutWaitingForReports);
+            return new("fix-trade-capture-smoke", status, connected, loggedOn, requestSent, ackReceived, ackAccepted, requestRejected, ackRejectText, rejectMsgType, rejectRefTagId, rejectRefMsgType, rejectReasonCode, rejectText, lastReceivedMsgType, expectedTradeReportCount, noMoreReports, logoutSent, reports.Count, lastRequested || noMoreReports, reports, startedAt, DateTimeOffset.UtcNow, messageText, LmaxConnectivityLabSafetyValidator.DecisionsForExternalCommand(options), diagnostics);
         }
         catch (OperationCanceledException)
         {
-            return new("fix-trade-capture-smoke", "Failed", connected, loggedOn, requestSent, ackReceived, ackAccepted, ackRejectText, reports.Count, reports.Any(x => x.LastReportRequested), reports, startedAt, DateTimeOffset.UtcNow, "Trade capture smoke timed out.", LmaxConnectivityLabSafetyValidator.DecisionsForExternalCommand(options), diagnostics);
+            return new("fix-trade-capture-smoke", "Failed", connected, loggedOn, requestSent, ackReceived, ackAccepted, requestRejected, ackRejectText, rejectMsgType, rejectRefTagId, rejectRefMsgType, rejectReasonCode, rejectText, lastReceivedMsgType, expectedTradeReportCount, noMoreReports, logoutSent, reports.Count, reports.Any(x => x.LastReportRequested), reports, startedAt, DateTimeOffset.UtcNow, "Trade capture smoke timed out.", LmaxConnectivityLabSafetyValidator.DecisionsForExternalCommand(options), diagnostics);
         }
         catch (Exception ex) when (ex is SocketException or IOException or AuthenticationException)
         {
-            return new("fix-trade-capture-smoke", "Failed", connected, loggedOn, requestSent, ackReceived, ackAccepted, ackRejectText, reports.Count, reports.Any(x => x.LastReportRequested), reports, startedAt, DateTimeOffset.UtcNow, $"Trade capture smoke failed: {ex.GetType().Name}: {ex.Message}", LmaxConnectivityLabSafetyValidator.DecisionsForExternalCommand(options), diagnostics);
+            return new("fix-trade-capture-smoke", "Failed", connected, loggedOn, requestSent, ackReceived, ackAccepted, requestRejected, ackRejectText, rejectMsgType, rejectRefTagId, rejectRefMsgType, rejectReasonCode, rejectText, lastReceivedMsgType, expectedTradeReportCount, noMoreReports, logoutSent, reports.Count, reports.Any(x => x.LastReportRequested), reports, startedAt, DateTimeOffset.UtcNow, $"Trade capture smoke failed: {ex.GetType().Name}: {ex.Message}", LmaxConnectivityLabSafetyValidator.DecisionsForExternalCommand(options), diagnostics);
         }
+    }
+
+    private static string ResolveTradeCaptureStatus(bool ackReceived, bool ackAccepted, bool requestRejected, int? expectedTradeReportCount, int reportCount, bool timedOut)
+    {
+        if (requestRejected || !ackReceived || !ackAccepted) return "Failed";
+        if (expectedTradeReportCount == 0) return "Ok";
+        if (expectedTradeReportCount is > 0 && reportCount >= expectedTradeReportCount.Value) return "Ok";
+        if (expectedTradeReportCount is > 0 && timedOut) return "PartiallySucceeded";
+        return timedOut ? "Failed" : "Ok";
+    }
+
+    private static string ResolveTradeCaptureMessage(bool ackReceived, bool ackAccepted, bool requestRejected, string? rejectText, int? expectedTradeReportCount, int reportCount, bool timedOut)
+    {
+        if (requestRejected) return $"TradeCaptureReportRequest was rejected by FIX session reject: {rejectText ?? "(no reject text)"}";
+        if (!ackReceived) return "No TradeCaptureReportRequestAck was received before timeout.";
+        if (!ackAccepted) return "Trade capture request was rejected or not accepted.";
+        if (expectedTradeReportCount == 0) return "Trade capture request accepted; no trade reports returned for the requested window.";
+        if (expectedTradeReportCount is > 0 && reportCount >= expectedTradeReportCount.Value) return $"Trade capture request accepted; received {reportCount} of {expectedTradeReportCount.Value} expected trade reports. No data was persisted.";
+        if (expectedTradeReportCount is > 0 && timedOut) return $"Trade capture request accepted, but timed out after receiving {reportCount} of {expectedTradeReportCount.Value} expected trade reports.";
+        if (expectedTradeReportCount is null && timedOut && reportCount == 0) return "AQ accepted but no TotNumTradeReports was provided and no AE reports arrived before timeout.";
+        if (expectedTradeReportCount is null && timedOut) return $"AQ accepted but no TotNumTradeReports was provided; received {reportCount} AE reports before timeout.";
+        return "Trade capture request accepted. No data was persisted.";
     }
 
     private static async Task<LmaxFixMarketDataSmokeResult> RunSingleMarketDataSnapshotAttemptAsync(

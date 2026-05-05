@@ -528,7 +528,7 @@ The isolated lab has validated LMAX Demo FIX market data snapshot retrieval for 
 
 The LMAX integration strategy is now FIX-only plus EOD files. The lab path is FIX Market Data, FIX Trading read-only recovery, and LMAX EOD report reconciliation. Account REST API discovery remains parked as diagnostic-only code; BasicAuth against `https://account-api.london-demo.lmax.com` returned `401` for likely endpoints, and Account API access is not required for platform operation.
 
-The lab includes read-only FIX Trading recovery tools: `fix-capabilities` scans the LMAX trading dictionary for supported messages, `fix-trade-capture-smoke` sends `35=AD` and reads `35=AQ`/`35=AE`, and `fix-order-status-dry-run` builds a sanitized `35=H` request without opening a socket. The uploaded LMAX dictionary findings support `H`, `8`, `AD`, `AQ`, and `AE`; `AF`, `AN`, and `AP` are treated as unsupported unless future LMAX documentation provides equivalents.
+The lab includes read-only FIX Trading recovery tools: `fix-capabilities` scans the LMAX trading dictionary for supported messages, `fix-trade-capture-smoke` sends `35=AD` with a 16-character-or-shorter `568 TradeRequestID` and reads `35=AQ`/`35=AE` or session-level `35=3` rejects, and `fix-order-status-dry-run` builds a sanitized `35=H` request without opening a socket. Accepted `AQ` with `748=0` is treated as a successful zero-report response, not a timeout. The uploaded LMAX dictionary findings support `H`, `8`, `AD`, `AQ`, and `AE`; `AF`, `AN`, and `AP` are treated as unsupported unless future LMAX documentation provides equivalents.
 
 Useful dry-run commands:
 

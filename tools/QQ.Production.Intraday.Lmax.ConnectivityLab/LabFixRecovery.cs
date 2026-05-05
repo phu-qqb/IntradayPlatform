@@ -43,7 +43,17 @@ public sealed record LmaxFixTradeCaptureSmokeResult(
     bool RequestSent,
     bool AckReceived,
     bool AckAccepted,
+    bool RequestRejected,
     string? AckRejectText,
+    string? RejectMsgType,
+    string? RejectRefTagId,
+    string? RejectRefMsgType,
+    string? RejectReasonCode,
+    string? RejectText,
+    string? LastReceivedMsgType,
+    int? ExpectedTradeReportCount,
+    bool NoMoreReports,
+    bool LogoutSent,
     int TradeReportCount,
     bool LastReportRequested,
     IReadOnlyList<LmaxFixTradeCaptureReport> Reports,
@@ -56,9 +66,28 @@ public sealed record LmaxFixTradeCaptureSmokeResult(
     public static LmaxFixTradeCaptureSmokeResult Skipped(string message, IReadOnlyList<string> safetyDecisions)
     {
         var now = DateTimeOffset.UtcNow;
-        return new("fix-trade-capture-smoke", "Skipped", false, false, false, false, false, null, 0, false, [], now, now, message, safetyDecisions, []);
+        return new("fix-trade-capture-smoke", "Skipped", false, false, false, false, false, false, null, null, null, null, null, null, null, null, false, false, 0, false, [], now, now, message, safetyDecisions, []);
     }
 }
+
+public sealed record LmaxFixTradeCaptureAck(
+    bool IsAck,
+    bool Accepted,
+    string? Text,
+    string? RequestId,
+    string? TradeRequestType,
+    string? SubscriptionRequestType,
+    int? TotNumTradeReports,
+    string? Result,
+    string? Status);
+
+public sealed record LmaxFixSessionReject(
+    bool IsReject,
+    string? RefSeqNum,
+    string? RefTagId,
+    string? RefMsgType,
+    string? SessionRejectReason,
+    string? Text);
 
 public static class LmaxFixRecoveryCodec
 {
@@ -112,6 +141,7 @@ public static class LmaxFixRecoveryCodec
 
     public static string BuildTradeCaptureReportRequest(string senderCompId, string targetCompId, int sequenceNumber, string tradeRequestId, LmaxFixTradeCaptureRequestOptions options)
     {
+        ValidateTradeRequestId(tradeRequestId);
         var fields = new List<(string Tag, string Value)>
         {
             ("568", tradeRequestId),
@@ -125,6 +155,19 @@ public static class LmaxFixRecoveryCodec
         return LmaxFixMarketDataCodec.BuildMessage("AD", sequenceNumber, senderCompId, targetCompId, fields);
     }
 
+    public static string GenerateTradeRequestId(DateTimeOffset now, int sequenceNumber)
+    {
+        var suffix = Math.Abs(sequenceNumber % 100).ToString("00", CultureInfo.InvariantCulture);
+        return $"TC{now.UtcDateTime:yyMMddHHmmss}{suffix}";
+    }
+
+    public static void ValidateTradeRequestId(string tradeRequestId)
+    {
+        if (string.IsNullOrWhiteSpace(tradeRequestId)) throw new ArgumentException("TradeRequestID must be configured.", nameof(tradeRequestId));
+        if (tradeRequestId.Length > 16) throw new ArgumentException("TradeRequestID tag 568 must be 16 characters or fewer.", nameof(tradeRequestId));
+        if (tradeRequestId.Any(ch => ch > 127 || char.IsWhiteSpace(ch))) throw new ArgumentException("TradeRequestID tag 568 must be ASCII and contain no whitespace.", nameof(tradeRequestId));
+    }
+
     public static string BuildOrderStatusRequest(string senderCompId, string targetCompId, int sequenceNumber, string clOrdId, string? account = null, string? securityId = null, string? securityIdSource = null, string? side = null, string? ordStatusReqId = null)
     {
         var fields = new List<(string Tag, string Value)> { ("11", clOrdId) };
@@ -136,13 +179,33 @@ public static class LmaxFixRecoveryCodec
         return LmaxFixMarketDataCodec.BuildMessage("H", sequenceNumber, senderCompId, targetCompId, fields);
     }
 
-    public static (bool IsAck, bool Accepted, string? Text, string? RequestId, string? Result, string? Status) ParseTradeCaptureAck(string message)
+    public static LmaxFixTradeCaptureAck ParseTradeCaptureAck(string message)
     {
         var isAck = LmaxFixMarketDataCodec.ContainsTag(message, "35", "AQ");
         var result = LmaxFixMarketDataCodec.GetTag(message, "749");
         var status = LmaxFixMarketDataCodec.GetTag(message, "750");
         var accepted = isAck && (string.IsNullOrWhiteSpace(result) || result == "0") && (string.IsNullOrWhiteSpace(status) || status is "0" or "1");
-        return (isAck, accepted, LmaxFixMarketDataCodec.GetTag(message, "58"), LmaxFixMarketDataCodec.GetTag(message, "568"), result, status);
+        return new(
+            isAck,
+            accepted,
+            LmaxFixMarketDataCodec.GetTag(message, "58"),
+            LmaxFixMarketDataCodec.GetTag(message, "568"),
+            LmaxFixMarketDataCodec.GetTag(message, "569"),
+            LmaxFixMarketDataCodec.GetTag(message, "263"),
+            ParseInt(LmaxFixMarketDataCodec.GetTag(message, "748")),
+            result,
+            status);
+    }
+
+    public static LmaxFixSessionReject ParseSessionReject(string message)
+    {
+        return new(
+            LmaxFixMarketDataCodec.ContainsTag(message, "35", "3"),
+            LmaxFixMarketDataCodec.GetTag(message, "45"),
+            LmaxFixMarketDataCodec.GetTag(message, "371"),
+            LmaxFixMarketDataCodec.GetTag(message, "372"),
+            LmaxFixMarketDataCodec.GetTag(message, "373"),
+            LmaxFixMarketDataCodec.GetTag(message, "58"));
     }
 
     public static LmaxFixTradeCaptureReport ParseTradeCaptureReport(string message)
@@ -164,6 +227,7 @@ public static class LmaxFixRecoveryCodec
     }
 
     private static decimal? ParseDecimal(string? value) => decimal.TryParse(value, NumberStyles.Any, CultureInfo.InvariantCulture, out var parsed) ? parsed : null;
+    private static int? ParseInt(string? value) => int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed) ? parsed : null;
     private static DateTimeOffset? ParseFixTime(string? value) => DateTimeOffset.TryParseExact(value, "yyyyMMdd-HH:mm:ss.fff", CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out var parsed) ? parsed.ToUniversalTime() : null;
     private static string FormatFixTime(DateTimeOffset value) => value.UtcDateTime.ToString("yyyyMMdd-HH:mm:ss.fff", CultureInfo.InvariantCulture);
 
