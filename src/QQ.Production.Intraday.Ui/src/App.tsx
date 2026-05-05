@@ -525,6 +525,17 @@ function CommandCenter({ dashboard, health, integrity, actions }: { dashboard: D
 
 function DailyOperationsPage({ dashboard, actions }: { dashboard: DashboardState; actions: { refreshAll: () => Promise<void>; runOperation: <T>(label: string, work: () => Promise<T>, successMessage?: (result: T) => string | undefined) => Promise<T>; setSelected: (item: unknown) => void } }) {
   const [reason, setReason] = useState('Daily operations manual run');
+  const summarizeJson = (json?: string | null) => {
+    if (!json) return '-';
+    try {
+      const parsed = JSON.parse(json) as Record<string, unknown>;
+      const keys = ['status', 'blockingIssueCount', 'warningIssueCount', 'processedCount', 'blockedCount', 'failedCount', 'breakCount', 'blockingBreakCount', 'totalNetPnlUsd', 'currencyCount'];
+      const parts = keys.filter((key) => parsed[key] !== undefined).map((key) => `${formatStatus(key)}: ${String(parsed[key])}`);
+      return parts.length ? parts.join(' | ') : json;
+    } catch {
+      return json;
+    }
+  };
   const runJob = async (jobType: string) => {
     if (!reason.trim()) {
       window.alert('A reason is required to run an operational job.');
@@ -619,7 +630,9 @@ function DailyOperationsPage({ dashboard, actions }: { dashboard: DashboardState
           { key: 'status', header: 'Status', render: (row) => <StatusChip label={row.status} tone={toneForStatus(row.status)} />, sortValue: (row) => row.status },
           { key: 'duration', header: 'Duration', render: (row) => row.durationMs == null ? '-' : `${Math.round(row.durationMs / 1000)}s`, sortValue: (row) => row.durationMs ?? 0, className: 'numeric' },
           { key: 'operator', header: 'Triggered By', render: (row) => row.triggeredByDisplayName ?? row.triggeredByOperatorId ?? row.triggeredByActorType },
-          { key: 'input', header: 'Input', render: (row) => row.inputJson ?? '-' },
+          { key: 'output', header: 'Output Summary', render: (row) => row.errorMessage ? <span className="danger-text">{row.errorMessage}</span> : summarizeJson(row.outputJson) },
+          { key: 'retryOf', header: 'Retry Of', render: (row) => row.retryOfJobRunId ? <code title={row.retryOfJobRunId}>{formatIdShort(row.retryOfJobRunId)}</code> : '-' },
+          { key: 'exception', header: 'Exception', render: (row) => row.exceptionCaseId ? <code title={row.exceptionCaseId}>{formatIdShort(row.exceptionCaseId)}</code> : '-' },
           { key: 'correlation', header: 'Correlation', render: (row) => row.correlationId ?? '-' },
           { key: 'retry', header: 'Retry', render: (row) => row.canRetry ? <ActionButton idleLabel="Retry" runningLabel="Retrying..." onClick={(event) => event.stopPropagation()} onAction={() => retryJob(row)} /> : '-' }
         ]} />

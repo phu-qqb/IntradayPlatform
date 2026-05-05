@@ -227,6 +227,46 @@ describe('cockpit UI primitives', () => {
     expect(screen.queryByRole('button', { name: /enable live trading/i })).toBeNull();
   });
 
+  it('renders daily operations status, retry, and exception cues', () => {
+    render(
+      <DataTable
+        rows={[
+          { id: 'job-1', status: 'Failed', jobType: 'ReferenceDataIntegrityCheck', canRetry: true, exceptionCaseId: 'case-1', retryOfJobRunId: null },
+          { id: 'job-2', status: 'Succeeded', jobType: 'BuildMarketDataBars', canRetry: false, exceptionCaseId: null, retryOfJobRunId: 'job-1' }
+        ]}
+        getRowKey={(row) => row.id}
+        columns={[
+          { key: 'job', header: 'Job', render: (row) => row.jobType },
+          { key: 'status', header: 'Status', render: (row) => <StatusChip label={row.status} tone={toneForStatus(row.status)} /> },
+          { key: 'retryOf', header: 'Retry Of', render: (row) => row.retryOfJobRunId ?? '-' },
+          { key: 'exception', header: 'Exception', render: (row) => row.exceptionCaseId ?? '-' },
+          { key: 'retry', header: 'Retry', render: (row) => row.canRetry ? <button>Retry</button> : '-' }
+        ]}
+      />
+    );
+
+    expect(screen.getByText('ReferenceDataIntegrityCheck')).toBeTruthy();
+    expect(screen.getByText('Failed').className).toContain('danger');
+    expect(screen.getByText('case-1')).toBeTruthy();
+    expect(screen.getAllByRole('button', { name: 'Retry' })).toHaveLength(1);
+  });
+
+  it('renders daily operations step and event detail concepts', () => {
+    render(
+      <div>
+        <h2>Steps</h2>
+        <span>Check reference data integrity</span>
+        <h2>Events</h2>
+        <span>Job completed with status Failed.</span>
+        <span>Output Summary</span>
+      </div>
+    );
+
+    expect(screen.getByText('Steps')).toBeTruthy();
+    expect(screen.getByText('Events')).toBeTruthy();
+    expect(screen.getByText('Output Summary')).toBeTruthy();
+  });
+
   it('renders risk decision explainability with observed and limit values', () => {
     render(
       <DataTable

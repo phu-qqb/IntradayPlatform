@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Json;
+using System.Text.Json;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.Configuration;
@@ -44,14 +45,79 @@ public sealed class DailyOperationsApiTests
         var checklist = await GetAsync<DailyChecklistItemDto[]>(client, "/ops/daily-checklist?date=2026-05-04", "local-admin");
         Assert.Contains(checklist, x => x.Name == "Reference data clean" && x.Status == "Complete");
 
-        var retry = await PostAsync<OperationalJobRunDto>(client, $"/ops/jobs/runs/{run.Id}/retry", "local-admin", new { reason = "Retry reference data check in ops API test." });
+        const string retryReason = "Retry reference data check in ops API test.";
+        var retry = await PostAsync<OperationalJobRunDto>(client, $"/ops/jobs/runs/{run.Id}/retry", "local-admin", new { reason = retryReason });
         Assert.Equal(run.Id, retry.RetryOfJobRunId);
         Assert.NotEqual(run.Id, retry.Id);
+        Assert.Equal(1, retry.RetryCount);
+
+        var retryBadRequest = await SendJsonAsync(client, HttpMethod.Post, $"/ops/jobs/runs/{run.Id}/retry", "local-admin", new { reason = "" });
+        Assert.Equal(HttpStatusCode.BadRequest, retryBadRequest.StatusCode);
+
+        var viewerDenied = await SendJsonAsync(client, HttpMethod.Post, "/ops/jobs/run", "local-viewer", new { jobType = "ReferenceDataIntegrityCheck", reason = "Viewer should not be able to run jobs.", input = new { } });
+        Assert.Equal(HttpStatusCode.BadRequest, viewerDenied.StatusCode);
 
         var audit = await GetAsync<OperatorAuditEventDto[]>(client, "/audit/events?limit=100", "local-admin");
         Assert.Contains(audit, x => x.EventType == "OperationalJobStarted");
         Assert.Contains(audit, x => x.EventType == "OperationalJobSucceeded");
-        Assert.Contains(audit, x => x.EventType == "OperationalJobRetried");
+        var retried = Assert.Single(audit, x => x.EventType == "OperationalJobRetried");
+        Assert.Equal(run.Id, retried.EntityId);
+        Assert.Equal(retryReason, retried.Reason);
+        Assert.Contains(run.Id, retried.MetadataJson);
+        Assert.Contains(retry.Id, retried.MetadataJson);
+        Assert.Contains("\"originalJobRunId\"", retried.MetadataJson);
+        Assert.Contains("\"retryJobRunId\"", retried.MetadataJson);
+        Assert.Contains(audit, x => x.EventType == "PermissionDenied");
+    }
+
+    [Fact]
+    public async Task Critical_reference_data_job_failure_creates_exception_case_and_output_summary()
+    {
+        var state = SeedData.Create(Now);
+        state.Venues.Clear();
+        await using var factory = CreateInMemoryFactory(state);
+        using var client = factory.CreateClient();
+
+        var run = await PostAsync<OperationalJobRunDto>(client, "/ops/jobs/run", "local-admin", new { jobType = "ReferenceDataIntegrityCheck", reason = "Ops API test broken reference data.", input = new { } });
+        Assert.Equal("Failed", run.Status);
+        Assert.False(string.IsNullOrWhiteSpace(run.ExceptionCaseId));
+        Assert.Contains("blockingIssueCount", run.OutputJson);
+
+        var events = await GetAsync<OperationalJobRunEventDto[]>(client, $"/ops/jobs/runs/{run.Id}/events", "local-admin");
+        Assert.Contains(events, x => x.Message.Contains("completed with status Failed", StringComparison.OrdinalIgnoreCase));
+
+        var cases = await GetAsync<ExceptionCaseDto[]>(client, "/exceptions?limit=50", "local-admin");
+        Assert.Contains(cases, x => x.Id == run.ExceptionCaseId && x.EntityType == "OperationalJobRun" && x.EntityId == run.Id);
+    }
+
+    [Fact]
+    public async Task Build_market_data_bars_job_output_serializes_and_updates_existing_bar()
+    {
+        var state = SeedData.Create(Now);
+        await using var factory = CreateInMemoryFactory(state);
+        using var client = factory.CreateClient();
+        await CreateFakeSnapshotsAsync(client, Now.AddMinutes(-14), 4);
+
+        var first = await PostAsync<OperationalJobRunDto>(client, "/ops/jobs/run", "local-admin", new { jobType = "BuildMarketDataBars", reason = "Create latest bar in ops API test.", input = new { } });
+        Assert.Equal("Succeeded", first.Status);
+        Assert.Contains("\"barBuildStatus\"", first.OutputJson);
+        Assert.Contains("\"barsCreated\"", first.OutputJson);
+        Assert.DoesNotContain("\"Status\"", first.OutputJson);
+
+        var second = await PostAsync<OperationalJobRunDto>(client, "/ops/jobs/run", "local-admin", new { jobType = "BuildMarketDataBars", reason = "Update latest bar in ops API test.", input = new { } });
+        Assert.Equal("Succeeded", second.Status);
+        using var output = JsonDocument.Parse(second.OutputJson!);
+        Assert.Equal("Succeeded", output.RootElement.GetProperty("jobStatus").GetString());
+        Assert.Equal("Completed", output.RootElement.GetProperty("barBuildStatus").GetString());
+        Assert.Equal(0, output.RootElement.GetProperty("barsCreated").GetInt32());
+        Assert.Equal(1, output.RootElement.GetProperty("barsUpdated").GetInt32());
+
+        var loaded = await GetAsync<OperationalJobRunDto>(client, $"/ops/jobs/runs/{second.Id}", "local-admin");
+        Assert.Equal(second.Id, loaded.Id);
+        Assert.Equal("BuildMarketDataBars", loaded.JobType);
+
+        var runs = await GetAsync<OperationalJobRunDto[]>(client, "/ops/jobs/runs?limit=20", "local-admin");
+        Assert.Contains(runs, x => x.Id == second.Id);
     }
 
     private static WebApplicationFactory<Program> CreateInMemoryFactory(PlatformState state)
@@ -66,7 +132,8 @@ public sealed class DailyOperationsApiTests
                     ["Safety:AllowExternalConnections"] = "false",
                     ["Safety:AllowLiveTrading"] = "false",
                     ["Safety:RequireFakeExecutionGateway"] = "true",
-                    ["Governance:FourEyesEnabled"] = "true"
+                    ["Governance:FourEyesEnabled"] = "true",
+                    ["ReferenceDataIntegrity:FailStartupOnBlockingIssues"] = "false"
                 });
             });
             builder.ConfigureServices(services =>
@@ -105,10 +172,26 @@ public sealed class DailyOperationsApiTests
         return await client.SendAsync(request);
     }
 
-    private sealed record OperationalJobRunDto(string Id, string JobType, string Status, string? RetryOfJobRunId);
+    private static async Task CreateFakeSnapshotsAsync(HttpClient client, DateTimeOffset startUtc, int count)
+    {
+        using var response = await SendJsonAsync(client, HttpMethod.Post, "/market-data/fake-snapshots", "local-admin", new
+        {
+            startUtc,
+            intervalSeconds = 60,
+            count,
+            bid = 1.10m,
+            ask = 1.1002m,
+            bidStep = 0.0001m,
+            askStep = 0.0001m
+        });
+        response.EnsureSuccessStatusCode();
+    }
+
+    private sealed record OperationalJobRunDto(string Id, string JobType, string Status, string? OutputJson, string? ExceptionCaseId, string? RetryOfJobRunId, int RetryCount);
     private sealed record OperationalJobStepDto(string StepName, string Status);
     private sealed record OperationalJobRunEventDto(string Message);
     private sealed record DailyOperationsSummaryDto(OperationalJobRunDto? LatestReferenceIntegrity);
     private sealed record DailyChecklistItemDto(string Name, string Status);
-    private sealed record OperatorAuditEventDto(string EventType);
+    private sealed record OperatorAuditEventDto(string EventType, string? EntityType, string? EntityId, string? CorrelationId, string? Reason, string MetadataJson);
+    private sealed record ExceptionCaseDto(string Id, string? EntityType, string? EntityId);
 }

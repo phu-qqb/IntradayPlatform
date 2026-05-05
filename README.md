@@ -128,6 +128,8 @@ Daily Operations adds `AddDailyOperationsJobControl` for persistent local operat
 - `OperationalJobSteps`
 - `OperationalJobRunEvents`
 
+Daily Operations job status semantics distinguish operational results from infrastructure failures. `Succeeded` means the wrapper completed as expected, `Skipped` means intentionally no work, `PartiallySucceeded` means completed with business warnings or handled blocks, and `Failed` is reserved for infrastructure/programming failures or critical controls such as blocking reference-data integrity. EOD reconciliation can succeed while reporting blocking breaks because those breaks remain reconciliation/exception workflow objects. Retries create new linked job runs with `RetryOfJobRunId`, require a reason, and are audited.
+
 ## Scripts
 
 - `scripts/check-env.ps1`
@@ -149,7 +151,7 @@ Daily Operations adds `AddDailyOperationsJobControl` for persistent local operat
 
 See [docs/LOCAL_RUNBOOK.md](docs/LOCAL_RUNBOOK.md) for the full local workflow.
 
-The smoke script uses dynamic UTC timestamps: it builds the previous completed 15-minute bar, adds fresh fake snapshots for execution freshness, creates a current model run, and processes it through `FakeLmaxGateway`. If a local API call fails, the script prints the endpoint, safe request body, HTTP status, and response body.
+The smoke scripts use dynamic UTC timestamps and local-only APIs. `smoke-local.ps1` builds the previous completed 15-minute bar, adds fresh fake snapshots for execution freshness, creates a current model run, and processes it through `FakeLmaxGateway`. `smoke-daily-ops-local.ps1` validates Daily Operations summary/checklist/job history, exercises a safe retry, verifies audit events, and skips EOD reconciliation clearly when no local LMAX EOD import run exists. If a local API call fails, the scripts print the endpoint, safe request body, HTTP status, and response body.
 
 ## Run API
 

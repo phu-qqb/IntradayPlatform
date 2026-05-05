@@ -40,6 +40,12 @@ function Invoke-LocalApi {
     }
     catch {
         Write-Host "API call failed: $Method $Path" -ForegroundColor Red
+        if ($null -ne $Body) {
+            Write-Host "Body: $($Body | ConvertTo-Json -Depth 20)" -ForegroundColor DarkGray
+        }
+        if ($_.Exception.Response) {
+            Write-Host "HTTP status: $([int]$_.Exception.Response.StatusCode) $($_.Exception.Response.StatusDescription)" -ForegroundColor Red
+        }
         if ($_.ErrorDetails.Message) {
             Write-Host $_.ErrorDetails.Message -ForegroundColor Red
         }

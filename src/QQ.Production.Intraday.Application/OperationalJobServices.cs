@@ -4,7 +4,7 @@ using QQ.Production.Intraday.Domain;
 namespace QQ.Production.Intraday.Application;
 
 public sealed record OperationalJobRunFilter(int Limit, OperationalJobRunStatus? Status = null, OperationalJobType? JobType = null, DateTimeOffset? FromUtc = null, DateTimeOffset? ToUtc = null);
-public sealed record RunOperationalJobRequest(OperationalJobType JobType, string Reason, object? Input = null, OperationalJobTriggerType TriggerType = OperationalJobTriggerType.Manual, OperationalJobRunId? RetryOfJobRunId = null);
+public sealed record RunOperationalJobRequest(OperationalJobType JobType, string Reason, object? Input = null, OperationalJobTriggerType TriggerType = OperationalJobTriggerType.Manual, OperationalJobRunId? RetryOfJobRunId = null, int? RetryCount = null);
 public sealed record DailyOperationsSummary(DateOnly Date, OperationalJobRun? LatestReferenceIntegrity, OperationalJobRun? LatestMarketDataBars, OperationalJobRun? LatestWeightPromotion, OperationalJobRun? LatestModelRunProcessing, OperationalJobRun? LatestEodImport, OperationalJobRun? LatestEodReconciliation, OperationalJobRun? LatestPnlSummary, int OpenExceptionCount, int OpenBlockingExceptionCount, int FailedJobCount, int PendingApprovalCount);
 public enum DailyChecklistItemStatus { NotStarted, Running, Complete, Warning, Failed, Blocked }
 public sealed record DailyChecklistItem(string Name, DailyChecklistItemStatus Status, string Message, string? RelatedEntityType = null, string? RelatedEntityId = null);
@@ -105,7 +105,7 @@ public sealed class OperationalJobRunner(
             null,
             null,
             request.RetryOfJobRunId,
-            request.RetryOfJobRunId is null ? 0 : 1,
+            request.RetryCount ?? (request.RetryOfJobRunId is null ? 0 : 1),
             definition?.IsRerunnable ?? true,
             now,
             now);
@@ -124,7 +124,17 @@ public sealed class OperationalJobRunner(
             var status = DetermineStatus(run.JobType, output);
             var completed = Complete(run, status, output, null);
             await repository.UpdateRunAsync(completed, cancellationToken);
-            await audit.RecordAsync(new(status == OperationalJobRunStatus.Succeeded ? OperatorAuditEventType.OperationalJobSucceeded : OperatorAuditEventType.OperationalJobFailed, status == OperationalJobRunStatus.Succeeded ? OperatorAuditSeverity.Info : OperatorAuditSeverity.Warning, status == OperationalJobRunStatus.Succeeded ? OperatorAuditResult.Succeeded : OperatorAuditResult.Blocked, "OperationalJobRunner", $"Operational job {run.JobType} completed with status {status}.", "OperationalJobRun", run.Id.Value.ToString("D"), request.Reason, Metadata: output), cancellationToken);
+            await AddEventAsync(run.Id, status is OperationalJobRunStatus.Failed or OperationalJobRunStatus.TimedOut ? OperationalJobSeverity.Critical : OperationalJobSeverity.Info, $"Job completed with status {status}.", new { run.JobType, status }, cancellationToken);
+            var auditType = status is OperationalJobRunStatus.Succeeded or OperationalJobRunStatus.Skipped or OperationalJobRunStatus.PartiallySucceeded ? OperatorAuditEventType.OperationalJobSucceeded : OperatorAuditEventType.OperationalJobFailed;
+            var auditSeverity = status == OperationalJobRunStatus.Failed ? OperatorAuditSeverity.Warning : OperatorAuditSeverity.Info;
+            var auditResult = status == OperationalJobRunStatus.Failed ? OperatorAuditResult.Failed : status == OperationalJobRunStatus.PartiallySucceeded ? OperatorAuditResult.Blocked : OperatorAuditResult.Succeeded;
+            await audit.RecordAsync(new(auditType, auditSeverity, auditResult, "OperationalJobRunner", $"Operational job {run.JobType} completed with status {status}.", "OperationalJobRun", run.Id.Value.ToString("D"), request.Reason, Metadata: new { run.JobType, status, output }), cancellationToken);
+            if (ShouldCreateExceptionCase(definition, status))
+            {
+                var exceptionCase = await CreateJobExceptionCaseAsync(completed, $"Operational job completed with status {status}.", output, cancellationToken);
+                completed = completed with { ExceptionCaseId = exceptionCase.Id };
+                await repository.UpdateRunAsync(completed, cancellationToken);
+            }
             return completed;
         }
         catch (Exception ex)
@@ -135,7 +145,7 @@ public sealed class OperationalJobRunner(
             await audit.RecordFailedAsync(OperatorAuditEventType.OperationalJobFailed, "OperationalJobRunner", $"Operational job {run.JobType} failed.", ex.Message, "OperationalJobRun", run.Id.Value.ToString("D"), new { run.JobType }, cancellationToken);
             if (definition?.Severity == OperationalJobSeverity.Critical)
             {
-                var exceptionCase = await exceptionCases.CreateManualCaseAsync(new CreateExceptionCaseRequest(ExceptionCaseSeverity.Critical, ExceptionCaseType.SystemHealth, ExceptionCaseSource.SystemHealth, $"Operational job failed: {run.Name}", ex.Message, "OperationalJobRun", run.Id.Value.ToString("D"), Metadata: new { run.JobType }), cancellationToken);
+                var exceptionCase = await CreateJobExceptionCaseAsync(failed, ex.Message, new { run.JobType }, cancellationToken);
                 failed = failed with { ExceptionCaseId = exceptionCase.Id };
                 await repository.UpdateRunAsync(failed, cancellationToken);
             }
@@ -148,8 +158,29 @@ public sealed class OperationalJobRunner(
         await permissions.RequirePermissionAsync(OperatorPermission.RetryOperationalJobs, cancellationToken);
         var prior = await repository.GetRunAsync(id, cancellationToken) ?? throw new DomainRuleViolationException("Operational job run not found.");
         if (!prior.CanRetry) throw new DomainRuleViolationException("This operational job is not retryable.");
-        await audit.RecordSucceededAsync(OperatorAuditEventType.OperationalJobRetried, "OperationalJobRunner", "Operational job retry requested.", "OperationalJobRun", prior.Id.Value.ToString("D"), new { prior.JobType }, cancellationToken);
-        return await RunJobAsync(new RunOperationalJobRequest(prior.JobType, reason, Deserialize(prior.InputJson), prior.TriggerType, prior.Id), cancellationToken);
+        var retry = await RunJobAsync(new RunOperationalJobRequest(prior.JobType, reason, Deserialize(prior.InputJson), prior.TriggerType, prior.Id, prior.RetryCount + 1), cancellationToken);
+        var actor = context.Current;
+        await audit.RecordAsync(new(
+            OperatorAuditEventType.OperationalJobRetried,
+            OperatorAuditSeverity.Info,
+            OperatorAuditResult.Succeeded,
+            "OperationalJobRunner",
+            "Operational job retry requested.",
+            "OperationalJobRun",
+            prior.Id.Value.ToString("D"),
+            reason,
+            Metadata: new
+            {
+                originalJobRunId = prior.Id.Value.ToString("D"),
+                retryJobRunId = retry.Id.Value.ToString("D"),
+                jobType = prior.JobType.ToString(),
+                reason,
+                retryCount = retry.RetryCount,
+                triggeredByOperatorId = actor.ActorId,
+                correlationId = context.CorrelationId
+            }),
+            cancellationToken);
+        return retry;
     }
 
     public Task<IReadOnlyList<OperationalJobRun>> GetRecentJobRunsAsync(OperationalJobRunFilter filter, CancellationToken cancellationToken) => repository.GetRunsAsync(filter, cancellationToken);
@@ -163,52 +194,63 @@ public sealed class OperationalJobRunner(
             OperationalJobType.ReferenceDataIntegrityCheck => await RunStepAsync(run.Id, "Check reference data integrity", input, async () =>
             {
                 var result = await referenceDataIntegrity.CheckAsync(cancellationToken);
-                return new { result.BlockingIssueCount, result.WarningIssueCount };
+                return new { status = result.BlockingIssueCount > 0 ? OperationalJobRunStatus.Failed.ToString() : OperationalJobRunStatus.Succeeded.ToString(), result.BlockingIssueCount, result.WarningIssueCount };
             }, cancellationToken),
             OperationalJobType.BuildMarketDataBars => await RunStepAsync(run.Id, "Build latest 15-minute bars", input, async () =>
             {
                 var state = await intradayRepository.LoadStateAsync(cancellationToken);
                 var venue = state.Venues.FirstOrDefault(x => x.Name == "LMAX") ?? throw new DomainRuleViolationException("LMAX venue reference data was not found.");
                 var result = await barBuilder.BuildLatestFifteenMinuteBarsAsync(venue.Id, cancellationToken);
-                return new { result.RunId, result.BarsCreated, result.BarsUpdated, result.Status, result.ErrorMessage };
+                return new { jobStatus = OperationalJobRunStatus.Succeeded.ToString(), barBuildRunId = result.RunId, result.BarsCreated, result.BarsUpdated, barBuildStatus = result.Status.ToString(), timeframe = "FifteenMinutes", venue = venue.Name, message = result.ErrorMessage };
             }, cancellationToken),
             OperationalJobType.PromoteReadyWeightBatches => await RunStepAsync(run.Id, "Promote ready weight batches", input, async () =>
             {
                 var results = await modelWeightPromotion.PromoteReadyBatchesAsync(10, cancellationToken);
-                return new { promotedCount = results.Count(x => x.Succeeded), rejectedCount = results.Count(x => !x.Succeeded), issueCount = results.Sum(x => x.ValidationIssueCount), results = results.Select(x => new { x.BatchId, x.Status, x.ModelRunId, x.Succeeded, x.Message }) };
+                var rejected = results.Count(x => !x.Succeeded && !x.AlreadyPromoted);
+                return new { status = rejected > 0 ? OperationalJobRunStatus.PartiallySucceeded.ToString() : OperationalJobRunStatus.Succeeded.ToString(), promotedCount = results.Count(x => x.Succeeded && !x.AlreadyPromoted), alreadyPromotedCount = results.Count(x => x.AlreadyPromoted), rejectedCount = rejected, issueCount = results.Sum(x => x.ValidationIssueCount), results = results.Select(x => new { x.BatchId, x.Status, x.ModelRunId, x.Succeeded, x.AlreadyPromoted, x.Message }) };
             }, cancellationToken),
             OperationalJobType.ProcessPendingModelRuns => await RunStepAsync(run.Id, "Process pending model runs", input, async () =>
             {
                 var processed = 0;
                 var blocked = 0;
                 var noAction = 0;
+                var failed = 0;
+                var orderCount = 0;
+                var fillCount = 0;
                 for (var i = 0; i < 25; i++)
                 {
                     var result = await processModelRunService.ProcessNextAsync(cancellationToken);
                     if (result.Status == ProcessModelRunStatus.NoActionRequired) { noAction++; break; }
                     if (result.Processed) processed++;
                     if (result.Blocked) blocked++;
+                    if (result.Status == ProcessModelRunStatus.Failed) failed++;
+                    orderCount += result.OrderCount;
+                    fillCount += result.FillCount;
                     if (!result.Processed && !result.Blocked) break;
                 }
-                return new { processedCount = processed, blockedCount = blocked, noActionCount = noAction };
+                var status = failed > 0 ? OperationalJobRunStatus.Failed : blocked > 0 ? OperationalJobRunStatus.PartiallySucceeded : OperationalJobRunStatus.Succeeded;
+                return new { status = status.ToString(), processedCount = processed, blockedCount = blocked, noActionCount = noAction, failedCount = failed, orderCount, fillCount };
             }, cancellationToken),
             OperationalJobType.GenerateFakeLmaxEodReports => await RunStepAsync(run.Id, "Generate fake LMAX EOD reports", input, async () =>
             {
                 var reportDate = ReadDate(input) ?? DateOnly.FromDateTime(clock.UtcNow.UtcDateTime);
-                var result = await fakeLmaxEodReportGenerator.GenerateAsync(reportDate, "LMAX", "LMAX_DEMO_LOCAL", LmaxEodMutationMode.None, cancellationToken);
-                return result;
+                var mutationMode = ReadMutationMode(input) ?? LmaxEodMutationMode.None;
+                var result = await fakeLmaxEodReportGenerator.GenerateAsync(reportDate, "LMAX", "LMAX_DEMO_LOCAL", mutationMode, cancellationToken);
+                return new { status = OperationalJobRunStatus.Succeeded.ToString(), result.ReportDate, individualTradesPath = SanitizePath(result.IndividualTradesPath), tradesSummaryPath = SanitizePath(result.TradesSummaryPath), currencyWalletsPath = SanitizePath(result.CurrencyWalletsPath), result.IndividualTradeCount, result.TradeSummaryCount, result.CurrencyWalletCount, result.MutationMode };
             }, cancellationToken),
             OperationalJobType.RunEodReconciliation => await RunStepAsync(run.Id, "Run EOD reconciliation", input, async () =>
             {
                 var reportDate = ReadDate(input) ?? DateOnly.FromDateTime(clock.UtcNow.UtcDateTime);
                 var result = await eodReconciliation.RunAsync(reportDate, "LMAX", "LMAX_DEMO_LOCAL", cancellationToken);
-                return new { result.RunId, result.ReportDate, result.BreakCount, result.BlockingBreakCount };
+                return new { status = OperationalJobRunStatus.Succeeded.ToString(), result.RunId, result.ReportDate, result.BreakCount, result.BlockingBreakCount };
             }, cancellationToken),
             OperationalJobType.CalculateEodPnlSummary => await RunStepAsync(run.Id, "Calculate EOD PnL summary", input, async () =>
             {
                 var reportDate = ReadDate(input) ?? DateOnly.FromDateTime(clock.UtcNow.UtcDateTime);
                 var summary = await eodPnlSummary.GetSummaryAsync(reportDate, "LMAX", "LMAX_DEMO_LOCAL", cancellationToken);
-                return summary is null ? new { status = "NoSummary" } : new { summary.TotalWalletBalanceUsd, summary.TotalProfitLossUsd, summary.TotalCommissionUsd, summary.TotalDividendsUsd, summary.TotalFinancingUsd, summary.TotalNetPnlUsd };
+                return summary is null
+                    ? new { status = OperationalJobRunStatus.Skipped.ToString(), message = "No EOD PnL summary is available for the requested date.", currencyCount = 0 }
+                    : new { status = OperationalJobRunStatus.Succeeded.ToString(), summary.TotalWalletBalanceUsd, summary.TotalProfitLossUsd, summary.TotalCommissionUsd, summary.TotalDividendsUsd, summary.TotalFinancingUsd, summary.TotalNetPnlUsd, currencyCount = summary.CurrencyRows.Count };
             }, cancellationToken),
             OperationalJobType.ImportGeneratedLmaxEodReports => await RunStepAsync(run.Id, "Import generated LMAX EOD reports", input, async () =>
             {
@@ -219,12 +261,12 @@ public sealed class OperationalJobRunner(
                 var reportDate = ReadDate(input) ?? DateOnly.FromDateTime(clock.UtcNow.UtcDateTime);
                 if (string.IsNullOrWhiteSpace(individual) || string.IsNullOrWhiteSpace(trades) || string.IsNullOrWhiteSpace(wallets))
                 {
-                    return new { status = "Skipped", message = "Generated report paths were not supplied." };
+                    return new { status = OperationalJobRunStatus.Skipped.ToString(), message = "Generated report paths were not supplied.", validationIssueCount = 0, blockingIssueCount = 0 };
                 }
                 var result = await lmaxEodReportImport.ImportReportSetAsync(individual, trades, wallets, reportDate, "LMAX", "LMAX_DEMO_LOCAL", cancellationToken);
-                return new { result.ImportRunId, result.Status, result.RowCount, result.BlockingIssueCount, result.Message };
+                return new { status = result.BlockingIssueCount > 0 ? OperationalJobRunStatus.PartiallySucceeded.ToString() : OperationalJobRunStatus.Succeeded.ToString(), result.ImportRunId, importStatus = result.Status, result.RowCount, result.BlockingIssueCount, validationIssueCount = result.Issues.Count, result.Message };
             }, cancellationToken),
-            _ => await RunStepAsync(run.Id, "Custom job", input, () => Task.FromResult<object>(new { status = "Skipped", message = "No local job wrapper is implemented for this job type." }), cancellationToken)
+            _ => await RunStepAsync(run.Id, "Custom job", input, () => Task.FromResult<object>(new { status = OperationalJobRunStatus.Skipped.ToString(), message = "No local job wrapper is implemented for this job type." }), cancellationToken)
         };
 
     private async Task<object> RunStepAsync(OperationalJobRunId runId, string stepName, object? input, Func<Task<object>> action, CancellationToken cancellationToken)
@@ -258,21 +300,61 @@ public sealed class OperationalJobRunner(
 
     private static OperationalJobRunStatus DetermineStatus(OperationalJobType jobType, object output)
     {
-        var json = OperatorAuditService.SerializeSanitized(output) ?? string.Empty;
-        if (json.Contains("\"status\":\"Skipped\"", StringComparison.OrdinalIgnoreCase)) return OperationalJobRunStatus.Skipped;
-        if (json.Contains("\"blockingIssueCount\":0", StringComparison.OrdinalIgnoreCase) || !json.Contains("blockingIssueCount", StringComparison.OrdinalIgnoreCase)) return OperationalJobRunStatus.Succeeded;
-        return jobType == OperationalJobType.ReferenceDataIntegrityCheck ? OperationalJobRunStatus.Failed : OperationalJobRunStatus.PartiallySucceeded;
+        var json = OperatorAuditService.SerializeSanitized(output) ?? "{}";
+        using var doc = JsonDocument.Parse(json);
+        if (TryReadStatus(doc.RootElement, out var explicitStatus)) return explicitStatus;
+        if (TryReadInt(doc.RootElement, "blockingIssueCount", out var blocking) && blocking > 0)
+        {
+            return jobType == OperationalJobType.ReferenceDataIntegrityCheck
+                ? OperationalJobRunStatus.Failed
+                : OperationalJobRunStatus.PartiallySucceeded;
+        }
+
+        return OperationalJobRunStatus.Succeeded;
     }
+
+    private static bool TryReadStatus(JsonElement root, out OperationalJobRunStatus status)
+    {
+        status = OperationalJobRunStatus.Succeeded;
+        return root.ValueKind == JsonValueKind.Object
+            && (root.TryGetProperty("status", out var value) || root.TryGetProperty("jobStatus", out value))
+            && value.ValueKind == JsonValueKind.String
+            && Enum.TryParse(value.GetString(), true, out status);
+    }
+
+    private static bool TryReadInt(JsonElement root, string propertyName, out int value)
+    {
+        value = 0;
+        return root.ValueKind == JsonValueKind.Object
+            && root.TryGetProperty(propertyName, out var property)
+            && property.TryGetInt32(out value);
+    }
+
+    private static bool ShouldCreateExceptionCase(OperationalJobDefinition? definition, OperationalJobRunStatus status)
+        => definition?.Severity == OperationalJobSeverity.Critical && status == OperationalJobRunStatus.Failed;
+
+    private async Task<ExceptionCase> CreateJobExceptionCaseAsync(OperationalJobRun run, string message, object? metadata, CancellationToken cancellationToken)
+        => await exceptionCases.CreateManualCaseAsync(new CreateExceptionCaseRequest(ExceptionCaseSeverity.Critical, ExceptionCaseType.SystemHealth, ExceptionCaseSource.SystemHealth, $"Operational job failed: {run.Name}", message, "OperationalJobRun", run.Id.Value.ToString("D"), Metadata: new { run.JobType, run.Status, metadata }), cancellationToken);
 
     private static long Duration(DateTimeOffset start, DateTimeOffset end) => (long)Math.Max(0, (end - start).TotalMilliseconds);
     private static object? Deserialize(string? json) => string.IsNullOrWhiteSpace(json) ? null : JsonSerializer.Deserialize<object>(json, JsonOptions);
     private static JsonDocument? ToJson(object? input) => input is null ? null : JsonDocument.Parse(JsonSerializer.Serialize(input, JsonOptions));
+    private static string SanitizePath(string path) => Path.GetFileName(path);
     private static DateOnly? ReadDate(object? input)
     {
         using var doc = ToJson(input);
         if (doc?.RootElement.TryGetProperty("reportDate", out var value) == true && DateOnly.TryParse(value.GetString(), out var date)) return date;
         if (doc?.RootElement.TryGetProperty("date", out value) == true && DateOnly.TryParse(value.GetString(), out date)) return date;
         return null;
+    }
+
+    private static LmaxEodMutationMode? ReadMutationMode(object? input)
+    {
+        using var doc = ToJson(input);
+        return doc?.RootElement.TryGetProperty("mutationMode", out var value) == true
+            && Enum.TryParse<LmaxEodMutationMode>(value.GetString(), true, out var mode)
+            ? mode
+            : null;
     }
 
     public static IReadOnlyList<OperationalJobDefinition> DefaultDefinitions(DateTimeOffset now) =>

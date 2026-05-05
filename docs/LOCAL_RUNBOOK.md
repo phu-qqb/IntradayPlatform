@@ -218,7 +218,19 @@ Supported local job types include:
 - `RunEodReconciliation`
 - `CalculateEodPnlSummary`
 
-Every manual job run requires a reason and writes operator audit events such as `OperationalJobStarted`, `OperationalJobSucceeded`, `OperationalJobFailed`, and `OperationalJobRetried`. Critical infrastructure failures can create an exception case. Business outcomes such as blocked model-run processing remain visible in job output and do not bypass risk, reconciliation, exception, audit, or governance checks.
+Every manual job run requires a reason and writes operator audit events such as `OperationalJobStarted`, `OperationalJobSucceeded`, `OperationalJobFailed`, and `OperationalJobRetried`. Job input/output metadata is sanitized before persistence.
+
+Status semantics are deliberately operational:
+
+- `Succeeded`: the wrapper completed and produced the expected local result.
+- `Skipped`: the job intentionally did no work, such as missing optional generated EOD paths or no PnL summary for that date.
+- `PartiallySucceeded`: the wrapper completed but produced business warnings or cleanly handled blocks.
+- `Failed`: infrastructure/programming failure or a critical operational failure.
+- `TimedOut`: reserved for future scheduler/timeout enforcement; the current local runner does not emit it yet.
+
+Business blocks are not automatically infrastructure failures. For example, `ProcessPendingModelRuns` can return `PartiallySucceeded` when risk/reconciliation blocks are handled cleanly. `RunEodReconciliation` can succeed while reporting blocking break counts because the reconciliation service and exception workflow own those breaks. `ReferenceDataIntegrityCheck` with blocking issues is treated as `Failed` because startup/reference integrity is a critical control and creates a linked exception case.
+
+Retry creates a new `OperationalJobRun` linked by `RetryOfJobRunId`; it does not mutate the original run. Retry requires a reason, increments retry count, respects the job definition rerunnable flag, and creates an audit event.
 
 Useful API calls:
 
@@ -242,7 +254,7 @@ Run the local Daily Operations smoke after starting the API:
 .\scripts\smoke-daily-ops-local.ps1
 ```
 
-The smoke validates health, FakeLmax-only safety, daily summary, reference check job, bar build job, ready-weight promotion job, pending model-run processing job, job history, and audit events. It skips EOD reconciliation clearly when no local LMAX EOD import run exists.
+The smoke validates health, FakeLmax-only safety, daily summary, reference check job, bar build job, ready-weight promotion job, pending model-run processing job, retry linkage, job history, and audit events. It skips EOD reconciliation clearly when no local LMAX EOD import run exists.
 
 ## Risk Control Center
 
