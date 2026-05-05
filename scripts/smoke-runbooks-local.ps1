@@ -14,12 +14,49 @@ function Assert-LocalUrl {
 
 function Get-ItemsFromResponse {
     param([object]$Response)
-    if ($null -eq $Response) { return @() }
-    if ($Response -is [System.Array]) { return @($Response) }
-    foreach ($name in @("value", "Value", "items", "Items", "runs", "runbooks", "data")) {
-        if ($Response.PSObject.Properties.Name -contains $name) { return @($Response.$name) }
+    if ($null -eq $Response) { return }
+    if ($Response -is [System.Array]) {
+        foreach ($item in $Response) { $item }
+        return
     }
-    return @($Response)
+    foreach ($name in @("value", "Value", "items", "Items", "runs", "runbookRuns", "runbookDefinitions", "definitions", "events", "auditEvents", "steps", "data")) {
+        $property = $Response.PSObject.Properties | Where-Object { $_.Name -eq $name } | Select-Object -First 1
+        if ($null -ne $property) {
+            if ($null -eq $property.Value) { return }
+            if ($property.Value -is [System.Array]) {
+                foreach ($item in $property.Value) { $item }
+                return
+            }
+            $property.Value
+            return
+        }
+    }
+    $Response
+}
+
+function Write-ListDiagnostics {
+    param(
+        [string]$Label,
+        [object]$RawResponse,
+        [object[]]$Items,
+        [string]$Expected
+    )
+    Write-Host "$Label diagnostics" -ForegroundColor Yellow
+    Write-Host "Expected: $Expected" -ForegroundColor Yellow
+    Write-Host "Extracted item count: $($Items.Count)" -ForegroundColor Yellow
+    Write-Host "Extracted id/name/runbookType values:" -ForegroundColor Yellow
+    foreach ($item in $Items) {
+        Write-Host "  id=$($item.id) name=$($item.name) runbookType=$($item.runbookType) status=$($item.status)" -ForegroundColor Yellow
+    }
+    Write-Host "Raw response JSON:" -ForegroundColor Yellow
+    Write-Host ($RawResponse | ConvertTo-Json -Depth 30) -ForegroundColor DarkYellow
+}
+
+function Find-RunbookDefinition {
+    param([object[]]$Definitions, [string]$RunbookType, [string]$NameFragment)
+    $match = $Definitions | Where-Object { $_.runbookType -eq $RunbookType } | Select-Object -First 1
+    if ($null -ne $match) { return $match }
+    return $Definitions | Where-Object { "$($_.name)" -like "*$NameFragment*" } | Select-Object -First 1
 }
 
 function Invoke-LocalApi {
@@ -68,10 +105,17 @@ Assert-True ($health.liveTradingEnabled -eq $false) "live trading remains disabl
 Assert-True ($health.externalConnectionsEnabled -eq $false) "external connections remain disabled"
 
 Write-Host "Runbook definitions" -ForegroundColor Cyan
-$definitions = Get-ItemsFromResponse (Invoke-LocalApi "GET" "/ops/runbooks/definitions")
-Assert-True (($definitions | Where-Object { $_.runbookType -eq "StartOfDay" }).Count -gt 0) "StartOfDay definition exists"
-Assert-True (($definitions | Where-Object { $_.runbookType -eq "IntradayCycle" }).Count -gt 0) "IntradayCycle definition exists"
-Assert-True (($definitions | Where-Object { $_.runbookType -eq "EndOfDay" }).Count -gt 0) "EndOfDay definition exists"
+$definitionsResponse = Invoke-LocalApi "GET" "/ops/runbooks/definitions"
+$definitions = @(Get-ItemsFromResponse $definitionsResponse)
+$startOfDayDefinition = Find-RunbookDefinition -Definitions $definitions -RunbookType "StartOfDay" -NameFragment "Start of Day"
+$intradayDefinition = Find-RunbookDefinition -Definitions $definitions -RunbookType "IntradayCycle" -NameFragment "Intraday"
+$endOfDayDefinition = Find-RunbookDefinition -Definitions $definitions -RunbookType "EndOfDay" -NameFragment "End of Day"
+if ($null -eq $startOfDayDefinition) { Write-ListDiagnostics "Runbook definitions" $definitionsResponse $definitions "StartOfDay"; throw "Assertion failed: StartOfDay definition exists" }
+if ($null -eq $intradayDefinition) { Write-ListDiagnostics "Runbook definitions" $definitionsResponse $definitions "IntradayCycle"; throw "Assertion failed: IntradayCycle definition exists" }
+if ($null -eq $endOfDayDefinition) { Write-ListDiagnostics "Runbook definitions" $definitionsResponse $definitions "EndOfDay"; throw "Assertion failed: EndOfDay definition exists" }
+Write-Host "OK: StartOfDay definition exists" -ForegroundColor Green
+Write-Host "OK: IntradayCycle definition exists" -ForegroundColor Green
+Write-Host "OK: EndOfDay definition exists" -ForegroundColor Green
 
 Write-Host "Run StartOfDay" -ForegroundColor Cyan
 $sod = Invoke-LocalApi "POST" "/ops/runbooks/run" @{ runbookType = "StartOfDay"; reason = "Runbook smoke StartOfDay"; input = @{} }
@@ -89,9 +133,15 @@ $eod = Complete-ManualSteps $eod
 Assert-True ([string]::IsNullOrWhiteSpace($eod.id) -eq $false) "EndOfDay returned runbook id"
 
 Write-Host "History and audit" -ForegroundColor Cyan
-$runs = Get-ItemsFromResponse (Invoke-LocalApi "GET" "/ops/runbooks/runs?limit=100")
-Assert-True (($runs | Where-Object { $_.id -eq $sod.id -or $_.runbookType -eq "StartOfDay" }).Count -gt 0) "runbook history contains StartOfDay"
-$audit = Get-ItemsFromResponse (Invoke-LocalApi "GET" "/audit/events?limit=200")
+$runsResponse = Invoke-LocalApi "GET" "/ops/runbooks/runs?limit=100"
+$runs = @(Get-ItemsFromResponse $runsResponse)
+if ((@($runs | Where-Object { $_.id -eq $sod.id -or $_.runbookType -eq "StartOfDay" }).Count) -eq 0) {
+    Write-ListDiagnostics "Runbook history" $runsResponse $runs "StartOfDay run id $($sod.id)"
+    throw "Assertion failed: runbook history contains StartOfDay"
+}
+Write-Host "OK: runbook history contains StartOfDay" -ForegroundColor Green
+$auditResponse = Invoke-LocalApi "GET" "/audit/events?limit=200"
+$audit = @(Get-ItemsFromResponse $auditResponse)
 Assert-True (($audit | Where-Object { $_.eventType -eq "RunbookStarted" }).Count -gt 0) "RunbookStarted audit exists"
 Assert-True (($audit | Where-Object { $_.eventType -in @("RunbookCompleted", "RunbookWaitingForOperator", "RunbookFailed") }).Count -gt 0) "runbook completion/wait/fail audit exists"
 
