@@ -519,6 +519,7 @@ dotnet restore .\QQ.Production.Intraday.sln --configfile .\NuGet.Config
 dotnet build .\QQ.Production.Intraday.sln --no-restore -m:1 /p:BuildInParallel=false
 .\scripts\lmax-lab-print-config.ps1
 .\scripts\lmax-lab-public-data-smoke.ps1
+.\scripts\lmax-lab-account-config-check.ps1
 .\scripts\lmax-lab-account-smoke.ps1
 .\scripts\lmax-lab-fix-dry-run.ps1
 .\scripts\lmax-lab-fix-order-logon-smoke.ps1
@@ -547,6 +548,16 @@ Read-only market data snapshot smoke is also explicit:
 It sends a FIX `MarketDataRequest`, prints bid/ask/mid or reject details, does not submit orders, and does not persist live LMAX data into LocalDB.
 
 LMAX Demo FIX market data snapshot retrieval has been validated in the isolated lab for `EURUSD` using `SecurityId` mode with LMAX instrument id `4001`. The main API/Worker runtime remains FakeLmax-only and does not consume or persist Demo market data.
+
+The lab also has read-only Account API discovery for `https://account-api.london-demo.lmax.com`. It supports `Auto`, `BasicAuth`, `BearerApiKey`, and `HeaderApiKey` auth modes from user-secrets/environment variables only. Manual probes are explicit and safe:
+
+```powershell
+.\scripts\lmax-lab-account-discover.ps1 -AllowExternalConnections -AuthMode Auto -ShowResponseExcerpt
+.\scripts\lmax-lab-account-positions-smoke.ps1 -AllowExternalConnections -AuthMode Auto -ShowResponseExcerpt
+.\scripts\lmax-lab-account-balances-smoke.ps1 -AllowExternalConnections -AuthMode Auto -ShowResponseExcerpt
+```
+
+These commands use GET-only endpoint discovery, print sanitized status/excerpts, do not submit orders, and do not persist live account data into LocalDB.
 
 See [LMAX_CONNECTIVITY_LAB.md](LMAX_CONNECTIVITY_LAB.md) for command details, safety gates, and questions to resolve with LMAX before any real demo/UAT connectivity work.
 

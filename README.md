@@ -526,6 +526,8 @@ It also includes a read-only Demo FIX market data snapshot smoke command. The co
 
 The isolated lab has validated LMAX Demo FIX market data snapshot retrieval for `EURUSD` using `SecurityId` mode with LMAX instrument id `4001`. This does not change the main runtime: API and Worker remain FakeLmax-only, no orders are submitted, and Demo market data is not persisted into LocalDB.
 
+The lab now includes read-only LMAX Account API discovery against `https://account-api.london-demo.lmax.com`. It supports `Auto`, `BasicAuth`, `BearerApiKey`, and `HeaderApiKey` modes from user-secrets/environment variables only. Discovery probes safe GET endpoints for account, positions, balances, open orders, and trade history; it prints sanitized status/excerpts and does not persist live account data.
+
 Useful dry-run commands:
 
 ```powershell
@@ -534,6 +536,8 @@ Useful dry-run commands:
 .\scripts\lmax-lab-fix-order-logon-smoke.ps1
 .\scripts\lmax-lab-fix-marketdata-logon-smoke.ps1
 .\scripts\lmax-lab-fix-marketdata-snapshot-smoke.ps1
+.\scripts\lmax-lab-account-config-check.ps1
+.\scripts\lmax-lab-account-smoke.ps1
 .\scripts\lmax-lab-order-dry-run.ps1
 ```
 

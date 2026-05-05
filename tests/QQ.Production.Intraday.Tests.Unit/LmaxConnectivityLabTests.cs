@@ -433,6 +433,106 @@ public sealed class LmaxConnectivityLabTests
     }
 
     [Fact]
+    public async Task Account_api_smoke_is_skipped_when_external_connections_are_disabled()
+    {
+        var client = new LmaxAccountApiClient(new LmaxConnectivityLabSafetyValidator(), new FakeHttpHandler(_ => new HttpResponseMessage(System.Net.HttpStatusCode.OK)));
+        var options = CompleteAccountOptions();
+        options.AllowExternalConnections = false;
+
+        var result = await client.DiscoverAsync(options, "account-api-smoke", ["/account"], showResponseExcerpt: false, CancellationToken.None);
+
+        Assert.Equal("Skipped", result.Status);
+        Assert.Contains("AllowExternalConnections=false", result.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Account_api_safety_blocks_non_https_production_and_order_submission()
+    {
+        var validator = new LmaxConnectivityLabSafetyValidator();
+        var http = CompleteAccountOptions();
+        http.AccountApiBaseUrl = "http://account-api.london-demo.lmax.com";
+        http.AllowExternalConnections = true;
+        var production = CompleteAccountOptions();
+        production.EnvironmentName = "Production";
+        production.AllowExternalConnections = true;
+        var orderSubmission = CompleteAccountOptions();
+        orderSubmission.AllowExternalConnections = true;
+        orderSubmission.AllowOrderSubmission = true;
+
+        Assert.Contains("HTTPS", string.Join(" ", validator.ValidateForAccountApi(http)), StringComparison.Ordinal);
+        Assert.Contains("Demo or UAT", string.Join(" ", validator.ValidateForAccountApi(production)), StringComparison.Ordinal);
+        Assert.Contains("AllowOrderSubmission=false", string.Join(" ", validator.ValidateForAccountApi(orderSubmission)), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Account_api_auth_headers_are_built_and_masked()
+    {
+        var options = CompleteAccountOptions();
+        options.AccountApiKey = "api-secret";
+        options.AccountApiBearerToken = "bearer-secret";
+
+        using var basic = new HttpRequestMessage(HttpMethod.Get, "/");
+        using var bearer = new HttpRequestMessage(HttpMethod.Get, "/");
+        using var header = new HttpRequestMessage(HttpMethod.Get, "/");
+        LmaxAccountApiClient.ApplyAuth(basic, options, LmaxAccountApiAuthMode.BasicAuth);
+        LmaxAccountApiClient.ApplyAuth(bearer, options, LmaxAccountApiAuthMode.BearerApiKey);
+        LmaxAccountApiClient.ApplyAuth(header, options, LmaxAccountApiAuthMode.HeaderApiKey);
+
+        Assert.Equal("Basic", basic.Headers.Authorization?.Scheme);
+        Assert.Equal("Bearer", bearer.Headers.Authorization?.Scheme);
+        Assert.True(header.Headers.Contains("X-API-Key"));
+        Assert.DoesNotContain("api-secret", LmaxAccountApiClient.BuildMaskedAuthSummary(options, LmaxAccountApiAuthMode.HeaderApiKey), StringComparison.Ordinal);
+        Assert.DoesNotContain("bearer-secret", LmaxAccountApiClient.BuildMaskedAuthSummary(options, LmaxAccountApiAuthMode.BearerApiKey), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Account_api_auto_mode_prefers_basic_then_api_key()
+    {
+        var basic = CompleteAccountOptions();
+        basic.AccountApiKey = "key";
+        var keyOnly = CompleteAccountOptions();
+        keyOnly.AccountApiUsername = null;
+        keyOnly.AccountApiPassword = null;
+        keyOnly.AccountApiKey = "key";
+
+        Assert.Equal(LmaxAccountApiAuthMode.BasicAuth, LmaxAccountApiClient.ResolveAuthModes(basic).First());
+        Assert.Equal(LmaxAccountApiAuthMode.BearerApiKey, LmaxAccountApiClient.ResolveAuthModes(keyOnly).First());
+    }
+
+    [Fact]
+    public async Task Account_api_discovery_treats_404_as_non_fatal_and_401_as_auth_issue()
+    {
+        var client404 = new LmaxAccountApiClient(new LmaxConnectivityLabSafetyValidator(), new FakeHttpHandler(_ => new HttpResponseMessage(System.Net.HttpStatusCode.NotFound) { Content = new StringContent("{}") }));
+        var client401 = new LmaxAccountApiClient(new LmaxConnectivityLabSafetyValidator(), new FakeHttpHandler(_ => new HttpResponseMessage(System.Net.HttpStatusCode.Unauthorized) { Content = new StringContent("{}") }));
+        var options = CompleteAccountOptions();
+        options.AllowExternalConnections = true;
+
+        var notFound = await client404.DiscoverAsync(options, "account-api-discover", ["/missing"], showResponseExcerpt: true, CancellationToken.None);
+        var unauthorized = await client401.DiscoverAsync(options, "account-api-discover", ["/account"], showResponseExcerpt: true, CancellationToken.None);
+
+        Assert.Equal("Skipped", notFound.Status);
+        Assert.Equal("NotFound", notFound.EndpointProbes.Single().Status);
+        Assert.Equal("Failed", unauthorized.Status);
+        Assert.Equal("Unauthorized", unauthorized.EndpointProbes.Single().Status);
+    }
+
+    [Fact]
+    public async Task Account_api_reachable_json_response_reports_safe_shape_without_secrets()
+    {
+        var client = new LmaxAccountApiClient(new LmaxConnectivityLabSafetyValidator(), new FakeHttpHandler(_ => new HttpResponseMessage(System.Net.HttpStatusCode.OK) { Content = new StringContent("{\"positions\":[{\"symbol\":\"EURUSD\"}],\"wallets\":[]}") }));
+        var options = CompleteAccountOptions();
+        options.AllowExternalConnections = true;
+        options.AccountApiPassword = "do-not-print";
+
+        var result = await client.DiscoverAsync(options, "account-api-discover", ["/account"], showResponseExcerpt: true, CancellationToken.None);
+
+        Assert.Equal("Ok", result.Status);
+        Assert.Contains("positions", result.EndpointProbes.Single().TopLevelFields);
+        Assert.DoesNotContain("do-not-print", result.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("do-not-print", string.Join("|", result.EndpointProbes.Select(x => x.Excerpt)), StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Api_and_worker_do_not_reference_connectivity_lab()
     {
         var root = FindRepoRoot();
@@ -457,7 +557,7 @@ public sealed class LmaxConnectivityLabTests
     }
 
     private static LmaxConnectivityLabRunner CreateRunner()
-        => new(new PlaceholderLmaxPublicDataClient(), new PlaceholderLmaxAccountClient(), new PlaceholderLmaxFixSessionClient(), new LmaxConnectivityLabSafetyValidator());
+        => new(new PlaceholderLmaxPublicDataClient(), new LmaxAccountApiClient(new LmaxConnectivityLabSafetyValidator()), new PlaceholderLmaxFixSessionClient(), new LmaxConnectivityLabSafetyValidator());
 
     private static LmaxConnectivityLabOptions CompleteFixOptions(bool liveTrading = false, bool orderSubmission = false)
         => new()
@@ -478,6 +578,19 @@ public sealed class LmaxConnectivityLabTests
             FixPassword = "password",
             LmaxSlashSymbol = "EUR/USD",
             FixSecurityIdSource = "8"
+        };
+
+    private static LmaxConnectivityLabOptions CompleteAccountOptions()
+        => new()
+        {
+            EnvironmentName = "Demo",
+            AccountApiBaseUrl = "https://account-api.london-demo.lmax.com",
+            AccountApiAuthMode = LmaxAccountApiAuthMode.Auto,
+            AccountApiUsername = "demo-user",
+            AccountApiPassword = "demo-password",
+            AllowExternalConnections = false,
+            AllowOrderSubmission = false,
+            AllowLiveTrading = false
         };
 
     private static LmaxFixMarketDataRequestOptions CompleteMarketDataRequestOptions()
@@ -510,5 +623,11 @@ public sealed class LmaxConnectivityLabTests
         }
 
         throw new DirectoryNotFoundException("Could not locate repository root.");
+    }
+
+    private sealed class FakeHttpHandler(Func<HttpRequestMessage, HttpResponseMessage> handler) : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+            => Task.FromResult(handler(request));
     }
 }

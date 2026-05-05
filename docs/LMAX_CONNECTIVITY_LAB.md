@@ -74,6 +74,9 @@ QQ_LMAX_ALLOW_ORDER_SUBMISSION
 QQ_LMAX_ALLOW_LIVE_TRADING
 QQ_LMAX_DRY_RUN
 QQ_LMAX_ACCOUNT_API_BASE_URL
+QQ_LMAX_ACCOUNT_API_AUTH_MODE
+QQ_LMAX_ACCOUNT_API_USERNAME
+QQ_LMAX_ACCOUNT_API_PASSWORD
 QQ_LMAX_PUBLIC_DATA_API_BASE_URL
 QQ_LMAX_FIX_ORDER_HOST
 QQ_LMAX_FIX_ORDER_PORT
@@ -86,6 +89,9 @@ QQ_LMAX_FIX_TARGET_COMP_ID
 QQ_LMAX_FIX_USERNAME
 QQ_LMAX_FIX_PASSWORD
 QQ_LMAX_ACCOUNT_API_KEY
+QQ_LMAX_ACCOUNT_API_KEY_HEADER_NAME
+QQ_LMAX_ACCOUNT_API_BEARER_TOKEN
+QQ_LMAX_ACCOUNT_API_REQUEST_TIMEOUT_SECONDS
 QQ_LMAX_INSTRUMENT_SYMBOL
 QQ_LMAX_INSTRUMENT_ID
 QQ_LMAX_SLASH_SYMBOL
@@ -108,6 +114,11 @@ dotnet run --project .\tools\QQ.Production.Intraday.Lmax.ConnectivityLab -- prin
 dotnet run --project .\tools\QQ.Production.Intraday.Lmax.ConnectivityLab -- check-public-data-config
 dotnet run --project .\tools\QQ.Production.Intraday.Lmax.ConnectivityLab -- public-data-smoke
 dotnet run --project .\tools\QQ.Production.Intraday.Lmax.ConnectivityLab -- account-api-smoke
+dotnet run --project .\tools\QQ.Production.Intraday.Lmax.ConnectivityLab -- account-api-discover
+dotnet run --project .\tools\QQ.Production.Intraday.Lmax.ConnectivityLab -- account-api-positions-smoke
+dotnet run --project .\tools\QQ.Production.Intraday.Lmax.ConnectivityLab -- account-api-balances-smoke
+dotnet run --project .\tools\QQ.Production.Intraday.Lmax.ConnectivityLab -- account-api-open-orders-smoke
+dotnet run --project .\tools\QQ.Production.Intraday.Lmax.ConnectivityLab -- account-api-trade-history-smoke
 dotnet run --project .\tools\QQ.Production.Intraday.Lmax.ConnectivityLab -- fix-session-dry-run
 dotnet run --project .\tools\QQ.Production.Intraday.Lmax.ConnectivityLab -- fix-market-data-smoke
 dotnet run --project .\tools\QQ.Production.Intraday.Lmax.ConnectivityLab -- fix-order-logon-smoke
@@ -122,6 +133,59 @@ The smoke commands skip safely unless `AllowExternalConnections=true` and requir
 `fix-order-logon-smoke` and `fix-marketdata-logon-smoke` use a minimal raw FIX 4.4 logon/logoff implementation over TLS. They send only Logon and Logout. They do not submit orders and do not subscribe to market data. QuickFIX/n is not currently added; this keeps the lab dependency-free while still allowing a controlled Demo/UAT logon check.
 
 `fix-marketdata-snapshot-smoke` logs on to the market data session, sends a read-only `MarketDataRequest` (`35=V`), parses `MarketDataSnapshotFullRefresh` (`35=W`), `MarketDataIncrementalRefresh` (`35=X`), or `MarketDataRequestReject` (`35=Y`), prints bid/ask/mid if received, then unsubscribes when needed and logs out. It does not persist data to LocalDB and is not integrated with the execution workflow.
+
+## Account API Read-Only Discovery
+
+The lab includes read-only Account REST API discovery for LMAX Demo/UAT. It is exploratory and isolated. It does not persist account data into LocalDB, does not create broker positions, does not update wallets, does not submit orders, and is not referenced by `QQ.Production.Intraday.Api` or `QQ.Production.Intraday.Worker`.
+
+Default Demo endpoints:
+
+```text
+AccountApiBaseUrl = https://account-api.london-demo.lmax.com
+PublicDataApiBaseUrl = https://public-data-api.london-demo.lmax.com
+```
+
+Configure credentials with user-secrets or environment variables only:
+
+```powershell
+dotnet user-secrets set "LmaxConnectivityLab:AccountApiAuthMode" "Auto" --project .\tools\QQ.Production.Intraday.Lmax.ConnectivityLab
+dotnet user-secrets set "LmaxConnectivityLab:AccountApiUsername" "<demo-username>" --project .\tools\QQ.Production.Intraday.Lmax.ConnectivityLab
+dotnet user-secrets set "LmaxConnectivityLab:AccountApiPassword" "<demo-password>" --project .\tools\QQ.Production.Intraday.Lmax.ConnectivityLab
+
+# If LMAX provides API-key auth instead:
+dotnet user-secrets set "LmaxConnectivityLab:AccountApiKey" "<api-key>" --project .\tools\QQ.Production.Intraday.Lmax.ConnectivityLab
+```
+
+Supported auth modes:
+
+- `Auto`: tries BasicAuth when username/password exist, then Bearer API key, then header API key.
+- `BasicAuth`: sends `Authorization: Basic ...`.
+- `BearerApiKey`: sends `Authorization: Bearer ...` using `AccountApiBearerToken` or `AccountApiKey`.
+- `HeaderApiKey`: sends `AccountApiKeyHeaderName` with the API key; default header is `X-API-Key`.
+- `UsernamePasswordForm`: intentionally not guessed; skipped unless a known safe auth endpoint is later implemented.
+- `None`: no auth header, useful only for probing public metadata endpoints.
+
+Read-only commands:
+
+```powershell
+.\scripts\lmax-lab-account-config-check.ps1
+.\scripts\lmax-lab-account-smoke.ps1
+.\scripts\lmax-lab-account-discover.ps1 -AllowExternalConnections -AuthMode Auto -ShowResponseExcerpt
+.\scripts\lmax-lab-account-positions-smoke.ps1 -AllowExternalConnections -AuthMode Auto -ShowResponseExcerpt
+.\scripts\lmax-lab-account-balances-smoke.ps1 -AllowExternalConnections -AuthMode Auto -ShowResponseExcerpt
+.\scripts\lmax-lab-account-open-orders-smoke.ps1 -AllowExternalConnections -AuthMode Auto -ShowResponseExcerpt
+.\scripts\lmax-lab-account-trade-history-smoke.ps1 -AllowExternalConnections -AuthMode Auto -ShowResponseExcerpt
+```
+
+`account-api-discover` probes a controlled set of GET-only endpoints, including `/openapi.json`, `/account`, `/accounts`, `/v1/account/positions`, `/v1/account/balances`, `/working-orders`, `/instrument-positions`, `/wallets`, and `/trade-history`. It reports HTTP status, content type, top-level JSON field names, array counts where obvious, and a sanitized short excerpt only when `-ShowResponseExcerpt` is used. `404` is treated as discovery information, not infrastructure failure. `401`/`403` is reported as authentication or permission failure.
+
+Troubleshooting:
+
+- `401 Unauthorized`: wrong auth mode, username/password, bearer token, or API key.
+- `403 Forbidden`: credentials are valid but the account may not have API permission.
+- `404 Not Found`: endpoint path is probably wrong; try discovery and record working endpoints here once confirmed.
+- TLS/proxy issues: outbound HTTPS to `account-api.london-demo.lmax.com:443` must be allowed.
+- Docs vs contact guidance: public docs may require API-key auth even though LMAX contact said Demo credentials may work; keep `AccountApiAuthMode=Auto` until a working mode is confirmed.
 
 ## Scripts
 
@@ -268,6 +332,6 @@ After logon works, next safe steps are read-only market data snapshot investigat
 - No official LMAX client library is wired in.
 - QuickFIX/n is not wired in; FIX logon and market-data snapshot smoke use a minimal raw FIX client.
 - Public data smoke returns `Skipped` unless a future client is implemented.
-- Account API smoke returns `Skipped` unless a future client is implemented.
+- Account API discovery is read-only and exploratory; working positions/balances/open-orders/trade-history endpoint paths still need to be confirmed against LMAX Demo.
 - Demo order command is gated and returns `Skipped`; it does not submit orders.
 - Main API/Worker remain FakeLmax-only.

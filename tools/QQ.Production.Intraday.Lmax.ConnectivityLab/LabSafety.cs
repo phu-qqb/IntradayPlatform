@@ -48,6 +48,24 @@ public sealed class LmaxConnectivityLabSafetyValidator
         return issues;
     }
 
+    public IReadOnlyList<string> ValidateForAccountApi(LmaxConnectivityLabOptions options)
+    {
+        var issues = new List<string>();
+        if (options.AllowLiveTrading) issues.Add("Account API smoke is blocked because AllowLiveTrading=true.");
+        if (options.AllowOrderSubmission) issues.Add("Account API smoke requires AllowOrderSubmission=false.");
+        if (!options.AllowExternalConnections) issues.Add("Account API smoke is skipped because AllowExternalConnections=false.");
+        if (!IsDemoOrUat(options.EnvironmentName)) issues.Add("Account API smoke is allowed only in Demo or UAT environments.");
+        if (string.IsNullOrWhiteSpace(options.AccountApiBaseUrl)) issues.Add("Missing AccountApiBaseUrl.");
+        else if (!Uri.TryCreate(options.AccountApiBaseUrl, UriKind.Absolute, out var uri)) issues.Add("AccountApiBaseUrl is not a valid absolute URI.");
+        else
+        {
+            if (!uri.Scheme.Equals(Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase)) issues.Add("AccountApiBaseUrl must use HTTPS.");
+            if (!IsKnownLmaxDemoOrUatHost(uri.Host)) issues.Add("AccountApiBaseUrl must be an LMAX demo/UAT host for this lab command.");
+        }
+
+        return issues;
+    }
+
     public static IReadOnlyList<string> DecisionsForExternalCommand(LmaxConnectivityLabOptions options)
     {
         var decisions = new List<string>
@@ -66,4 +84,8 @@ public sealed class LmaxConnectivityLabSafetyValidator
 
     public static bool IsDemoOrUat(string environmentName)
         => environmentName.Equals("Demo", StringComparison.OrdinalIgnoreCase) || environmentName.Equals("UAT", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsKnownLmaxDemoOrUatHost(string host)
+        => host.EndsWith(".lmax.com", StringComparison.OrdinalIgnoreCase)
+           && (host.Contains("demo", StringComparison.OrdinalIgnoreCase) || host.Contains("uat", StringComparison.OrdinalIgnoreCase));
 }

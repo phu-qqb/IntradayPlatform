@@ -2,7 +2,7 @@ using QQ.Production.Intraday.Lmax.ConnectivityLab;
 
 var runner = new LmaxConnectivityLabRunner(
     new PlaceholderLmaxPublicDataClient(),
-    new PlaceholderLmaxAccountClient(),
+    new LmaxAccountApiClient(new LmaxConnectivityLabSafetyValidator()),
     new RawLmaxFixSessionClient(new LmaxConnectivityLabSafetyValidator()),
     new LmaxConnectivityLabSafetyValidator());
 

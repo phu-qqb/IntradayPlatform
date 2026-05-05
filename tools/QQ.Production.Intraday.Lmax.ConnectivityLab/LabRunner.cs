@@ -2,7 +2,7 @@ namespace QQ.Production.Intraday.Lmax.ConnectivityLab;
 
 public sealed class LmaxConnectivityLabRunner(
     ILmaxPublicDataClient publicDataClient,
-    ILmaxAccountClient accountClient,
+    ILmaxAccountApiClient accountClient,
     ILmaxFixSessionClient fixClient,
     LmaxConnectivityLabSafetyValidator safety)
 {
@@ -21,12 +21,28 @@ public sealed class LmaxConnectivityLabRunner(
             return marketDataResult.Status == "Failed" ? 1 : 0;
         }
 
+        if (command.StartsWith("account-api-", StringComparison.OrdinalIgnoreCase))
+        {
+            var accountResult = command.ToLowerInvariant() switch
+            {
+                "account-api-config-check" => ToAccountResult(accountClient.CheckConfig(options), options),
+                "account-api-discover" => await accountClient.DiscoverAsync(options, command, LmaxAccountApiClient.DefaultDiscoveryEndpoints, HasFlag(optionArgs, "show-response-excerpt"), cancellationToken),
+                "account-api-smoke" => await accountClient.DiscoverAsync(options, command, LmaxAccountApiClient.DefaultDiscoveryEndpoints.Take(8).ToList(), HasFlag(optionArgs, "show-response-excerpt"), cancellationToken),
+                "account-api-positions-smoke" => await accountClient.DiscoverAsync(options, command, LmaxAccountApiClient.PositionEndpoints, HasFlag(optionArgs, "show-response-excerpt"), cancellationToken),
+                "account-api-balances-smoke" => await accountClient.DiscoverAsync(options, command, LmaxAccountApiClient.BalanceEndpoints, HasFlag(optionArgs, "show-response-excerpt"), cancellationToken),
+                "account-api-open-orders-smoke" => await accountClient.DiscoverAsync(options, command, LmaxAccountApiClient.OpenOrderEndpoints, HasFlag(optionArgs, "show-response-excerpt"), cancellationToken),
+                "account-api-trade-history-smoke" => await accountClient.DiscoverAsync(options, command, LmaxAccountApiClient.TradeHistoryEndpoints, HasFlag(optionArgs, "show-response-excerpt"), cancellationToken),
+                _ => LmaxAccountApiSmokeResult.Skipped(command, $"Unknown account API command '{command}'.", options, [])
+            };
+            WriteAccountApiResult(accountResult);
+            return accountResult.Status == "Failed" ? 1 : 0;
+        }
+
         var result = command.ToLowerInvariant() switch
         {
             "print-config" => PrintConfig(options),
             "check-public-data-config" => CheckPublicDataConfig(options),
             "public-data-smoke" => await publicDataClient.SmokeAsync(options, cancellationToken),
-            "account-api-smoke" => await accountClient.SmokeAsync(options, cancellationToken),
             "fix-session-dry-run" => fixClient.Validate(options, marketData: false),
             "fix-market-data-smoke" => await fixClient.SmokeAsync(options, marketData: true, cancellationToken),
             "fix-order-logon-smoke" => await fixClient.LogonSmokeAsync(options, marketData: false, cancellationToken),
@@ -91,6 +107,38 @@ public sealed class LmaxConnectivityLabRunner(
             Console.WriteLine($"- {decision}");
         }
     }
+
+    private static void WriteAccountApiResult(LmaxAccountApiSmokeResult result)
+    {
+        Console.WriteLine($"Command: {result.Command}");
+        Console.WriteLine($"Status: {result.Status}");
+        Console.WriteLine($"BaseUrl: {result.BaseUrl}");
+        Console.WriteLine($"StartedAtUtc: {result.StartedAtUtc:O}");
+        Console.WriteLine($"CompletedAtUtc: {result.CompletedAtUtc:O}");
+        Console.WriteLine($"Message: {result.Message}");
+        foreach (var attempt in result.AuthAttempts)
+        {
+            Console.WriteLine($"AuthAttempt: Mode={attempt.AuthMode} Status={attempt.Status} Message={attempt.Message}");
+        }
+        foreach (var probe in result.EndpointProbes)
+        {
+            Console.WriteLine($"Probe: Endpoint={probe.Endpoint} AuthMode={probe.AuthMode} Status={probe.Status} HttpStatus={probe.HttpStatus} ContentType={probe.ContentType} ItemCount={probe.ItemCount} Fields={string.Join(",", probe.TopLevelFields)} Message={probe.Message}");
+            if (!string.IsNullOrWhiteSpace(probe.Excerpt)) Console.WriteLine($"Excerpt: {probe.Excerpt}");
+        }
+        foreach (var decision in result.SafetyDecisions)
+        {
+            Console.WriteLine($"- {decision}");
+        }
+    }
+
+    private static LmaxAccountApiSmokeResult ToAccountResult(LabCommandResult result, LmaxConnectivityLabOptions options)
+    {
+        var now = DateTimeOffset.UtcNow;
+        return new(result.Command, result.Status, result.Message, options.AccountApiBaseUrl ?? "(not configured)", result.SafetyDecisions, [], [], now, now);
+    }
+
+    private static bool HasFlag(IEnumerable<string> args, string name)
+        => args.Any(x => x.Equals($"--{name}=true", StringComparison.OrdinalIgnoreCase) || x.Equals($"--{name}", StringComparison.OrdinalIgnoreCase));
 
     private static void WriteMarketDataResult(LmaxFixMarketDataSmokeResult result)
     {

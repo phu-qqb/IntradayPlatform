@@ -14,8 +14,15 @@ public sealed class LmaxConnectivityLabOptions
     public bool DryRun { get; set; } = true;
     public string VenueName { get; set; } = "LMAX";
     public string AccountCode { get; set; } = "LMAX_DEMO_LOCAL";
-    public string? AccountApiBaseUrl { get; set; }
-    public string? PublicDataApiBaseUrl { get; set; }
+    public string? AccountApiBaseUrl { get; set; } = "https://account-api.london-demo.lmax.com";
+    public string? PublicDataApiBaseUrl { get; set; } = "https://public-data-api.london-demo.lmax.com";
+    public LmaxAccountApiAuthMode AccountApiAuthMode { get; set; } = LmaxAccountApiAuthMode.Auto;
+    public string? AccountApiUsername { get; set; }
+    public string? AccountApiPassword { get; set; }
+    public string? AccountApiKey { get; set; }
+    public string AccountApiKeyHeaderName { get; set; } = "X-API-Key";
+    public string? AccountApiBearerToken { get; set; }
+    public int AccountApiRequestTimeoutSeconds { get; set; } = 10;
     public string? FixOrderHost { get; set; }
     public int? FixOrderPort { get; set; }
     public string? FixMarketDataHost { get; set; }
@@ -40,7 +47,6 @@ public sealed class LmaxConnectivityLabOptions
     public LmaxFixMarketDataSymbolEncodingMode MarketDataSymbolEncodingMode { get; set; } = LmaxFixMarketDataSymbolEncodingMode.SecurityIdAndSymbol;
     public bool ShowFixMessages { get; set; } = false;
     public int RequestTimeoutSeconds { get; set; } = 10;
-    public string? AccountApiKey { get; set; }
 
     public static LmaxConnectivityLabOptions FromEnvironmentAndArgs(string[] args)
     {
@@ -67,6 +73,13 @@ public sealed class LmaxConnectivityLabOptions
             if (key == "dry-run") options.DryRun = bool.Parse(value);
             if (key == "public-data-api-base-url") options.PublicDataApiBaseUrl = value;
             if (key == "account-api-base-url") options.AccountApiBaseUrl = value;
+            if (key == "account-api-auth-mode" || key == "auth-mode") options.AccountApiAuthMode = Enum.Parse<LmaxAccountApiAuthMode>(value, ignoreCase: true);
+            if (key == "account-api-username") options.AccountApiUsername = value;
+            if (key == "account-api-password") options.AccountApiPassword = value;
+            if (key == "account-api-key") options.AccountApiKey = value;
+            if (key == "account-api-key-header-name") options.AccountApiKeyHeaderName = value;
+            if (key == "account-api-bearer-token") options.AccountApiBearerToken = value;
+            if (key == "account-api-request-timeout-seconds") options.AccountApiRequestTimeoutSeconds = int.Parse(value);
             if (key == "fix-order-host") options.FixOrderHost = value;
             if (key == "fix-order-port") options.FixOrderPort = int.Parse(value);
             if (key == "fix-market-data-host") options.FixMarketDataHost = value;
@@ -108,6 +121,13 @@ public sealed class LmaxConnectivityLabOptions
             ["AccountCode"] = AccountCode,
             ["AccountApiBaseUrl"] = AccountApiBaseUrl ?? "(not configured)",
             ["PublicDataApiBaseUrl"] = PublicDataApiBaseUrl ?? "(not configured)",
+            ["AccountApiAuthMode"] = AccountApiAuthMode.ToString(),
+            ["AccountApiUsername"] = Mask(AccountApiUsername),
+            ["AccountApiPassword"] = Mask(AccountApiPassword),
+            ["AccountApiKey"] = Mask(AccountApiKey),
+            ["AccountApiKeyHeaderName"] = AccountApiKeyHeaderName,
+            ["AccountApiBearerToken"] = Mask(AccountApiBearerToken),
+            ["AccountApiRequestTimeoutSeconds"] = AccountApiRequestTimeoutSeconds.ToString(),
             ["FixOrderHost"] = FixOrderHost ?? "(not configured)",
             ["FixOrderPort"] = FixOrderPort?.ToString() ?? "(not configured)",
             ["FixMarketDataHost"] = FixMarketDataHost ?? "(not configured)",
@@ -131,8 +151,7 @@ public sealed class LmaxConnectivityLabOptions
             ["MarketDataMaxMessages"] = MarketDataMaxMessages.ToString(),
             ["MarketDataSymbolEncodingMode"] = MarketDataSymbolEncodingMode.ToString(),
             ["ShowFixMessages"] = ShowFixMessages.ToString(),
-            ["RequestTimeoutSeconds"] = RequestTimeoutSeconds.ToString(),
-            ["AccountApiKey"] = Mask(AccountApiKey)
+            ["RequestTimeoutSeconds"] = RequestTimeoutSeconds.ToString()
         };
 
     public static string Mask(string? value)
@@ -207,6 +226,13 @@ public sealed class LmaxConnectivityLabOptions
         SetIfPresent(values, "LmaxConnectivityLab:AccountCode", "QQ_LMAX_ACCOUNT_CODE", "LmaxConnectivityLab__AccountCode");
         SetIfPresent(values, "LmaxConnectivityLab:AccountApiBaseUrl", "QQ_LMAX_ACCOUNT_API_BASE_URL", "LmaxConnectivityLab__AccountApiBaseUrl");
         SetIfPresent(values, "LmaxConnectivityLab:PublicDataApiBaseUrl", "QQ_LMAX_PUBLIC_DATA_API_BASE_URL", "LmaxConnectivityLab__PublicDataApiBaseUrl");
+        SetIfPresent(values, "LmaxConnectivityLab:AccountApiAuthMode", "QQ_LMAX_ACCOUNT_API_AUTH_MODE", "LmaxConnectivityLab__AccountApiAuthMode");
+        SetIfPresent(values, "LmaxConnectivityLab:AccountApiUsername", "QQ_LMAX_ACCOUNT_API_USERNAME", "LmaxConnectivityLab__AccountApiUsername");
+        SetIfPresent(values, "LmaxConnectivityLab:AccountApiPassword", "QQ_LMAX_ACCOUNT_API_PASSWORD", "LmaxConnectivityLab__AccountApiPassword");
+        SetIfPresent(values, "LmaxConnectivityLab:AccountApiKey", "QQ_LMAX_ACCOUNT_API_KEY", "LmaxConnectivityLab__AccountApiKey");
+        SetIfPresent(values, "LmaxConnectivityLab:AccountApiKeyHeaderName", "QQ_LMAX_ACCOUNT_API_KEY_HEADER_NAME", "LmaxConnectivityLab__AccountApiKeyHeaderName");
+        SetIfPresent(values, "LmaxConnectivityLab:AccountApiBearerToken", "QQ_LMAX_ACCOUNT_API_BEARER_TOKEN", "LmaxConnectivityLab__AccountApiBearerToken");
+        SetIfPresent(values, "LmaxConnectivityLab:AccountApiRequestTimeoutSeconds", "QQ_LMAX_ACCOUNT_API_REQUEST_TIMEOUT_SECONDS", "LmaxConnectivityLab__AccountApiRequestTimeoutSeconds");
         SetIfPresent(values, "LmaxConnectivityLab:FixOrderHost", "QQ_LMAX_FIX_ORDER_HOST", "LmaxConnectivityLab__FixOrderHost");
         SetIfPresent(values, "LmaxConnectivityLab:FixOrderPort", "QQ_LMAX_FIX_ORDER_PORT", "LmaxConnectivityLab__FixOrderPort");
         SetIfPresent(values, "LmaxConnectivityLab:FixMarketDataHost", "QQ_LMAX_FIX_MARKET_DATA_HOST", "LmaxConnectivityLab__FixMarketDataHost");
@@ -231,7 +257,6 @@ public sealed class LmaxConnectivityLabOptions
         SetIfPresent(values, "LmaxConnectivityLab:MarketDataSymbolEncodingMode", "QQ_LMAX_MARKET_DATA_SYMBOL_ENCODING_MODE", "LmaxConnectivityLab__MarketDataSymbolEncodingMode");
         SetIfPresent(values, "LmaxConnectivityLab:ShowFixMessages", "QQ_LMAX_SHOW_FIX_MESSAGES", "LmaxConnectivityLab__ShowFixMessages");
         SetIfPresent(values, "LmaxConnectivityLab:RequestTimeoutSeconds", "QQ_LMAX_REQUEST_TIMEOUT_SECONDS", "LmaxConnectivityLab__RequestTimeoutSeconds");
-        SetIfPresent(values, "LmaxConnectivityLab:AccountApiKey", "QQ_LMAX_ACCOUNT_API_KEY", "LmaxConnectivityLab__AccountApiKey");
     }
 
     private static void SetIfPresent(IDictionary<string, string> values, string key, params string[] environmentNames)
@@ -259,6 +284,13 @@ public sealed class LmaxConnectivityLabOptions
         options.AccountCode = GetString(values, nameof(AccountCode), options.AccountCode) ?? options.AccountCode;
         options.AccountApiBaseUrl = GetString(values, nameof(AccountApiBaseUrl), options.AccountApiBaseUrl);
         options.PublicDataApiBaseUrl = GetString(values, nameof(PublicDataApiBaseUrl), options.PublicDataApiBaseUrl);
+        options.AccountApiAuthMode = GetEnum(values, nameof(AccountApiAuthMode), options.AccountApiAuthMode);
+        options.AccountApiUsername = GetString(values, nameof(AccountApiUsername), options.AccountApiUsername);
+        options.AccountApiPassword = GetString(values, nameof(AccountApiPassword), options.AccountApiPassword);
+        options.AccountApiKey = GetString(values, nameof(AccountApiKey), options.AccountApiKey);
+        options.AccountApiKeyHeaderName = GetString(values, nameof(AccountApiKeyHeaderName), options.AccountApiKeyHeaderName) ?? options.AccountApiKeyHeaderName;
+        options.AccountApiBearerToken = GetString(values, nameof(AccountApiBearerToken), options.AccountApiBearerToken);
+        options.AccountApiRequestTimeoutSeconds = GetInt(values, nameof(AccountApiRequestTimeoutSeconds), options.AccountApiRequestTimeoutSeconds) ?? options.AccountApiRequestTimeoutSeconds;
         options.FixOrderHost = GetString(values, nameof(FixOrderHost), options.FixOrderHost);
         options.FixOrderPort = GetInt(values, nameof(FixOrderPort), options.FixOrderPort);
         options.FixMarketDataHost = GetString(values, nameof(FixMarketDataHost), options.FixMarketDataHost);
@@ -317,6 +349,8 @@ public sealed record LabCommandResult(
     public static LabCommandResult Blocked(string command, string message, IReadOnlyList<string> decisions) => new(command, "Blocked", message, decisions);
     public static LabCommandResult Failed(string command, string message, IReadOnlyList<string> decisions) => new(command, "Failed", message, decisions);
 }
+
+public enum LmaxAccountApiAuthMode { None, BasicAuth, BearerApiKey, HeaderApiKey, UsernamePasswordForm, Auto }
 
 public sealed record LmaxFixOptions(string? Host, int? Port, string? SenderCompId, string? TargetCompId, string? Username, bool UseTls);
 public sealed record LmaxFixSessionHealth(bool Configured, bool Connected, string Message);
