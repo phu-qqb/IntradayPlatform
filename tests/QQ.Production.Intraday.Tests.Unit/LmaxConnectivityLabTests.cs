@@ -533,6 +533,136 @@ public sealed class LmaxConnectivityLabTests
     }
 
     [Fact]
+    public void Fix_capability_scanner_detects_supported_and_unsupported_messages()
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"lmax-fix-dictionary-{Guid.NewGuid():N}.xml");
+        File.WriteAllText(path, """
+            <fix>
+              <messages>
+                <message name="OrderStatusRequest" msgtype="H"><field name="ClOrdID" required="Y" /></message>
+                <message name="ExecutionReport" msgtype="8"><field name="ExecID" required="Y" /></message>
+                <message name="TradeCaptureReportRequest" msgtype="AD"><group name="TrdCapDtGrp" required="Y" /></message>
+                <message name="TradeCaptureReportRequestAck" msgtype="AQ"><field name="TradeRequestID" required="Y" /></message>
+                <message name="TradeCaptureReport" msgtype="AE"><field name="ExecID" required="Y" /></message>
+              </messages>
+            </fix>
+            """);
+        try
+        {
+            var result = LmaxFixRecoveryCodec.ScanDictionary(path);
+
+            Assert.Equal("Ok", result.Status);
+            Assert.Contains(result.Capabilities, x => x.MessageName == "OrderStatusRequest" && x.MsgType == "H" && x.Supported);
+            Assert.Contains(result.Capabilities, x => x.MessageName == "ExecutionReport" && x.MsgType == "8" && x.Supported);
+            Assert.Contains(result.Capabilities, x => x.MessageName == "TradeCaptureReportRequest" && x.MsgType == "AD" && x.Supported);
+            Assert.Contains(result.Capabilities, x => x.MessageName == "TradeCaptureReportRequestAck" && x.MsgType == "AQ" && x.Supported);
+            Assert.Contains(result.Capabilities, x => x.MessageName == "TradeCaptureReport" && x.MsgType == "AE" && x.Supported);
+            Assert.Contains(result.Capabilities, x => x.MessageName == "OrderMassStatusRequest" && x.MsgType == "AF" && !x.Supported);
+            Assert.Contains(result.Capabilities, x => x.MessageName == "RequestForPositions" && x.MsgType == "AN" && !x.Supported);
+            Assert.Contains(result.Capabilities, x => x.MessageName == "PositionReport" && x.MsgType == "AP" && !x.Supported);
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public void Trade_capture_request_builder_emits_read_only_ad_request()
+    {
+        var options = LmaxFixTradeCaptureRequestOptions.From(
+            new DateTimeOffset(2026, 5, 5, 12, 0, 0, TimeSpan.Zero),
+            60,
+            null,
+            null,
+            "ACC1",
+            10,
+            50,
+            false);
+
+        var request = LmaxFixRecoveryCodec.BuildTradeCaptureReportRequest("SENDER", "LMXBD", 2, "TCREQ1", options);
+
+        Assert.Contains($"{LmaxFixMarketDataCodec.Soh}35=AD{LmaxFixMarketDataCodec.Soh}", request, StringComparison.Ordinal);
+        Assert.Contains($"{LmaxFixMarketDataCodec.Soh}568=TCREQ1{LmaxFixMarketDataCodec.Soh}", request, StringComparison.Ordinal);
+        Assert.Contains($"{LmaxFixMarketDataCodec.Soh}569=1{LmaxFixMarketDataCodec.Soh}", request, StringComparison.Ordinal);
+        Assert.Contains($"{LmaxFixMarketDataCodec.Soh}263=0{LmaxFixMarketDataCodec.Soh}", request, StringComparison.Ordinal);
+        Assert.Contains($"{LmaxFixMarketDataCodec.Soh}1=ACC1{LmaxFixMarketDataCodec.Soh}", request, StringComparison.Ordinal);
+        Assert.Contains($"{LmaxFixMarketDataCodec.Soh}580=2{LmaxFixMarketDataCodec.Soh}", request, StringComparison.Ordinal);
+        Assert.Equal(2, LmaxFixMarketDataCodec.ParseFields(request).Count(x => x.Tag == "60"));
+    }
+
+    [Fact]
+    public void Trade_capture_request_builder_omits_account_when_absent()
+    {
+        var options = LmaxFixTradeCaptureRequestOptions.From(DateTimeOffset.UtcNow, 60, null, null, null, 10, 50, false);
+
+        var request = LmaxFixRecoveryCodec.BuildTradeCaptureReportRequest("SENDER", "LMXBD", 2, "TCREQ1", options);
+
+        Assert.DoesNotContain($"{LmaxFixMarketDataCodec.Soh}1=", request, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Trade_capture_ack_parser_handles_accepted_and_rejected_acks()
+    {
+        var accepted = FixMessage("35=AQ", "568=TCREQ1", "749=0", "750=0");
+        var rejected = FixMessage("35=AQ", "568=TCREQ2", "749=1", "750=2", "58=Rejected window");
+
+        var acceptedAck = LmaxFixRecoveryCodec.ParseTradeCaptureAck(accepted);
+        var rejectedAck = LmaxFixRecoveryCodec.ParseTradeCaptureAck(rejected);
+
+        Assert.True(acceptedAck.IsAck);
+        Assert.True(acceptedAck.Accepted);
+        Assert.Equal("TCREQ1", acceptedAck.RequestId);
+        Assert.True(rejectedAck.IsAck);
+        Assert.False(rejectedAck.Accepted);
+        Assert.Equal("Rejected window", rejectedAck.Text);
+    }
+
+    [Fact]
+    public void Trade_capture_report_parser_extracts_report_fields()
+    {
+        var message = FixMessage("35=AE", "568=TCREQ1", "17=EXEC1", "527=SECEXEC1", "48=4001", "22=8", "55=EUR/USD", "32=1000", "31=1.17361", "75=20260505", "60=20260505-10:15:30.123", "54=1", "1=ACC1", "912=Y");
+
+        var report = LmaxFixRecoveryCodec.ParseTradeCaptureReport(message);
+
+        Assert.Equal("EXEC1", report.ExecId);
+        Assert.Equal("SECEXEC1", report.SecondaryExecId);
+        Assert.Equal("4001", report.SecurityId);
+        Assert.Equal("EUR/USD", report.Symbol);
+        Assert.Equal(1000m, report.LastQty);
+        Assert.Equal(1.17361m, report.LastPx);
+        Assert.Equal("20260505", report.TradeDate);
+        Assert.Equal(new DateTimeOffset(2026, 5, 5, 10, 15, 30, 123, TimeSpan.Zero), report.TransactTime);
+        Assert.Equal("1", report.Side);
+        Assert.True(report.LastReportRequested);
+    }
+
+    [Fact]
+    public void Order_status_request_builder_emits_read_only_h_request()
+    {
+        var request = LmaxFixRecoveryCodec.BuildOrderStatusRequest("SENDER", "LMXBD", 2, "CL1", account: "ACC1", securityId: "4001", securityIdSource: "8", side: "1", ordStatusReqId: "OSR1");
+
+        Assert.Contains($"{LmaxFixMarketDataCodec.Soh}35=H{LmaxFixMarketDataCodec.Soh}", request, StringComparison.Ordinal);
+        Assert.Contains($"{LmaxFixMarketDataCodec.Soh}11=CL1{LmaxFixMarketDataCodec.Soh}", request, StringComparison.Ordinal);
+        Assert.Contains($"{LmaxFixMarketDataCodec.Soh}790=OSR1{LmaxFixMarketDataCodec.Soh}", request, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Trade_capture_smoke_skips_without_external_connections_and_masks_password()
+    {
+        var fix = new RawLmaxFixSessionClient(new LmaxConnectivityLabSafetyValidator());
+        var options = CompleteFixOptions();
+        options.FixPassword = "trade-capture-secret-password";
+        var request = LmaxFixTradeCaptureRequestOptions.From(DateTimeOffset.UtcNow, 60, null, null, null, 10, 50, false);
+
+        var result = await fix.TradeCaptureSmokeAsync(options, request, CancellationToken.None);
+
+        Assert.Equal("Skipped", result.Status);
+        Assert.DoesNotContain("trade-capture-secret-password", result.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("trade-capture-secret-password", string.Join("|", result.Diagnostics), StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Api_and_worker_do_not_reference_connectivity_lab()
     {
         var root = FindRepoRoot();

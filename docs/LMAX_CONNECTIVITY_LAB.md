@@ -16,6 +16,16 @@ Project path:
 tools/QQ.Production.Intraday.Lmax.ConnectivityLab
 ```
 
+## FIX-Only Integration Path
+
+The platform integration strategy is now FIX-first and EOD-file based:
+
+- FIX Market Data for read-only live/demo market data investigation.
+- FIX Trading for logon, read-only order/trade recovery requests, and future carefully gated trading work.
+- LMAX EOD files as the official daily reconciliation source.
+
+The Account REST API path is parked. The Account API lab commands remain in the repo as isolated diagnostics only, but they are no longer required for platform operation. BasicAuth against `https://account-api.london-demo.lmax.com` returned `401 Unauthorized` for likely discovery endpoints during exploration, so do not treat Account API availability as a dependency for this platform. No Account API command persists data or feeds the main runtime.
+
 ## Safety Defaults
 
 The lab defaults are deliberately inert:
@@ -124,6 +134,9 @@ dotnet run --project .\tools\QQ.Production.Intraday.Lmax.ConnectivityLab -- fix-
 dotnet run --project .\tools\QQ.Production.Intraday.Lmax.ConnectivityLab -- fix-order-logon-smoke
 dotnet run --project .\tools\QQ.Production.Intraday.Lmax.ConnectivityLab -- fix-marketdata-logon-smoke
 dotnet run --project .\tools\QQ.Production.Intraday.Lmax.ConnectivityLab -- fix-marketdata-snapshot-smoke
+dotnet run --project .\tools\QQ.Production.Intraday.Lmax.ConnectivityLab -- fix-capabilities
+dotnet run --project .\tools\QQ.Production.Intraday.Lmax.ConnectivityLab -- fix-trade-capture-smoke
+dotnet run --project .\tools\QQ.Production.Intraday.Lmax.ConnectivityLab -- fix-order-status-dry-run
 dotnet run --project .\tools\QQ.Production.Intraday.Lmax.ConnectivityLab -- order-lifecycle-demo-dry-run
 dotnet run --project .\tools\QQ.Production.Intraday.Lmax.ConnectivityLab -- order-lifecycle-demo
 ```
@@ -134,9 +147,32 @@ The smoke commands skip safely unless `AllowExternalConnections=true` and requir
 
 `fix-marketdata-snapshot-smoke` logs on to the market data session, sends a read-only `MarketDataRequest` (`35=V`), parses `MarketDataSnapshotFullRefresh` (`35=W`), `MarketDataIncrementalRefresh` (`35=X`), or `MarketDataRequestReject` (`35=Y`), prints bid/ask/mid if received, then unsubscribes when needed and logs out. It does not persist data to LocalDB and is not integrated with the execution workflow.
 
-## Account API Read-Only Discovery
+## FIX Trading Read-Only Recovery
 
-The lab includes read-only Account REST API discovery for LMAX Demo/UAT. It is exploratory and isolated. It does not persist account data into LocalDB, does not create broker positions, does not update wallets, does not submit orders, and is not referenced by `QQ.Production.Intraday.Api` or `QQ.Production.Intraday.Worker`.
+`fix-capabilities` scans `brokerFixTradingGateway-QuickFix-DataDictionary.xml` if that dictionary is present anywhere under the repo. If it is missing, the command returns `Skipped` and explains where to place it. The scanner performs no network calls.
+
+The capability scanner reports:
+
+- `OrderStatusRequest` (`35=H`)
+- `ExecutionReport` (`35=8`)
+- `TradeCaptureReportRequest` (`35=AD`)
+- `TradeCaptureReportRequestAck` (`35=AQ`)
+- `TradeCaptureReport` (`35=AE`)
+- `OrderMassStatusRequest` (`35=AF`)
+- `RequestForPositions` (`35=AN`)
+- `PositionReport` (`35=AP`)
+
+Uploaded LMAX package findings indicate that the trading dictionary supports `H`, `8`, `AD`, `AQ`, and `AE`, but does not include `AF`, `AN`, or `AP`. The lab therefore does not invent mass-status or position-report requests. If a future LMAX package adds custom equivalents, the scanner will make that visible before any command is implemented.
+
+`fix-trade-capture-smoke` is a read-only FIX Trading command. It logs on, sends `TradeCaptureReportRequest` (`35=AD`) for a recent UTC window, reads `TradeCaptureReportRequestAck` (`35=AQ`) and zero or more `TradeCaptureReport` (`35=AE`) messages, then logs out. It submits no orders and persists nothing into LocalDB. An accepted ack with zero reports and `LastRptRequested=true` is a valid success.
+
+The AD request uses a unique `568 TradeRequestID`, `569=1`, `263=0`, optional `1 Account`, and the LMAX date group shape with `580=2` plus two `60 TransactTime` values for start and end UTC. Parsed report fields include `17 ExecID`, `527 SecondaryExecID`, `48 SecurityID`, `22 SecurityIDSource`, `55 Symbol`, `32 LastQty`, `31 LastPx`, `75 TradeDate`, `60 TransactTime`, optional `54 Side`, optional `1 Account`, and `912 LastRptRequested`.
+
+`fix-order-status-dry-run` builds a read-only `OrderStatusRequest` (`35=H`) and prints a sanitized FIX message. It does not open a socket. `fix-order-status-smoke` remains parked until an explicit ClOrdID recovery scenario is needed. `fix-order-mass-status-smoke` and `fix-position-report-smoke` return `Skipped` when the dictionary does not support those messages.
+
+## Parked Account API Read-Only Discovery
+
+The lab includes read-only Account REST API discovery for LMAX Demo/UAT, but this path is parked and diagnostic only. It is not part of the platform integration path. It does not persist account data into LocalDB, does not create broker positions, does not update wallets, does not submit orders, and is not referenced by `QQ.Production.Intraday.Api` or `QQ.Production.Intraday.Worker`.
 
 Default Demo endpoints:
 
@@ -177,7 +213,7 @@ Read-only commands:
 .\scripts\lmax-lab-account-trade-history-smoke.ps1 -AllowExternalConnections -AuthMode Auto -ShowResponseExcerpt
 ```
 
-`account-api-discover` probes a controlled set of GET-only endpoints, including `/openapi.json`, `/account`, `/accounts`, `/v1/account/positions`, `/v1/account/balances`, `/working-orders`, `/instrument-positions`, `/wallets`, and `/trade-history`. It reports HTTP status, content type, top-level JSON field names, array counts where obvious, and a sanitized short excerpt only when `-ShowResponseExcerpt` is used. `404` is treated as discovery information, not infrastructure failure. `401`/`403` is reported as authentication or permission failure.
+`account-api-discover` probes a controlled set of GET-only endpoints, including `/openapi.json`, `/account`, `/accounts`, `/v1/account/positions`, `/v1/account/balances`, `/working-orders`, `/instrument-positions`, `/wallets`, and `/trade-history`. It reports HTTP status, content type, top-level JSON field names, array counts where obvious, and a sanitized short excerpt only when `-ShowResponseExcerpt` is used. `404` is treated as discovery information, not infrastructure failure. `401`/`403` is reported as authentication or permission failure. BasicAuth exploration against the Demo host has returned `401` for likely endpoints, reinforcing that this is diagnostic only.
 
 Troubleshooting:
 
@@ -199,6 +235,8 @@ Run `dotnet restore` and `dotnet build` first; the scripts execute the already-b
 .\scripts\lmax-lab-fix-order-logon-smoke.ps1
 .\scripts\lmax-lab-fix-marketdata-logon-smoke.ps1
 .\scripts\lmax-lab-fix-marketdata-snapshot-smoke.ps1
+.\scripts\lmax-lab-fix-capabilities.ps1
+.\scripts\lmax-lab-fix-order-status-dry-run.ps1
 .\scripts\lmax-lab-order-dry-run.ps1
 ```
 
@@ -215,6 +253,14 @@ Manual read-only market data snapshot smoke:
 
 ```powershell
 .\scripts\lmax-lab-fix-marketdata-snapshot-smoke.ps1 -AllowExternalConnections -Instrument EURUSD -LmaxInstrumentId 4001 -SlashSymbol "EUR/USD" -MarketDepth 1 -RequestMode Auto -SymbolEncodingMode SecurityId -MaxWaitSeconds 15
+```
+
+Manual read-only FIX Trading recovery smoke:
+
+```powershell
+.\scripts\lmax-lab-fix-capabilities.ps1
+.\scripts\lmax-lab-fix-trade-capture-smoke.ps1 -AllowExternalConnections -LookbackMinutes 1440 -MaxReports 20 -ShowFixMessages
+.\scripts\lmax-lab-fix-order-status-dry-run.ps1 -ClOrdId "known-demo-client-order-id"
 ```
 
 Required safety conditions:
@@ -301,11 +347,10 @@ Before real connectivity work:
 - .NET API library availability
 - FIX 4.4 credentials
 - market data access method
-- Account API key and authentication model
-- how to retrieve positions
-- how to retrieve balances
-- how to retrieve open orders
-- how to retrieve trade history
+- whether any FIX custom message replaces unsupported `AF`/`AN`/`AP`
+- exact trade-capture date-window constraints and retention
+- how to map trade capture reports to EOD execution reports
+- Account API key/authentication model only if diagnostics are resumed later
 - EOD report acquisition method
 - certification/conformance requirements before live
 
@@ -325,13 +370,14 @@ Before real connectivity work:
 - Timeout after logon: use `-RequestMode Auto -SymbolEncodingMode Auto -ShowFixMessages`, increase `-MaxWaitSeconds`, and inspect whether LMAX sends heartbeats, test requests, rejects, or no market-data response.
 - TestRequest/heartbeat: the lab responds to `35=1` TestRequest with a `35=0` Heartbeat and ignores ordinary `35=0` Heartbeat while waiting for market data.
 
-After logon works, next safe steps are read-only market data snapshot investigation, account/position API discovery, and only later a demo order lifecycle under a separate explicit approval.
+After logon works, next safe steps are read-only market data snapshot investigation and FIX trade-capture recovery. Account REST API exploration is parked. Any demo order lifecycle remains a separate future approval and is not implemented here.
 
 ## Current Limitations
 
 - No official LMAX client library is wired in.
 - QuickFIX/n is not wired in; FIX logon and market-data snapshot smoke use a minimal raw FIX client.
 - Public data smoke returns `Skipped` unless a future client is implemented.
-- Account API discovery is read-only and exploratory; working positions/balances/open-orders/trade-history endpoint paths still need to be confirmed against LMAX Demo.
+- Account API discovery is parked and diagnostic only; the main path is FIX market data, FIX trading recovery, and LMAX EOD files.
+- `OrderMassStatusRequest`, `RequestForPositions`, and `PositionReport` are treated as unsupported unless a future LMAX FIX dictionary says otherwise.
 - Demo order command is gated and returns `Skipped`; it does not submit orders.
 - Main API/Worker remain FakeLmax-only.

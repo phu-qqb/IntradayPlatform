@@ -372,6 +372,7 @@ public interface ILmaxFixSessionClient
     Task<LabCommandResult> SmokeAsync(LmaxConnectivityLabOptions options, bool marketData, CancellationToken cancellationToken);
     Task<LabCommandResult> LogonSmokeAsync(LmaxConnectivityLabOptions options, bool marketData, CancellationToken cancellationToken);
     Task<LmaxFixMarketDataSmokeResult> MarketDataSnapshotSmokeAsync(LmaxConnectivityLabOptions options, CancellationToken cancellationToken);
+    Task<LmaxFixTradeCaptureSmokeResult> TradeCaptureSmokeAsync(LmaxConnectivityLabOptions options, LmaxFixTradeCaptureRequestOptions request, CancellationToken cancellationToken);
 }
 
 public sealed class PlaceholderLmaxPublicDataClient : ILmaxPublicDataClient
@@ -431,6 +432,9 @@ public sealed class PlaceholderLmaxFixSessionClient : ILmaxFixSessionClient
 
     public Task<LmaxFixMarketDataSmokeResult> MarketDataSnapshotSmokeAsync(LmaxConnectivityLabOptions options, CancellationToken cancellationToken)
         => Task.FromResult(LmaxFixMarketDataSmokeResult.Skipped("Read-only market data snapshot smoke is not implemented in this placeholder client.", LmaxConnectivityLabSafetyValidator.DecisionsForExternalCommand(options)));
+
+    public Task<LmaxFixTradeCaptureSmokeResult> TradeCaptureSmokeAsync(LmaxConnectivityLabOptions options, LmaxFixTradeCaptureRequestOptions request, CancellationToken cancellationToken)
+        => Task.FromResult(LmaxFixTradeCaptureSmokeResult.Skipped("Read-only trade capture smoke is not implemented in this placeholder client.", LmaxConnectivityLabSafetyValidator.DecisionsForExternalCommand(options)));
 
     private static IEnumerable<string> RequiredFixFields(LmaxConnectivityLabOptions options, bool marketData)
     {

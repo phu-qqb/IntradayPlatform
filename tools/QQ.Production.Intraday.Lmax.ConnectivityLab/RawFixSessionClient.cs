@@ -119,6 +119,124 @@ public sealed class RawLmaxFixSessionClient(LmaxConnectivityLabSafetyValidator s
         return lastResult ?? LmaxFixMarketDataSmokeResult.Create("Failed", "No market data request attempts were made.", startedAt, false, false, false, false, false, false, false, false, null, null, null, LmaxConnectivityLabSafetyValidator.DecisionsForExternalCommand(options), diagnostics, allAttempts);
     }
 
+    public async Task<LmaxFixTradeCaptureSmokeResult> TradeCaptureSmokeAsync(LmaxConnectivityLabOptions options, LmaxFixTradeCaptureRequestOptions requestOptions, CancellationToken cancellationToken)
+    {
+        var startedAt = DateTimeOffset.UtcNow;
+        var issues = safety.ValidateForFixLogon(options, marketData: false).ToList();
+        var diagnostics = new List<string>
+        {
+            $"Host={options.FixOrderHost ?? "(not configured)"}",
+            $"Port={options.FixOrderPort?.ToString(CultureInfo.InvariantCulture) ?? "(not configured)"}",
+            $"TargetCompId={options.FixOrderTargetCompId ?? options.FixTargetCompId ?? "(not configured)"}",
+            $"SenderCompId={LmaxConnectivityLabOptions.Mask(options.FixSenderCompId)}",
+            $"StartUtc={requestOptions.StartUtc:O}",
+            $"EndUtc={requestOptions.EndUtc:O}",
+            $"AccountConfigured={!string.IsNullOrWhiteSpace(requestOptions.Account)}",
+            $"MaxReports={requestOptions.MaxReports}"
+        };
+        if (issues.Count > 0)
+        {
+            return LmaxFixTradeCaptureSmokeResult.Skipped(string.Join(" ", issues), LmaxConnectivityLabSafetyValidator.DecisionsForExternalCommand(options)) with { Diagnostics = diagnostics };
+        }
+
+        var target = (options.FixOrderTargetCompId ?? options.FixTargetCompId)!;
+        var reports = new List<LmaxFixTradeCaptureReport>();
+        var sequenceNumber = 1;
+        var connected = false;
+        var loggedOn = false;
+        var requestSent = false;
+        var ackReceived = false;
+        var ackAccepted = false;
+        string? ackRejectText = null;
+        try
+        {
+            using var tcp = new TcpClient();
+            using (var connectTimeout = CreateTimeout(options.ConnectTimeoutSeconds, cancellationToken))
+            {
+                await tcp.ConnectAsync(options.FixOrderHost!, options.FixOrderPort!.Value, connectTimeout.Token);
+                connected = true;
+            }
+
+            Stream rawStream;
+            using (var connectTimeout = CreateTimeout(options.ConnectTimeoutSeconds, cancellationToken))
+            {
+                rawStream = options.UseTls ? await CreateTlsStreamAsync(tcp, options.FixOrderHost!, connectTimeout.Token) : tcp.GetStream();
+            }
+
+            await using var stream = rawStream;
+            var logon = LmaxFixMarketDataCodec.BuildMessage("A", sequenceNumber++, options.FixSenderCompId!, target, [
+                ("98", "0"),
+                ("108", "30"),
+                ("141", "Y"),
+                ("553", options.FixUsername!),
+                ("554", options.FixPassword!)
+            ]);
+            using (var logonTimeout = CreateTimeout(options.LogonTimeoutSeconds, cancellationToken))
+            {
+                await WriteAsciiAsync(stream, logon, logonTimeout.Token);
+                var logonResponse = await ReadFixResponseAsync(stream, logonTimeout.Token);
+                loggedOn = LmaxFixMarketDataCodec.ContainsTag(logonResponse, "35", "A");
+            }
+
+            if (!loggedOn)
+            {
+                return new("fix-trade-capture-smoke", "Failed", connected, false, false, false, false, null, 0, false, [], startedAt, DateTimeOffset.UtcNow, "FIX trading logon was not confirmed; trade capture request was not sent.", LmaxConnectivityLabSafetyValidator.DecisionsForExternalCommand(options), diagnostics);
+            }
+
+            var tradeRequestId = $"QQTC-{DateTimeOffset.UtcNow:yyyyMMddHHmmssfff}";
+            var request = LmaxFixRecoveryCodec.BuildTradeCaptureReportRequest(options.FixSenderCompId!, target, sequenceNumber++, tradeRequestId, requestOptions);
+            if (requestOptions.ShowFixMessages) diagnostics.Add($"OUT {LmaxFixMarketDataCodec.SanitizeMessage(request)}");
+            using (var wait = CreateTimeout(requestOptions.MaxWaitSeconds, cancellationToken))
+            {
+                await WriteAsciiAsync(stream, request, wait.Token);
+                requestSent = true;
+                while (!wait.IsCancellationRequested && reports.Count < requestOptions.MaxReports)
+                {
+                    var (message, nextSequence) = await ReadMarketDataResponseAsync(stream, options, target, sequenceNumber, wait.Token);
+                    sequenceNumber = nextSequence;
+                    if (string.IsNullOrWhiteSpace(message)) break;
+                    var msgType = LmaxFixMarketDataCodec.GetMsgType(message);
+                    if (requestOptions.ShowFixMessages) diagnostics.Add($"IN {LmaxFixMarketDataCodec.SanitizeMessage(message)}");
+                    if (msgType == "AQ")
+                    {
+                        var ack = LmaxFixRecoveryCodec.ParseTradeCaptureAck(message);
+                        ackReceived = true;
+                        ackAccepted = ack.Accepted;
+                        ackRejectText = ack.Text;
+                        if (!ackAccepted) break;
+                    }
+                    else if (msgType == "AE")
+                    {
+                        var report = LmaxFixRecoveryCodec.ParseTradeCaptureReport(message);
+                        reports.Add(report);
+                        if (report.LastReportRequested) break;
+                    }
+                    else if (msgType is "5" or "3")
+                    {
+                        ackRejectText = LmaxFixMarketDataCodec.GetTag(message, "58");
+                        break;
+                    }
+                }
+            }
+
+            await TrySendLogoutAsync(stream, options, target, sequenceNumber, diagnostics, "TradeCapture");
+            var lastRequested = reports.Any(x => x.LastReportRequested);
+            var status = ackReceived && ackAccepted ? "Ok" : ackReceived ? "Failed" : "Failed";
+            var messageText = ackReceived && ackAccepted
+                ? reports.Count == 0 ? "Trade capture request accepted; no reports received before timeout. No data was persisted." : "Trade capture reports received. No data was persisted."
+                : ackReceived ? "Trade capture request was rejected or not accepted." : "No TradeCaptureReportRequestAck was received before timeout.";
+            return new("fix-trade-capture-smoke", status, connected, loggedOn, requestSent, ackReceived, ackAccepted, ackRejectText, reports.Count, lastRequested, reports, startedAt, DateTimeOffset.UtcNow, messageText, LmaxConnectivityLabSafetyValidator.DecisionsForExternalCommand(options), diagnostics);
+        }
+        catch (OperationCanceledException)
+        {
+            return new("fix-trade-capture-smoke", "Failed", connected, loggedOn, requestSent, ackReceived, ackAccepted, ackRejectText, reports.Count, reports.Any(x => x.LastReportRequested), reports, startedAt, DateTimeOffset.UtcNow, "Trade capture smoke timed out.", LmaxConnectivityLabSafetyValidator.DecisionsForExternalCommand(options), diagnostics);
+        }
+        catch (Exception ex) when (ex is SocketException or IOException or AuthenticationException)
+        {
+            return new("fix-trade-capture-smoke", "Failed", connected, loggedOn, requestSent, ackReceived, ackAccepted, ackRejectText, reports.Count, reports.Any(x => x.LastReportRequested), reports, startedAt, DateTimeOffset.UtcNow, $"Trade capture smoke failed: {ex.GetType().Name}: {ex.Message}", LmaxConnectivityLabSafetyValidator.DecisionsForExternalCommand(options), diagnostics);
+        }
+    }
+
     private static async Task<LmaxFixMarketDataSmokeResult> RunSingleMarketDataSnapshotAttemptAsync(
         LmaxConnectivityLabOptions options,
         LmaxFixMarketDataRequestOptions requestOptions,
@@ -393,7 +511,7 @@ public sealed class RawLmaxFixSessionClient(LmaxConnectivityLabSafetyValidator s
     {
         try
         {
-            var logout = LmaxFixMarketDataCodec.BuildMessage("5", sequenceNumber, options.FixSenderCompId!, target, [("58", "Connectivity lab market data logoff")]);
+            var logout = LmaxFixMarketDataCodec.BuildMessage("5", sequenceNumber, options.FixSenderCompId!, target, [("58", "Connectivity lab FIX logoff")]);
             if (options.ShowFixMessages)
             {
                 attempts.Add($"{attemptLabel}: OUT {LmaxFixMarketDataCodec.SanitizeMessage(logout)}");

@@ -13,6 +13,45 @@ public sealed class LmaxConnectivityLabRunner(
         var options = LmaxConnectivityLabOptions.FromEnvironmentAndArgs(optionArgs);
         var explicitConfirm = args.Any(x => x.Equals("--confirm-demo-order", StringComparison.OrdinalIgnoreCase));
 
+        if (command.Equals("fix-capabilities", StringComparison.OrdinalIgnoreCase))
+        {
+            var capabilities = LmaxFixRecoveryCodec.ScanDefaultDictionary();
+            WriteCapabilitiesResult(capabilities);
+            return capabilities.Status == "Failed" ? 1 : 0;
+        }
+
+        if (command.Equals("fix-trade-capture-smoke", StringComparison.OrdinalIgnoreCase))
+        {
+            var tradeCaptureOptions = LmaxFixTradeCaptureRequestOptions.From(
+                DateTimeOffset.UtcNow,
+                GetIntArg(optionArgs, "lookback-minutes", 1440),
+                GetDateTimeOffsetArg(optionArgs, "start-utc"),
+                GetDateTimeOffsetArg(optionArgs, "end-utc"),
+                GetStringArg(optionArgs, "account"),
+                GetIntArg(optionArgs, "max-wait-seconds", 10),
+                GetIntArg(optionArgs, "max-reports", 50),
+                HasFlag(optionArgs, "show-fix-messages"));
+            var tradeCaptureResult = await fixClient.TradeCaptureSmokeAsync(options, tradeCaptureOptions, cancellationToken);
+            WriteTradeCaptureResult(tradeCaptureResult);
+            return tradeCaptureResult.Status == "Failed" ? 1 : 0;
+        }
+
+        if (command.Equals("fix-order-status-dry-run", StringComparison.OrdinalIgnoreCase))
+        {
+            var dryRunResult = BuildOrderStatusDryRun(options, optionArgs);
+            WriteResult(dryRunResult);
+            return dryRunResult.Status == "Blocked" ? 2 : 0;
+        }
+
+        if (command.Equals("fix-order-status-smoke", StringComparison.OrdinalIgnoreCase) ||
+            command.Equals("fix-order-mass-status-smoke", StringComparison.OrdinalIgnoreCase) ||
+            command.Equals("fix-position-report-smoke", StringComparison.OrdinalIgnoreCase))
+        {
+            var skippedResult = UnsupportedReadOnlyFixCommand(command);
+            WriteResult(skippedResult);
+            return 0;
+        }
+
         if (command.Equals("fix-marketdata-snapshot-smoke", StringComparison.OrdinalIgnoreCase) ||
             command.Equals("fix-market-data-snapshot-smoke", StringComparison.OrdinalIgnoreCase))
         {
@@ -92,6 +131,60 @@ public sealed class LmaxConnectivityLabRunner(
         return LabCommandResult.Skipped("order-lifecycle-demo", "Safety gates passed for demo/UAT only, but no real LMAX order submission implementation is wired into the lab yet.", LmaxConnectivityLabSafetyValidator.DecisionsForExternalCommand(options));
     }
 
+    private static LabCommandResult BuildOrderStatusDryRun(LmaxConnectivityLabOptions options, string[] args)
+    {
+        var clOrdId = GetStringArg(args, "cl-ord-id") ?? "DRYRUN-CLORDID";
+        var target = options.FixOrderTargetCompId ?? options.FixTargetCompId ?? "LMXBD";
+        var sender = string.IsNullOrWhiteSpace(options.FixSenderCompId) ? "DRYRUN-SENDER" : options.FixSenderCompId!;
+        var message = LmaxFixRecoveryCodec.BuildOrderStatusRequest(
+            sender,
+            target,
+            sequenceNumber: 2,
+            clOrdId,
+            GetStringArg(args, "account"),
+            GetStringArg(args, "security-id"),
+            GetStringArg(args, "security-id-source"),
+            GetStringArg(args, "side"),
+            GetStringArg(args, "ord-status-req-id"));
+        var decisions = LmaxConnectivityLabSafetyValidator.DecisionsForExternalCommand(options)
+            .Concat([
+                "Built read-only OrderStatusRequest 35=H.",
+                "No network call was made.",
+                "No order was submitted.",
+                $"FIX: {LmaxFixMarketDataCodec.SanitizeMessage(message)}"
+            ])
+            .ToList();
+        return LabCommandResult.Ok("fix-order-status-dry-run", $"Built OrderStatusRequest dry-run for ClOrdID={clOrdId}.", decisions);
+    }
+
+    private static LabCommandResult UnsupportedReadOnlyFixCommand(string command)
+    {
+        var scan = LmaxFixRecoveryCodec.ScanDefaultDictionary();
+        var expected = command.ToLowerInvariant() switch
+        {
+            "fix-order-mass-status-smoke" => "OrderMassStatusRequest",
+            "fix-position-report-smoke" => "RequestForPositions",
+            _ => "OrderStatusRequest"
+        };
+        var capability = scan.Capabilities.FirstOrDefault(x => x.MessageName.Equals(expected, StringComparison.OrdinalIgnoreCase));
+        if (command.Equals("fix-order-status-smoke", StringComparison.OrdinalIgnoreCase))
+        {
+            return LabCommandResult.Skipped(command, "OrderStatusRequest smoke is parked until an explicit ClOrdID recovery scenario is needed. Use fix-order-status-dry-run to inspect the read-only request. No network call was made.", []);
+        }
+
+        if (scan.Status == "Skipped")
+        {
+            return LabCommandResult.Skipped(command, $"{scan.Message} Cannot confirm {expected} support. No network call was made.", []);
+        }
+
+        if (capability is null || !capability.Supported)
+        {
+            return LabCommandResult.Skipped(command, $"{expected} is unsupported by the available LMAX FIX trading dictionary. No network call was made.", []);
+        }
+
+        return LabCommandResult.Skipped(command, $"{expected} appears in the dictionary, but this read-only smoke is not implemented yet. No network call was made.", []);
+    }
+
     private static void WriteResult(LabCommandResult result)
     {
         Console.WriteLine($"Command: {result.Command}");
@@ -139,6 +232,59 @@ public sealed class LmaxConnectivityLabRunner(
 
     private static bool HasFlag(IEnumerable<string> args, string name)
         => args.Any(x => x.Equals($"--{name}=true", StringComparison.OrdinalIgnoreCase) || x.Equals($"--{name}", StringComparison.OrdinalIgnoreCase));
+
+    private static string? GetStringArg(IEnumerable<string> args, string name)
+    {
+        var prefix = $"--{name}=";
+        return args.FirstOrDefault(x => x.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))?[prefix.Length..];
+    }
+
+    private static int GetIntArg(IEnumerable<string> args, string name, int defaultValue)
+        => int.TryParse(GetStringArg(args, name), out var parsed) ? parsed : defaultValue;
+
+    private static DateTimeOffset? GetDateTimeOffsetArg(IEnumerable<string> args, string name)
+        => DateTimeOffset.TryParse(GetStringArg(args, name), out var parsed) ? parsed.ToUniversalTime() : null;
+
+    private static void WriteCapabilitiesResult(LmaxFixCapabilityScanResult result)
+    {
+        Console.WriteLine($"Command: {result.Command}");
+        Console.WriteLine($"Status: {result.Status}");
+        if (!string.IsNullOrWhiteSpace(result.DictionaryPath)) Console.WriteLine($"DictionaryPath: {result.DictionaryPath}");
+        Console.WriteLine($"Message: {result.Message}");
+        foreach (var capability in result.Capabilities)
+        {
+            Console.WriteLine($"Capability: MessageName={capability.MessageName} MsgType={capability.MsgType} Supported={capability.Supported} Required=[{string.Join(",", capability.RequiredFields)}] Optional=[{string.Join(",", capability.OptionalFields)}]");
+        }
+    }
+
+    private static void WriteTradeCaptureResult(LmaxFixTradeCaptureSmokeResult result)
+    {
+        Console.WriteLine($"Command: {result.Command}");
+        Console.WriteLine($"Status: {result.Status}");
+        Console.WriteLine($"Connected: {result.Connected}");
+        Console.WriteLine($"LoggedOn: {result.LoggedOn}");
+        Console.WriteLine($"RequestSent: {result.RequestSent}");
+        Console.WriteLine($"AckReceived: {result.AckReceived}");
+        Console.WriteLine($"AckAccepted: {result.AckAccepted}");
+        if (!string.IsNullOrWhiteSpace(result.AckRejectText)) Console.WriteLine($"AckRejectText: {result.AckRejectText}");
+        Console.WriteLine($"TradeReportCount: {result.TradeReportCount}");
+        Console.WriteLine($"LastReportRequested: {result.LastReportRequested}");
+        Console.WriteLine($"StartedAtUtc: {result.StartedAtUtc:O}");
+        Console.WriteLine($"CompletedAtUtc: {result.CompletedAtUtc:O}");
+        Console.WriteLine($"Message: {result.Message}");
+        foreach (var report in result.Reports)
+        {
+            Console.WriteLine($"Report: ExecID={report.ExecId} SecondaryExecID={report.SecondaryExecId} SecurityID={report.SecurityId} Symbol={report.Symbol} LastQty={report.LastQty} LastPx={report.LastPx} TradeDate={report.TradeDate} TransactTime={report.TransactTime:O} Side={report.Side} LastReportRequested={report.LastReportRequested}");
+        }
+        foreach (var diagnostic in result.Diagnostics)
+        {
+            Console.WriteLine($"Diagnostic: {diagnostic}");
+        }
+        foreach (var decision in result.SafetyDecisions)
+        {
+            Console.WriteLine($"- {decision}");
+        }
+    }
 
     private static void WriteMarketDataResult(LmaxFixMarketDataSmokeResult result)
     {

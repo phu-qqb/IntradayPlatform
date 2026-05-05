@@ -525,6 +525,8 @@ dotnet build .\QQ.Production.Intraday.sln --no-restore -m:1 /p:BuildInParallel=f
 .\scripts\lmax-lab-fix-order-logon-smoke.ps1
 .\scripts\lmax-lab-fix-marketdata-logon-smoke.ps1
 .\scripts\lmax-lab-fix-marketdata-snapshot-smoke.ps1
+.\scripts\lmax-lab-fix-capabilities.ps1
+.\scripts\lmax-lab-fix-order-status-dry-run.ps1
 .\scripts\lmax-lab-order-dry-run.ps1
 ```
 
@@ -549,7 +551,19 @@ It sends a FIX `MarketDataRequest`, prints bid/ask/mid or reject details, does n
 
 LMAX Demo FIX market data snapshot retrieval has been validated in the isolated lab for `EURUSD` using `SecurityId` mode with LMAX instrument id `4001`. The main API/Worker runtime remains FakeLmax-only and does not consume or persist Demo market data.
 
-The lab also has read-only Account API discovery for `https://account-api.london-demo.lmax.com`. It supports `Auto`, `BasicAuth`, `BearerApiKey`, and `HeaderApiKey` auth modes from user-secrets/environment variables only. Manual probes are explicit and safe:
+The LMAX integration strategy is now FIX-only plus EOD files: FIX Market Data, FIX Trading read-only recovery, and LMAX EOD reports. Account REST API discovery is parked as diagnostic only; BasicAuth against `https://account-api.london-demo.lmax.com` returned `401` for likely endpoints and it is not required for platform operation.
+
+Read-only FIX Trading recovery commands:
+
+```powershell
+.\scripts\lmax-lab-fix-capabilities.ps1
+.\scripts\lmax-lab-fix-trade-capture-smoke.ps1 -AllowExternalConnections -LookbackMinutes 1440 -MaxReports 20 -ShowFixMessages
+.\scripts\lmax-lab-fix-order-status-dry-run.ps1 -ClOrdId "known-demo-client-order-id"
+```
+
+`fix-capabilities` scans the LMAX trading dictionary when present. Current package findings support `OrderStatusRequest` (`35=H`), `ExecutionReport` (`35=8`), `TradeCaptureReportRequest` (`35=AD`), `TradeCaptureReportRequestAck` (`35=AQ`), and `TradeCaptureReport` (`35=AE`). `OrderMassStatusRequest` (`35=AF`), `RequestForPositions` (`35=AN`), and `PositionReport` (`35=AP`) are treated as unsupported unless a future LMAX dictionary provides them. These commands do not submit orders and do not persist live data.
+
+Parked Account API diagnostics, if ever resumed, remain explicit and safe:
 
 ```powershell
 .\scripts\lmax-lab-account-discover.ps1 -AllowExternalConnections -AuthMode Auto -ShowResponseExcerpt
