@@ -36,6 +36,12 @@ public sealed class LmaxConnectivityLabRunner(
             return tradeCaptureResult.Status == "Failed" ? 1 : 0;
         }
 
+        if (command.Equals("fix-trade-capture-replay", StringComparison.OrdinalIgnoreCase))
+        {
+            var exitCode = ReplayTradeCaptureFixture(options, GetStringArg(optionArgs, "fixture"));
+            return exitCode;
+        }
+
         if (command.Equals("fix-order-status-dry-run", StringComparison.OrdinalIgnoreCase))
         {
             var dryRunResult = BuildOrderStatusDryRun(options, optionArgs);
@@ -185,6 +191,52 @@ public sealed class LmaxConnectivityLabRunner(
         return LabCommandResult.Skipped(command, $"{expected} appears in the dictionary, but this read-only smoke is not implemented yet. No network call was made.", []);
     }
 
+    private static int ReplayTradeCaptureFixture(LmaxConnectivityLabOptions options, string? fixturePath)
+    {
+        var path = string.IsNullOrWhiteSpace(fixturePath) ? DefaultTradeCaptureReplayFixturePath() : Path.GetFullPath(fixturePath);
+        Console.WriteLine("Command: fix-trade-capture-replay");
+        Console.WriteLine("Status: Running");
+        Console.WriteLine("ExternalConnections: False");
+        Console.WriteLine($"FixturePath: {path}");
+        if (!File.Exists(path))
+        {
+            Console.WriteLine("Status: Skipped");
+            Console.WriteLine("Message: Synthetic trade capture replay fixture was not found. No network call was made.");
+            return 0;
+        }
+
+        var messages = File.ReadLines(path)
+            .Select(x => x.Trim())
+            .Where(x => !string.IsNullOrWhiteSpace(x) && !x.StartsWith('#'))
+            .Select(NormalizeReplayFixLine)
+            .ToList();
+        var normalized = messages.Select(x => LmaxFixRecoveryCodec.NormalizeTradeCaptureReport(x, options)).ToList();
+        Console.WriteLine("Status: Ok");
+        Console.WriteLine($"MessageCount: {messages.Count}");
+        foreach (var item in normalized)
+        {
+            var report = item.Report;
+            var eod = item.EodShape;
+            Console.WriteLine($"Report: ExecID={report.ExecId} SecurityID={report.SecurityId} Symbol={report.Symbol} InternalSymbol={report.InternalSymbol} Side={report.NormalizedSide?.ToString() ?? report.Side} LastQty={report.LastQty} LastPx={report.LastPx} TradeDate={report.TradeDate} TransactTimeUtc={report.TransactTime:O} Account={report.Account} LastReportRequested={report.LastReportRequested} CanMapToEodIndividualTrade={report.CanMapToEodIndividualTrade}");
+            Console.WriteLine($"EodShape: ExecutionId={eod.ExecutionId} MtfExecutionId={eod.MtfExecutionId} TimestampUtc={eod.TimestampUtc:O} TradeQuantity={eod.TradeQuantity} TradePrice={eod.TradePrice} InstrumentId={eod.InstrumentId} Symbol={eod.Symbol} InstructionId={eod.InstructionId} OrderId={eod.OrderId} AccountId={eod.AccountId} UnitsBoughtSold={eod.UnitsBoughtSold} NotionalValue={eod.NotionalValue}");
+            if (item.MissingForEodComparison.Count > 0) Console.WriteLine($"MissingForEodComparison: {string.Join("; ", item.MissingForEodComparison)}");
+            if (item.Warnings.Count > 0) Console.WriteLine($"Warnings: {string.Join("; ", item.Warnings)}");
+        }
+
+        Console.WriteLine("Message: Synthetic AE replay completed. No network call was made and no data was persisted.");
+        return 0;
+    }
+
+    private static string NormalizeReplayFixLine(string line)
+    {
+        var trimmed = line.Trim();
+        if (trimmed.Contains('|', StringComparison.Ordinal)) return trimmed.Replace('|', LmaxFixMarketDataCodec.Soh);
+        return trimmed;
+    }
+
+    private static string DefaultTradeCaptureReplayFixturePath()
+        => Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "fixtures", "synthetic-trade-capture-ae.fix"));
+
     private static void WriteResult(LabCommandResult result)
     {
         Console.WriteLine($"Command: {result.Command}");
@@ -284,7 +336,9 @@ public sealed class LmaxConnectivityLabRunner(
         Console.WriteLine($"Message: {result.Message}");
         foreach (var report in result.Reports)
         {
-            Console.WriteLine($"Report: ExecID={report.ExecId} SecondaryExecID={report.SecondaryExecId} SecurityID={report.SecurityId} Symbol={report.Symbol} LastQty={report.LastQty} LastPx={report.LastPx} TradeDate={report.TradeDate} TransactTime={report.TransactTime:O} Side={report.Side} LastReportRequested={report.LastReportRequested}");
+            Console.WriteLine($"Report: ExecID={report.ExecId} SecurityID={report.SecurityId} Symbol={report.Symbol} InternalSymbol={report.InternalSymbol} Side={report.NormalizedSide?.ToString() ?? report.Side} LastQty={report.LastQty} LastPx={report.LastPx} TradeDate={report.TradeDate} TransactTimeUtc={report.TransactTime:O} Account={report.Account} LastReportRequested={report.LastReportRequested} CanMapToEodIndividualTrade={report.CanMapToEodIndividualTrade}");
+            if (report.MissingForEodComparison is { Count: > 0 }) Console.WriteLine($"ReportMissingForEodComparison: {string.Join("; ", report.MissingForEodComparison)}");
+            if (report.Warnings is { Count: > 0 }) Console.WriteLine($"ReportWarnings: {string.Join("; ", report.Warnings)}");
         }
         foreach (var diagnostic in result.Diagnostics)
         {

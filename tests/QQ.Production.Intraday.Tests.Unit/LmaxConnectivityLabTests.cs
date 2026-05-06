@@ -789,20 +789,104 @@ public sealed class LmaxConnectivityLabTests
     [Fact]
     public void Trade_capture_report_parser_extracts_report_fields()
     {
-        var message = FixMessage("35=AE", "568=TCREQ1", "17=EXEC1", "527=SECEXEC1", "48=4001", "22=8", "55=EUR/USD", "32=1000", "31=1.17361", "75=20260505", "60=20260505-10:15:30.123", "54=1", "1=ACC1", "912=Y");
+        var message = FixMessage("35=AE", "568=TCREQ1", "571=TRPT1", "17=EXEC1", "527=SECEXEC1", "48=4001", "22=8", "55=EUR/USD", "32=1000", "31=1.17361", "75=20260505", "60=20260505-10:15:30.123", "54=1", "1=ACC1", "11=CL1", "37=ORD1", "912=Y");
 
         var report = LmaxFixRecoveryCodec.ParseTradeCaptureReport(message);
 
         Assert.Equal("EXEC1", report.ExecId);
         Assert.Equal("SECEXEC1", report.SecondaryExecId);
         Assert.Equal("4001", report.SecurityId);
+        Assert.Equal("TRPT1", report.TradeReportId);
         Assert.Equal("EUR/USD", report.Symbol);
         Assert.Equal(1000m, report.LastQty);
         Assert.Equal(1.17361m, report.LastPx);
         Assert.Equal("20260505", report.TradeDate);
         Assert.Equal(new DateTimeOffset(2026, 5, 5, 10, 15, 30, 123, TimeSpan.Zero), report.TransactTime);
         Assert.Equal("1", report.Side);
+        Assert.Equal(LmaxFixTradeCaptureSide.Buy, report.NormalizedSide);
         Assert.True(report.LastReportRequested);
+        Assert.Equal("ACC1", report.Account);
+        Assert.Equal("CL1", report.ClOrdId);
+        Assert.Equal("ORD1", report.OrderId);
+    }
+
+    [Fact]
+    public void Trade_capture_normalization_maps_security_id_4001_to_eurusd()
+    {
+        var message = FixMessage("35=AE", "568=TCREQ1", "17=EXEC1", "48=4001", "22=8", "32=1000", "31=1.17361", "75=20260505", "60=20260505-10:15:30.123", "54=2", "1=ACC1");
+
+        var normalized = LmaxFixRecoveryCodec.NormalizeTradeCaptureReport(message, CompleteFixOptions());
+
+        Assert.Equal("EURUSD", normalized.Report.InternalSymbol);
+        Assert.Equal(LmaxFixTradeCaptureSide.Sell, normalized.Report.NormalizedSide);
+        Assert.Equal(-1000m, normalized.EodShape.UnitsBoughtSold);
+        Assert.Equal(1173.61000m, normalized.EodShape.NotionalValue);
+    }
+
+    [Fact]
+    public void Trade_capture_normalization_handles_symbol_without_security_id()
+    {
+        var message = FixMessage("35=AE", "568=TCREQ1", "17=EXEC1", "55=EUR/USD", "32=1000", "31=1.17361", "75=20260505", "60=20260505-10:15:30.123", "54=1");
+
+        var normalized = LmaxFixRecoveryCodec.NormalizeTradeCaptureReport(message, CompleteFixOptions());
+
+        Assert.Equal("EURUSD", normalized.Report.InternalSymbol);
+        Assert.True(normalized.Report.CanMapToEodIndividualTrade);
+    }
+
+    [Fact]
+    public void Trade_capture_normalization_warns_for_missing_optional_and_malformed_fields()
+    {
+        var message = FixMessage("35=AE", "568=TCREQ1", "17=EXEC1", "48=4001", "32=not-a-decimal", "31=bad-price", "60=bad-time", "54=9");
+
+        var normalized = LmaxFixRecoveryCodec.NormalizeTradeCaptureReport(message, CompleteFixOptions());
+
+        Assert.Contains(normalized.Warnings, x => x.Contains("LastQty", StringComparison.Ordinal));
+        Assert.Contains(normalized.Warnings, x => x.Contains("LastPx", StringComparison.Ordinal));
+        Assert.Contains(normalized.Warnings, x => x.Contains("TransactTime", StringComparison.Ordinal));
+        Assert.Contains(normalized.Warnings, x => x.Contains("Side", StringComparison.Ordinal));
+        Assert.Contains(normalized.MissingForEodComparison, x => x.Contains("ClOrdID", StringComparison.Ordinal));
+        Assert.Contains(normalized.MissingForEodComparison, x => x.Contains("TradeUTI", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Trade_capture_to_eod_shape_mapper_projects_comparison_fields()
+    {
+        var message = FixMessage("35=AE", "568=TCREQ1", "17=EXEC1", "527=MTF1", "48=4001", "22=8", "55=EUR/USD", "32=1000", "31=1.17361", "75=20260505", "60=20260505-10:15:30.123", "54=1", "1=ACC1", "11=CL1", "37=ORD1");
+
+        var mapped = LmaxFixRecoveryCodec.NormalizeTradeCaptureReport(message, CompleteFixOptions()).EodShape;
+
+        Assert.Equal("EXEC1", mapped.ExecutionId);
+        Assert.Equal("MTF1", mapped.MtfExecutionId);
+        Assert.Equal(1000m, mapped.TradeQuantity);
+        Assert.Equal(1.17361m, mapped.TradePrice);
+        Assert.Equal("4001", mapped.InstrumentId);
+        Assert.Equal("EURUSD", mapped.Symbol);
+        Assert.Equal("CL1", mapped.InstructionId);
+        Assert.Equal("ORD1", mapped.OrderId);
+        Assert.Equal("ACC1", mapped.AccountId);
+    }
+
+    [Fact]
+    public async Task Trade_capture_replay_command_is_local_only()
+    {
+        var runner = CreateRunner();
+        using var output = new StringWriter();
+        var original = Console.Out;
+        Console.SetOut(output);
+        try
+        {
+            var fixture = Path.Combine(FindRepoRoot(), "tools", "QQ.Production.Intraday.Lmax.ConnectivityLab", "fixtures", "synthetic-trade-capture-ae.fix");
+            var exitCode = await runner.RunAsync(["fix-trade-capture-replay", $"--fixture={fixture}"], CancellationToken.None);
+
+            Assert.Equal(0, exitCode);
+            Assert.Contains("No network call was made", output.ToString(), StringComparison.Ordinal);
+            Assert.Contains("Synthetic AE replay completed", output.ToString(), StringComparison.Ordinal);
+        }
+        finally
+        {
+            Console.SetOut(original);
+        }
     }
 
     [Fact]

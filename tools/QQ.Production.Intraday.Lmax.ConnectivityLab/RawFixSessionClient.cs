@@ -248,9 +248,14 @@ public sealed class RawLmaxFixSessionClient(LmaxConnectivityLabSafetyValidator s
                     }
                     else if (msgType == "AE")
                     {
-                        var report = LmaxFixRecoveryCodec.ParseTradeCaptureReport(message);
-                        reports.Add(report);
-                        if (report.LastReportRequested || expectedTradeReportCount is not null && reports.Count >= expectedTradeReportCount.Value)
+                        var normalized = LmaxFixRecoveryCodec.NormalizeTradeCaptureReport(message, options);
+                        reports.Add(normalized.Report);
+                        foreach (var warning in normalized.Warnings)
+                        {
+                            diagnostics.Add($"TradeCaptureReport warning: {warning}");
+                        }
+
+                        if (normalized.Report.LastReportRequested || expectedTradeReportCount is not null && reports.Count >= expectedTradeReportCount.Value)
                         {
                             noMoreReports = true;
                             break;

@@ -20,6 +20,12 @@ public sealed record LmaxFixTradeCaptureRequestOptions(DateTimeOffset StartUtc, 
     }
 }
 
+public enum LmaxFixTradeCaptureSide
+{
+    Buy,
+    Sell
+}
+
 public sealed record LmaxFixTradeCaptureReport(
     string? TradeRequestId,
     string? ExecId,
@@ -33,7 +39,41 @@ public sealed record LmaxFixTradeCaptureReport(
     DateTimeOffset? TransactTime,
     string? Side,
     string? Account,
-    bool LastReportRequested);
+    bool LastReportRequested,
+    string? TradeReportId = null,
+    string? OrderId = null,
+    string? ClOrdId = null,
+    string? InstrumentId = null,
+    string? InternalSymbol = null,
+    LmaxFixTradeCaptureSide? NormalizedSide = null,
+    string? RawFixMessageSanitized = null,
+    DateTimeOffset? ParsedAtUtc = null,
+    IReadOnlyList<string>? Warnings = null,
+    bool CanMapToEodIndividualTrade = false,
+    IReadOnlyList<string>? MissingForEodComparison = null);
+
+public sealed record LmaxFixTradeCaptureEodShape(
+    string? ExecutionId,
+    string? MtfExecutionId,
+    DateTimeOffset? TimestampUtc,
+    decimal? TradeQuantity,
+    decimal? TradePrice,
+    string? TradeDate,
+    string? InstrumentId,
+    string? SecurityId,
+    string? Symbol,
+    string? InstructionId,
+    string? OrderId,
+    string? AccountId,
+    decimal? UnitsBoughtSold,
+    decimal? NotionalValue,
+    string? TradeUti);
+
+public sealed record LmaxFixTradeCaptureNormalizationResult(
+    LmaxFixTradeCaptureReport Report,
+    LmaxFixTradeCaptureEodShape EodShape,
+    IReadOnlyList<string> Warnings,
+    IReadOnlyList<string> MissingForEodComparison);
 
 public sealed record LmaxFixTradeCaptureSmokeResult(
     string Command,
@@ -209,26 +249,127 @@ public static class LmaxFixRecoveryCodec
     }
 
     public static LmaxFixTradeCaptureReport ParseTradeCaptureReport(string message)
+        => NormalizeTradeCaptureReport(message, null).Report;
+
+    public static LmaxFixTradeCaptureNormalizationResult NormalizeTradeCaptureReport(string message, LmaxConnectivityLabOptions? options)
     {
-        return new(
+        var warnings = new List<string>();
+        var missing = new List<string>();
+        var msgType = LmaxFixMarketDataCodec.GetMsgType(message);
+        if (msgType != "AE") warnings.Add($"Expected MsgType AE but received {msgType ?? "(missing)"}.");
+
+        var securityId = LmaxFixMarketDataCodec.GetTag(message, "48");
+        var symbol = LmaxFixMarketDataCodec.GetTag(message, "55");
+        var internalSymbol = ResolveInternalSymbol(securityId, symbol, options);
+        var instrumentId = securityId;
+        var side = LmaxFixMarketDataCodec.GetTag(message, "54");
+        var normalizedSide = ParseSide(side, warnings);
+        var lastQty = ParseDecimalWithWarning(LmaxFixMarketDataCodec.GetTag(message, "32"), "LastQty(32)", warnings);
+        var lastPx = ParseDecimalWithWarning(LmaxFixMarketDataCodec.GetTag(message, "31"), "LastPx(31)", warnings);
+        var transactTime = ParseFixTimeWithWarning(LmaxFixMarketDataCodec.GetTag(message, "60"), "TransactTime(60)", warnings);
+        var execId = LmaxFixMarketDataCodec.GetTag(message, "17");
+        var secondaryExecId = LmaxFixMarketDataCodec.GetTag(message, "527");
+        var account = LmaxFixMarketDataCodec.GetTag(message, "1");
+        var orderId = LmaxFixMarketDataCodec.GetTag(message, "37");
+        var clOrdId = LmaxFixMarketDataCodec.GetTag(message, "11");
+        var tradeReportId = LmaxFixMarketDataCodec.GetTag(message, "571");
+        var tradeDate = LmaxFixMarketDataCodec.GetTag(message, "75");
+
+        if (string.IsNullOrWhiteSpace(execId)) warnings.Add("Missing ExecID(17).");
+        if (string.IsNullOrWhiteSpace(securityId) && string.IsNullOrWhiteSpace(symbol)) warnings.Add("Missing both SecurityID(48) and Symbol(55).");
+        if (lastQty is null && lastPx is null) warnings.Add("Missing both LastQty(32) and LastPx(31).");
+
+        if (string.IsNullOrWhiteSpace(clOrdId)) missing.Add("Missing ClOrdID / instruction id.");
+        if (string.IsNullOrWhiteSpace(orderId)) missing.Add("Missing OrderID.");
+        if (string.IsNullOrWhiteSpace(symbol) && string.IsNullOrWhiteSpace(internalSymbol)) missing.Add("Missing Symbol.");
+        if (string.IsNullOrWhiteSpace(account)) missing.Add("Missing Account.");
+        missing.Add("Missing TradeUTI; not currently available from parsed FIX AE.");
+
+        var units = normalizedSide switch
+        {
+            LmaxFixTradeCaptureSide.Buy when lastQty.HasValue => lastQty,
+            LmaxFixTradeCaptureSide.Sell when lastQty.HasValue => -lastQty,
+            _ => null
+        };
+        var notional = lastQty.HasValue && lastPx.HasValue ? lastQty.Value * lastPx.Value : (decimal?)null;
+        var canMap = !string.IsNullOrWhiteSpace(execId)
+            && (!string.IsNullOrWhiteSpace(securityId) || !string.IsNullOrWhiteSpace(symbol) || !string.IsNullOrWhiteSpace(internalSymbol))
+            && lastQty.HasValue
+            && lastPx.HasValue;
+
+        var report = new LmaxFixTradeCaptureReport(
             LmaxFixMarketDataCodec.GetTag(message, "568"),
-            LmaxFixMarketDataCodec.GetTag(message, "17"),
-            LmaxFixMarketDataCodec.GetTag(message, "527"),
-            LmaxFixMarketDataCodec.GetTag(message, "48"),
+            execId,
+            secondaryExecId,
+            securityId,
             LmaxFixMarketDataCodec.GetTag(message, "22"),
-            LmaxFixMarketDataCodec.GetTag(message, "55"),
-            ParseDecimal(LmaxFixMarketDataCodec.GetTag(message, "32")),
-            ParseDecimal(LmaxFixMarketDataCodec.GetTag(message, "31")),
-            LmaxFixMarketDataCodec.GetTag(message, "75"),
-            ParseFixTime(LmaxFixMarketDataCodec.GetTag(message, "60")),
-            LmaxFixMarketDataCodec.GetTag(message, "54"),
-            LmaxFixMarketDataCodec.GetTag(message, "1"),
-            LmaxFixMarketDataCodec.ContainsTag(message, "912", "Y"));
+            symbol,
+            lastQty,
+            lastPx,
+            tradeDate,
+            transactTime,
+            side,
+            account,
+            LmaxFixMarketDataCodec.ContainsTag(message, "912", "Y"),
+            tradeReportId,
+            orderId,
+            clOrdId,
+            instrumentId,
+            internalSymbol,
+            normalizedSide,
+            LmaxFixMarketDataCodec.SanitizeMessage(message),
+            DateTimeOffset.UtcNow,
+            warnings,
+            canMap,
+            missing);
+
+        return new(report, LmaxFixTradeCaptureToEodShapeMapper.Map(report), warnings, missing);
     }
 
     private static decimal? ParseDecimal(string? value) => decimal.TryParse(value, NumberStyles.Any, CultureInfo.InvariantCulture, out var parsed) ? parsed : null;
     private static int? ParseInt(string? value) => int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed) ? parsed : null;
     private static DateTimeOffset? ParseFixTime(string? value) => DateTimeOffset.TryParseExact(value, "yyyyMMdd-HH:mm:ss.fff", CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out var parsed) ? parsed.ToUniversalTime() : null;
+    private static decimal? ParseDecimalWithWarning(string? value, string fieldName, ICollection<string> warnings)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return null;
+        if (decimal.TryParse(value, NumberStyles.Any, CultureInfo.InvariantCulture, out var parsed)) return parsed;
+        warnings.Add($"Could not parse {fieldName} decimal value '{value}'.");
+        return null;
+    }
+
+    private static DateTimeOffset? ParseFixTimeWithWarning(string? value, string fieldName, ICollection<string> warnings)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return null;
+        var parsed = ParseFixTime(value);
+        if (parsed.HasValue) return parsed;
+        warnings.Add($"Could not parse {fieldName} UTC timestamp '{value}'.");
+        return null;
+    }
+
+    private static LmaxFixTradeCaptureSide? ParseSide(string? value, ICollection<string> warnings)
+    {
+        return value switch
+        {
+            "1" => LmaxFixTradeCaptureSide.Buy,
+            "2" => LmaxFixTradeCaptureSide.Sell,
+            null or "" => null,
+            _ => AddSideWarning(value, warnings)
+        };
+    }
+
+    private static LmaxFixTradeCaptureSide? AddSideWarning(string value, ICollection<string> warnings)
+    {
+        warnings.Add($"Unsupported FIX Side(54) value '{value}'.");
+        return null;
+    }
+
+    private static string? ResolveInternalSymbol(string? securityId, string? symbol, LmaxConnectivityLabOptions? options)
+    {
+        if (options is not null && !string.IsNullOrWhiteSpace(securityId) && securityId == options.LmaxInstrumentId) return options.InstrumentSymbol;
+        if (securityId == "4001") return "EURUSD";
+        return symbol?.Replace("/", string.Empty, StringComparison.Ordinal);
+    }
+
     private static string FormatFixTime(DateTimeOffset value) => value.UtcDateTime.ToString("yyyyMMdd-HH:mm:ss.fff", CultureInfo.InvariantCulture);
 
     private static string FindRepoRoot()
@@ -240,5 +381,33 @@ public static class LmaxFixRecoveryCodec
             current = current.Parent;
         }
         return Directory.GetCurrentDirectory();
+    }
+}
+
+public static class LmaxFixTradeCaptureToEodShapeMapper
+{
+    public static LmaxFixTradeCaptureEodShape Map(LmaxFixTradeCaptureReport report)
+    {
+        return new(
+            report.ExecId,
+            report.SecondaryExecId,
+            report.TransactTime,
+            report.LastQty,
+            report.LastPx,
+            report.TradeDate,
+            report.InstrumentId,
+            report.SecurityId,
+            report.InternalSymbol ?? report.Symbol,
+            report.ClOrdId,
+            report.OrderId,
+            report.Account,
+            report.NormalizedSide switch
+            {
+                LmaxFixTradeCaptureSide.Buy when report.LastQty.HasValue => report.LastQty,
+                LmaxFixTradeCaptureSide.Sell when report.LastQty.HasValue => -report.LastQty,
+                _ => null
+            },
+            report.LastQty.HasValue && report.LastPx.HasValue ? report.LastQty.Value * report.LastPx.Value : null,
+            null);
     }
 }

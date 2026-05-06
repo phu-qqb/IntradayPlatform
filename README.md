@@ -530,6 +530,8 @@ The LMAX integration strategy is now FIX-only plus EOD files. The lab path is FI
 
 The lab includes read-only FIX Trading recovery tools: `fix-capabilities` scans the LMAX trading dictionary for supported messages, `fix-trade-capture-smoke` sends `35=AD` with a 16-character-or-shorter `568 TradeRequestID` and reads `35=AQ`/`35=AE` or session-level `35=3` rejects, and `fix-order-status-dry-run` builds a sanitized `35=H` request without opening a socket. Accepted `AQ` with `748=0` is treated as a successful zero-report response, not a timeout. The uploaded LMAX dictionary findings support `H`, `8`, `AD`, `AQ`, and `AE`; `AF`, `AN`, and `AP` are treated as unsupported unless future LMAX documentation provides equivalents.
 
+`fix-trade-capture-replay` replays synthetic sanitized `35=AE` messages, normalizes them into lab-only trade capture DTOs, and projects an EOD-like comparison shape. This is comparison-readiness only: no live FIX call, no order submission, and no persistence.
+
 Useful dry-run commands:
 
 ```powershell
@@ -540,6 +542,7 @@ Useful dry-run commands:
 .\scripts\lmax-lab-fix-marketdata-snapshot-smoke.ps1
 .\scripts\lmax-lab-fix-capabilities.ps1
 .\scripts\lmax-lab-fix-order-status-dry-run.ps1
+.\scripts\lmax-lab-fix-trade-capture-replay.ps1
 .\scripts\lmax-lab-order-dry-run.ps1
 ```
 

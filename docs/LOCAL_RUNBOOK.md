@@ -559,9 +559,10 @@ Read-only FIX Trading recovery commands:
 .\scripts\lmax-lab-fix-capabilities.ps1
 .\scripts\lmax-lab-fix-trade-capture-smoke.ps1 -AllowExternalConnections -LookbackMinutes 1440 -MaxReports 20 -ShowFixMessages
 .\scripts\lmax-lab-fix-order-status-dry-run.ps1 -ClOrdId "known-demo-client-order-id"
+.\scripts\lmax-lab-fix-trade-capture-replay.ps1
 ```
 
-`fix-capabilities` scans the LMAX trading dictionary when present. Current package findings support `OrderStatusRequest` (`35=H`), `ExecutionReport` (`35=8`), `TradeCaptureReportRequest` (`35=AD`), `TradeCaptureReportRequestAck` (`35=AQ`), and `TradeCaptureReport` (`35=AE`). `OrderMassStatusRequest` (`35=AF`), `RequestForPositions` (`35=AN`), and `PositionReport` (`35=AP`) are treated as unsupported unless a future LMAX dictionary provides them. Trade capture uses a short `568 TradeRequestID` format like `TC26050516395101` to satisfy LMAX Demo's 16-character limit, treats accepted `AQ` with `748=0` as a successful zero-report response, and reports session-level `35=3` rejects explicitly. These commands do not submit orders and do not persist live data.
+`fix-capabilities` scans the LMAX trading dictionary when present. Current package findings support `OrderStatusRequest` (`35=H`), `ExecutionReport` (`35=8`), `TradeCaptureReportRequest` (`35=AD`), `TradeCaptureReportRequestAck` (`35=AQ`), and `TradeCaptureReport` (`35=AE`). `OrderMassStatusRequest` (`35=AF`), `RequestForPositions` (`35=AN`), and `PositionReport` (`35=AP`) are treated as unsupported unless a future LMAX dictionary provides them. Trade capture uses a short `568 TradeRequestID` format like `TC26050516395101` to satisfy LMAX Demo's 16-character limit, treats accepted `AQ` with `748=0` as a successful zero-report response, and reports session-level `35=3` rejects explicitly. Synthetic replay normalizes lab fixture `35=AE` messages into an EOD-like comparison shape. These commands do not submit orders and do not persist live data.
 
 Parked Account API diagnostics, if ever resumed, remain explicit and safe:
 

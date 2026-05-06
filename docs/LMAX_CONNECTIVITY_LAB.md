@@ -174,6 +174,65 @@ Session-level rejects (`35=3`) are parsed explicitly. If LMAX rejects an `AD` re
 
 `fix-order-status-dry-run` builds a read-only `OrderStatusRequest` (`35=H`) and prints a sanitized FIX message. It does not open a socket. `fix-order-status-smoke` remains parked until an explicit ClOrdID recovery scenario is needed. `fix-order-mass-status-smoke` and `fix-position-report-smoke` return `Skipped` when the dictionary does not support those messages.
 
+## FIX Trade Capture Normalization
+
+When `fix-trade-capture-smoke` receives `TradeCaptureReport` (`35=AE`) messages, the lab normalizes them into a lab-only DTO aligned with the shape needed for later EOD comparison. This is still read-only: reports are printed, not persisted, and the main API/Worker do not consume them.
+
+The AE parser extracts:
+
+- `568 TradeRequestID`
+- `571 TradeReportID`
+- `912 LastRptRequested`
+- `17 ExecID`
+- `527 SecondaryExecID`
+- `48 SecurityID`
+- `22 SecurityIDSource`
+- `55 Symbol`
+- `32 LastQty`
+- `31 LastPx`
+- `75 TradeDate`
+- `60 TransactTime`
+- `54 Side`
+- `1 Account`
+- `11 ClOrdID`
+- `37 OrderID`
+
+Normalization maps `SecurityID=4001` to `EURUSD` when the lab config/default mapping is available. FIX side `54=1` maps to `Buy`; `54=2` maps to `Sell`. Quantities and prices are parsed as `decimal`, and timestamps are parsed as UTC. Malformed decimals or timestamps produce warnings rather than crashing the replay or smoke command.
+
+The lab also projects each normalized AE into an EOD-like comparison DTO:
+
+- `ExecutionId`
+- `MtfExecutionId`
+- `TimestampUtc`
+- `TradeQuantity`
+- `TradePrice`
+- `TradeDate`
+- `InstrumentId` / `SecurityId`
+- `Symbol`
+- `InstructionId` / `ClOrdID`
+- `OrderId`
+- `AccountId`
+- `UnitsBoughtSold`
+- `NotionalValue`
+- `TradeUti`
+
+This is comparison-readiness only. It does not claim perfect equivalence with `individual-trades.csv`. Known differences include:
+
+- EOD has Trade UTI; parsed FIX AE may not.
+- Field names and cardinality differ.
+- Some EOD fields may not exist in AE.
+- Account, ClOrdID, OrderID, Symbol, or Trade UTI may be missing depending on the report.
+
+Each normalized report includes `CanMapToEodIndividualTrade`, `MissingForEodComparison[]`, and `Warnings[]`.
+
+Synthetic replay:
+
+```powershell
+.\scripts\lmax-lab-fix-trade-capture-replay.ps1
+```
+
+The replay reads synthetic sanitized FIX messages from `tools/QQ.Production.Intraday.Lmax.ConnectivityLab/fixtures/synthetic-trade-capture-ae.fix`, normalizes them, prints normalized reports and EOD-like projections, makes no network call, and persists nothing. The fixture covers buy/sell EURUSD, USDJPY, `912=Y`, missing `55`, missing `48`, malformed decimal, and malformed timestamp cases.
+
 ## Parked Account API Read-Only Discovery
 
 The lab includes read-only Account REST API discovery for LMAX Demo/UAT, but this path is parked and diagnostic only. It is not part of the platform integration path. It does not persist account data into LocalDB, does not create broker positions, does not update wallets, does not submit orders, and is not referenced by `QQ.Production.Intraday.Api` or `QQ.Production.Intraday.Worker`.
