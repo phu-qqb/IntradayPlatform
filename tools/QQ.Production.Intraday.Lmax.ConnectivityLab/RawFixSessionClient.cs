@@ -658,74 +658,417 @@ public sealed class RawLmaxFixSessionClient(LmaxConnectivityLabSafetyValidator s
             "API/Worker integration is not used."
         };
 
-        var orderSubmission = await DemoOrderLifecycleAsync(options, request, explicitConfirmation, cancellationToken);
-        diagnostics.AddRange(orderSubmission.Diagnostics);
+        if (request.DryRun)
+        {
+            var dryRunOrder = await DemoOrderLifecycleAsync(options, request, explicitConfirmation, cancellationToken);
+            diagnostics.AddRange(dryRunOrder.Diagnostics);
+            diagnostics.Add("Dry-run evidence stopped before network I/O. No order was submitted.");
+            return BuildLifecycleEvidenceResult(startedAt, options, request, dryRunOrder, null, null, diagnostics);
+        }
+
+        return await DemoLifecycleEvidenceOnSingleSessionAsync(options, request, tradeCaptureRequest, explicitConfirmation, startedAt, diagnostics, cancellationToken);
+    }
+
+    private async Task<LmaxFixLifecycleEvidenceResult> DemoLifecycleEvidenceOnSingleSessionAsync(
+        LmaxConnectivityLabOptions options,
+        LmaxFixDemoOrderRequest request,
+        LmaxFixTradeCaptureRequestOptions tradeCaptureRequest,
+        bool explicitConfirmation,
+        DateTimeOffset startedAt,
+        List<string> diagnostics,
+        CancellationToken cancellationToken)
+    {
+        var decisions = safety.ValidateForDemoOrderLifecycle(options, request, explicitConfirmation).ToList();
+        var clOrdId = request.ClientOrderId ?? LmaxFixRecoveryCodec.GenerateClientOrderId(DateTimeOffset.UtcNow, 2);
+        diagnostics.AddRange([
+            $"Host={options.FixOrderHost ?? "(not configured)"}",
+            $"Port={options.FixOrderPort?.ToString(CultureInfo.InvariantCulture) ?? "(not configured)"}",
+            $"TargetCompId={options.FixOrderTargetCompId ?? options.FixTargetCompId ?? "(not configured)"}",
+            $"SenderCompId={LmaxConnectivityLabOptions.Mask(options.FixSenderCompId)}",
+            $"ClientOrderId={clOrdId}",
+            "SameSessionRecovery=True",
+            "RecoveryLogonAttempts=0"
+        ]);
+
+        if (decisions.Any(x => !x.Passed))
+        {
+            var skipped = LmaxFixDemoOrderLifecycleResult.Skipped("Demo lifecycle evidence safety gates did not pass. No order was sent.", LmaxConnectivityLabSafetyValidator.DecisionsForExternalCommand(options), decisions) with { Diagnostics = diagnostics, ClientOrderId = clOrdId };
+            return BuildLifecycleEvidenceResult(startedAt, options, request, skipped, null, null, diagnostics);
+        }
+
+        var target = (options.FixOrderTargetCompId ?? options.FixTargetCompId)!;
+        var sequenceNumber = 1;
+        var connected = false;
+        var loggedOn = false;
+        var orderSent = false;
+        var terminal = false;
+        var logoutSent = false;
+        string? lastMsgType = null;
+        var executionReports = new List<LmaxFixExecutionReport>();
+        LmaxFixDemoOrderLifecycleResult orderSubmission;
         LmaxFixOrderStatusSmokeResult? orderStatus = null;
         LmaxFixTradeCaptureSmokeResult? tradeCapture = null;
 
-        if (orderSubmission.OrderSent && !string.IsNullOrWhiteSpace(orderSubmission.ClientOrderId))
+        try
         {
-            var recoveryOptions = CopyOptions(options);
-            recoveryOptions.AllowOrderSubmission = false;
-            recoveryOptions.DryRun = true;
-            var lastExecution = orderSubmission.ExecutionReports.LastOrDefault();
-
-            orderStatus = await OrderStatusSmokeAsync(
-                recoveryOptions,
-                new LmaxFixOrderStatusSmokeRequest(
-                    orderSubmission.ClientOrderId,
-                    request.Account,
-                    request.LmaxInstrumentId,
-                    recoveryOptions.FixSecurityIdSource,
-                    request.Side == LmaxFixDemoOrderSide.Buy ? "1" : "2",
-                    null,
-                    request.MaxWaitSeconds,
-                    request.ShowFixMessages),
-                cancellationToken);
-            diagnostics.AddRange(orderStatus.Diagnostics.Select(x => $"OrderStatus: {x}"));
-
-            tradeCapture = await TradeCaptureSmokeAsync(recoveryOptions, tradeCaptureRequest, cancellationToken);
-            diagnostics.AddRange(tradeCapture.Diagnostics.Select(x => $"TradeCapture: {x}"));
-            if (lastExecution is not null && tradeCapture.Reports.Count > 0 && !tradeCapture.Reports.Any(x => string.Equals(x.ExecId, lastExecution.ExecId, StringComparison.Ordinal)))
+            using var tcp = new TcpClient();
+            using (var connectTimeout = CreateTimeout(options.ConnectTimeoutSeconds, cancellationToken))
             {
-                diagnostics.Add($"TradeCapture did not include latest ExecutionReport ExecID={lastExecution.ExecId ?? "(missing)"}.");
+                await tcp.ConnectAsync(options.FixOrderHost!, options.FixOrderPort!.Value, connectTimeout.Token);
+                connected = true;
             }
-        }
-        else
-        {
-            diagnostics.Add("Order submission did not produce a sent ClOrdID; read-only recovery steps were not run.");
-        }
 
+            Stream rawStream;
+            using (var connectTimeout = CreateTimeout(options.ConnectTimeoutSeconds, cancellationToken))
+            {
+                rawStream = options.UseTls ? await CreateTlsStreamAsync(tcp, options.FixOrderHost!, connectTimeout.Token) : tcp.GetStream();
+            }
+
+            await using var stream = rawStream;
+            var logonSeq = sequenceNumber;
+            var logon = LmaxFixMarketDataCodec.BuildMessage("A", sequenceNumber++, options.FixSenderCompId!, target, [
+                ("98", "0"),
+                ("108", "30"),
+                ("141", "Y"),
+                ("553", options.FixUsername!),
+                ("554", options.FixPassword!)
+            ]);
+            diagnostics.Add($"MsgSeqNum Logon={logonSeq}");
+            if (request.ShowFixMessages || options.ShowFixMessages) diagnostics.Add($"OUT Logon {LmaxFixMarketDataCodec.SanitizeMessage(logon)}");
+            using (var logonTimeout = CreateTimeout(options.LogonTimeoutSeconds, cancellationToken))
+            {
+                await WriteAsciiAsync(stream, logon, logonTimeout.Token);
+                var logonResponse = await ReadFixResponseAsync(stream, logonTimeout.Token);
+                loggedOn = LmaxFixMarketDataCodec.ContainsTag(logonResponse, "35", "A");
+                lastMsgType = LmaxFixMarketDataCodec.GetMsgType(logonResponse);
+                if (request.ShowFixMessages || options.ShowFixMessages) diagnostics.Add($"IN Logon {LmaxFixMarketDataCodec.SanitizeMessage(logonResponse)}");
+            }
+
+            if (!loggedOn)
+            {
+                orderSubmission = new("fix-demo-order-lifecycle", "Failed", connected, false, false, false, false, false, null, null, null, null, null, null, false, clOrdId, lastMsgType, [], startedAt, DateTimeOffset.UtcNow, "FIX trading logon was not confirmed; demo order was not sent.", LmaxConnectivityLabSafetyValidator.DecisionsForExternalCommand(options), decisions, diagnostics);
+                return BuildLifecycleEvidenceResult(startedAt, options, request, orderSubmission, null, null, diagnostics);
+            }
+
+            var newOrderSeq = sequenceNumber;
+            var newOrder = LmaxFixRecoveryCodec.BuildNewOrderSingle(options.FixSenderCompId!, target, sequenceNumber++, request, clOrdId, options.FixSecurityIdSource);
+            diagnostics.Add($"MsgSeqNum NewOrderSingle={newOrderSeq}");
+            if (request.ShowFixMessages || options.ShowFixMessages) diagnostics.Add($"OUT NewOrderSingle {LmaxFixMarketDataCodec.SanitizeMessage(newOrder)}");
+            using (var wait = CreateTimeout(request.MaxWaitSeconds, cancellationToken))
+            {
+                await WriteAsciiAsync(stream, newOrder, wait.Token);
+                orderSent = true;
+                while (!wait.IsCancellationRequested)
+                {
+                    string message;
+                    int nextSequence;
+                    try
+                    {
+                        (message, nextSequence) = await ReadMarketDataResponseAsync(stream, options, target, sequenceNumber, wait.Token);
+                    }
+                    catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+                    {
+                        break;
+                    }
+
+                    sequenceNumber = nextSequence;
+                    if (string.IsNullOrWhiteSpace(message)) break;
+                    lastMsgType = LmaxFixMarketDataCodec.GetMsgType(message);
+                    if (request.ShowFixMessages || options.ShowFixMessages) diagnostics.Add($"IN NewOrderSingleResponse {LmaxFixMarketDataCodec.SanitizeMessage(message)}");
+                    if (lastMsgType == "8")
+                    {
+                        var normalized = LmaxFixRecoveryCodec.NormalizeExecutionReport(message, options);
+                        executionReports.Add(normalized.Report);
+                        foreach (var warning in normalized.Warnings) diagnostics.Add($"ExecutionReport warning: {warning}");
+                        if (IsTerminalExecutionReport(normalized.Report))
+                        {
+                            terminal = true;
+                            break;
+                        }
+                    }
+                    else if (lastMsgType == "3")
+                    {
+                        var reject = LmaxFixRecoveryCodec.ParseSessionReject(message);
+                        orderSubmission = new("fix-demo-order-lifecycle", "Failed", connected, loggedOn, orderSent, executionReports.Count > 0, terminal, true, "3", reject.RefTagId, reject.RefMsgType, reject.SessionRejectReason, reject.Text, "ProtocolRejected", false, clOrdId, lastMsgType, executionReports, startedAt, DateTimeOffset.UtcNow, $"NewOrderSingle was rejected at FIX session level: {reject.Text ?? "(no reject text)"}", LmaxConnectivityLabSafetyValidator.DecisionsForExternalCommand(options), decisions, diagnostics);
+                        logoutSent = await TrySendLogoutAsync(stream, options, target, sequenceNumber, diagnostics, "LifecycleEvidence");
+                        orderSubmission = orderSubmission with { LogoutSent = logoutSent };
+                        return BuildLifecycleEvidenceResult(startedAt, options, request, orderSubmission, null, null, diagnostics);
+                    }
+                    else if (lastMsgType == "5")
+                    {
+                        diagnostics.Add($"Received MsgType=5 during order phase Text={LmaxFixMarketDataCodec.GetTag(message, "58") ?? "(none)"}");
+                        break;
+                    }
+                }
+            }
+
+            var orderMessage = terminal
+                ? "Demo order lifecycle received terminal ExecutionReport. Same-session recovery will run before logout."
+                : executionReports.Count > 0
+                    ? "Demo order lifecycle received ExecutionReport messages but no terminal state before recovery timeout."
+                    : "Demo order lifecycle sent order but received no ExecutionReport before timeout.";
+            orderSubmission = new("fix-demo-order-lifecycle", executionReports.Count > 0 ? "Ok" : "Failed", connected, loggedOn, orderSent, executionReports.Count > 0, terminal, false, null, null, null, null, null, terminal ? "TerminalExecutionReport" : null, false, clOrdId, lastMsgType, executionReports, startedAt, DateTimeOffset.UtcNow, orderMessage, LmaxConnectivityLabSafetyValidator.DecisionsForExternalCommand(options), decisions, diagnostics);
+
+            if (orderSubmission.TerminalExecutionReportReceived || orderSubmission.ExecutionReports.Any(x => x.ExecType == LmaxFixExecutionReportType.Trade))
+            {
+                diagnostics.Add($"RecoveryPhaseSafety: AllowOrderSubmission=False AllowLiveTrading={options.AllowLiveTrading} AllowExternalConnections={options.AllowExternalConnections}");
+                diagnostics.Add("Same session used for order + recovery; no second FIX logon attempted.");
+                var orderStatusResult = await SendOrderStatusRequestOnSessionAsync(stream, options, target, sequenceNumber, new LmaxFixOrderStatusSmokeRequest(clOrdId, request.Account, request.LmaxInstrumentId, options.FixSecurityIdSource, request.Side == LmaxFixDemoOrderSide.Buy ? "1" : "2", null, request.MaxWaitSeconds, request.ShowFixMessages), startedAt, cancellationToken);
+                sequenceNumber = orderStatusResult.NextSequenceNumber;
+                orderStatus = orderStatusResult.Result;
+                diagnostics.AddRange(orderStatus.Diagnostics.Select(x => $"OrderStatus: {x}"));
+
+                var lastFill = orderSubmission.ExecutionReports.LastOrDefault(x => x.ExecType == LmaxFixExecutionReportType.Trade);
+                var adjustedTradeCaptureRequest = AdjustTradeCaptureWindowAfterFill(tradeCaptureRequest, lastFill, DateTimeOffset.UtcNow, diagnostics);
+                var tradeCaptureResult = await SendTradeCaptureRequestOnSessionAsync(stream, options, target, sequenceNumber, adjustedTradeCaptureRequest, startedAt, cancellationToken);
+                sequenceNumber = tradeCaptureResult.NextSequenceNumber;
+                tradeCapture = tradeCaptureResult.Result;
+                diagnostics.AddRange(tradeCapture.Diagnostics.Select(x => $"TradeCapture: {x}"));
+            }
+            else
+            {
+                diagnostics.Add("Terminal/fill ExecutionReport was not available; same-session read-only recovery was not run.");
+            }
+
+            logoutSent = await TrySendLogoutAsync(stream, options, target, sequenceNumber, diagnostics, "LifecycleEvidence");
+            orderSubmission = orderSubmission with { LogoutSent = logoutSent, CompletedAtUtc = DateTimeOffset.UtcNow };
+            return BuildLifecycleEvidenceResult(startedAt, options, request, orderSubmission, orderStatus, tradeCapture, diagnostics);
+        }
+        catch (OperationCanceledException)
+        {
+            orderSubmission = new("fix-demo-order-lifecycle", "Failed", connected, loggedOn, orderSent, executionReports.Count > 0, terminal, false, null, null, null, null, null, null, logoutSent, clOrdId, lastMsgType, executionReports, startedAt, DateTimeOffset.UtcNow, "FIX lifecycle evidence command timed out.", LmaxConnectivityLabSafetyValidator.DecisionsForExternalCommand(options), decisions, diagnostics);
+            return BuildLifecycleEvidenceResult(startedAt, options, request, orderSubmission, orderStatus, tradeCapture, diagnostics);
+        }
+        catch (Exception ex) when (ex is SocketException or IOException or AuthenticationException or ArgumentException)
+        {
+            orderSubmission = new("fix-demo-order-lifecycle", "Failed", connected, loggedOn, orderSent, executionReports.Count > 0, terminal, false, null, null, null, null, null, null, logoutSent, clOrdId, lastMsgType, executionReports, startedAt, DateTimeOffset.UtcNow, $"FIX lifecycle evidence command failed: {ex.GetType().Name}: {ex.Message}", LmaxConnectivityLabSafetyValidator.DecisionsForExternalCommand(options), decisions, diagnostics);
+            return BuildLifecycleEvidenceResult(startedAt, options, request, orderSubmission, orderStatus, tradeCapture, diagnostics);
+        }
+    }
+
+    private static LmaxFixLifecycleEvidenceResult BuildLifecycleEvidenceResult(
+        DateTimeOffset startedAt,
+        LmaxConnectivityLabOptions options,
+        LmaxFixDemoOrderRequest request,
+        LmaxFixDemoOrderLifecycleResult orderSubmission,
+        LmaxFixOrderStatusSmokeResult? orderStatus,
+        LmaxFixTradeCaptureSmokeResult? tradeCapture,
+        IReadOnlyList<string> diagnostics)
+    {
         var evidence = LmaxFixLifecycleEvidenceBuilder.Build(request, orderSubmission, orderStatus, tradeCapture);
         var failedChecks = evidence.ConsistencyChecks.Count(x => x.Status == LmaxFixLifecycleConsistencyStatus.Failed);
+        var orderFilled = evidence.FillExecutionReportCount > 0 && string.Equals(evidence.FinalOrdStatus, LmaxFixOrderStatus.Filled.ToString(), StringComparison.Ordinal);
         var status = orderSubmission.Status == "Failed"
             ? "Failed"
-            : failedChecks > 0
-                ? "Failed"
-                : orderSubmission.Status == "Skipped"
-                    ? "Skipped"
-                    : "Ok";
+            : orderFilled && failedChecks > 0
+                ? "PartiallySucceeded"
+                : failedChecks > 0
+                    ? "Failed"
+                    : orderSubmission.Status == "Skipped"
+                        ? "Skipped"
+                        : "Ok";
         var message = status switch
         {
             "Ok" => "FIX lifecycle evidence report completed. No data was persisted.",
+            "PartiallySucceeded" => $"Demo order filled, but recovery evidence is incomplete: OrderStatusReceived={evidence.OrderStatusReceived}; TradeCaptureReceived={evidence.TradeCaptureReceived}; FailedConsistencyChecks={failedChecks}. No data was persisted.",
             "Skipped" => "FIX lifecycle evidence report was skipped before live submission. No order was submitted.",
             _ => failedChecks > 0
                 ? $"FIX lifecycle evidence report found {failedChecks} failed consistency check(s). No data was persisted."
                 : orderSubmission.Message
         };
 
-        return new(
-            "fix-demo-lifecycle-evidence",
-            status,
-            orderSubmission,
-            orderStatus,
-            tradeCapture,
-            evidence,
-            startedAt,
-            DateTimeOffset.UtcNow,
-            message,
-            LmaxConnectivityLabSafetyValidator.DecisionsForExternalCommand(options),
-            diagnostics);
+        return new("fix-demo-lifecycle-evidence", status, orderSubmission, orderStatus, tradeCapture, evidence, startedAt, DateTimeOffset.UtcNow, message, LmaxConnectivityLabSafetyValidator.DecisionsForExternalCommand(options), diagnostics);
+    }
+
+    private sealed record SameSessionOrderStatusResult(LmaxFixOrderStatusSmokeResult Result, int NextSequenceNumber);
+
+    private async Task<SameSessionOrderStatusResult> SendOrderStatusRequestOnSessionAsync(Stream stream, LmaxConnectivityLabOptions options, string target, int sequenceNumber, LmaxFixOrderStatusSmokeRequest request, DateTimeOffset startedAt, CancellationToken cancellationToken)
+    {
+        var diagnostics = new List<string> { "SameSession=True", "No second FIX logon attempted." };
+        var reports = new List<LmaxFixExecutionReport>();
+        var requestSent = false;
+        var requestRejected = false;
+        string? rejectRefTagId = null;
+        string? rejectRefMsgType = null;
+        string? rejectText = null;
+        var requestSeq = sequenceNumber;
+        try
+        {
+            var orderStatusRequest = LmaxFixRecoveryCodec.BuildOrderStatusRequest(options.FixSenderCompId!, target, sequenceNumber++, request.ClOrdId!, request.Account, request.SecurityId, request.SecurityIdSource, request.Side, request.OrdStatusReqId);
+            diagnostics.Add($"MsgSeqNum OrderStatusRequest={requestSeq}");
+            if (request.ShowFixMessages || options.ShowFixMessages) diagnostics.Add($"OUT {LmaxFixMarketDataCodec.SanitizeMessage(orderStatusRequest)}");
+            using var wait = CreateTimeout(request.MaxWaitSeconds, cancellationToken);
+            await WriteAsciiAsync(stream, orderStatusRequest, wait.Token);
+            requestSent = true;
+            while (!wait.IsCancellationRequested)
+            {
+                string message;
+                int nextSequence;
+                try
+                {
+                    (message, nextSequence) = await ReadMarketDataResponseAsync(stream, options, target, sequenceNumber, wait.Token);
+                }
+                catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+                {
+                    break;
+                }
+
+                sequenceNumber = nextSequence;
+                if (string.IsNullOrWhiteSpace(message)) break;
+                var msgType = LmaxFixMarketDataCodec.GetMsgType(message);
+                if (request.ShowFixMessages || options.ShowFixMessages) diagnostics.Add($"IN {LmaxFixMarketDataCodec.SanitizeMessage(message)}");
+                if (msgType == "8")
+                {
+                    var normalized = LmaxFixRecoveryCodec.NormalizeExecutionReport(message, options);
+                    reports.Add(normalized.Report);
+                    foreach (var warning in normalized.Warnings) diagnostics.Add($"ExecutionReport warning: {warning}");
+                    break;
+                }
+
+                if (msgType == "3")
+                {
+                    var reject = LmaxFixRecoveryCodec.ParseSessionReject(message);
+                    requestRejected = true;
+                    rejectRefTagId = reject.RefTagId;
+                    rejectRefMsgType = reject.RefMsgType;
+                    rejectText = reject.Text;
+                    break;
+                }
+
+                if (msgType == "5")
+                {
+                    rejectText = LmaxFixMarketDataCodec.GetTag(message, "58");
+                    break;
+                }
+            }
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+        }
+
+        var latest = reports.LastOrDefault();
+        var result = reports.Count > 0
+            ? new LmaxFixOrderStatusSmokeResult("fix-order-status-smoke", "Ok", true, true, requestSent, true, false, null, null, null, request.ClOrdId, latest?.OrderId, latest?.OrdStatus.ToString(), reports, startedAt, DateTimeOffset.UtcNow, false, $"Received same-session ExecutionReport for ClOrdID={request.ClOrdId}; OrdStatus={latest?.OrdStatus}. No data was persisted.", LmaxConnectivityLabSafetyValidator.DecisionsForExternalCommand(options), diagnostics)
+            : requestRejected
+                ? new LmaxFixOrderStatusSmokeResult("fix-order-status-smoke", "Failed", true, true, requestSent, false, true, rejectRefTagId, rejectRefMsgType, rejectText, request.ClOrdId, null, null, [], startedAt, DateTimeOffset.UtcNow, false, $"OrderStatusRequest was rejected at FIX session level: {rejectText ?? "(no reject text)"}", LmaxConnectivityLabSafetyValidator.DecisionsForExternalCommand(options), diagnostics)
+                : new LmaxFixOrderStatusSmokeResult("fix-order-status-smoke", "Failed", true, true, requestSent, false, false, null, null, rejectText, request.ClOrdId, null, null, [], startedAt, DateTimeOffset.UtcNow, false, "OrderStatusRequest timed out before ExecutionReport or session reject was received on the same session.", LmaxConnectivityLabSafetyValidator.DecisionsForExternalCommand(options), diagnostics);
+        return new(result, sequenceNumber);
+    }
+
+    private sealed record SameSessionTradeCaptureResult(LmaxFixTradeCaptureSmokeResult Result, int NextSequenceNumber);
+
+    private async Task<SameSessionTradeCaptureResult> SendTradeCaptureRequestOnSessionAsync(Stream stream, LmaxConnectivityLabOptions options, string target, int sequenceNumber, LmaxFixTradeCaptureRequestOptions requestOptions, DateTimeOffset startedAt, CancellationToken cancellationToken)
+    {
+        var diagnostics = new List<string> { "SameSession=True", "No second FIX logon attempted." };
+        var reports = new List<LmaxFixTradeCaptureReport>();
+        var requestSent = false;
+        var ackReceived = false;
+        var ackAccepted = false;
+        var requestRejected = false;
+        string? ackRejectText = null;
+        string? rejectMsgType = null;
+        string? rejectRefTagId = null;
+        string? rejectRefMsgType = null;
+        string? rejectReasonCode = null;
+        string? rejectText = null;
+        string? lastReceivedMsgType = null;
+        int? expectedTradeReportCount = null;
+        var noMoreReports = false;
+        var timedOutWaitingForReports = false;
+        var requestSeq = sequenceNumber;
+        var tradeRequestId = LmaxFixRecoveryCodec.GenerateTradeRequestId(DateTimeOffset.UtcNow, sequenceNumber);
+        var request = LmaxFixRecoveryCodec.BuildTradeCaptureReportRequest(options.FixSenderCompId!, target, sequenceNumber++, tradeRequestId, requestOptions);
+        diagnostics.Add($"MsgSeqNum TradeCaptureReportRequest={requestSeq}");
+        diagnostics.Add($"TradeRequestID={tradeRequestId}");
+        if (requestOptions.ShowFixMessages || options.ShowFixMessages) diagnostics.Add($"OUT {LmaxFixMarketDataCodec.SanitizeMessage(request)}");
+        using (var wait = CreateTimeout(requestOptions.MaxWaitSeconds, cancellationToken))
+        {
+            await WriteAsciiAsync(stream, request, wait.Token);
+            requestSent = true;
+            while (!wait.IsCancellationRequested && reports.Count < requestOptions.MaxReports)
+            {
+                string message;
+                int nextSequence;
+                try
+                {
+                    (message, nextSequence) = await ReadMarketDataResponseAsync(stream, options, target, sequenceNumber, wait.Token);
+                }
+                catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+                {
+                    timedOutWaitingForReports = true;
+                    break;
+                }
+
+                sequenceNumber = nextSequence;
+                if (string.IsNullOrWhiteSpace(message)) break;
+                lastReceivedMsgType = LmaxFixMarketDataCodec.GetMsgType(message);
+                if (requestOptions.ShowFixMessages || options.ShowFixMessages) diagnostics.Add($"IN {LmaxFixMarketDataCodec.SanitizeMessage(message)}");
+                if (lastReceivedMsgType == "AQ")
+                {
+                    var ack = LmaxFixRecoveryCodec.ParseTradeCaptureAck(message);
+                    ackReceived = true;
+                    ackAccepted = ack.Accepted;
+                    ackRejectText = ack.Text;
+                    expectedTradeReportCount = ack.TotNumTradeReports;
+                    diagnostics.Add($"TradeCaptureAck: TradeRequestID={ack.RequestId ?? "(missing)"} TotNumTradeReports={expectedTradeReportCount?.ToString(CultureInfo.InvariantCulture) ?? "(missing)"} Result={ack.Result ?? "(missing)"} Status={ack.Status ?? "(missing)"}");
+                    if (ackAccepted && expectedTradeReportCount == 0)
+                    {
+                        noMoreReports = true;
+                        break;
+                    }
+
+                    if (!ackAccepted) break;
+                }
+                else if (lastReceivedMsgType == "AE")
+                {
+                    var normalized = LmaxFixRecoveryCodec.NormalizeTradeCaptureReport(message, options);
+                    reports.Add(normalized.Report);
+                    foreach (var warning in normalized.Warnings) diagnostics.Add($"TradeCaptureReport warning: {warning}");
+                    if (normalized.Report.LastReportRequested || expectedTradeReportCount is not null && reports.Count >= expectedTradeReportCount.Value)
+                    {
+                        noMoreReports = true;
+                        break;
+                    }
+                }
+                else if (lastReceivedMsgType == "3")
+                {
+                    var reject = LmaxFixRecoveryCodec.ParseSessionReject(message);
+                    rejectMsgType = "3";
+                    rejectRefTagId = reject.RefTagId;
+                    rejectRefMsgType = reject.RefMsgType;
+                    rejectReasonCode = reject.SessionRejectReason;
+                    rejectText = reject.Text;
+                    ackRejectText = reject.Text;
+                    requestRejected = string.Equals(reject.RefMsgType, "AD", StringComparison.Ordinal);
+                    break;
+                }
+                else if (lastReceivedMsgType == "5")
+                {
+                    ackRejectText = LmaxFixMarketDataCodec.GetTag(message, "58");
+                    break;
+                }
+            }
+        }
+
+        var status = ResolveTradeCaptureStatus(ackReceived, ackAccepted, requestRejected, expectedTradeReportCount, reports.Count, timedOutWaitingForReports);
+        var messageText = ResolveTradeCaptureMessage(ackReceived, ackAccepted, requestRejected, rejectText, expectedTradeReportCount, reports.Count, timedOutWaitingForReports);
+        var result = new LmaxFixTradeCaptureSmokeResult("fix-trade-capture-smoke", status, true, true, requestSent, ackReceived, ackAccepted, requestRejected, ackRejectText, rejectMsgType, rejectRefTagId, rejectRefMsgType, rejectReasonCode, rejectText, lastReceivedMsgType, expectedTradeReportCount, noMoreReports, false, reports.Count, reports.Any(x => x.LastReportRequested) || noMoreReports, reports, startedAt, DateTimeOffset.UtcNow, messageText, LmaxConnectivityLabSafetyValidator.DecisionsForExternalCommand(options), diagnostics);
+        return new(result, sequenceNumber);
+    }
+
+    public static LmaxFixTradeCaptureRequestOptions AdjustTradeCaptureWindowAfterFill(LmaxFixTradeCaptureRequestOptions requested, LmaxFixExecutionReport? lastFill, DateTimeOffset now, ICollection<string> diagnostics)
+    {
+        var fillTime = lastFill?.TransactTimeUtc ?? now;
+        var requestedLookback = requested.EndUtc > requested.StartUtc ? requested.EndUtc - requested.StartUtc : TimeSpan.FromMinutes(1440);
+        var lookback = requestedLookback < TimeSpan.FromMinutes(5) ? TimeSpan.FromMinutes(5) : requestedLookback;
+        var startUtc = fillTime.Subtract(lookback).ToUniversalTime();
+        var endUtc = new[] { now.ToUniversalTime(), fillTime.AddMinutes(1).ToUniversalTime() }.Max();
+        if (endUtc <= fillTime) endUtc = fillTime.AddMinutes(1).ToUniversalTime();
+
+        diagnostics.Add($"FillTransactTimeUtc={fillTime:O}");
+        diagnostics.Add($"TradeCaptureStartUtc={startUtc:O}");
+        diagnostics.Add($"TradeCaptureEndUtc={endUtc:O}");
+        return requested with { StartUtc = startUtc, EndUtc = endUtc };
     }
 
     private static LmaxConnectivityLabOptions CopyOptions(LmaxConnectivityLabOptions source)

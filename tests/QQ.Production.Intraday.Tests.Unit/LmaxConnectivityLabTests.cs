@@ -1348,6 +1348,58 @@ public sealed class LmaxConnectivityLabTests
     }
 
     [Fact]
+    public void Lifecycle_evidence_trade_capture_window_is_computed_after_fill_time()
+    {
+        var fill = LmaxFixRecoveryCodec.NormalizeExecutionReport(FixMessage("35=8", "17=FILL1", "37=ORDER1", "11=CL1", "150=F", "39=2", "48=4001", "54=1", "14=0.1", "151=0", "32=0.1", "31=1.17361", "60=20260506-08:24:19.908"), CompleteFixOptions()).Report;
+        var requested = LmaxFixTradeCaptureRequestOptions.From(new DateTimeOffset(2026, 5, 6, 8, 24, 17, TimeSpan.Zero), 1440, null, null, null, 10, 20, false);
+        var diagnostics = new List<string>();
+
+        var adjusted = RawLmaxFixSessionClient.AdjustTradeCaptureWindowAfterFill(requested, fill, new DateTimeOffset(2026, 5, 6, 8, 24, 20, TimeSpan.Zero), diagnostics);
+
+        Assert.True(adjusted.EndUtc > fill.TransactTimeUtc);
+        Assert.True(adjusted.StartUtc < fill.TransactTimeUtc);
+        Assert.Contains(diagnostics, x => x.Contains("FillTransactTimeUtc=2026-05-06T08:24:19.908", StringComparison.Ordinal));
+        Assert.Contains(diagnostics, x => x.Contains("TradeCaptureStartUtc=", StringComparison.Ordinal));
+        Assert.Contains(diagnostics, x => x.Contains("TradeCaptureEndUtc=", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Lifecycle_evidence_fails_expected_recovery_checks_when_order_filled_but_recovery_missing()
+    {
+        var (request, order, _, tradeCapture) = MatchingLifecycleEvidenceInputs();
+        var emptyTradeCapture = tradeCapture with { Reports = [], TradeReportCount = 0 };
+
+        var report = LmaxFixLifecycleEvidenceBuilder.Build(request, order, null, emptyTradeCapture);
+
+        Assert.Contains(report.ConsistencyChecks, x => x.Name == "OrderStatus recovery returned ExecutionReport" && x.Status == LmaxFixLifecycleConsistencyStatus.Failed);
+        Assert.Contains(report.ConsistencyChecks, x => x.Name == "Fill ExecID appears in TradeCaptureReport" && x.Status == LmaxFixLifecycleConsistencyStatus.Failed);
+    }
+
+    [Fact]
+    public void Lifecycle_evidence_uses_same_session_recovery_and_single_logout_path()
+    {
+        var source = File.ReadAllText(Path.Combine(FindRepoRoot(), "tools", "QQ.Production.Intraday.Lmax.ConnectivityLab", "RawFixSessionClient.cs"));
+
+        Assert.Contains("DemoLifecycleEvidenceOnSingleSessionAsync", source, StringComparison.Ordinal);
+        Assert.Contains("SendOrderStatusRequestOnSessionAsync", source, StringComparison.Ordinal);
+        Assert.Contains("SendTradeCaptureRequestOnSessionAsync", source, StringComparison.Ordinal);
+        Assert.Contains("Same session used for order + recovery; no second FIX logon attempted.", source, StringComparison.Ordinal);
+        Assert.Contains("RecoveryLogonAttempts=0", source, StringComparison.Ordinal);
+        Assert.Contains("TrySendLogoutAsync(stream, options, target, sequenceNumber, diagnostics, \"LifecycleEvidence\")", source, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Lifecycle_evidence_diagnostics_include_sequence_progression()
+    {
+        var source = File.ReadAllText(Path.Combine(FindRepoRoot(), "tools", "QQ.Production.Intraday.Lmax.ConnectivityLab", "RawFixSessionClient.cs"));
+
+        Assert.Contains("MsgSeqNum Logon=", source, StringComparison.Ordinal);
+        Assert.Contains("MsgSeqNum NewOrderSingle=", source, StringComparison.Ordinal);
+        Assert.Contains("MsgSeqNum OrderStatusRequest=", source, StringComparison.Ordinal);
+        Assert.Contains("MsgSeqNum TradeCaptureReportRequest=", source, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task Lifecycle_evidence_command_safety_blocks_by_default_without_network()
     {
         var fix = new RawLmaxFixSessionClient(new LmaxConnectivityLabSafetyValidator());

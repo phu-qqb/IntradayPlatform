@@ -347,6 +347,10 @@ The lab has now validated the full LMAX Demo FIX lifecycle in isolation:
 
 `fix-demo-lifecycle-evidence` is a lab-only wrapper that can produce one structured report for that flow. In live Demo mode it submits the same tiny gated demo order, runs read-only order-status recovery by `ClOrdID`, runs read-only trade-capture recovery over a recent UTC window, then prints consistency checks. It does not persist anything into the main DB and it is not referenced by the API or Worker.
 
+The command separates the order-capable phase from the recovery phase while keeping one FIX Trading session. The first phase uses the strict demo order gates (`AllowOrderSubmission=true`, explicit confirmation, `DryRun=false`, Demo/UAT only). After the terminal execution report is known, the recovery phase stays on the same logged-on session and sends only `OrderStatusRequest` (`35=H`) and `TradeCaptureReportRequest` (`35=AD`). It never sends a second `NewOrderSingle`, does not attempt a second recovery logon, and logs out once at the end.
+
+Trade capture windows are computed after the fill is received. The lab uses the last fill `TransactTimeUtc` as the anchor, sets the start before that fill, and sets `EndUtc` after the fill (`max(now, fillTime + 1 minute)`). Diagnostics include `FillTransactTimeUtc`, `TradeCaptureStartUtc`, and `TradeCaptureEndUtc` so operators can verify the recovery window actually covers the fill.
+
 The evidence report checks:
 
 - `ClOrdID` matches across order submission and order-status recovery.
@@ -358,6 +362,8 @@ The evidence report checks:
 - Missing Trade UTI in FIX AE is reported as a warning only.
 
 `ExecType=I` is status-only. It must not be counted as a fill; fill identity comes from `ExecType=F` / `Trade` execution reports and the corresponding TradeCapture `ExecID`.
+
+If the order fills but read-only recovery is incomplete, the evidence command reports `PartiallySucceeded` and states which recovery pieces are missing. That means the order lifecycle itself succeeded, but the cross-channel evidence is incomplete.
 
 Dry-run:
 

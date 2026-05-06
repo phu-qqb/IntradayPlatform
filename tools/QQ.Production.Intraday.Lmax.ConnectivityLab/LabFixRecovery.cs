@@ -972,6 +972,10 @@ public static class LmaxFixLifecycleEvidenceBuilder
         AddSideCheck(checks, "Side matches ExecutionReport and OrderStatus", latestExecution?.Side, latestStatusReport?.Side);
         AddDecimalCheck(checks, "CumQty matches ExecutionReport and OrderStatus", latestExecution?.CumQty, latestStatusReport?.CumQty);
         AddDecimalCheck(checks, "LeavesQty matches ExecutionReport and OrderStatus", latestExecution?.LeavesQty, latestStatusReport?.LeavesQty);
+        if (lastFill is not null && latestStatusReport is null)
+        {
+            checks.Add(new("OrderStatus recovery returned ExecutionReport", LmaxFixLifecycleConsistencyStatus.Failed, "Order filled, but OrderStatusRequest did not return an ExecutionReport."));
+        }
 
         if (lastFill is not null)
         {
