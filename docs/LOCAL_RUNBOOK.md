@@ -79,6 +79,14 @@ Then connect with SQL Server Management Studio or Azure Data Studio to `(localdb
 
 The API uses `Persistence:Provider = SqlServerLocal` by default and still registers only `FakeLmaxGateway`.
 
+## LMAX Adapter Boundary
+
+The Connectivity Lab has validated the LMAX Demo FIX lifecycle, including market-data snapshot, Demo order lifecycle, order-status recovery, trade-capture recovery, and lifecycle evidence checks. That validation does not change local runtime behavior.
+
+The API and Worker remain `FakeLmaxGateway` only. No LMAX FIX session, real gateway, shadow-mode service, credential form, live market-data provider, or order-submission path is registered in the main runtime.
+
+The dormant adapter design gate lives in `src/QQ.Production.Intraday.Infrastructure.Lmax` and is documented in `docs/LMAX_ADAPTER_DESIGN.md`. It defines contracts, normalized DTOs, safety options, and in-memory shadow-mode observations for future work. Future LMAX integration must begin in shadow mode and must not mutate orders, fills, positions, or execution state.
+
 ## Run UI
 
 The local operator cockpit lives at:

@@ -23,7 +23,19 @@ Local simulator foundation for `QQ.Production.Intraday`, an institutional PMS/OM
 - No live LMAX connectivity exists in the registered application path
 - API and Worker register only `FakeLmaxGateway`
 
-The `QQ.Production.Intraday.Infrastructure.Lmax` project contains only a placeholder `LmaxVenueGateway` that throws `NotImplementedException` and is not registered by the API or Worker.
+The `QQ.Production.Intraday.Infrastructure.Lmax` project contains a placeholder `LmaxVenueGateway` that throws `NotImplementedException` and is not registered by the API or Worker. It also contains dormant adapter design contracts, normalized DTOs, safety-gate helpers, and in-memory shadow-mode comparison helpers. These are architecture/readiness types only; the API and Worker do not register them.
+
+## LMAX Adapter Design Gate
+
+The isolated Connectivity Lab has validated the LMAX Demo FIX lifecycle: market-data snapshot, trading logon, tiny Demo `NewOrderSingle`, `ExecutionReport` New/Trade, `OrderStatusRequest`, `TradeCaptureReportRequest`, and `TradeCaptureReport` recovery. No lab data is persisted into the main database.
+
+The platform integration path is FIX-only plus LMAX EOD files:
+
+- FIX Market Data for future market-data ingestion.
+- FIX Trading for future order entry, execution reports, order-status recovery, and trade-capture recovery.
+- LMAX EOD files as the official daily reconciliation source.
+
+The real adapter is not wired into runtime. Future LMAX work must start in shadow mode, comparing normalized LMAX events to internal orders/fills without mutating orders, fills, positions, or execution state. See `docs/LMAX_ADAPTER_DESIGN.md`.
 
 ## Quality Gate #1
 

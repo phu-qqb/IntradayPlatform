@@ -26,6 +26,8 @@ The platform integration strategy is now FIX-first and EOD-file based:
 
 The Account REST API path is parked. The Account API lab commands remain in the repo as isolated diagnostics only, but they are no longer required for platform operation. BasicAuth against `https://account-api.london-demo.lmax.com` returned `401 Unauthorized` for likely discovery endpoints during exploration, so do not treat Account API availability as a dependency for this platform. No Account API command persists data or feeds the main runtime.
 
+The lab validation feeds the dormant adapter design gate documented in `docs/LMAX_ADAPTER_DESIGN.md`. That design gate defines contracts, normalized DTOs, safety options, and shadow-mode comparison helpers only. It does not register LMAX connectivity in the API or Worker.
+
 ## Safety Defaults
 
 The lab defaults are deliberately inert:
