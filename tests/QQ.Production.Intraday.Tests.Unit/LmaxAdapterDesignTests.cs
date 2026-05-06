@@ -212,6 +212,122 @@ public sealed class LmaxAdapterDesignTests
     }
 
     [Fact]
+    public void Shadow_mode_trade_capture_matching_internal_fill_creates_match_observation()
+    {
+        var tradeCapture = new LmaxFixTradeCaptureNormalizer().Normalize(FixFields(
+            ("17", "EXEC-FILL"),
+            ("37", "ORDER-1"),
+            ("11", "CLIENT-1"),
+            ("48", "4001"),
+            ("32", "0.1"),
+            ("31", "1.17361")));
+        var internalFills = new[]
+        {
+            new LmaxShadowInternalFillReference("internal-fill-1", "EXEC-FILL", "CLIENT-1", "ORDER-1", 0.1m, 1.17361m)
+        };
+
+        var observations = new LmaxShadowModeService().Compare([], [tradeCapture], internalFills, []);
+
+        Assert.Contains(observations, x => x.Type == LmaxShadowObservationType.TradeCaptureMatchesInternalFill && x.InternalEntityId == "internal-fill-1");
+    }
+
+    [Fact]
+    public void Shadow_mode_trade_capture_missing_internal_fill_creates_warning_observation()
+    {
+        var tradeCapture = new LmaxFixTradeCaptureNormalizer().Normalize(FixFields(
+            ("17", "EXEC-FILL"),
+            ("37", "ORDER-1"),
+            ("11", "CLIENT-1"),
+            ("48", "4001"),
+            ("32", "0.1"),
+            ("31", "1.17361")));
+
+        var observations = new LmaxShadowModeService().Compare([], [tradeCapture], [], []);
+
+        Assert.Contains(observations, x => x.Type == LmaxShadowObservationType.TradeCaptureMissingInternalFill && x.Severity == LmaxShadowObservationSeverity.Warning);
+    }
+
+    [Fact]
+    public void Shadow_mode_order_status_filled_matches_internal_child_status()
+    {
+        var status = new LmaxFixExecutionReportNormalizer().Normalize(FixFields(
+            ("17", "STATUS-1"),
+            ("37", "ORDER-1"),
+            ("11", "CLIENT-1"),
+            ("150", "I"),
+            ("39", "2"),
+            ("48", "4001"),
+            ("14", "0.1"),
+            ("151", "0")));
+        var internalOrders = new[]
+        {
+            new LmaxShadowInternalOrderReference("child-1", "CLIENT-1", "ORDER-1", LmaxNormalizedOrderStatusValue.Filled, 0.1m, 0m)
+        };
+
+        var observations = new LmaxShadowModeService().Compare([status], [], [], internalOrders);
+
+        Assert.Contains(observations, x => x.Type == LmaxShadowObservationType.OrderStatusMatchesInternalOrder && x.InternalEntityId == "child-1");
+    }
+
+    [Fact]
+    public void Shadow_mode_order_status_filled_without_internal_filled_state_creates_warning()
+    {
+        var status = new LmaxFixExecutionReportNormalizer().Normalize(FixFields(
+            ("17", "STATUS-1"),
+            ("37", "ORDER-1"),
+            ("11", "CLIENT-1"),
+            ("150", "I"),
+            ("39", "2"),
+            ("48", "4001"),
+            ("14", "0.1"),
+            ("151", "0")));
+        var internalOrders = new[]
+        {
+            new LmaxShadowInternalOrderReference("child-1", "CLIENT-1", "ORDER-1", LmaxNormalizedOrderStatusValue.New, 0m, 0.1m)
+        };
+
+        var observations = new LmaxShadowModeService().Compare([status], [], [], internalOrders);
+
+        Assert.Contains(observations, x => x.Type == LmaxShadowObservationType.OrderStatusMismatch && x.Severity == LmaxShadowObservationSeverity.Warning);
+    }
+
+    [Fact]
+    public void Shadow_mode_never_mutates_references()
+    {
+        var executionReport = new LmaxFixExecutionReportNormalizer().Normalize(FixFields(
+            ("17", "EXEC-FILL"),
+            ("37", "ORDER-1"),
+            ("11", "CLIENT-1"),
+            ("150", "F"),
+            ("39", "2"),
+            ("48", "4001"),
+            ("32", "0.1"),
+            ("31", "1.17361")));
+        var tradeCapture = new LmaxFixTradeCaptureNormalizer().Normalize(FixFields(
+            ("17", "EXEC-FILL"),
+            ("37", "ORDER-1"),
+            ("11", "CLIENT-1"),
+            ("48", "4001"),
+            ("32", "0.1"),
+            ("31", "1.17361")));
+        var fills = new List<LmaxShadowInternalFillReference>
+        {
+            new("internal-fill-1", "EXEC-FILL", "CLIENT-1", "ORDER-1", 0.1m, 1.17361m)
+        };
+        var orders = new List<LmaxShadowInternalOrderReference>
+        {
+            new("child-1", "CLIENT-1", "ORDER-1", LmaxNormalizedOrderStatusValue.Filled, 0.1m, 0m)
+        };
+
+        _ = new LmaxShadowModeService().Compare([executionReport], [tradeCapture], fills, orders);
+
+        Assert.Single(fills);
+        Assert.Single(orders);
+        Assert.Equal("internal-fill-1", fills[0].InternalFillId);
+        Assert.Equal("child-1", orders[0].InternalOrderId);
+    }
+
+    [Fact]
     public void Normalized_diagnostics_do_not_expose_credentials()
     {
         var raw = "35=8\u000158=password-secret\u0001Authorization=Bearer top-secret-token\u0001";

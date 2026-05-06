@@ -35,7 +35,9 @@ The platform integration path is FIX-only plus LMAX EOD files:
 - FIX Trading for future order entry, execution reports, order-status recovery, and trade-capture recovery.
 - LMAX EOD files as the official daily reconciliation source.
 
-The real adapter is not wired into runtime. Future LMAX work must start in shadow mode, comparing normalized LMAX events to internal orders/fills without mutating orders, fills, positions, or execution state. See `docs/LMAX_ADAPTER_DESIGN.md`.
+The real adapter is not wired into runtime. Future LMAX work must start in shadow mode, comparing normalized LMAX events to internal orders/fills without mutating orders, fills, positions, or execution state. See `docs/LMAX_ADAPTER_DESIGN.md` and `docs/ADAPTER_CONTRACTS.md`.
+
+The adapter contract parity gate is documented in `docs/ADAPTER_CONTRACTS.md`. It defines the neutral venue event model used to compare internal execution behavior, `FakeLmaxGateway` simulator output, and future LMAX FIX-normalized events before any real adapter can be considered for runtime registration.
 
 ## Quality Gate #1
 

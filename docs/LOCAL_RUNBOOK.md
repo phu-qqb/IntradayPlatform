@@ -79,6 +79,8 @@ Then connect with SQL Server Management Studio or Azure Data Studio to `(localdb
 
 The API uses `Persistence:Provider = SqlServerLocal` by default and still registers only `FakeLmaxGateway`.
 
+LMAX adapter contract and simulator parity details are documented in [ADAPTER_CONTRACTS.md](ADAPTER_CONTRACTS.md). These checks are design-gate infrastructure only; they do not register a real LMAX adapter or enable live trading.
+
 ## LMAX Adapter Boundary
 
 The Connectivity Lab has validated the LMAX Demo FIX lifecycle, including market-data snapshot, Demo order lifecycle, order-status recovery, trade-capture recovery, and lifecycle evidence checks. That validation does not change local runtime behavior.
@@ -86,6 +88,8 @@ The Connectivity Lab has validated the LMAX Demo FIX lifecycle, including market
 The API and Worker remain `FakeLmaxGateway` only. No LMAX FIX session, real gateway, shadow-mode service, credential form, live market-data provider, or order-submission path is registered in the main runtime.
 
 The dormant adapter design gate lives in `src/QQ.Production.Intraday.Infrastructure.Lmax` and is documented in `docs/LMAX_ADAPTER_DESIGN.md`. It defines contracts, normalized DTOs, safety options, and in-memory shadow-mode observations for future work. Future LMAX integration must begin in shadow mode and must not mutate orders, fills, positions, or execution state.
+
+The adapter contract parity gate is documented in `docs/ADAPTER_CONTRACTS.md`. It checks that simulator events and LMAX FIX-normalized events map into the same neutral venue lifecycle contract before any real adapter work is considered.
 
 ## Run UI
 
