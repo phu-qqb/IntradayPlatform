@@ -846,6 +846,53 @@ export type OperatorAuditEventDto = {
   metadataJson?: string | null;
 };
 
+export type LmaxShadowReplayRunDto = {
+  id: string;
+  inputSource: string;
+  status: string;
+  startedAtUtc: string;
+  completedAtUtc?: string | null;
+  inputJson?: string | null;
+  outputJson?: string | null;
+  observationCount: number;
+  blockingObservationCount: number;
+  warningObservationCount: number;
+  message?: string | null;
+  correlationId?: string | null;
+  createdAtUtc: string;
+};
+
+export type LmaxShadowObservationDto = {
+  id: string;
+  replayRunId?: string | null;
+  observedAtUtc: string;
+  type: string;
+  severity: string;
+  status: string;
+  instrumentId?: string | null;
+  symbol?: string | null;
+  brokerExecutionId?: string | null;
+  brokerOrderId?: string | null;
+  clientOrderId?: string | null;
+  internalFillId?: string | null;
+  internalOrderId?: string | null;
+  description: string;
+  lmaxPayloadJson?: string | null;
+  internalPayloadJson?: string | null;
+  differenceJson?: string | null;
+  correlationId?: string | null;
+  createdAtUtc: string;
+};
+
+export type LmaxShadowReplayRequest = {
+  inputSource: string;
+  reason: string;
+  executionReports?: unknown[];
+  tradeCaptureReports?: unknown[];
+  orderStatuses?: unknown[];
+  protocolRejects?: unknown[];
+};
+
 export type OperatorUserDto = {
   id: string;
   operatorId: string;

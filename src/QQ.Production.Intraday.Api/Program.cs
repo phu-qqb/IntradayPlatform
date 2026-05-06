@@ -38,6 +38,7 @@ builder.Services.AddScoped<IRiskControlService, RiskControlService>();
 builder.Services.AddScoped<IOperationalJobRunner, OperationalJobRunner>();
 builder.Services.AddScoped<IOperationalRunbookRunner, OperationalRunbookRunner>();
 builder.Services.AddScoped<IDailyOperationsService, DailyOperationsService>();
+builder.Services.AddScoped<ILmaxShadowReplayService, LmaxShadowModeService>();
 builder.Services.AddSingleton(new LocalSchedulerOptions(
     builder.Configuration.GetValue("LocalScheduler:Enabled", false),
     builder.Configuration.GetValue("LocalScheduler:PollIntervalSeconds", 30)));
@@ -77,6 +78,7 @@ if (string.Equals(persistenceProvider, "SqlServerLocal", StringComparison.Ordina
     builder.Services.AddScoped<IExceptionCaseRepository, SqlServerExceptionCaseRepository>();
     builder.Services.AddScoped<IOperationalJobRepository, SqlServerOperationalJobRepository>();
     builder.Services.AddScoped<IOperationalRunbookRepository, SqlServerOperationalRunbookRepository>();
+    builder.Services.AddScoped<ILmaxShadowRepository, SqlServerLmaxShadowRepository>();
     builder.Services.AddScoped<IBrokerPositionProvider, SqlServerFakeBrokerPositionProvider>();
     builder.Services.AddScoped<IBarBuilderService, BarBuilderService>();
     builder.Services.AddScoped<LocalDatabaseInitializer>();
@@ -96,6 +98,7 @@ else if (string.Equals(persistenceProvider, "InMemory", StringComparison.Ordinal
     builder.Services.AddSingleton<IExceptionCaseRepository, InMemoryExceptionCaseRepository>();
     builder.Services.AddSingleton<IOperationalJobRepository, InMemoryOperationalJobRepository>();
     builder.Services.AddSingleton<IOperationalRunbookRepository, InMemoryOperationalRunbookRepository>();
+    builder.Services.AddSingleton<ILmaxShadowRepository, InMemoryLmaxShadowRepository>();
     builder.Services.AddSingleton<IBrokerPositionProvider, FakeBrokerPositionProvider>();
     builder.Services.AddSingleton<IBarBuilderService, BarBuilderService>();
 }
@@ -863,6 +866,47 @@ app.MapGet("/audit/events/by-correlation/{correlationId}", async (string correla
     var events = await audit.GetByCorrelationIdAsync(correlationId, ClampLimit(limit), cancellationToken);
     return Results.Ok(events.Select(ToOperatorAuditEventDto));
 });
+
+app.MapPost("/lmax-shadow/replay", async (LmaxShadowReplayApiRequest request, ILmaxShadowReplayService shadow, CancellationToken cancellationToken) =>
+{
+    var result = await shadow.ReplayAsync(ToLmaxShadowReplayRequest(request), cancellationToken);
+    return Results.Ok(ToLmaxShadowReplayRunDto(result));
+});
+
+app.MapGet("/lmax-shadow/replay-runs", async (ILmaxShadowReplayService shadow, int? limit, string? status, string? inputSource, DateTimeOffset? fromUtc, DateTimeOffset? toUtc, CancellationToken cancellationToken) =>
+{
+    var runs = await shadow.GetReplayRunsAsync(new LmaxShadowReplayRunFilter(ClampLimit(limit), ParseEnum<LmaxShadowReplayStatus>(status), ParseEnum<LmaxShadowInputSource>(inputSource), fromUtc, toUtc), cancellationToken);
+    return Results.Ok(runs.Select(ToLmaxShadowReplayRunDto));
+});
+
+app.MapGet("/lmax-shadow/replay-runs/{id:guid}", async (Guid id, ILmaxShadowReplayService shadow, CancellationToken cancellationToken) =>
+{
+    var run = await shadow.GetReplayRunAsync(new LmaxShadowReplayRunId(id), cancellationToken);
+    return run is null ? Results.NotFound() : Results.Ok(ToLmaxShadowReplayRunDto(run));
+});
+
+app.MapGet("/lmax-shadow/observations", async (ILmaxShadowReplayService shadow, int? limit, Guid? replayRunId, string? severity, string? status, string? type, string? symbol, string? brokerExecutionId, string? clientOrderId, CancellationToken cancellationToken) =>
+{
+    var observations = await shadow.GetObservationsAsync(new LmaxShadowObservationFilter(
+        ClampLimit(limit),
+        replayRunId is null ? null : new LmaxShadowReplayRunId(replayRunId.Value),
+        ParseEnum<LmaxShadowObservationSeverity>(severity),
+        ParseEnum<LmaxShadowObservationStatus>(status),
+        ParseEnum<LmaxShadowObservationType>(type),
+        symbol,
+        brokerExecutionId,
+        clientOrderId), cancellationToken);
+    return Results.Ok(observations.Select(ToLmaxShadowObservationDto));
+});
+
+app.MapPost("/lmax-shadow/observations/{id:guid}/acknowledge", async (Guid id, ReasonRequest request, ILmaxShadowReplayService shadow, CancellationToken cancellationToken) =>
+    Results.Ok(ToLmaxShadowObservationDto(await shadow.AcknowledgeObservationAsync(new LmaxShadowObservationId(id), request.Reason, cancellationToken))));
+
+app.MapPost("/lmax-shadow/observations/{id:guid}/resolve", async (Guid id, ReasonRequest request, ILmaxShadowReplayService shadow, CancellationToken cancellationToken) =>
+    Results.Ok(ToLmaxShadowObservationDto(await shadow.ResolveObservationAsync(new LmaxShadowObservationId(id), request.Reason, cancellationToken))));
+
+app.MapPost("/lmax-shadow/observations/{id:guid}/ignore", async (Guid id, ReasonRequest request, ILmaxShadowReplayService shadow, CancellationToken cancellationToken) =>
+    Results.Ok(ToLmaxShadowObservationDto(await shadow.IgnoreObservationAsync(new LmaxShadowObservationId(id), request.Reason, cancellationToken))));
 
 app.MapGet("/exceptions", async (IExceptionCaseService service, int? limit, string? status, string? severity, string? type, string? source, string? assignedTo, string? instrument, string? entityType, string? entityId, string? correlationId, DateTimeOffset? fromUtc, DateTimeOffset? toUtc, CancellationToken cancellationToken) =>
 {
@@ -1638,6 +1682,24 @@ static OperatorAuditEventDto ToOperatorAuditEventDto(OperatorAuditEvent x)
         x.AfterJson,
         x.MetadataJson);
 
+static LmaxShadowReplayRequest ToLmaxShadowReplayRequest(LmaxShadowReplayApiRequest request)
+    => new(
+        request.InputSource,
+        request.ExecutionReports?.Select(x => new LmaxShadowExecutionReportInput(x.ExecId, x.BrokerOrderId, x.ClientOrderId, x.ExecutionType, x.OrderStatus, ParseInstrumentId(x.InstrumentId), x.Symbol, x.Side, x.LastQty, x.LastPx, x.LeavesQty, x.CumQty, x.AvgPx, x.TransactTimeUtc, x.Payload)).ToList(),
+        request.TradeCaptureReports?.Select(x => new LmaxShadowTradeCaptureInput(x.ExecId, x.SecondaryExecId, x.BrokerOrderId, x.ClientOrderId, ParseInstrumentId(x.InstrumentId), x.Symbol, x.Side, x.LastQty, x.LastPx, x.TradeDate, x.TransactTimeUtc, x.TradeUti, x.LastReportRequested, x.Payload)).ToList(),
+        request.OrderStatuses?.Select(x => new LmaxShadowOrderStatusInput(x.BrokerOrderId, x.ClientOrderId, ParseInstrumentId(x.InstrumentId), x.Symbol, x.OrderStatus, x.CumQty, x.LeavesQty, x.TransactTimeUtc, x.Payload)).ToList(),
+        request.ProtocolRejects?.Select(x => new LmaxShadowProtocolRejectInput(x.RefMsgType, x.RefTagId, x.ReasonCode, x.Text, x.ClientOrderId, x.BrokerOrderId, x.Payload)).ToList(),
+        request.Reason);
+
+static InstrumentId? ParseInstrumentId(string? id)
+    => Guid.TryParse(id, out var parsed) ? new InstrumentId(parsed) : null;
+
+static LmaxShadowReplayRunDto ToLmaxShadowReplayRunDto(LmaxShadowReplayRun x)
+    => new(x.Id.Value.ToString("D"), x.InputSource.ToString(), x.Status.ToString(), x.StartedAtUtc, x.CompletedAtUtc, x.InputJson, x.OutputJson, x.ObservationCount, x.BlockingObservationCount, x.WarningObservationCount, x.Message, x.CorrelationId, x.CreatedAtUtc);
+
+static LmaxShadowObservationDto ToLmaxShadowObservationDto(LmaxShadowObservation x)
+    => new(x.Id.Value.ToString("D"), x.ReplayRunId?.Value.ToString("D"), x.ObservedAtUtc, x.Type.ToString(), x.Severity.ToString(), x.Status.ToString(), x.InstrumentId?.Value.ToString("D"), x.Symbol, x.BrokerExecutionId, x.BrokerOrderId, x.ClientOrderId, x.InternalFillId?.Value.ToString("D"), x.InternalOrderId?.Value.ToString("D"), x.Description, x.LmaxPayloadJson, x.InternalPayloadJson, x.DifferenceJson, x.CorrelationId, x.CreatedAtUtc);
+
 static OperatorUserDto ToOperatorUserDto(OperatorUser user, IReadOnlySet<OperatorRole> roles, IReadOnlySet<OperatorPermission> permissions)
     => new(user.Id.Value.ToString("D"), user.OperatorId, user.DisplayName, user.Email, user.IsEnabled, user.CreatedAtUtc, user.UpdatedAtUtc, roles.Select(x => x.ToString()).OrderBy(x => x).ToList(), permissions.Select(x => x.ToString()).OrderBy(x => x).ToList());
 
@@ -1787,6 +1849,8 @@ public sealed record FillDto(string Id, string BrokerExecutionId, string ChildOr
 public sealed record MarketDataSnapshotDto(string Id, string InstrumentId, string? Symbol, string VenueId, string? VenueName, decimal Bid, decimal Ask, decimal Mid, decimal Spread, string Source, DateTimeOffset SourceTimestampUtc, DateTimeOffset ReceivedAtUtc, long? SequenceNumber, bool IsSynthetic, DateTimeOffset CreatedAtUtc);
 public sealed record MarketDataBarDto(string Id, string InstrumentId, string? Symbol, string VenueId, string? VenueName, string Timeframe, DateTimeOffset BarStartUtc, DateTimeOffset BarEndUtc, string Source, decimal BidOpen, decimal BidHigh, decimal BidLow, decimal BidClose, decimal AskOpen, decimal AskHigh, decimal AskLow, decimal AskClose, decimal MidOpen, decimal MidHigh, decimal MidLow, decimal MidClose, decimal SpreadOpen, decimal SpreadHigh, decimal SpreadLow, decimal SpreadClose, decimal SpreadAverage, int ObservationCount, DateTimeOffset? FirstSnapshotUtc, DateTimeOffset? LastSnapshotUtc, bool IsComplete, string QualityStatus, string? BuildRunId, string BuilderVersion, DateTimeOffset CreatedAtUtc);
 public sealed record OperatorAuditEventDto(string Id, DateTimeOffset OccurredAtUtc, string ActorType, string ActorId, string ActorDisplayName, string EventType, string Severity, string Result, string? EntityType, string? EntityId, string? CorrelationId, string? CausationId, string? RequestId, string Source, string Description, string? Reason, string? BeforeJson, string? AfterJson, string? MetadataJson);
+public sealed record LmaxShadowReplayRunDto(string Id, string InputSource, string Status, DateTimeOffset StartedAtUtc, DateTimeOffset? CompletedAtUtc, string? InputJson, string? OutputJson, int ObservationCount, int BlockingObservationCount, int WarningObservationCount, string? Message, string? CorrelationId, DateTimeOffset CreatedAtUtc);
+public sealed record LmaxShadowObservationDto(string Id, string? ReplayRunId, DateTimeOffset ObservedAtUtc, string Type, string Severity, string Status, string? InstrumentId, string? Symbol, string? BrokerExecutionId, string? BrokerOrderId, string? ClientOrderId, string? InternalFillId, string? InternalOrderId, string Description, string? LmaxPayloadJson, string? InternalPayloadJson, string? DifferenceJson, string? CorrelationId, DateTimeOffset CreatedAtUtc);
 public sealed record OperatorUserDto(string Id, string OperatorId, string DisplayName, string? Email, bool IsEnabled, DateTimeOffset CreatedAtUtc, DateTimeOffset? UpdatedAtUtc, IReadOnlyList<string> Roles, IReadOnlyList<string> Permissions);
 public sealed record ApprovalRequestDto(string Id, string Type, string Status, string RequestedByOperatorId, string RequestedByDisplayName, DateTimeOffset RequestedAtUtc, string RequiredApproverRole, string EntityType, string EntityId, string Reason, string PayloadJson, string? BeforeJson, string? AfterJson, string? CorrelationId, DateTimeOffset? ExpiresAtUtc, DateTimeOffset? ApprovedAtUtc, string? ApprovedByOperatorId, DateTimeOffset? RejectedAtUtc, string? RejectedByOperatorId, DateTimeOffset? ExecutedAtUtc, string? ExecutedByOperatorId, string? ResultMessage, DateTimeOffset CreatedAtUtc, DateTimeOffset? UpdatedAtUtc);
 public sealed record ApprovalDecisionDto(string Id, string ApprovalRequestId, string Decision, string DecidedByOperatorId, string DecidedByDisplayName, string Reason, DateTimeOffset DecidedAtUtc, string? CorrelationId);
@@ -1802,6 +1866,11 @@ public sealed record VenueInstrumentMappingDto(string Id, string VenueId, string
 public sealed record RiskInstrumentDto(InstrumentDto Instrument, IReadOnlyList<InstrumentAliasDto> Aliases, IReadOnlyList<VenueInstrumentMappingDto> VenueMappings);
 public sealed record RiskVenueDto(VenueDto Venue);
 public sealed record ReasonRequest(string Reason);
+public sealed record LmaxShadowReplayApiRequest(LmaxShadowInputSource InputSource, IReadOnlyList<LmaxShadowExecutionReportApiInput>? ExecutionReports, IReadOnlyList<LmaxShadowTradeCaptureApiInput>? TradeCaptureReports, IReadOnlyList<LmaxShadowOrderStatusApiInput>? OrderStatuses, IReadOnlyList<LmaxShadowProtocolRejectApiInput>? ProtocolRejects, string Reason);
+public sealed record LmaxShadowExecutionReportApiInput(string? ExecId, string? BrokerOrderId, string? ClientOrderId, string? ExecutionType, string? OrderStatus, string? InstrumentId, string? Symbol, string? Side, decimal? LastQty, decimal? LastPx, decimal? LeavesQty, decimal? CumQty, decimal? AvgPx, DateTimeOffset? TransactTimeUtc, object? Payload);
+public sealed record LmaxShadowTradeCaptureApiInput(string? ExecId, string? SecondaryExecId, string? BrokerOrderId, string? ClientOrderId, string? InstrumentId, string? Symbol, string? Side, decimal? LastQty, decimal? LastPx, DateOnly? TradeDate, DateTimeOffset? TransactTimeUtc, string? TradeUti, bool? LastReportRequested, object? Payload);
+public sealed record LmaxShadowOrderStatusApiInput(string? BrokerOrderId, string? ClientOrderId, string? InstrumentId, string? Symbol, string? OrderStatus, decimal? CumQty, decimal? LeavesQty, DateTimeOffset? TransactTimeUtc, object? Payload);
+public sealed record LmaxShadowProtocolRejectApiInput(string? RefMsgType, int? RefTagId, int? ReasonCode, string? Text, string? ClientOrderId, string? BrokerOrderId, object? Payload);
 public sealed record RunOperationalJobApiRequest(string JobType, string Reason, object? Input);
 public sealed record RunOperationalRunbookApiRequest(string RunbookType, string Reason, object? Input);
 public sealed record CompleteManualRunbookStepRequest(string StepRunId, string Reason);

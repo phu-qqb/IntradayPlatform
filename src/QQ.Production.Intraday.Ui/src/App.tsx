@@ -23,6 +23,8 @@ import type {
   LmaxIndividualTradeDto,
   LmaxReportImportRunDto,
   LmaxReportValidationIssueDto,
+  LmaxShadowObservationDto,
+  LmaxShadowReplayRunDto,
   LmaxTradeSummaryDto,
   OrdersDto,
   OperatorAuditEventDto,
@@ -123,9 +125,11 @@ type DashboardState = {
   schedulerEnabled: boolean;
   dailyOpsSummary?: DailyOperationsSummaryDto;
   dailyOpsChecklist: DailyChecklistItemDto[];
+  lmaxShadowReplayRuns: LmaxShadowReplayRunDto[];
+  lmaxShadowObservations: LmaxShadowObservationDto[];
 };
 
-type PageId = 'command' | 'daily-ops' | 'pms' | 'weights' | 'oms' | 'ems' | 'market' | 'exceptions' | 'recon' | 'lmax-eod' | 'risk-admin' | 'governance' | 'audit' | 'connectivity';
+type PageId = 'command' | 'daily-ops' | 'pms' | 'weights' | 'oms' | 'ems' | 'market' | 'exceptions' | 'recon' | 'lmax-eod' | 'lmax-shadow' | 'risk-admin' | 'governance' | 'audit' | 'connectivity';
 
 const emptyDashboard: DashboardState = {
   modelRuns: [],
@@ -168,7 +172,9 @@ const emptyDashboard: DashboardState = {
   runbookRuns: [],
   schedules: [],
   schedulerEnabled: false,
-  dailyOpsChecklist: []
+  dailyOpsChecklist: [],
+  lmaxShadowReplayRuns: [],
+  lmaxShadowObservations: []
 };
 
 const navSections: Array<{ label: string; items: Array<{ id: PageId; label: string; icon: typeof Activity }> }> = [
@@ -194,7 +200,8 @@ const navSections: Array<{ label: string; items: Array<{ id: PageId; label: stri
     label: 'Data',
     items: [
       { id: 'market', label: 'Market Data', icon: BarChart3 },
-      { id: 'lmax-eod', label: 'LMAX EOD', icon: WalletCards }
+      { id: 'lmax-eod', label: 'LMAX EOD', icon: WalletCards },
+      { id: 'lmax-shadow', label: 'LMAX Shadow', icon: FileSearch }
     ]
   },
   {
@@ -222,7 +229,7 @@ export default function App() {
   const loadIntegrity = useCallback(async () => setIntegrity(await apiClient.getReferenceDataIntegrity()), []);
 
   const loadDashboard = useCallback(async () => {
-    const [modelRuns, modelWeightBatches, targets, drifts, internalPositions, brokerPositions, reconciliationBreaks, tradeIntents, riskDecisions, orders, fills, snapshots, bars, killSwitch, instruments, venues, lmaxImportRuns, lmaxValidationIssues, lmaxIndividualTrades, lmaxTradeSummaries, lmaxCurrencyWallets, eodReconciliationRuns, eodReconciliationBreaks, exceptionCases, auditEvents, riskLimitSets, activeRiskLimitSet, tradingWindows, riskInstruments, riskVenues, operators, currentOperator, approvalRequests, opsJobDefinitions, opsJobRuns, runbookDefinitions, runbookRuns, scheduleList, dailyOpsSummary, dailyOpsChecklist] = await Promise.all([
+    const [modelRuns, modelWeightBatches, targets, drifts, internalPositions, brokerPositions, reconciliationBreaks, tradeIntents, riskDecisions, orders, fills, snapshots, bars, killSwitch, instruments, venues, lmaxImportRuns, lmaxValidationIssues, lmaxIndividualTrades, lmaxTradeSummaries, lmaxCurrencyWallets, eodReconciliationRuns, eodReconciliationBreaks, exceptionCases, auditEvents, riskLimitSets, activeRiskLimitSet, tradingWindows, riskInstruments, riskVenues, operators, currentOperator, approvalRequests, opsJobDefinitions, opsJobRuns, runbookDefinitions, runbookRuns, scheduleList, dailyOpsSummary, dailyOpsChecklist, lmaxShadowReplayRuns, lmaxShadowObservations] = await Promise.all([
       apiClient.getModelRuns(),
       apiClient.getModelWeightBatches(),
       apiClient.getTargetPositions(),
@@ -262,7 +269,9 @@ export default function App() {
       apiClient.getRunbookRuns(),
       apiClient.getSchedules(),
       apiClient.getDailyOpsSummary(),
-      apiClient.getDailyOpsChecklist()
+      apiClient.getDailyOpsChecklist(),
+      apiClient.getLmaxShadowReplayRuns(),
+      apiClient.getLmaxShadowObservations()
     ]);
 
     const [riskLimits, instrumentRiskLimits, venueRiskLimits] = activeRiskLimitSet
@@ -273,7 +282,7 @@ export default function App() {
         ])
       : [[], [], []];
 
-    setDashboard((current) => ({ ...current, modelRuns, modelWeightBatches, targets, drifts, internalPositions, brokerPositions, reconciliationBreaks, tradeIntents, riskDecisions, orders, fills, snapshots, bars, killSwitch, instruments, venues, lmaxImportRuns, lmaxValidationIssues, lmaxIndividualTrades, lmaxTradeSummaries, lmaxCurrencyWallets, eodReconciliationRuns, eodReconciliationBreaks, exceptionCases, auditEvents, riskLimitSets, activeRiskLimitSet, riskLimits, instrumentRiskLimits, venueRiskLimits, tradingWindows, riskInstruments, riskVenues, operators, currentOperator, approvalRequests, opsJobDefinitions, opsJobRuns, runbookDefinitions, runbookRuns, schedules: scheduleList.value ?? [], schedulerEnabled: scheduleList.schedulerEnabled, dailyOpsSummary, dailyOpsChecklist }));
+    setDashboard((current) => ({ ...current, modelRuns, modelWeightBatches, targets, drifts, internalPositions, brokerPositions, reconciliationBreaks, tradeIntents, riskDecisions, orders, fills, snapshots, bars, killSwitch, instruments, venues, lmaxImportRuns, lmaxValidationIssues, lmaxIndividualTrades, lmaxTradeSummaries, lmaxCurrencyWallets, eodReconciliationRuns, eodReconciliationBreaks, exceptionCases, auditEvents, riskLimitSets, activeRiskLimitSet, riskLimits, instrumentRiskLimits, venueRiskLimits, tradingWindows, riskInstruments, riskVenues, operators, currentOperator, approvalRequests, opsJobDefinitions, opsJobRuns, runbookDefinitions, runbookRuns, schedules: scheduleList.value ?? [], schedulerEnabled: scheduleList.schedulerEnabled, dailyOpsSummary, dailyOpsChecklist, lmaxShadowReplayRuns, lmaxShadowObservations }));
   }, []);
 
   const refreshAll = useCallback(async () => {
@@ -390,6 +399,8 @@ function renderPage(page: PageId, dashboard: DashboardState, health: HealthDto |
       return <ReconPage dashboard={dashboard} />;
     case 'lmax-eod':
       return <LmaxEodPage dashboard={dashboard} actions={actions} />;
+    case 'lmax-shadow':
+      return <LmaxShadowPage dashboard={dashboard} actions={actions} />;
     case 'risk-admin':
       return <RiskAdminPage dashboard={dashboard} health={health} integrity={integrity} actions={actions} />;
     case 'governance':
@@ -508,6 +519,9 @@ function CommandCenter({ dashboard, health, integrity, actions }: { dashboard: D
   const pendingApprovals = dashboard.approvalRequests.filter((item) => item.status === 'Pending');
   const latestJob = dashboard.opsJobRuns[0];
   const checklistComplete = dashboard.dailyOpsChecklist.filter((item) => item.status === 'Complete').length;
+  const openShadowBlocking = dashboard.lmaxShadowObservations.filter((item) => item.status === 'Open' && item.severity === 'Blocking').length;
+  const openShadowWarnings = dashboard.lmaxShadowObservations.filter((item) => item.status === 'Open' && item.severity === 'Warning').length;
+  const latestShadowReplay = dashboard.lmaxShadowReplayRuns[0];
   return (
     <section className="workspace-page">
       <SectionHeader title="Command Center" eyebrow="Operational overview" actions={<CommandButton tone="info" onClick={() => actions.setSelected(dashboard.auditEvents[0])}>Latest Event</CommandButton>} />
@@ -520,6 +534,7 @@ function CommandCenter({ dashboard, health, integrity, actions }: { dashboard: D
         <MetricCard label="Latest Model Run" value={dashboard.modelRuns[0]?.status ?? '-'} sublabel={formatIdShort(dashboard.modelRuns[0]?.id)} tone={toneForStatus(dashboard.modelRuns[0]?.status)} />
         <MetricCard label="Open Exceptions" value={openExceptions.length} sublabel={`${blockingExceptions} blocking/critical`} tone={blockingExceptions ? 'danger' : openExceptions.length ? 'warning' : 'ok'} />
         <MetricCard label="Pending Approvals" value={pendingApprovals.length} sublabel={pendingApprovals[0] ? `${formatStatus(pendingApprovals[0].type)} requested by ${pendingApprovals[0].requestedByOperatorId}` : 'No maker/checker items pending'} tone={pendingApprovals.length ? 'warning' : 'ok'} />
+        <MetricCard label="LMAX Shadow" value={latestShadowReplay?.status ?? 'Not run'} sublabel={`${openShadowBlocking} blocking, ${openShadowWarnings} warnings`} tone={openShadowBlocking ? 'danger' : openShadowWarnings ? 'warning' : latestShadowReplay ? 'ok' : 'neutral'} />
         <MetricCard label="Daily Checklist" value={`${checklistComplete}/${dashboard.dailyOpsChecklist.length || '-'}`} sublabel={latestJob ? `Latest job ${formatStatus(latestJob.status)}` : 'No operational jobs yet'} tone={dashboard.dailyOpsSummary?.failedJobCount ? 'danger' : checklistComplete ? 'info' : 'neutral'} />
         <MetricCard label="Failed Jobs Today" value={dashboard.dailyOpsSummary?.failedJobCount ?? 0} sublabel={latestJob ? `${formatStatus(latestJob.jobType)} at ${formatUtc(latestJob.startedAtUtc)}` : 'No job history loaded'} tone={dashboard.dailyOpsSummary?.failedJobCount ? 'danger' : 'ok'} />
         <MetricCard label="Position Match" value={mismatchCount === 0 ? 'Matched' : `${mismatchCount} hint${mismatchCount === 1 ? '' : 's'}`} sublabel="Visual hint only, backend recon is authoritative" tone={mismatchCount === 0 ? 'ok' : 'warning'} />
@@ -1038,6 +1053,97 @@ function LmaxEodPage({ dashboard, actions }: { dashboard: DashboardState; action
           await actions.refreshAll();
         }}
       />
+    </section>
+  );
+}
+
+function LmaxShadowPage({ dashboard, actions }: { dashboard: DashboardState; actions: { refreshAll: () => Promise<void>; runOperation: <T>(label: string, work: () => Promise<T>, successMessage?: (result: T) => string | undefined) => Promise<T>; setSelected: (item: unknown) => void } }) {
+  const [reason, setReason] = useState('Local shadow replay inspection');
+  const [status, setStatus] = useState('');
+  const openBlocking = dashboard.lmaxShadowObservations.filter((item) => item.status === 'Open' && item.severity === 'Blocking');
+  const openWarnings = dashboard.lmaxShadowObservations.filter((item) => item.status === 'Open' && item.severity === 'Warning');
+  const matches = dashboard.lmaxShadowObservations.filter((item) => item.severity === 'Info');
+  const filtered = dashboard.lmaxShadowObservations.filter((item) => !status || item.status === status);
+  const transition = async (label: string, work: () => Promise<LmaxShadowObservationDto>) => {
+    await actions.runOperation(label, work, () => `${label} completed.`);
+    await actions.refreshAll();
+  };
+
+  return (
+    <section className="workspace-page">
+      <SectionHeader
+        title="LMAX Shadow"
+        eyebrow="Replay normalized LMAX-like evidence without live connections or runtime mutation"
+        actions={<StatusChip label="Replay only" tone="info" />}
+      />
+      <div className="critical-box">Shadow mode compares normalized evidence to internal state and writes observations only. It does not mutate orders, fills, positions, risk decisions, or reconciliation state.</div>
+      <div className="metric-grid">
+        <MetricCard label="Observations" value={dashboard.lmaxShadowObservations.length} sublabel="Stored local shadow observations" tone="neutral" />
+        <MetricCard label="Blocking" value={openBlocking.length} sublabel="Creates exception cases when produced" tone={openBlocking.length ? 'danger' : 'ok'} />
+        <MetricCard label="Warnings" value={openWarnings.length} sublabel="Operator review items" tone={openWarnings.length ? 'warning' : 'ok'} />
+        <MetricCard label="Matches" value={matches.length} sublabel="Info observations" tone="ok" />
+        <MetricCard label="Latest Replay" value={dashboard.lmaxShadowReplayRuns[0]?.status ?? 'Not run'} sublabel={dashboard.lmaxShadowReplayRuns[0]?.message ?? 'No replay history'} tone={toneForStatus(dashboard.lmaxShadowReplayRuns[0]?.status)} />
+      </div>
+      <div className="form-grid compact">
+        <label>
+          Reason
+          <input value={reason} onChange={(event) => setReason(event.target.value)} />
+        </label>
+        <ActionButton
+          className="command-button info"
+          idleLabel="Run Empty Replay"
+          runningLabel="Replaying..."
+          disabled={!reason.trim()}
+          onAction={async () => {
+            await actions.runOperation('Running LMAX shadow replay', () => apiClient.runLmaxShadowReplay({ inputSource: 'SyntheticFixture', reason, executionReports: [], tradeCaptureReports: [], orderStatuses: [], protocolRejects: [] }), () => 'Shadow replay completed.');
+            await actions.refreshAll();
+          }}
+        />
+      </div>
+      <div className="page-grid two">
+        <div className="panel">
+          <SectionHeader title="Replay Runs" />
+          <DataTable rows={dashboard.lmaxShadowReplayRuns} getRowKey={(row) => row.id} onRowClick={actions.setSelected} columns={[
+            { key: 'startedAtUtc', header: 'Started', render: (row) => formatUtc(row.startedAtUtc), sortValue: (row) => row.startedAtUtc },
+            { key: 'inputSource', header: 'Source', render: (row) => formatStatus(row.inputSource), sortValue: (row) => row.inputSource },
+            { key: 'status', header: 'Status', render: (row) => <StatusChip label={formatStatus(row.status)} tone={toneForStatus(row.status)} />, sortValue: (row) => row.status },
+            { key: 'observationCount', header: 'Obs', render: (row) => String(row.observationCount), sortValue: (row) => row.observationCount, className: 'numeric' },
+            { key: 'message', header: 'Message', render: (row) => row.message ?? '-' }
+          ]} />
+        </div>
+        <div className="panel">
+          <SectionHeader title="Observation Controls" />
+          <div className="form-grid compact">
+            <label>
+              Status filter
+              <select value={status} onChange={(event) => setStatus(event.target.value)}>
+                <option value="">All statuses</option>
+                <option value="Open">Open</option>
+                <option value="Acknowledged">Acknowledged</option>
+                <option value="Resolved">Resolved</option>
+                <option value="Ignored">Ignored</option>
+              </select>
+            </label>
+          </div>
+          <DataTable rows={filtered} getRowKey={(row) => row.id} onRowClick={actions.setSelected} columns={[
+            { key: 'createdAtUtc', header: 'Created', render: (row) => formatUtc(row.createdAtUtc), sortValue: (row) => row.createdAtUtc },
+            { key: 'severity', header: 'Severity', render: (row) => <SeverityBadge value={row.severity} />, sortValue: (row) => row.severity },
+            { key: 'type', header: 'Type', render: (row) => formatStatus(row.type), sortValue: (row) => row.type },
+            { key: 'status', header: 'Status', render: (row) => <StatusChip label={formatStatus(row.status)} tone={toneForStatus(row.status)} />, sortValue: (row) => row.status },
+            { key: 'symbol', header: 'Symbol', render: (row) => row.symbol ?? '-' },
+            { key: 'brokerExecutionId', header: 'Broker Exec', render: (row) => row.brokerExecutionId ?? '-' },
+            { key: 'clientOrderId', header: 'Client Order', render: (row) => row.clientOrderId ?? '-' },
+            { key: 'description', header: 'Description', render: (row) => row.description },
+            { key: 'actions', header: 'Actions', render: (row) => (
+              <div className="row-actions">
+                <ActionButton className="command-button" idleLabel="Ack" runningLabel="Ack..." disabled={!reason.trim() || row.status !== 'Open'} onClick={(event) => event.stopPropagation()} onAction={() => transition('Acknowledging shadow observation', () => apiClient.acknowledgeLmaxShadowObservation(row.id, reason))} />
+                <ActionButton className="command-button ok" idleLabel="Resolve" runningLabel="Resolving..." disabled={!reason.trim() || row.status === 'Resolved'} onClick={(event) => event.stopPropagation()} onAction={() => transition('Resolving shadow observation', () => apiClient.resolveLmaxShadowObservation(row.id, reason))} />
+                <ActionButton className="command-button" idleLabel="Ignore" runningLabel="Ignoring..." disabled={!reason.trim() || row.status === 'Ignored'} onClick={(event) => event.stopPropagation()} onAction={() => transition('Ignoring shadow observation', () => apiClient.ignoreLmaxShadowObservation(row.id, reason))} />
+              </div>
+            ) }
+          ]} />
+        </div>
+      </div>
     </section>
   );
 }

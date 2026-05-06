@@ -22,6 +22,9 @@ import type {
   LmaxReportImportResultDto,
   LmaxReportImportRunDto,
   LmaxReportValidationIssueDto,
+  LmaxShadowObservationDto,
+  LmaxShadowReplayRequest,
+  LmaxShadowReplayRunDto,
   LmaxTradeSummaryDto,
   MarketDataBarDto,
   MarketDataSnapshotDto,
@@ -235,6 +238,18 @@ export const apiClient = {
     request<OperatorAuditEventDto[]>(`/audit/events/by-entity${query({ entityType, entityId, limit })}`),
   getAuditEventsByCorrelation: (correlationId: string, limit = 100) =>
     request<OperatorAuditEventDto[]>(`/audit/events/by-correlation/${encodeURIComponent(correlationId)}${query({ limit })}`),
+  getLmaxShadowReplayRuns: (params: { limit?: number; status?: string; inputSource?: string; fromUtc?: string; toUtc?: string } = {}) =>
+    request<LmaxShadowReplayRunDto[]>(`/lmax-shadow/replay-runs${query({ limit: 100, ...params })}`),
+  getLmaxShadowObservations: (params: { limit?: number; replayRunId?: string; severity?: string; status?: string; type?: string; symbol?: string; brokerExecutionId?: string; clientOrderId?: string } = {}) =>
+    request<LmaxShadowObservationDto[]>(`/lmax-shadow/observations${query({ limit: 100, ...params })}`),
+  runLmaxShadowReplay: (body: LmaxShadowReplayRequest) =>
+    request<LmaxShadowReplayRunDto>('/lmax-shadow/replay', { method: 'POST', body: JSON.stringify(body) }),
+  acknowledgeLmaxShadowObservation: (id: string, reason: string) =>
+    request<LmaxShadowObservationDto>(`/lmax-shadow/observations/${id}/acknowledge`, { method: 'POST', body: JSON.stringify({ reason }) }),
+  resolveLmaxShadowObservation: (id: string, reason: string) =>
+    request<LmaxShadowObservationDto>(`/lmax-shadow/observations/${id}/resolve`, { method: 'POST', body: JSON.stringify({ reason }) }),
+  ignoreLmaxShadowObservation: (id: string, reason: string) =>
+    request<LmaxShadowObservationDto>(`/lmax-shadow/observations/${id}/ignore`, { method: 'POST', body: JSON.stringify({ reason }) }),
   getExceptionCases: (params: { limit?: number; status?: string; severity?: string; type?: string; source?: string; assignedTo?: string; instrument?: string; fromUtc?: string; toUtc?: string } = {}) =>
     request<ExceptionCaseDto[]>(`/exceptions${query({ limit: 100, ...params })}`),
   getExceptionCaseActions: (id: string) => request<ExceptionCaseActionDto[]>(`/exceptions/${id}/actions`),

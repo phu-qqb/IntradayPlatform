@@ -155,3 +155,10 @@ Before any real LMAX runtime integration can be considered, the platform still n
 - daily operations/runbook rehearsals
 - failover and recovery rehearsals
 - production certification and operational sign-off
+
+## Shadow Observation Store
+
+Shadow mode now has a local observation store and replay harness. The store accepts normalized LMAX-like execution reports, order statuses, trade capture reports, and protocol rejects through local replay endpoints. It compares those normalized events against internal child orders and fills, then writes LMAX shadow observations and replay run history only. Shadow replay does not mutate orders, fills, positions, risk decisions, or reconciliation state.
+
+Blocking shadow observations create operator-visible exception cases. Warning observations remain review items. This is replay infrastructure only; live shadow mode remains a future activation gate and the API/Worker remain FakeLmax-only.
+

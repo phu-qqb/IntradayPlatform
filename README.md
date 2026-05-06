@@ -597,3 +597,8 @@ See [docs/LMAX_CONNECTIVITY_LAB.md](docs/LMAX_CONNECTIVITY_LAB.md) for configura
 - Production/RDS duplicate reference-data remediation is not implemented yet
 - Old local databases may contain stale demo model runs from earlier seed behavior; `scripts/reset-local-db.ps1 -SeedDemoData` recreates a clean local database where demo seed contains fake snapshots only.
 - NuGet advisory audit currently reports `System.Security.Cryptography.Xml` as a vulnerable transitive package through the SQL Server infrastructure dependency graph. Directly pinning available .NET 10 package versions did not clear the advisory, so this is documented rather than masked with an unstable package workaround.
+
+### LMAX Shadow Observation Store
+
+The platform includes a local LMAX shadow replay store for normalized lab evidence. Replay creates auditable observations and optional blocking exception cases without mutating orders, fills, positions, risk, or reconciliation state. This is not live LMAX integration; API and Worker remain FakeLmax-only.
+

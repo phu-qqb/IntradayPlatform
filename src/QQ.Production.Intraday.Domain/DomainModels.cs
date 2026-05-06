@@ -594,6 +594,12 @@ public enum OperatorAuditEventType
     ScheduleTriggered,
     DailyChecklistViewed,
     DailyOperationsSummaryViewed,
+    LmaxShadowReplayStarted,
+    LmaxShadowReplayCompleted,
+    LmaxShadowObservationCreated,
+    LmaxShadowObservationAcknowledged,
+    LmaxShadowObservationResolved,
+    LmaxShadowObservationIgnored,
     Unknown
 }
 

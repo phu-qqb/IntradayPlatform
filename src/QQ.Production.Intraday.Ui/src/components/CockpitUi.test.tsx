@@ -294,6 +294,28 @@ describe('cockpit UI primitives', () => {
     expect(screen.getByText('Output Summary')).toBeTruthy();
   });
 
+  it('renders LMAX shadow observation concepts without live controls or credentials', () => {
+    render(
+      <DataTable
+        rows={[{ id: 'shadow-1', severity: 'Warning', status: 'Open', type: 'ExecutionReportMissingInternalFill', description: 'LMAX fill missing internally.' }]}
+        getRowKey={(row) => row.id}
+        columns={[
+          { key: 'severity', header: 'Severity', render: (row) => <SeverityBadge value={row.severity} /> },
+          { key: 'status', header: 'Status', render: (row) => <StatusChip label={row.status} tone={toneForStatus(row.status)} /> },
+          { key: 'type', header: 'Type', render: (row) => row.type },
+          { key: 'description', header: 'Description', render: (row) => row.description },
+          { key: 'actions', header: 'Actions', render: () => <button>Acknowledge</button> }
+        ]}
+      />
+    );
+
+    expect(screen.getByTitle('ExecutionReportMissingInternalFill')).toBeTruthy();
+    expect(screen.getByRole('button', { name: /acknowledge/i })).toBeTruthy();
+    expect(screen.queryByLabelText(/password/i)).toBeNull();
+    expect(screen.queryByRole('button', { name: /enable lmax/i })).toBeNull();
+    expect(screen.queryByRole('button', { name: /submit order/i })).toBeNull();
+  });
+
   it('renders risk decision explainability with observed and limit values', () => {
     render(
       <DataTable

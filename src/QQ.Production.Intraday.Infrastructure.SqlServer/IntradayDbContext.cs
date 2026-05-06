@@ -64,6 +64,8 @@ public sealed class IntradayDbContext(DbContextOptions<IntradayDbContext> option
     public DbSet<OperationalRunbookRun> OperationalRunbookRuns => Set<OperationalRunbookRun>();
     public DbSet<OperationalRunbookStepRun> OperationalRunbookStepRuns => Set<OperationalRunbookStepRun>();
     public DbSet<OperationalScheduleDefinition> OperationalScheduleDefinitions => Set<OperationalScheduleDefinition>();
+    public DbSet<LmaxShadowReplayRun> LmaxShadowReplayRuns => Set<LmaxShadowReplayRun>();
+    public DbSet<LmaxShadowObservation> LmaxShadowObservations => Set<LmaxShadowObservation>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -127,6 +129,8 @@ public sealed class IntradayDbContext(DbContextOptions<IntradayDbContext> option
         modelBuilder.Entity<OperationalRunbookRun>().HasKey(x => x.Id);
         modelBuilder.Entity<OperationalRunbookStepRun>().HasKey(x => x.Id);
         modelBuilder.Entity<OperationalScheduleDefinition>().HasKey(x => x.Id);
+        modelBuilder.Entity<LmaxShadowReplayRun>().HasKey(x => x.Id);
+        modelBuilder.Entity<LmaxShadowObservation>().HasKey(x => x.Id);
 
         modelBuilder.Entity<ModelRun>().HasIndex(x => x.Id).IsUnique();
         modelBuilder.Entity<Fund>().HasIndex(x => x.Name).IsUnique().HasFilter("[IsEnabled] = 1");
@@ -213,6 +217,19 @@ public sealed class IntradayDbContext(DbContextOptions<IntradayDbContext> option
         modelBuilder.Entity<OperationalRunbookRun>().HasIndex(x => x.RetryOfRunbookRunId);
         modelBuilder.Entity<OperationalRunbookStepRun>().HasIndex(x => x.RunbookRunId);
         modelBuilder.Entity<OperationalScheduleDefinition>().HasIndex(x => new { x.IsEnabled, x.NextRunAtUtc });
+        modelBuilder.Entity<LmaxShadowObservation>().HasIndex(x => x.Type);
+        modelBuilder.Entity<LmaxShadowObservation>().HasIndex(x => x.Severity);
+        modelBuilder.Entity<LmaxShadowObservation>().HasIndex(x => x.Status);
+        modelBuilder.Entity<LmaxShadowObservation>().HasIndex(x => x.BrokerExecutionId);
+        modelBuilder.Entity<LmaxShadowObservation>().HasIndex(x => x.ClientOrderId);
+        modelBuilder.Entity<LmaxShadowObservation>().HasIndex(x => x.BrokerOrderId);
+        modelBuilder.Entity<LmaxShadowObservation>().HasIndex(x => x.InstrumentId);
+        modelBuilder.Entity<LmaxShadowObservation>().HasIndex(x => x.ReplayRunId);
+        modelBuilder.Entity<LmaxShadowObservation>().HasIndex(x => x.CreatedAtUtc);
+        modelBuilder.Entity<LmaxShadowReplayRun>().HasIndex(x => x.Status);
+        modelBuilder.Entity<LmaxShadowReplayRun>().HasIndex(x => x.InputSource);
+        modelBuilder.Entity<LmaxShadowReplayRun>().HasIndex(x => x.CorrelationId);
+        modelBuilder.Entity<LmaxShadowReplayRun>().HasIndex(x => x.CreatedAtUtc);
 
         modelBuilder.Entity<BrokerAccount>().HasOne<Fund>().WithMany().HasForeignKey(x => x.FundId).OnDelete(DeleteBehavior.Restrict);
         modelBuilder.Entity<NavSnapshot>().HasOne<Fund>().WithMany().HasForeignKey(x => x.FundId).OnDelete(DeleteBehavior.Restrict);
@@ -480,6 +497,12 @@ public sealed class IntradayDbContext(DbContextOptions<IntradayDbContext> option
         modelBuilder.Entity<OperationalRunbookStepRun>().Property(x => x.JobRunId).HasConversion(x => x.HasValue ? x.Value.Value : (Guid?)null, x => x.HasValue ? new OperationalJobRunId(x.Value) : null);
         modelBuilder.Entity<OperationalScheduleDefinition>().Property(x => x.Id).HasConversion(x => x.Value, x => new OperationalScheduleDefinitionId(x));
         modelBuilder.Entity<OperationalScheduleDefinition>().Property(x => x.RunbookDefinitionId).HasConversion(x => x.Value, x => new OperationalRunbookDefinitionId(x));
+        modelBuilder.Entity<LmaxShadowReplayRun>().Property(x => x.Id).HasConversion(x => x.Value, x => new LmaxShadowReplayRunId(x));
+        modelBuilder.Entity<LmaxShadowObservation>().Property(x => x.Id).HasConversion(x => x.Value, x => new LmaxShadowObservationId(x));
+        modelBuilder.Entity<LmaxShadowObservation>().Property(x => x.ReplayRunId).HasConversion(x => x.HasValue ? x.Value.Value : (Guid?)null, x => x.HasValue ? new LmaxShadowReplayRunId(x.Value) : null);
+        modelBuilder.Entity<LmaxShadowObservation>().Property(x => x.InstrumentId).HasConversion(x => x.HasValue ? x.Value.Value : (Guid?)null, x => x.HasValue ? new InstrumentId(x.Value) : null);
+        modelBuilder.Entity<LmaxShadowObservation>().Property(x => x.InternalFillId).HasConversion(x => x.HasValue ? x.Value.Value : (Guid?)null, x => x.HasValue ? new FillId(x.Value) : null);
+        modelBuilder.Entity<LmaxShadowObservation>().Property(x => x.InternalOrderId).HasConversion(x => x.HasValue ? x.Value.Value : (Guid?)null, x => x.HasValue ? new ChildOrderId(x.Value) : null);
     }
 }
 
@@ -1288,5 +1311,63 @@ public sealed class SqlServerOperationalRunbookRepository(IntradayDbContext dbCo
         if (existing is null) dbContext.OperationalScheduleDefinitions.Add(schedule);
         else dbContext.Entry(existing).CurrentValues.SetValues(schedule);
         await dbContext.SaveChangesAsync(cancellationToken);
+    }
+}
+
+public sealed class SqlServerLmaxShadowRepository(IntradayDbContext dbContext) : ILmaxShadowRepository
+{
+    public async Task AddReplayRunAsync(LmaxShadowReplayRun run, CancellationToken cancellationToken)
+    {
+        dbContext.LmaxShadowReplayRuns.Add(run);
+        await dbContext.SaveChangesAsync(cancellationToken);
+    }
+
+    public async Task UpdateReplayRunAsync(LmaxShadowReplayRun run, CancellationToken cancellationToken)
+    {
+        var existing = await dbContext.LmaxShadowReplayRuns.FirstAsync(x => x.Id == run.Id, cancellationToken);
+        dbContext.Entry(existing).CurrentValues.SetValues(run);
+        await dbContext.SaveChangesAsync(cancellationToken);
+    }
+
+    public Task<LmaxShadowReplayRun?> GetReplayRunAsync(LmaxShadowReplayRunId id, CancellationToken cancellationToken)
+        => dbContext.LmaxShadowReplayRuns.AsNoTracking().FirstOrDefaultAsync(x => x.Id == id, cancellationToken);
+
+    public async Task<IReadOnlyList<LmaxShadowReplayRun>> GetReplayRunsAsync(LmaxShadowReplayRunFilter filter, CancellationToken cancellationToken)
+    {
+        var query = dbContext.LmaxShadowReplayRuns.AsNoTracking().AsQueryable();
+        if (filter.Status is not null) query = query.Where(x => x.Status == filter.Status);
+        if (filter.InputSource is not null) query = query.Where(x => x.InputSource == filter.InputSource);
+        if (filter.FromUtc is not null) query = query.Where(x => x.StartedAtUtc >= filter.FromUtc);
+        if (filter.ToUtc is not null) query = query.Where(x => x.StartedAtUtc <= filter.ToUtc);
+        return await query.OrderByDescending(x => x.StartedAtUtc).Take(Math.Clamp(filter.Limit, 1, 500)).ToListAsync(cancellationToken);
+    }
+
+    public async Task AddObservationAsync(LmaxShadowObservation observation, CancellationToken cancellationToken)
+    {
+        dbContext.LmaxShadowObservations.Add(observation);
+        await dbContext.SaveChangesAsync(cancellationToken);
+    }
+
+    public async Task UpdateObservationAsync(LmaxShadowObservation observation, CancellationToken cancellationToken)
+    {
+        var existing = await dbContext.LmaxShadowObservations.FirstAsync(x => x.Id == observation.Id, cancellationToken);
+        dbContext.Entry(existing).CurrentValues.SetValues(observation);
+        await dbContext.SaveChangesAsync(cancellationToken);
+    }
+
+    public Task<LmaxShadowObservation?> GetObservationAsync(LmaxShadowObservationId id, CancellationToken cancellationToken)
+        => dbContext.LmaxShadowObservations.AsNoTracking().FirstOrDefaultAsync(x => x.Id == id, cancellationToken);
+
+    public async Task<IReadOnlyList<LmaxShadowObservation>> GetObservationsAsync(LmaxShadowObservationFilter filter, CancellationToken cancellationToken)
+    {
+        var query = dbContext.LmaxShadowObservations.AsNoTracking().AsQueryable();
+        if (filter.ReplayRunId is not null) query = query.Where(x => x.ReplayRunId == filter.ReplayRunId);
+        if (filter.Severity is not null) query = query.Where(x => x.Severity == filter.Severity);
+        if (filter.Status is not null) query = query.Where(x => x.Status == filter.Status);
+        if (filter.Type is not null) query = query.Where(x => x.Type == filter.Type);
+        if (!string.IsNullOrWhiteSpace(filter.Symbol)) query = query.Where(x => x.Symbol == filter.Symbol);
+        if (!string.IsNullOrWhiteSpace(filter.BrokerExecutionId)) query = query.Where(x => x.BrokerExecutionId == filter.BrokerExecutionId);
+        if (!string.IsNullOrWhiteSpace(filter.ClientOrderId)) query = query.Where(x => x.ClientOrderId == filter.ClientOrderId);
+        return await query.OrderByDescending(x => x.CreatedAtUtc).Take(Math.Clamp(filter.Limit, 1, 500)).ToListAsync(cancellationToken);
     }
 }

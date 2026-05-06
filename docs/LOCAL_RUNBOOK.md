@@ -623,3 +623,16 @@ See [LMAX_CONNECTIVITY_LAB.md](LMAX_CONNECTIVITY_LAB.md) for command details, sa
 ## NuGet Advisory
 
 The vulnerability audit currently reports transitive `System.Security.Cryptography.Xml 9.0.0` advisories through SQL Server/EF infrastructure dependencies. Directly pinning available .NET 10 package versions did not clear the advisory in the current package graph, so it remains documented rather than hidden with an unstable override.
+
+## LMAX Shadow Replay
+
+Use the LMAX Shadow page to inspect replay runs and observations created from normalized LMAX lab evidence. The page is local and replay-only: there are no credential forms, no live LMAX controls, and no order submission controls. Operators can acknowledge, resolve, or ignore observations with a reason; each action is audited.
+
+To replay a local evidence file while the API is running:
+
+```powershell
+.\scripts\replay-lmax-lab-evidence.ps1 -Path .\path\to\evidence.json
+```
+
+The script only posts to localhost and never opens FIX connections.
+

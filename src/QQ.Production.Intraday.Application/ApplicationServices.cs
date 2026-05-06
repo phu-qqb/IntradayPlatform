@@ -450,6 +450,8 @@ public sealed class PlatformState
     public List<OperationalRunbookRun> OperationalRunbookRuns { get; } = [];
     public List<OperationalRunbookStepRun> OperationalRunbookStepRuns { get; } = [];
     public List<OperationalScheduleDefinition> OperationalScheduleDefinitions { get; } = [];
+    public List<LmaxShadowReplayRun> LmaxShadowReplayRuns { get; } = [];
+    public List<LmaxShadowObservation> LmaxShadowObservations { get; } = [];
     public KillSwitchState KillSwitch { get; set; } = new(Guid.NewGuid(), false, null, DateTimeOffset.UnixEpoch);
 }
 
