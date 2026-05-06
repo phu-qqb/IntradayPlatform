@@ -31,7 +31,7 @@ The isolated Connectivity Lab has validated:
 
 ## Adapter Contracts
 
-The dormant adapter foundation defines interfaces and DTOs in `QQ.Production.Intraday.Infrastructure.Lmax`:
+The dormant adapter foundation defines interfaces, DTOs, and skeleton components in `QQ.Production.Intraday.Infrastructure.Lmax`:
 
 - `ILmaxFixSession`
 - `ILmaxFixMarketDataSession`
@@ -44,7 +44,19 @@ The dormant adapter foundation defines interfaces and DTOs in `QQ.Production.Int
 - `ILmaxFixSafetyGate`
 - `ILmaxShadowModeService`
 
-These are contracts and pure normalization helpers only. They are not connected to dependency injection in the API or Worker.
+The concrete skeleton classes are inert by default:
+
+- `LmaxFixOrderMessageBuilder`
+- `LmaxFixExecutionEventMapper`
+- `LmaxFixTradeCaptureMapper`
+- `LmaxFixOrderStatusMapper`
+- `LmaxFixMarketDataMapper`
+- `LmaxFixRejectMapper`
+- `LmaxVenueGatewaySkeleton`
+- `LmaxFixAdapterRuntimeSafetyValidator`
+- `LmaxFixAdapterOptions`
+
+These are contracts, pure builders, pure mappers, and safety helpers only. They are not connected to dependency injection in the API or Worker. They do not open sockets, read credentials, submit orders, or persist data.
 
 ## Normalized Models
 
@@ -83,6 +95,18 @@ The safety gate rejects:
 
 For this design gate, order submission through the adapter is blocked even if an option is set. The only validated order submission path remains the isolated Connectivity Lab with explicit Demo safety flags.
 
+## Proven FIX Message Shapes
+
+The adapter skeleton builders encode the LMAX rules learned in the lab:
+
+- `NewOrderSingle` (`35=D`) includes `11`, `48`, `22=8`, optional `55`, `54`, `60`, `38`, `40`, optional `44`, `59`, and optional `1`.
+- `NewOrderSingle` does not include `21 HandlInst` by default.
+- `TradeCaptureReportRequest` (`35=AD`) uses `568` with max length 16, `569=1`, `263=0`, `580=2`, and two `60 TransactTime` values for start/end.
+- `OrderStatusRequest` (`35=H`) uses `11`, optional `48`, `22=8` when `48` is present, optional `54`, and optional `1`.
+- `MarketDataRequest` (`35=V`) supports the validated EURUSD security-id shape: `48=4001`, `22=8`, bid `269=0`, and offer `269=1`.
+
+The builders return sanitized message strings for tests and diagnostics only. They do not send anything.
+
 ## Shadow Mode
 
 Future LMAX runtime work must start in shadow mode.
@@ -119,3 +143,15 @@ The main runtime must continue to show:
 - API/Worker do not register LMAX FIX sessions or `ILmaxShadowModeService`.
 
 Any future change that alters those boundaries must be treated as a separate safety-critical design gate.
+
+## Remaining Runtime Integration Gates
+
+Before any real LMAX runtime integration can be considered, the platform still needs:
+
+- shadow-mode observation persistence
+- explicit configuration gates
+- governance approval flow for adapter activation
+- risk approval enforcement for any future order path
+- daily operations/runbook rehearsals
+- failover and recovery rehearsals
+- production certification and operational sign-off

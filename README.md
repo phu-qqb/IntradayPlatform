@@ -39,6 +39,8 @@ The real adapter is not wired into runtime. Future LMAX work must start in shado
 
 The adapter contract parity gate is documented in `docs/ADAPTER_CONTRACTS.md`. It defines the neutral venue event model used to compare internal execution behavior, `FakeLmaxGateway` simulator output, and future LMAX FIX-normalized events before any real adapter can be considered for runtime registration.
 
+The LMAX adapter skeleton now includes inert FIX message builders, mappers, runtime safety validation, and a blocked `LmaxVenueGatewaySkeleton`. These components are not registered in API or Worker. `FakeLmaxGateway` remains the only runtime execution gateway.
+
 ## Quality Gate #1
 
 Quality Gate #1 hardened the local simulator foundation without changing the architecture:

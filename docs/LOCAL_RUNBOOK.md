@@ -91,6 +91,8 @@ The dormant adapter design gate lives in `src/QQ.Production.Intraday.Infrastruct
 
 The adapter contract parity gate is documented in `docs/ADAPTER_CONTRACTS.md`. It checks that simulator events and LMAX FIX-normalized events map into the same neutral venue lifecycle contract before any real adapter work is considered.
 
+The adapter skeleton includes pure FIX message builders and mappers plus a runtime safety validator. It is disabled by default and not registered. There is no local runbook step, UI control, or API endpoint that enables it.
+
 ## Run UI
 
 The local operator cockpit lives at:

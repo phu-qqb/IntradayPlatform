@@ -113,3 +113,5 @@ A real LMAX adapter must pass these contracts before any runtime registration is
 - API/Worker default-registration safety checks
 
 Passing this gate does not authorize live trading. It only proves that normalized venue lifecycle evidence can be interpreted consistently with the simulator and internal execution state model.
+
+The current `LmaxVenueGatewaySkeleton` is intentionally inert. It is a named placeholder for future adapter shape, not an executable gateway. It is not registered in API or Worker, and its order-submission method returns a blocked result.
