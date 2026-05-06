@@ -568,6 +568,14 @@ Read-only FIX Trading recovery commands:
 
 Live demo order lifecycle is intentionally gated and should not be run as part of normal local validation. It requires `-AllowExternalConnections`, `-AllowOrderSubmission`, `-ConfirmDemoOrder`, and `-DryRun:$false`, plus the lab safety gates. The default validated `35=D` shape omits `21 HandlInst` because LMAX Demo rejected that tag at session level. It remains isolated from API/Worker, does not enable live trading, and does not persist live data.
 
+The lifecycle evidence command is also lab-only and dry-run by default:
+
+```powershell
+.\scripts\lmax-lab-fix-demo-lifecycle-evidence.ps1
+```
+
+When intentionally run in live Demo mode with all explicit gates, it submits the tiny gated demo order, collects `35=8` execution reports, recovers status with read-only `35=H`, recovers fills with read-only `35=AD`/`35=AE`, and prints consistency checks. `ExecType=I` from order-status recovery is status-only and is not counted as a fill; fills are identified by `ExecType=F` and matching TradeCapture `ExecID`. The command persists nothing and is not wired into API/Worker.
+
 After a Demo order exists, `fix-order-status-smoke` can recover its status by known `ClOrdID` without submitting anything:
 
 ```powershell

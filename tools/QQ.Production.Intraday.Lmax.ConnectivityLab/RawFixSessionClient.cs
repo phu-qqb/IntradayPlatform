@@ -648,6 +648,134 @@ public sealed class RawLmaxFixSessionClient(LmaxConnectivityLabSafetyValidator s
         }
     }
 
+    public async Task<LmaxFixLifecycleEvidenceResult> DemoLifecycleEvidenceAsync(LmaxConnectivityLabOptions options, LmaxFixDemoOrderRequest request, LmaxFixTradeCaptureRequestOptions tradeCaptureRequest, bool explicitConfirmation, CancellationToken cancellationToken)
+    {
+        var startedAt = DateTimeOffset.UtcNow;
+        var diagnostics = new List<string>
+        {
+            "Lifecycle evidence report is lab-only.",
+            "No live data is persisted into the main DB.",
+            "API/Worker integration is not used."
+        };
+
+        var orderSubmission = await DemoOrderLifecycleAsync(options, request, explicitConfirmation, cancellationToken);
+        diagnostics.AddRange(orderSubmission.Diagnostics);
+        LmaxFixOrderStatusSmokeResult? orderStatus = null;
+        LmaxFixTradeCaptureSmokeResult? tradeCapture = null;
+
+        if (orderSubmission.OrderSent && !string.IsNullOrWhiteSpace(orderSubmission.ClientOrderId))
+        {
+            var recoveryOptions = CopyOptions(options);
+            recoveryOptions.AllowOrderSubmission = false;
+            recoveryOptions.DryRun = true;
+            var lastExecution = orderSubmission.ExecutionReports.LastOrDefault();
+
+            orderStatus = await OrderStatusSmokeAsync(
+                recoveryOptions,
+                new LmaxFixOrderStatusSmokeRequest(
+                    orderSubmission.ClientOrderId,
+                    request.Account,
+                    request.LmaxInstrumentId,
+                    recoveryOptions.FixSecurityIdSource,
+                    request.Side == LmaxFixDemoOrderSide.Buy ? "1" : "2",
+                    null,
+                    request.MaxWaitSeconds,
+                    request.ShowFixMessages),
+                cancellationToken);
+            diagnostics.AddRange(orderStatus.Diagnostics.Select(x => $"OrderStatus: {x}"));
+
+            tradeCapture = await TradeCaptureSmokeAsync(recoveryOptions, tradeCaptureRequest, cancellationToken);
+            diagnostics.AddRange(tradeCapture.Diagnostics.Select(x => $"TradeCapture: {x}"));
+            if (lastExecution is not null && tradeCapture.Reports.Count > 0 && !tradeCapture.Reports.Any(x => string.Equals(x.ExecId, lastExecution.ExecId, StringComparison.Ordinal)))
+            {
+                diagnostics.Add($"TradeCapture did not include latest ExecutionReport ExecID={lastExecution.ExecId ?? "(missing)"}.");
+            }
+        }
+        else
+        {
+            diagnostics.Add("Order submission did not produce a sent ClOrdID; read-only recovery steps were not run.");
+        }
+
+        var evidence = LmaxFixLifecycleEvidenceBuilder.Build(request, orderSubmission, orderStatus, tradeCapture);
+        var failedChecks = evidence.ConsistencyChecks.Count(x => x.Status == LmaxFixLifecycleConsistencyStatus.Failed);
+        var status = orderSubmission.Status == "Failed"
+            ? "Failed"
+            : failedChecks > 0
+                ? "Failed"
+                : orderSubmission.Status == "Skipped"
+                    ? "Skipped"
+                    : "Ok";
+        var message = status switch
+        {
+            "Ok" => "FIX lifecycle evidence report completed. No data was persisted.",
+            "Skipped" => "FIX lifecycle evidence report was skipped before live submission. No order was submitted.",
+            _ => failedChecks > 0
+                ? $"FIX lifecycle evidence report found {failedChecks} failed consistency check(s). No data was persisted."
+                : orderSubmission.Message
+        };
+
+        return new(
+            "fix-demo-lifecycle-evidence",
+            status,
+            orderSubmission,
+            orderStatus,
+            tradeCapture,
+            evidence,
+            startedAt,
+            DateTimeOffset.UtcNow,
+            message,
+            LmaxConnectivityLabSafetyValidator.DecisionsForExternalCommand(options),
+            diagnostics);
+    }
+
+    private static LmaxConnectivityLabOptions CopyOptions(LmaxConnectivityLabOptions source)
+        => new()
+        {
+            Enabled = source.Enabled,
+            EnvironmentName = source.EnvironmentName,
+            AllowExternalConnections = source.AllowExternalConnections,
+            AllowOrderSubmission = source.AllowOrderSubmission,
+            AllowLiveTrading = source.AllowLiveTrading,
+            DryRun = source.DryRun,
+            VenueName = source.VenueName,
+            AccountCode = source.AccountCode,
+            AccountApiBaseUrl = source.AccountApiBaseUrl,
+            PublicDataApiBaseUrl = source.PublicDataApiBaseUrl,
+            AccountApiAuthMode = source.AccountApiAuthMode,
+            AccountApiUsername = source.AccountApiUsername,
+            AccountApiPassword = source.AccountApiPassword,
+            AccountApiKey = source.AccountApiKey,
+            AccountApiKeyHeaderName = source.AccountApiKeyHeaderName,
+            AccountApiBearerToken = source.AccountApiBearerToken,
+            AccountApiRequestTimeoutSeconds = source.AccountApiRequestTimeoutSeconds,
+            FixOrderHost = source.FixOrderHost,
+            FixOrderPort = source.FixOrderPort,
+            FixMarketDataHost = source.FixMarketDataHost,
+            FixMarketDataPort = source.FixMarketDataPort,
+            FixSenderCompId = source.FixSenderCompId,
+            FixOrderTargetCompId = source.FixOrderTargetCompId,
+            FixMarketDataTargetCompId = source.FixMarketDataTargetCompId,
+            FixTargetCompId = source.FixTargetCompId,
+            FixUsername = source.FixUsername,
+            FixPassword = source.FixPassword,
+            UseTls = source.UseTls,
+            InstrumentSymbol = source.InstrumentSymbol,
+            LmaxInstrumentId = source.LmaxInstrumentId,
+            LmaxSlashSymbol = source.LmaxSlashSymbol,
+            FixSecurityIdSource = source.FixSecurityIdSource,
+            MarketDepth = source.MarketDepth,
+            MarketDataRequestMode = source.MarketDataRequestMode,
+            ConnectTimeoutSeconds = source.ConnectTimeoutSeconds,
+            LogonTimeoutSeconds = source.LogonTimeoutSeconds,
+            MarketDataMaxWaitSeconds = source.MarketDataMaxWaitSeconds,
+            MarketDataMaxMessages = source.MarketDataMaxMessages,
+            MarketDataSymbolEncodingMode = source.MarketDataSymbolEncodingMode,
+            ShowFixMessages = source.ShowFixMessages,
+            RequestTimeoutSeconds = source.RequestTimeoutSeconds,
+            MaxDemoOrderQuantity = source.MaxDemoOrderQuantity,
+            MaxDemoOrderNotionalUsd = source.MaxDemoOrderNotionalUsd
+        };
+
     private static string ResolveTradeCaptureStatus(bool ackReceived, bool ackAccepted, bool requestRejected, int? expectedTradeReportCount, int reportCount, bool timedOut)
     {
         if (requestRejected || !ackReceived || !ackAccepted) return "Failed";

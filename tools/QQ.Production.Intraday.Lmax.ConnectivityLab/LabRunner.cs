@@ -72,6 +72,39 @@ public sealed class LmaxConnectivityLabRunner(
             return lifecycleResult.Status == "Failed" ? 1 : lifecycleResult.Status == "Skipped" ? 2 : 0;
         }
 
+        if (command.Equals("fix-demo-lifecycle-evidence", StringComparison.OrdinalIgnoreCase))
+        {
+            var request = LmaxFixDemoOrderRequest.From(
+                options,
+                GetStringArg(optionArgs, "side"),
+                GetStringArg(optionArgs, "order-type"),
+                GetStringArg(optionArgs, "time-in-force"),
+                GetDecimalArg(optionArgs, "venue-quantity"),
+                GetDecimalArg(optionArgs, "limit-price"),
+                GetDecimalArg(optionArgs, "max-notional-usd"),
+                GetStringArg(optionArgs, "client-order-id"),
+                GetStringArg(optionArgs, "account"),
+                HasFlag(optionArgs, "confirm-demo-order") || explicitConfirm,
+                GetBoolArg(optionArgs, "dry-run", options.DryRun),
+                GetIntArg(optionArgs, "max-wait-seconds", options.RequestTimeoutSeconds),
+                HasFlag(optionArgs, "show-fix-messages")) with
+                {
+                    IncludeHandlInst = HasFlag(optionArgs, "include-handl-inst")
+                };
+            var tradeCaptureOptions = LmaxFixTradeCaptureRequestOptions.From(
+                DateTimeOffset.UtcNow,
+                GetIntArg(optionArgs, "trade-capture-lookback-minutes", 1440),
+                GetDateTimeOffsetArg(optionArgs, "start-utc"),
+                GetDateTimeOffsetArg(optionArgs, "end-utc"),
+                GetStringArg(optionArgs, "account"),
+                GetIntArg(optionArgs, "max-wait-seconds", 10),
+                GetIntArg(optionArgs, "max-reports", 50),
+                HasFlag(optionArgs, "show-fix-messages"));
+            var evidenceResult = await fixClient.DemoLifecycleEvidenceAsync(options, request, tradeCaptureOptions, explicitConfirm || HasFlag(optionArgs, "confirm-demo-order"), cancellationToken);
+            WriteLifecycleEvidenceResult(evidenceResult);
+            return evidenceResult.Status == "Failed" ? 1 : evidenceResult.Status == "Skipped" ? 2 : 0;
+        }
+
         if (command.Equals("fix-order-status-dry-run", StringComparison.OrdinalIgnoreCase))
         {
             var dryRunResult = BuildOrderStatusDryRun(options, optionArgs);
@@ -528,6 +561,61 @@ public sealed class LmaxConnectivityLabRunner(
         foreach (var decision in result.DemoSafetyDecisions)
         {
             Console.WriteLine($"SafetyGate: {decision.Gate} Passed={decision.Passed} Message={decision.Message}");
+        }
+
+        foreach (var diagnostic in result.Diagnostics)
+        {
+            Console.WriteLine($"Diagnostic: {diagnostic}");
+        }
+
+        foreach (var decision in result.SafetyDecisions)
+        {
+            Console.WriteLine($"- {decision}");
+        }
+    }
+
+    private static void WriteLifecycleEvidenceResult(LmaxFixLifecycleEvidenceResult result)
+    {
+        var report = result.EvidenceReport;
+        Console.WriteLine($"Command: {result.Command}");
+        Console.WriteLine($"Status: {result.Status}");
+        Console.WriteLine($"StartedAtUtc: {result.StartedAtUtc:O}");
+        Console.WriteLine($"CompletedAtUtc: {result.CompletedAtUtc:O}");
+        Console.WriteLine($"Message: {result.Message}");
+        Console.WriteLine($"ClientOrderId: {report.ClientOrderId ?? "(missing)"}");
+        Console.WriteLine($"BrokerOrderId: {report.BrokerOrderId ?? "(missing)"}");
+        Console.WriteLine($"InstrumentSymbol: {report.InstrumentSymbol}");
+        Console.WriteLine($"SecurityId: {report.SecurityId}");
+        Console.WriteLine($"Side: {report.Side}");
+        Console.WriteLine($"RequestedQuantity: {report.RequestedQuantity}");
+        Console.WriteLine($"RequestedOrderType: {report.RequestedOrderType}");
+        Console.WriteLine($"RequestedTimeInForce: {report.RequestedTimeInForce}");
+        Console.WriteLine($"OrderSent: {report.OrderSent}");
+        Console.WriteLine($"ExecutionReportCount: {report.ExecutionReportCount}");
+        Console.WriteLine($"FillExecutionReportCount: {report.FillExecutionReportCount}");
+        Console.WriteLine($"FinalOrdStatus: {report.FinalOrdStatus ?? "(missing)"}");
+        Console.WriteLine($"FinalExecType: {report.FinalExecType ?? "(missing)"}");
+        Console.WriteLine($"CumQty: {report.CumQty?.ToString() ?? "(missing)"}");
+        Console.WriteLine($"LeavesQty: {report.LeavesQty?.ToString() ?? "(missing)"}");
+        Console.WriteLine($"AvgPx: {report.AvgPx?.ToString() ?? "(missing)"}");
+        Console.WriteLine($"LastFillExecId: {report.LastFillExecId ?? "(missing)"}");
+        Console.WriteLine($"LastFillQty: {report.LastFillQty?.ToString() ?? "(missing)"}");
+        Console.WriteLine($"LastFillPx: {report.LastFillPx?.ToString() ?? "(missing)"}");
+        Console.WriteLine($"OrderStatusReceived: {report.OrderStatusReceived}");
+        Console.WriteLine($"OrderStatusOrdStatus: {report.OrderStatusOrdStatus ?? "(missing)"}");
+        Console.WriteLine($"OrderStatusCumQty: {report.OrderStatusCumQty?.ToString() ?? "(missing)"}");
+        Console.WriteLine($"OrderStatusLeavesQty: {report.OrderStatusLeavesQty?.ToString() ?? "(missing)"}");
+        Console.WriteLine($"TradeCaptureReceived: {report.TradeCaptureReceived}");
+        Console.WriteLine($"TradeCaptureReportCount: {report.TradeCaptureReportCount}");
+        Console.WriteLine($"TradeCaptureExecIds: {string.Join(",", report.TradeCaptureExecIds)}");
+        foreach (var check in report.ConsistencyChecks)
+        {
+            Console.WriteLine($"ConsistencyCheck: Name=\"{check.Name}\" Status={check.Status} Expected={check.Expected ?? "(missing)"} Actual={check.Actual ?? "(missing)"} Message={check.Message}");
+        }
+
+        foreach (var warning in report.Warnings)
+        {
+            Console.WriteLine($"Warning: {warning}");
         }
 
         foreach (var diagnostic in result.Diagnostics)

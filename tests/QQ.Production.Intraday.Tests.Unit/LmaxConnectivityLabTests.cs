@@ -1276,6 +1276,97 @@ public sealed class LmaxConnectivityLabTests
     }
 
     [Fact]
+    public void Lifecycle_evidence_report_maps_fill_order_status_and_trade_capture()
+    {
+        var (request, order, status, tradeCapture) = MatchingLifecycleEvidenceInputs();
+
+        var report = LmaxFixLifecycleEvidenceBuilder.Build(request, order, status, tradeCapture);
+
+        Assert.Equal("DL26050607454402", report.ClientOrderId);
+        Assert.Equal("AAAESQAAAABd6+b7", report.BrokerOrderId);
+        Assert.Equal(2, report.ExecutionReportCount);
+        Assert.Equal(1, report.FillExecutionReportCount);
+        Assert.Equal("Filled", report.FinalOrdStatus);
+        Assert.Equal("Trade", report.FinalExecType);
+        Assert.Equal("aJBPhQAAAACZXTEG", report.LastFillExecId);
+        Assert.Equal(0.1m, report.LastFillQty);
+        Assert.Equal(1.17361m, report.LastFillPx);
+        Assert.True(report.OrderStatusReceived);
+        Assert.Equal("Filled", report.OrderStatusOrdStatus);
+        Assert.True(report.TradeCaptureReceived);
+        Assert.Contains("aJBPhQAAAACZXTEG", report.TradeCaptureExecIds);
+        Assert.DoesNotContain(report.ConsistencyChecks, x => x.Status == LmaxFixLifecycleConsistencyStatus.Failed);
+    }
+
+    [Fact]
+    public void Lifecycle_evidence_treats_order_status_exec_type_i_as_status_only()
+    {
+        var (request, order, status, tradeCapture) = MatchingLifecycleEvidenceInputs();
+
+        var report = LmaxFixLifecycleEvidenceBuilder.Build(request, order, status, tradeCapture);
+
+        Assert.Equal(1, report.FillExecutionReportCount);
+        Assert.Contains(report.ConsistencyChecks, x =>
+            x.Name == "ExecType=I OrderStatus report is status-only"
+            && x.Status == LmaxFixLifecycleConsistencyStatus.Passed);
+    }
+
+    [Fact]
+    public void Lifecycle_evidence_consistency_detects_mismatches()
+    {
+        var (request, order, status, tradeCapture) = MatchingLifecycleEvidenceInputs();
+        var mismatchedStatusReport = LmaxFixRecoveryCodec.NormalizeExecutionReport(FixMessage("35=8", "17=STATUS1", "37=DIFFERENTORDER", "11=DIFFERENTCLORD", "150=I", "39=2", "48=9999", "54=2", "38=0.1", "14=0.2", "151=0.1", "6=1.17361", "60=20260506-07:45:46.000"), CompleteFixOptions()).Report;
+        var mismatchedStatus = status with { ExecutionReports = [mismatchedStatusReport] };
+        var mismatchedTrade = tradeCapture with
+        {
+            Reports =
+            [
+                LmaxFixRecoveryCodec.NormalizeTradeCaptureReport(FixMessage("35=AE", "568=TC260506074501", "571=TR1", "17=OTHEREXEC", "48=9999", "22=8", "55=USDJPY", "32=0.2", "31=2.00000", "75=20260506", "60=20260506-07:45:45.000", "54=2", "37=DIFFERENTORDER", "11=DIFFERENTCLORD"), CompleteFixOptions()).Report
+            ],
+            TradeReportCount = 1
+        };
+
+        var report = LmaxFixLifecycleEvidenceBuilder.Build(request, order, mismatchedStatus, mismatchedTrade);
+
+        Assert.Contains(report.ConsistencyChecks, x => x.Name.Contains("ClOrdID", StringComparison.Ordinal) && x.Status == LmaxFixLifecycleConsistencyStatus.Failed);
+        Assert.Contains(report.ConsistencyChecks, x => x.Name.Contains("Broker OrderID", StringComparison.Ordinal) && x.Status == LmaxFixLifecycleConsistencyStatus.Failed);
+        Assert.Contains(report.ConsistencyChecks, x => x.Name.Contains("SecurityID matches ExecutionReport and OrderStatus", StringComparison.Ordinal) && x.Status == LmaxFixLifecycleConsistencyStatus.Failed);
+        Assert.Contains(report.ConsistencyChecks, x => x.Name.Contains("CumQty", StringComparison.Ordinal) && x.Status == LmaxFixLifecycleConsistencyStatus.Failed);
+        Assert.Contains(report.ConsistencyChecks, x => x.Name.Contains("Fill price", StringComparison.Ordinal) && x.Status == LmaxFixLifecycleConsistencyStatus.Failed);
+    }
+
+    [Fact]
+    public void Lifecycle_evidence_missing_trade_uti_is_warning_only()
+    {
+        var (request, order, status, tradeCapture) = MatchingLifecycleEvidenceInputs();
+
+        var report = LmaxFixLifecycleEvidenceBuilder.Build(request, order, status, tradeCapture);
+
+        Assert.Contains(report.Warnings, x => x.Contains("TradeUTI", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(report.ConsistencyChecks, x => x.Name.Contains("TradeUTI", StringComparison.OrdinalIgnoreCase) && x.Status == LmaxFixLifecycleConsistencyStatus.Warning);
+        Assert.DoesNotContain(report.ConsistencyChecks, x => x.Name.Contains("TradeUTI", StringComparison.OrdinalIgnoreCase) && x.Status == LmaxFixLifecycleConsistencyStatus.Failed);
+    }
+
+    [Fact]
+    public async Task Lifecycle_evidence_command_safety_blocks_by_default_without_network()
+    {
+        var fix = new RawLmaxFixSessionClient(new LmaxConnectivityLabSafetyValidator());
+        var options = CompleteFixOptions();
+        options.FixPassword = "lifecycle-evidence-secret-password";
+        var request = DemoOrderRequest(options) with { DryRun = false, ConfirmDemoOrder = true };
+        var tradeCapture = LmaxFixTradeCaptureRequestOptions.From(DateTimeOffset.UtcNow, 60, null, null, null, 10, 20, false);
+
+        var result = await fix.DemoLifecycleEvidenceAsync(options, request, tradeCapture, explicitConfirmation: true, CancellationToken.None);
+
+        Assert.Equal("Skipped", result.Status);
+        Assert.False(result.OrderSubmission.OrderSent);
+        Assert.Null(result.OrderStatusRecovery);
+        Assert.Null(result.TradeCaptureRecovery);
+        Assert.DoesNotContain("lifecycle-evidence-secret-password", string.Join("|", result.Diagnostics), StringComparison.Ordinal);
+        Assert.DoesNotContain("lifecycle-evidence-secret-password", result.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Api_and_worker_do_not_reference_connectivity_lab()
     {
         var root = FindRepoRoot();
@@ -1365,6 +1456,26 @@ public sealed class LmaxConnectivityLabTests
             DryRun: true,
             MaxWaitSeconds: 10,
             ShowFixMessages: false);
+
+    private static (LmaxFixDemoOrderRequest Request, LmaxFixDemoOrderLifecycleResult Order, LmaxFixOrderStatusSmokeResult Status, LmaxFixTradeCaptureSmokeResult TradeCapture) MatchingLifecycleEvidenceInputs()
+    {
+        var options = CompleteFixOptions();
+        var request = DemoOrderRequest(options) with
+        {
+            ClientOrderId = "DL26050607454402",
+            DryRun = false,
+            ConfirmDemoOrder = true
+        };
+        var newReport = LmaxFixRecoveryCodec.NormalizeExecutionReport(FixMessage("35=8", "17=aJBPhQAAAACZXTEF", "37=AAAESQAAAABd6+b7", "11=DL26050607454402", "150=0", "39=0", "48=4001", "22=8", "55=EURUSD", "54=1", "38=0.1", "14=0", "151=0.1", "6=0", "60=20260506-07:45:44.000"), options).Report;
+        var fillReport = LmaxFixRecoveryCodec.NormalizeExecutionReport(FixMessage("35=8", "17=aJBPhQAAAACZXTEG", "37=AAAESQAAAABd6+b7", "11=DL26050607454402", "150=F", "39=2", "48=4001", "22=8", "55=EURUSD", "54=1", "38=0.1", "14=0.1", "151=0", "32=0.1", "31=1.17361", "6=1.17361", "60=20260506-07:45:45.000"), options).Report;
+        var statusReport = LmaxFixRecoveryCodec.NormalizeExecutionReport(FixMessage("35=8", "17=aJBPhQAAAACZXTEH", "37=AAAESQAAAABd6+b7", "11=DL26050607454402", "150=I", "39=2", "48=4001", "22=8", "55=EURUSD", "54=1", "38=0.1", "14=0.1", "151=0", "6=1.17361", "60=20260506-07:45:46.000"), options).Report;
+        var tradeReport = LmaxFixRecoveryCodec.NormalizeTradeCaptureReport(FixMessage("35=AE", "568=TC260506074501", "571=TR1", "17=aJBPhQAAAACZXTEG", "527=MTF1", "48=4001", "22=8", "55=EURUSD", "32=0.1", "31=1.17361", "75=20260506", "60=20260506-07:45:45.000", "54=1", "37=AAAESQAAAABd6+b7", "11=DL26050607454402", "912=Y"), options).Report;
+        var now = DateTimeOffset.UtcNow;
+        var order = new LmaxFixDemoOrderLifecycleResult("fix-demo-order-lifecycle", "Ok", true, true, true, true, true, false, null, null, null, null, null, "TerminalExecutionReport", true, "DL26050607454402", "8", [newReport, fillReport], now, now, "Demo order lifecycle received terminal ExecutionReport. No data was persisted.", [], [], []);
+        var status = new LmaxFixOrderStatusSmokeResult("fix-order-status-smoke", "Ok", true, true, true, true, false, null, null, null, "DL26050607454402", "AAAESQAAAABd6+b7", "Filled", [statusReport], now, now, true, "Received ExecutionReport for ClOrdID=DL26050607454402; OrdStatus=Filled. No data was persisted.", [], []);
+        var capture = new LmaxFixTradeCaptureSmokeResult("fix-trade-capture-smoke", "Ok", true, true, true, true, true, false, null, null, null, null, null, null, "AE", 1, true, true, 1, true, [tradeReport], now, now, "Trade capture request accepted; received 1 of 1 expected trade reports. No data was persisted.", [], []);
+        return (request, order, status, capture);
+    }
 
     private static string FixMessage(params string[] fields)
         => string.Join(LmaxFixMarketDataCodec.Soh, fields) + LmaxFixMarketDataCodec.Soh;

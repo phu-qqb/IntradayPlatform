@@ -389,6 +389,7 @@ public interface ILmaxFixSessionClient
     Task<LmaxFixTradeCaptureSmokeResult> TradeCaptureSmokeAsync(LmaxConnectivityLabOptions options, LmaxFixTradeCaptureRequestOptions request, CancellationToken cancellationToken);
     Task<LmaxFixDemoOrderLifecycleResult> DemoOrderLifecycleAsync(LmaxConnectivityLabOptions options, LmaxFixDemoOrderRequest request, bool explicitConfirmation, CancellationToken cancellationToken);
     Task<LmaxFixOrderStatusSmokeResult> OrderStatusSmokeAsync(LmaxConnectivityLabOptions options, LmaxFixOrderStatusSmokeRequest request, CancellationToken cancellationToken);
+    Task<LmaxFixLifecycleEvidenceResult> DemoLifecycleEvidenceAsync(LmaxConnectivityLabOptions options, LmaxFixDemoOrderRequest request, LmaxFixTradeCaptureRequestOptions tradeCaptureRequest, bool explicitConfirmation, CancellationToken cancellationToken);
 }
 
 public sealed class PlaceholderLmaxPublicDataClient : ILmaxPublicDataClient
@@ -457,6 +458,14 @@ public sealed class PlaceholderLmaxFixSessionClient : ILmaxFixSessionClient
 
     public Task<LmaxFixOrderStatusSmokeResult> OrderStatusSmokeAsync(LmaxConnectivityLabOptions options, LmaxFixOrderStatusSmokeRequest request, CancellationToken cancellationToken)
         => Task.FromResult(LmaxFixOrderStatusSmokeResult.Skipped("Order status smoke is not implemented in this placeholder client.", LmaxConnectivityLabSafetyValidator.DecisionsForExternalCommand(options), request.ClOrdId));
+
+    public Task<LmaxFixLifecycleEvidenceResult> DemoLifecycleEvidenceAsync(LmaxConnectivityLabOptions options, LmaxFixDemoOrderRequest request, LmaxFixTradeCaptureRequestOptions tradeCaptureRequest, bool explicitConfirmation, CancellationToken cancellationToken)
+    {
+        var order = LmaxFixDemoOrderLifecycleResult.Skipped("Demo lifecycle evidence is not implemented in this placeholder client.", LmaxConnectivityLabSafetyValidator.DecisionsForExternalCommand(options));
+        var report = LmaxFixLifecycleEvidenceBuilder.Build(request, order, null, null);
+        var now = DateTimeOffset.UtcNow;
+        return Task.FromResult(new LmaxFixLifecycleEvidenceResult("fix-demo-lifecycle-evidence", "Skipped", order, null, null, report, now, now, order.Message, LmaxConnectivityLabSafetyValidator.DecisionsForExternalCommand(options), []));
+    }
 
     private static IEnumerable<string> RequiredFixFields(LmaxConnectivityLabOptions options, bool marketData)
     {

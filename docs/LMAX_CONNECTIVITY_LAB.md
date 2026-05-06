@@ -334,6 +334,52 @@ The script also refuses a live run unless the required switches are present:
 
 Do not run the live lifecycle unless you intentionally want to submit a tiny LMAX Demo order. If submitted, the lab logs on to the FIX Trading session, sends one `35=D`, reads `ExecutionReport` (`35=8`) messages until a terminal state or timeout, and logs out. The normalized execution reports are printed only; no live data is persisted into the main database.
 
+## FIX Lifecycle Evidence Report
+
+The lab has now validated the full LMAX Demo FIX lifecycle in isolation:
+
+- `NewOrderSingle` (`35=D`) submitted in Demo.
+- `ExecutionReport` (`35=8`) `New` received.
+- `ExecutionReport` (`35=8`) `Trade/Filled` received.
+- `OrderStatusRequest` (`35=H`) returned `ExecutionReport` (`35=8`) with `ExecType=I` and `OrdStatus=Filled`.
+- `TradeCaptureReportRequest` (`35=AD`) was accepted.
+- `TradeCaptureReport` (`35=AE`) recovered the fill.
+
+`fix-demo-lifecycle-evidence` is a lab-only wrapper that can produce one structured report for that flow. In live Demo mode it submits the same tiny gated demo order, runs read-only order-status recovery by `ClOrdID`, runs read-only trade-capture recovery over a recent UTC window, then prints consistency checks. It does not persist anything into the main DB and it is not referenced by the API or Worker.
+
+The evidence report checks:
+
+- `ClOrdID` matches across order submission and order-status recovery.
+- Broker `OrderID` matches between execution reports and order-status recovery.
+- `SecurityID` and side match across reports.
+- `CumQty` and `LeavesQty` from the terminal execution report match order-status recovery.
+- Fill `ExecID` from `ExecType=F` appears in `TradeCaptureReport` (`35=AE`).
+- Fill quantity and price match TradeCapture `LastQty` and `LastPx`.
+- Missing Trade UTI in FIX AE is reported as a warning only.
+
+`ExecType=I` is status-only. It must not be counted as a fill; fill identity comes from `ExecType=F` / `Trade` execution reports and the corresponding TradeCapture `ExecID`.
+
+Dry-run:
+
+```powershell
+.\scripts\lmax-lab-fix-demo-lifecycle-evidence.ps1
+```
+
+Live Demo evidence is intentionally gated and must not be run automatically:
+
+```powershell
+.\scripts\lmax-lab-fix-demo-lifecycle-evidence.ps1 `
+  -AllowExternalConnections `
+  -AllowOrderSubmission `
+  -ConfirmDemoOrder `
+  -DryRun:$false `
+  -VenueQuantity 0.1 `
+  -TradeCaptureLookbackMinutes 1440 `
+  -MaxReports 20
+```
+
+The command remains Demo/UAT-only, requires explicit confirmation, keeps `AllowLiveTrading=false`, and never writes recovered FIX data into production/local trading tables.
+
 ## FIX Trade Capture Normalization
 
 When `fix-trade-capture-smoke` receives `TradeCaptureReport` (`35=AE`) messages, the lab normalizes them into a lab-only DTO aligned with the shape needed for later EOD comparison. This is still read-only: reports are printed, not persisted, and the main API/Worker do not consume them.
@@ -602,5 +648,5 @@ After logon works, next safe steps are read-only market data snapshot investigat
 - Public data smoke returns `Skipped` unless a future client is implemented.
 - Account API discovery is parked and diagnostic only; the main path is FIX market data, FIX trading recovery, and LMAX EOD files.
 - `OrderMassStatusRequest`, `RequestForPositions`, and `PositionReport` are treated as unsupported unless a future LMAX FIX dictionary says otherwise.
-- Demo order command is gated and returns `Skipped`; it does not submit orders.
+- Demo order and lifecycle evidence commands are gated, Demo/UAT-only, and dry-run by default. They submit nothing unless explicit safety flags and confirmation are supplied.
 - Main API/Worker remain FakeLmax-only.

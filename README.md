@@ -538,6 +538,8 @@ The lab includes read-only FIX Trading recovery tools: `fix-capabilities` scans 
 
 `fix-order-status-smoke` is now unparked for explicit recovery cases with a known `ClOrdID`. It is read-only, requires `AllowOrderSubmission=false`, sends `35=H`, parses `35=8` through the lab ExecutionReport normalizer, and reports session-level `35=3` rejects structurally.
 
+`fix-demo-lifecycle-evidence` is a lab-only evidence wrapper for the validated Demo FIX lifecycle. In dry-run it submits nothing. In live Demo mode, after all explicit demo-order gates pass, it submits the tiny `35=D`, collects `35=8`, runs read-only `35=H` order-status recovery, runs read-only `35=AD`/`35=AE` trade-capture recovery, and prints consistency checks. `ExecType=I` is treated as status-only, not a fill; fill identity comes from `ExecType=F` and matching TradeCapture `ExecID`. Nothing is persisted into the main DB and API/Worker remain FakeLmax-only.
+
 Useful dry-run commands:
 
 ```powershell
@@ -551,6 +553,7 @@ Useful dry-run commands:
 .\scripts\lmax-lab-fix-trade-capture-replay.ps1
 .\scripts\lmax-lab-fix-execution-report-replay.ps1
 .\scripts\lmax-lab-fix-demo-order-dry-run.ps1
+.\scripts\lmax-lab-fix-demo-lifecycle-evidence.ps1
 .\scripts\lmax-lab-order-dry-run.ps1
 ```
 

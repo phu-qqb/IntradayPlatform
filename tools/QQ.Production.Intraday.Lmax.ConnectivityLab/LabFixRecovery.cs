@@ -64,6 +64,14 @@ public enum LmaxFixInternalOrderEventType
     Unknown
 }
 
+public enum LmaxFixLifecycleConsistencyStatus
+{
+    Passed,
+    Failed,
+    Warning,
+    NotApplicable
+}
+
 public enum LmaxFixDemoOrderSide
 {
     Buy,
@@ -151,6 +159,93 @@ public sealed record LmaxFixDemoOrderLifecycleResult(
         return new("fix-demo-order-lifecycle", "Skipped", false, false, false, false, false, false, null, null, null, null, null, null, false, null, null, [], now, now, message, safetyDecisions, demoSafetyDecisions ?? [], []);
     }
 }
+
+public sealed record LmaxFixLifecycleOrderSubmission(
+    bool OrderSent,
+    string? ClientOrderId,
+    string? BrokerOrderId,
+    int ExecutionReportCount,
+    int FillExecutionReportCount,
+    string? FinalOrdStatus,
+    string? FinalExecType,
+    decimal? CumQty,
+    decimal? LeavesQty,
+    decimal? AvgPx,
+    string? LastFillExecId,
+    string? LastFillSecondaryExecId,
+    decimal? LastFillQty,
+    decimal? LastFillPx,
+    IReadOnlyList<LmaxFixExecutionReport> ExecutionReports);
+
+public sealed record LmaxFixLifecycleOrderStatusRecovery(
+    bool OrderStatusReceived,
+    string? BrokerOrderId,
+    string? OrdStatus,
+    decimal? CumQty,
+    decimal? LeavesQty,
+    IReadOnlyList<LmaxFixExecutionReport> ExecutionReports);
+
+public sealed record LmaxFixLifecycleTradeCaptureRecovery(
+    bool TradeCaptureReceived,
+    int TradeCaptureReportCount,
+    IReadOnlyList<string> TradeCaptureExecIds,
+    IReadOnlyList<LmaxFixTradeCaptureReport> Reports);
+
+public sealed record LmaxFixLifecycleConsistencyCheck(
+    string Name,
+    LmaxFixLifecycleConsistencyStatus Status,
+    string Message,
+    string? Expected = null,
+    string? Actual = null);
+
+public sealed record LmaxFixLifecycleEvidenceReport(
+    string? ClientOrderId,
+    string? BrokerOrderId,
+    string InstrumentSymbol,
+    string SecurityId,
+    LmaxFixDemoOrderSide Side,
+    decimal RequestedQuantity,
+    LmaxFixDemoOrderType RequestedOrderType,
+    LmaxFixDemoOrderTimeInForce RequestedTimeInForce,
+    bool OrderSent,
+    int ExecutionReportCount,
+    int FillExecutionReportCount,
+    string? FinalOrdStatus,
+    string? FinalExecType,
+    decimal? CumQty,
+    decimal? LeavesQty,
+    decimal? AvgPx,
+    string? LastFillExecId,
+    string? LastFillSecondaryExecId,
+    decimal? LastFillQty,
+    decimal? LastFillPx,
+    bool OrderStatusReceived,
+    string? OrderStatusOrdStatus,
+    decimal? OrderStatusCumQty,
+    decimal? OrderStatusLeavesQty,
+    bool TradeCaptureReceived,
+    int TradeCaptureReportCount,
+    IReadOnlyList<string> TradeCaptureExecIds,
+    DateTimeOffset StartedAtUtc,
+    DateTimeOffset CompletedAtUtc,
+    IReadOnlyList<string> Warnings,
+    IReadOnlyList<LmaxFixLifecycleConsistencyCheck> ConsistencyChecks,
+    LmaxFixLifecycleOrderSubmission OrderSubmission,
+    LmaxFixLifecycleOrderStatusRecovery? OrderStatusRecovery,
+    LmaxFixLifecycleTradeCaptureRecovery? TradeCaptureRecovery);
+
+public sealed record LmaxFixLifecycleEvidenceResult(
+    string Command,
+    string Status,
+    LmaxFixDemoOrderLifecycleResult OrderSubmission,
+    LmaxFixOrderStatusSmokeResult? OrderStatusRecovery,
+    LmaxFixTradeCaptureSmokeResult? TradeCaptureRecovery,
+    LmaxFixLifecycleEvidenceReport EvidenceReport,
+    DateTimeOffset StartedAtUtc,
+    DateTimeOffset CompletedAtUtc,
+    string Message,
+    IReadOnlyList<string> SafetyDecisions,
+    IReadOnlyList<string> Diagnostics);
 
 public sealed record LmaxFixTradeCaptureReport(
     string? TradeRequestId,
@@ -843,6 +938,180 @@ public static class LmaxFixTradeCaptureToEodShapeMapper
             },
             report.LastQty.HasValue && report.LastPx.HasValue ? report.LastQty.Value * report.LastPx.Value : null,
             null);
+    }
+}
+
+public static class LmaxFixLifecycleEvidenceBuilder
+{
+    public static LmaxFixLifecycleEvidenceReport Build(
+        LmaxFixDemoOrderRequest request,
+        LmaxFixDemoOrderLifecycleResult orderSubmission,
+        LmaxFixOrderStatusSmokeResult? orderStatus,
+        LmaxFixTradeCaptureSmokeResult? tradeCapture)
+    {
+        var executionReports = orderSubmission.ExecutionReports;
+        var fillReports = executionReports.Where(x => x.ExecType == LmaxFixExecutionReportType.Trade).ToList();
+        var latestExecution = executionReports.LastOrDefault();
+        var lastFill = fillReports.LastOrDefault();
+        var latestStatusReport = orderStatus?.ExecutionReports.LastOrDefault();
+        var tradeReports = tradeCapture?.Reports ?? [];
+        var warnings = new List<string>();
+        var checks = new List<LmaxFixLifecycleConsistencyCheck>();
+
+        foreach (var report in tradeReports)
+        {
+            if (report.MissingForEodComparison?.Any(x => x.Contains("TradeUTI", StringComparison.OrdinalIgnoreCase)) == true)
+            {
+                warnings.Add($"TradeCapture ExecID={report.ExecId ?? "(missing)"} has no TradeUTI; this is expected for current FIX AE comparison readiness.");
+            }
+        }
+
+        AddStringCheck(checks, "ClOrdID matches across lifecycle", orderSubmission.ClientOrderId, latestStatusReport?.ClOrdId);
+        AddStringCheck(checks, "Broker OrderID matches ExecutionReport and OrderStatus", latestExecution?.OrderId, latestStatusReport?.OrderId);
+        AddStringCheck(checks, "SecurityID matches ExecutionReport and OrderStatus", latestExecution?.SecurityId, latestStatusReport?.SecurityId);
+        AddSideCheck(checks, "Side matches ExecutionReport and OrderStatus", latestExecution?.Side, latestStatusReport?.Side);
+        AddDecimalCheck(checks, "CumQty matches ExecutionReport and OrderStatus", latestExecution?.CumQty, latestStatusReport?.CumQty);
+        AddDecimalCheck(checks, "LeavesQty matches ExecutionReport and OrderStatus", latestExecution?.LeavesQty, latestStatusReport?.LeavesQty);
+
+        if (lastFill is not null)
+        {
+            var matchingTradeCapture = tradeReports.FirstOrDefault(x => string.Equals(x.ExecId, lastFill.ExecId, StringComparison.Ordinal));
+            var comparableTradeCapture = matchingTradeCapture ?? tradeReports.FirstOrDefault();
+            checks.Add(matchingTradeCapture is null
+                ? new("Fill ExecID appears in TradeCaptureReport", LmaxFixLifecycleConsistencyStatus.Failed, "Fill ExecutionReport ExecID was not found in TradeCapture AE reports.", lastFill.ExecId, string.Join(",", tradeReports.Select(x => x.ExecId).Where(x => !string.IsNullOrWhiteSpace(x))))
+                : new("Fill ExecID appears in TradeCaptureReport", LmaxFixLifecycleConsistencyStatus.Passed, "Fill ExecutionReport ExecID was recovered via TradeCapture AE.", lastFill.ExecId, matchingTradeCapture.ExecId));
+
+            AddDecimalCheck(checks, "Fill qty matches TradeCapture LastQty", lastFill.LastQty, comparableTradeCapture?.LastQty);
+            AddDecimalCheck(checks, "Fill price matches TradeCapture LastPx", lastFill.LastPx, comparableTradeCapture?.LastPx);
+        }
+        else
+        {
+            checks.Add(new("Fill ExecID appears in TradeCaptureReport", LmaxFixLifecycleConsistencyStatus.NotApplicable, "No fill ExecutionReport was available to compare."));
+            checks.Add(new("Fill qty matches TradeCapture LastQty", LmaxFixLifecycleConsistencyStatus.NotApplicable, "No fill ExecutionReport was available to compare."));
+            checks.Add(new("Fill price matches TradeCapture LastPx", LmaxFixLifecycleConsistencyStatus.NotApplicable, "No fill ExecutionReport was available to compare."));
+        }
+
+        checks.Add(latestStatusReport?.ExecType == LmaxFixExecutionReportType.OrderStatus
+            ? new("ExecType=I OrderStatus report is status-only", LmaxFixLifecycleConsistencyStatus.Passed, "OrderStatusRequest recovery returned ExecType=I and was not counted as a fill.")
+            : latestStatusReport is null
+                ? new("ExecType=I OrderStatus report is status-only", LmaxFixLifecycleConsistencyStatus.NotApplicable, "No OrderStatus ExecutionReport was available.")
+                : new("ExecType=I OrderStatus report is status-only", LmaxFixLifecycleConsistencyStatus.Warning, $"OrderStatus recovery returned ExecType={latestStatusReport.ExecType}; only ExecType=Trade/F is counted as a fill."));
+
+        if (tradeReports.Count > 0)
+        {
+            var tradeSecurityIds = tradeReports.Select(x => x.SecurityId).Where(x => !string.IsNullOrWhiteSpace(x)).Distinct(StringComparer.Ordinal).ToList();
+            if (!string.IsNullOrWhiteSpace(latestExecution?.SecurityId) && tradeSecurityIds.Count > 0)
+            {
+                checks.Add(tradeSecurityIds.Contains(latestExecution.SecurityId, StringComparer.Ordinal)
+                    ? new("SecurityID matches TradeCaptureReport", LmaxFixLifecycleConsistencyStatus.Passed, "ExecutionReport SecurityID was present in TradeCapture AE reports.", latestExecution.SecurityId, string.Join(",", tradeSecurityIds))
+                    : new("SecurityID matches TradeCaptureReport", LmaxFixLifecycleConsistencyStatus.Failed, "ExecutionReport SecurityID was not present in TradeCapture AE reports.", latestExecution.SecurityId, string.Join(",", tradeSecurityIds)));
+            }
+        }
+
+        if (tradeReports.Any(x => x.MissingForEodComparison?.Any(y => y.Contains("TradeUTI", StringComparison.OrdinalIgnoreCase)) == true))
+        {
+            checks.Add(new("TradeCapture missing TradeUTI is warning only", LmaxFixLifecycleConsistencyStatus.Warning, "FIX AE does not currently provide an EOD TradeUTI-equivalent field in parsed reports."));
+        }
+
+        var submission = new LmaxFixLifecycleOrderSubmission(
+            orderSubmission.OrderSent,
+            orderSubmission.ClientOrderId,
+            latestExecution?.OrderId,
+            executionReports.Count,
+            fillReports.Count,
+            latestExecution?.OrdStatus.ToString(),
+            latestExecution?.ExecType.ToString(),
+            latestExecution?.CumQty,
+            latestExecution?.LeavesQty,
+            latestExecution?.AvgPx,
+            lastFill?.ExecId,
+            null,
+            lastFill?.LastQty,
+            lastFill?.LastPx,
+            executionReports);
+
+        var statusRecovery = orderStatus is null
+            ? null
+            : new LmaxFixLifecycleOrderStatusRecovery(
+                orderStatus.ExecutionReportReceived,
+                latestStatusReport?.OrderId,
+                latestStatusReport?.OrdStatus.ToString(),
+                latestStatusReport?.CumQty,
+                latestStatusReport?.LeavesQty,
+                orderStatus.ExecutionReports);
+
+        var captureRecovery = tradeCapture is null
+            ? null
+            : new LmaxFixLifecycleTradeCaptureRecovery(
+                tradeCapture.TradeReportCount > 0,
+                tradeCapture.TradeReportCount,
+                tradeReports.Select(x => x.ExecId).Where(x => !string.IsNullOrWhiteSpace(x)).Cast<string>().ToList(),
+                tradeReports);
+
+        return new(
+            orderSubmission.ClientOrderId,
+            latestExecution?.OrderId ?? latestStatusReport?.OrderId,
+            request.InstrumentSymbol,
+            request.LmaxInstrumentId,
+            request.Side,
+            request.VenueQuantity,
+            request.OrderType,
+            request.TimeInForce,
+            orderSubmission.OrderSent,
+            executionReports.Count,
+            fillReports.Count,
+            latestExecution?.OrdStatus.ToString(),
+            latestExecution?.ExecType.ToString(),
+            latestExecution?.CumQty,
+            latestExecution?.LeavesQty,
+            latestExecution?.AvgPx,
+            lastFill?.ExecId,
+            null,
+            lastFill?.LastQty,
+            lastFill?.LastPx,
+            orderStatus?.ExecutionReportReceived == true,
+            latestStatusReport?.OrdStatus.ToString(),
+            latestStatusReport?.CumQty,
+            latestStatusReport?.LeavesQty,
+            tradeCapture?.TradeReportCount > 0,
+            tradeCapture?.TradeReportCount ?? 0,
+            captureRecovery?.TradeCaptureExecIds ?? [],
+            orderSubmission.StartedAtUtc,
+            new[] { orderSubmission.CompletedAtUtc, orderStatus?.CompletedAtUtc, tradeCapture?.CompletedAtUtc }.Where(x => x.HasValue).Max() ?? orderSubmission.CompletedAtUtc,
+            warnings.Distinct(StringComparer.Ordinal).ToList(),
+            checks,
+            submission,
+            statusRecovery,
+            captureRecovery);
+    }
+
+    private static void AddStringCheck(ICollection<LmaxFixLifecycleConsistencyCheck> checks, string name, string? expected, string? actual)
+    {
+        if (string.IsNullOrWhiteSpace(expected) || string.IsNullOrWhiteSpace(actual))
+        {
+            checks.Add(new(name, LmaxFixLifecycleConsistencyStatus.NotApplicable, "One or both values were missing.", expected, actual));
+            return;
+        }
+
+        checks.Add(string.Equals(expected, actual, StringComparison.Ordinal)
+            ? new(name, LmaxFixLifecycleConsistencyStatus.Passed, "Values matched.", expected, actual)
+            : new(name, LmaxFixLifecycleConsistencyStatus.Failed, "Values did not match.", expected, actual));
+    }
+
+    private static void AddSideCheck(ICollection<LmaxFixLifecycleConsistencyCheck> checks, string name, LmaxFixTradeCaptureSide? expected, LmaxFixTradeCaptureSide? actual)
+        => AddStringCheck(checks, name, expected?.ToString(), actual?.ToString());
+
+    private static void AddDecimalCheck(ICollection<LmaxFixLifecycleConsistencyCheck> checks, string name, decimal? expected, decimal? actual)
+    {
+        if (!expected.HasValue || !actual.HasValue)
+        {
+            checks.Add(new(name, LmaxFixLifecycleConsistencyStatus.NotApplicable, "One or both values were missing.", expected?.ToString(CultureInfo.InvariantCulture), actual?.ToString(CultureInfo.InvariantCulture)));
+            return;
+        }
+
+        checks.Add(expected.Value == actual.Value
+            ? new(name, LmaxFixLifecycleConsistencyStatus.Passed, "Values matched.", expected.Value.ToString(CultureInfo.InvariantCulture), actual.Value.ToString(CultureInfo.InvariantCulture))
+            : new(name, LmaxFixLifecycleConsistencyStatus.Failed, "Values did not match.", expected.Value.ToString(CultureInfo.InvariantCulture), actual.Value.ToString(CultureInfo.InvariantCulture)));
     }
 }
 
