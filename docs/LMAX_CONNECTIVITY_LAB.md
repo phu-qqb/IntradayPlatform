@@ -172,7 +172,48 @@ The `AQ` ack parser reads `568 TradeRequestID`, `569 TradeRequestType`, `263 Sub
 
 Session-level rejects (`35=3`) are parsed explicitly. If LMAX rejects an `AD` request, the result reports `RequestRejected=True`, `LastReceivedMsgType=3`, `RejectRefTagId`, `RejectRefMsgType`, `RejectReasonCode`, and `RejectText` instead of mislabeling the outcome as a timeout.
 
-`fix-order-status-dry-run` builds a read-only `OrderStatusRequest` (`35=H`) and prints a sanitized FIX message. It does not open a socket. `fix-order-status-smoke` remains parked until an explicit ClOrdID recovery scenario is needed. `fix-order-mass-status-smoke` and `fix-position-report-smoke` return `Skipped` when the dictionary does not support those messages.
+`fix-order-status-dry-run` builds a read-only `OrderStatusRequest` (`35=H`) and prints a sanitized FIX message. It does not open a socket. `fix-order-status-smoke` is implemented for explicit recovery scenarios where a known `ClOrdID` exists. `fix-order-mass-status-smoke` and `fix-position-report-smoke` return `Skipped` when the dictionary does not support those messages.
+
+## FIX OrderStatusRequest Smoke
+
+`fix-order-status-smoke` is read-only recovery tooling. It connects to the FIX Trading session, logs on, sends `OrderStatusRequest` (`35=H`), waits for `ExecutionReport` (`35=8`) or session reject (`35=3`), logs out, and prints normalized execution-report details. It submits no orders and persists nothing.
+
+The command requires:
+
+- `AllowExternalConnections=true`
+- `EnvironmentName=Demo` or `UAT`
+- `AllowLiveTrading=false`
+- `AllowOrderSubmission=false`
+- explicit `ClOrdID`
+- LMAX demo/UAT FIX Trading host
+
+Example using the validated tiny Demo order:
+
+```powershell
+.\scripts\lmax-lab-fix-order-status-smoke.ps1 `
+  -AllowExternalConnections `
+  -ClOrdID "DL26050607454402" `
+  -LmaxInstrumentId 4001 `
+  -Side Buy `
+  -ShowFixMessages
+```
+
+The request sends only read-only recovery fields:
+
+- `35=H`
+- `11 ClOrdID`
+- optional `48 SecurityID`
+- optional `22 SecurityIDSource`, defaulting to `8` when `SecurityID` is supplied
+- optional `54 Side`
+- optional `1 Account`
+- optional `790 OrdStatusReqID`
+
+Troubleshooting:
+
+- `35=3` session reject: inspect `RejectRefTagId`, `RejectRefMsgType`, and `RejectText`. The lab reports this as a structured reject, not a timeout.
+- Timeout: confirm the `ClOrdID`, session target, and whether the order still exists in the Demo session recovery window.
+- Logout before response: inspect `RejectText` / logout text and sequence-number state.
+- No credentials are printed; password tags are stripped from diagnostics.
 
 ## FIX ExecutionReport Normalization
 

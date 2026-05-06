@@ -388,6 +388,7 @@ public interface ILmaxFixSessionClient
     Task<LmaxFixMarketDataSmokeResult> MarketDataSnapshotSmokeAsync(LmaxConnectivityLabOptions options, CancellationToken cancellationToken);
     Task<LmaxFixTradeCaptureSmokeResult> TradeCaptureSmokeAsync(LmaxConnectivityLabOptions options, LmaxFixTradeCaptureRequestOptions request, CancellationToken cancellationToken);
     Task<LmaxFixDemoOrderLifecycleResult> DemoOrderLifecycleAsync(LmaxConnectivityLabOptions options, LmaxFixDemoOrderRequest request, bool explicitConfirmation, CancellationToken cancellationToken);
+    Task<LmaxFixOrderStatusSmokeResult> OrderStatusSmokeAsync(LmaxConnectivityLabOptions options, LmaxFixOrderStatusSmokeRequest request, CancellationToken cancellationToken);
 }
 
 public sealed class PlaceholderLmaxPublicDataClient : ILmaxPublicDataClient
@@ -453,6 +454,9 @@ public sealed class PlaceholderLmaxFixSessionClient : ILmaxFixSessionClient
 
     public Task<LmaxFixDemoOrderLifecycleResult> DemoOrderLifecycleAsync(LmaxConnectivityLabOptions options, LmaxFixDemoOrderRequest request, bool explicitConfirmation, CancellationToken cancellationToken)
         => Task.FromResult(LmaxFixDemoOrderLifecycleResult.Skipped("Demo order lifecycle is not implemented in this placeholder client.", LmaxConnectivityLabSafetyValidator.DecisionsForExternalCommand(options)));
+
+    public Task<LmaxFixOrderStatusSmokeResult> OrderStatusSmokeAsync(LmaxConnectivityLabOptions options, LmaxFixOrderStatusSmokeRequest request, CancellationToken cancellationToken)
+        => Task.FromResult(LmaxFixOrderStatusSmokeResult.Skipped("Order status smoke is not implemented in this placeholder client.", LmaxConnectivityLabSafetyValidator.DecisionsForExternalCommand(options), request.ClOrdId));
 
     private static IEnumerable<string> RequiredFixFields(LmaxConnectivityLabOptions options, bool marketData)
     {

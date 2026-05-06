@@ -997,6 +997,9 @@ public sealed class LmaxConnectivityLabTests
 
         Assert.Contains($"{LmaxFixMarketDataCodec.Soh}35=H{LmaxFixMarketDataCodec.Soh}", request, StringComparison.Ordinal);
         Assert.Contains($"{LmaxFixMarketDataCodec.Soh}11=CL1{LmaxFixMarketDataCodec.Soh}", request, StringComparison.Ordinal);
+        Assert.Contains($"{LmaxFixMarketDataCodec.Soh}48=4001{LmaxFixMarketDataCodec.Soh}", request, StringComparison.Ordinal);
+        Assert.Contains($"{LmaxFixMarketDataCodec.Soh}22=8{LmaxFixMarketDataCodec.Soh}", request, StringComparison.Ordinal);
+        Assert.Contains($"{LmaxFixMarketDataCodec.Soh}54=1{LmaxFixMarketDataCodec.Soh}", request, StringComparison.Ordinal);
         Assert.Contains($"{LmaxFixMarketDataCodec.Soh}790=OSR1{LmaxFixMarketDataCodec.Soh}", request, StringComparison.Ordinal);
     }
 
@@ -1008,6 +1011,87 @@ public sealed class LmaxConnectivityLabTests
         Assert.Equal("Blocked", result.Status);
         Assert.Contains("ClOrdID", result.Message, StringComparison.Ordinal);
         Assert.Null(result.FixMessageSanitized);
+    }
+
+    [Fact]
+    public async Task Order_status_smoke_skips_without_external_connections_or_cl_ord_id()
+    {
+        var fix = new RawLmaxFixSessionClient(new LmaxConnectivityLabSafetyValidator());
+        var options = CompleteFixOptions();
+
+        var missingClOrd = await fix.OrderStatusSmokeAsync(options, new LmaxFixOrderStatusSmokeRequest(null, null, "4001", null, null, null, 10, false), CancellationToken.None);
+        var blockedExternal = await fix.OrderStatusSmokeAsync(options, new LmaxFixOrderStatusSmokeRequest("CL1", null, "4001", null, null, null, 10, false), CancellationToken.None);
+
+        Assert.Equal("Skipped", missingClOrd.Status);
+        Assert.False(missingClOrd.RequestSent);
+        Assert.Contains("ClOrdID is required", missingClOrd.Message, StringComparison.Ordinal);
+        Assert.Equal("Skipped", blockedExternal.Status);
+        Assert.False(blockedExternal.RequestSent);
+        Assert.Contains("AllowExternalConnections=false", blockedExternal.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Order_status_smoke_requires_order_submission_false_and_masks_password()
+    {
+        var fix = new RawLmaxFixSessionClient(new LmaxConnectivityLabSafetyValidator());
+        var options = CompleteFixOptions(orderSubmission: true);
+        options.AllowExternalConnections = true;
+        options.FixPassword = "order-status-secret-password";
+
+        var result = await fix.OrderStatusSmokeAsync(options, new LmaxFixOrderStatusSmokeRequest("CL1", null, "4001", null, null, null, 10, false), CancellationToken.None);
+
+        Assert.Equal("Skipped", result.Status);
+        Assert.False(result.RequestSent);
+        Assert.Contains("AllowOrderSubmission=false", result.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("order-status-secret-password", result.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("order-status-secret-password", string.Join("|", result.Diagnostics), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Order_status_smoke_result_can_report_execution_report()
+    {
+        var report = LmaxFixRecoveryCodec.NormalizeExecutionReport(FixMessage("35=8", "17=aJBPhQAAAACZXTEG", "37=AAAESQAAAABd6+b7", "11=DL26050607454402", "150=F", "39=2", "48=4001", "54=1", "38=0.1", "14=0.1", "151=0", "32=0.1", "31=1.17361", "6=1.17361", "60=20260506-07:45:45.000"), CompleteFixOptions()).Report;
+
+        var result = new LmaxFixOrderStatusSmokeResult(
+            "fix-order-status-smoke",
+            "Ok",
+            Connected: true,
+            LoggedOn: true,
+            RequestSent: true,
+            ExecutionReportReceived: true,
+            RequestRejected: false,
+            RejectRefTagId: null,
+            RejectRefMsgType: null,
+            RejectText: null,
+            ClOrdId: "DL26050607454402",
+            BrokerOrderId: report.OrderId,
+            FinalOrdStatus: report.OrdStatus.ToString(),
+            ExecutionReports: [report],
+            StartedAtUtc: DateTimeOffset.UtcNow,
+            CompletedAtUtc: DateTimeOffset.UtcNow,
+            LogoutSent: true,
+            Message: "Received ExecutionReport for ClOrdID=DL26050607454402; OrdStatus=Filled. No data was persisted.",
+            SafetyDecisions: [],
+            Diagnostics: []);
+
+        Assert.Equal("Ok", result.Status);
+        Assert.True(result.ExecutionReportReceived);
+        Assert.Equal("AAAESQAAAABd6+b7", result.BrokerOrderId);
+        Assert.Equal("Filled", result.FinalOrdStatus);
+    }
+
+    [Fact]
+    public void Order_status_smoke_result_can_report_session_reject_and_timeout()
+    {
+        var reject = LmaxFixRecoveryCodec.ParseSessionReject(FixMessage("35=3", "371=11", "372=H", "373=1", "58=Unknown order"));
+        var rejected = new LmaxFixOrderStatusSmokeResult("fix-order-status-smoke", "Failed", true, true, true, false, true, reject.RefTagId, reject.RefMsgType, reject.Text, "CL1", null, null, [], DateTimeOffset.UtcNow, DateTimeOffset.UtcNow, true, $"OrderStatusRequest was rejected at FIX session level: {reject.Text}", [], []);
+        var timeout = new LmaxFixOrderStatusSmokeResult("fix-order-status-smoke", "Failed", true, true, true, false, false, null, null, null, "CL1", null, null, [], DateTimeOffset.UtcNow, DateTimeOffset.UtcNow, true, "OrderStatusRequest timed out before ExecutionReport or session reject was received.", [], []);
+
+        Assert.True(rejected.RequestRejected);
+        Assert.Equal("H", rejected.RejectRefMsgType);
+        Assert.Contains("rejected", rejected.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.False(timeout.RequestRejected);
+        Assert.Contains("timed out", timeout.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]

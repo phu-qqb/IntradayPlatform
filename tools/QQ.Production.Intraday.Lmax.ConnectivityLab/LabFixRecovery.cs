@@ -271,6 +271,45 @@ public sealed record LmaxFixOrderStatusRequestBuilderResult(
     string? FixMessageSanitized,
     IReadOnlyList<string> Warnings);
 
+public sealed record LmaxFixOrderStatusSmokeRequest(
+    string? ClOrdId,
+    string? Account,
+    string? SecurityId,
+    string? SecurityIdSource,
+    string? Side,
+    string? OrdStatusReqId,
+    int MaxWaitSeconds,
+    bool ShowFixMessages);
+
+public sealed record LmaxFixOrderStatusSmokeResult(
+    string Command,
+    string Status,
+    bool Connected,
+    bool LoggedOn,
+    bool RequestSent,
+    bool ExecutionReportReceived,
+    bool RequestRejected,
+    string? RejectRefTagId,
+    string? RejectRefMsgType,
+    string? RejectText,
+    string? ClOrdId,
+    string? BrokerOrderId,
+    string? FinalOrdStatus,
+    IReadOnlyList<LmaxFixExecutionReport> ExecutionReports,
+    DateTimeOffset StartedAtUtc,
+    DateTimeOffset CompletedAtUtc,
+    bool LogoutSent,
+    string Message,
+    IReadOnlyList<string> SafetyDecisions,
+    IReadOnlyList<string> Diagnostics)
+{
+    public static LmaxFixOrderStatusSmokeResult Skipped(string message, IReadOnlyList<string> safetyDecisions, string? clOrdId = null, IReadOnlyList<string>? diagnostics = null)
+    {
+        var now = DateTimeOffset.UtcNow;
+        return new("fix-order-status-smoke", "Skipped", false, false, false, false, false, null, null, null, clOrdId, null, null, [], now, now, false, message, safetyDecisions, diagnostics ?? []);
+    }
+}
+
 public sealed record LmaxFixTradeCaptureSmokeResult(
     string Command,
     string Status,

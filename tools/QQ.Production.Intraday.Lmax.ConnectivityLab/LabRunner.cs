@@ -79,8 +79,25 @@ public sealed class LmaxConnectivityLabRunner(
             return dryRunResult.Status == "Blocked" ? 2 : 0;
         }
 
-        if (command.Equals("fix-order-status-smoke", StringComparison.OrdinalIgnoreCase) ||
-            command.Equals("fix-order-mass-status-smoke", StringComparison.OrdinalIgnoreCase) ||
+        if (command.Equals("fix-order-status-smoke", StringComparison.OrdinalIgnoreCase))
+        {
+            var orderStatusResult = await fixClient.OrderStatusSmokeAsync(
+                options,
+                new LmaxFixOrderStatusSmokeRequest(
+                    GetStringArg(optionArgs, "cl-ord-id"),
+                    GetStringArg(optionArgs, "account"),
+                    GetStringArg(optionArgs, "security-id") ?? GetStringArg(optionArgs, "lmax-instrument-id"),
+                    GetStringArg(optionArgs, "security-id-source"),
+                    MapSideArg(GetStringArg(optionArgs, "side")),
+                    GetStringArg(optionArgs, "ord-status-req-id"),
+                    GetIntArg(optionArgs, "max-wait-seconds", 10),
+                    HasFlag(optionArgs, "show-fix-messages")),
+                cancellationToken);
+            WriteOrderStatusResult(orderStatusResult);
+            return orderStatusResult.Status == "Failed" ? 1 : orderStatusResult.Status == "Skipped" ? 2 : 0;
+        }
+
+        if (command.Equals("fix-order-mass-status-smoke", StringComparison.OrdinalIgnoreCase) ||
             command.Equals("fix-position-report-smoke", StringComparison.OrdinalIgnoreCase))
         {
             var skippedResult = UnsupportedReadOnlyFixCommand(command);
@@ -210,11 +227,6 @@ public sealed class LmaxConnectivityLabRunner(
             _ => "OrderStatusRequest"
         };
         var capability = scan.Capabilities.FirstOrDefault(x => x.MessageName.Equals(expected, StringComparison.OrdinalIgnoreCase));
-        if (command.Equals("fix-order-status-smoke", StringComparison.OrdinalIgnoreCase))
-        {
-            return LabCommandResult.Skipped(command, "OrderStatusRequest smoke is parked until an explicit ClOrdID recovery scenario is needed. Use fix-order-status-dry-run to inspect the read-only request. No network call was made.", []);
-        }
-
         if (scan.Status == "Skipped")
         {
             return LabCommandResult.Skipped(command, $"{scan.Message} Cannot confirm {expected} support. No network call was made.", []);
@@ -379,6 +391,13 @@ public sealed class LmaxConnectivityLabRunner(
     private static DateTimeOffset? GetDateTimeOffsetArg(IEnumerable<string> args, string name)
         => DateTimeOffset.TryParse(GetStringArg(args, name), out var parsed) ? parsed.ToUniversalTime() : null;
 
+    private static string? MapSideArg(string? side)
+        => side?.Equals("Buy", StringComparison.OrdinalIgnoreCase) == true
+            ? "1"
+            : side?.Equals("Sell", StringComparison.OrdinalIgnoreCase) == true
+                ? "2"
+                : side;
+
     private static void WriteCapabilitiesResult(LmaxFixCapabilityScanResult result)
     {
         Console.WriteLine($"Command: {result.Command}");
@@ -509,6 +528,41 @@ public sealed class LmaxConnectivityLabRunner(
         foreach (var decision in result.DemoSafetyDecisions)
         {
             Console.WriteLine($"SafetyGate: {decision.Gate} Passed={decision.Passed} Message={decision.Message}");
+        }
+
+        foreach (var diagnostic in result.Diagnostics)
+        {
+            Console.WriteLine($"Diagnostic: {diagnostic}");
+        }
+
+        foreach (var decision in result.SafetyDecisions)
+        {
+            Console.WriteLine($"- {decision}");
+        }
+    }
+
+    private static void WriteOrderStatusResult(LmaxFixOrderStatusSmokeResult result)
+    {
+        Console.WriteLine($"Command: {result.Command}");
+        Console.WriteLine($"Status: {result.Status}");
+        Console.WriteLine($"Connected: {result.Connected}");
+        Console.WriteLine($"LoggedOn: {result.LoggedOn}");
+        Console.WriteLine($"RequestSent: {result.RequestSent}");
+        Console.WriteLine($"ExecutionReportReceived: {result.ExecutionReportReceived}");
+        Console.WriteLine($"RequestRejected: {result.RequestRejected}");
+        if (!string.IsNullOrWhiteSpace(result.RejectRefTagId)) Console.WriteLine($"RejectRefTagId: {result.RejectRefTagId}");
+        if (!string.IsNullOrWhiteSpace(result.RejectRefMsgType)) Console.WriteLine($"RejectRefMsgType: {result.RejectRefMsgType}");
+        if (!string.IsNullOrWhiteSpace(result.RejectText)) Console.WriteLine($"RejectText: {result.RejectText}");
+        if (!string.IsNullOrWhiteSpace(result.ClOrdId)) Console.WriteLine($"ClOrdID: {result.ClOrdId}");
+        if (!string.IsNullOrWhiteSpace(result.BrokerOrderId)) Console.WriteLine($"BrokerOrderID: {result.BrokerOrderId}");
+        if (!string.IsNullOrWhiteSpace(result.FinalOrdStatus)) Console.WriteLine($"FinalOrdStatus: {result.FinalOrdStatus}");
+        Console.WriteLine($"StartedAtUtc: {result.StartedAtUtc:O}");
+        Console.WriteLine($"CompletedAtUtc: {result.CompletedAtUtc:O}");
+        Console.WriteLine($"LogoutSent: {result.LogoutSent}");
+        Console.WriteLine($"Message: {result.Message}");
+        foreach (var report in result.ExecutionReports)
+        {
+            Console.WriteLine($"ExecutionReport: ExecID={report.ExecId} OrderID={report.OrderId} ClOrdID={report.ClOrdId} ExecType={report.ExecType} OrdStatus={report.OrdStatus} SecurityID={report.SecurityId} Symbol={report.InternalSymbol ?? report.Symbol} Side={report.Side} OrderQty={report.OrderQty} CumQty={report.CumQty} LeavesQty={report.LeavesQty} LastQty={report.LastQty} LastPx={report.LastPx} AvgPx={report.AvgPx} TransactTimeUtc={report.TransactTimeUtc:O} Text={report.Text}");
         }
 
         foreach (var diagnostic in result.Diagnostics)

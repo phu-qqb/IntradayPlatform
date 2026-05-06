@@ -568,6 +568,14 @@ Read-only FIX Trading recovery commands:
 
 Live demo order lifecycle is intentionally gated and should not be run as part of normal local validation. It requires `-AllowExternalConnections`, `-AllowOrderSubmission`, `-ConfirmDemoOrder`, and `-DryRun:$false`, plus the lab safety gates. The default validated `35=D` shape omits `21 HandlInst` because LMAX Demo rejected that tag at session level. It remains isolated from API/Worker, does not enable live trading, and does not persist live data.
 
+After a Demo order exists, `fix-order-status-smoke` can recover its status by known `ClOrdID` without submitting anything:
+
+```powershell
+.\scripts\lmax-lab-fix-order-status-smoke.ps1 -AllowExternalConnections -ClOrdID "DL26050607454402" -LmaxInstrumentId 4001 -Side Buy -ShowFixMessages
+```
+
+This command requires `AllowOrderSubmission=false`, parses `35=8` execution reports through the lab normalizer, logs out cleanly, and persists nothing.
+
 Parked Account API diagnostics, if ever resumed, remain explicit and safe:
 
 ```powershell

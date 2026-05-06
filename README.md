@@ -536,6 +536,8 @@ The lab includes read-only FIX Trading recovery tools: `fix-capabilities` scans 
 
 `fix-demo-order-lifecycle` is a controlled LMAX Demo-only `NewOrderSingle` (`35=D`) lab command. Its dry-run script prints a sanitized tiny EURUSD Market IOC demo order without opening a socket. The default LMAX Demo order shape omits `21 HandlInst` because Demo rejected it as an unknown tag. Live demo submission is blocked unless external connections, order submission, `DryRun=false`, explicit confirmation, Demo/UAT host checks, and quantity/notional limits all pass. This remains outside the API/Worker runtime.
 
+`fix-order-status-smoke` is now unparked for explicit recovery cases with a known `ClOrdID`. It is read-only, requires `AllowOrderSubmission=false`, sends `35=H`, parses `35=8` through the lab ExecutionReport normalizer, and reports session-level `35=3` rejects structurally.
+
 Useful dry-run commands:
 
 ```powershell

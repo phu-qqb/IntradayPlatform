@@ -1,8 +1,11 @@
 param(
     [string]$EnvironmentName = "Demo",
     [switch]$AllowExternalConnections,
-    [string]$ClOrdId = "",
+    [string]$ClOrdID = "",
+    [string]$LmaxInstrumentId = "4001",
+    [string]$Side = "",
     [string]$Account = "",
+    [int]$MaxWaitSeconds = 10,
     [switch]$ShowFixMessages
 )
 
@@ -15,11 +18,14 @@ $env:DOTNET_CLI_HOME = Join-Path $root ".dotnet_home"
 $labArgs = @(
     "fix-order-status-smoke",
     "--environment=$EnvironmentName",
-    "--allow-external-connections=$($AllowExternalConnections.IsPresent)",
-    "--show-fix-messages=$($ShowFixMessages.IsPresent)"
+    "--allow-external-connections=$($AllowExternalConnections.IsPresent.ToString().ToLowerInvariant())",
+    "--show-fix-messages=$($ShowFixMessages.IsPresent.ToString().ToLowerInvariant())",
+    "--max-wait-seconds=$MaxWaitSeconds"
 )
 
-if ($ClOrdId) { $labArgs += "--cl-ord-id=$ClOrdId" }
+if ($ClOrdID) { $labArgs += "--cl-ord-id=$ClOrdID" }
+if ($LmaxInstrumentId) { $labArgs += "--lmax-instrument-id=$LmaxInstrumentId" }
+if ($Side) { $labArgs += "--side=$Side" }
 if ($Account) { $labArgs += "--account=$Account" }
 
 dotnet run --project $project --no-build --no-restore -- @labArgs
