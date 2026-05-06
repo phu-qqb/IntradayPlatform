@@ -42,6 +42,36 @@ public sealed class LmaxConnectivityLabRunner(
             return exitCode;
         }
 
+        if (command.Equals("fix-execution-report-replay", StringComparison.OrdinalIgnoreCase))
+        {
+            var exitCode = ReplayExecutionReportFixture(options, GetStringArg(optionArgs, "fixture"));
+            return exitCode;
+        }
+
+        if (command.Equals("fix-demo-order-lifecycle", StringComparison.OrdinalIgnoreCase))
+        {
+            var request = LmaxFixDemoOrderRequest.From(
+                options,
+                GetStringArg(optionArgs, "side"),
+                GetStringArg(optionArgs, "order-type"),
+                GetStringArg(optionArgs, "time-in-force"),
+                GetDecimalArg(optionArgs, "venue-quantity"),
+                GetDecimalArg(optionArgs, "limit-price"),
+                GetDecimalArg(optionArgs, "max-notional-usd"),
+                GetStringArg(optionArgs, "client-order-id"),
+                GetStringArg(optionArgs, "account"),
+                HasFlag(optionArgs, "confirm-demo-order") || explicitConfirm,
+                GetBoolArg(optionArgs, "dry-run", options.DryRun),
+                GetIntArg(optionArgs, "max-wait-seconds", options.RequestTimeoutSeconds),
+                HasFlag(optionArgs, "show-fix-messages")) with
+                {
+                    IncludeHandlInst = HasFlag(optionArgs, "include-handl-inst")
+                };
+            var lifecycleResult = await fixClient.DemoOrderLifecycleAsync(options, request, explicitConfirm || HasFlag(optionArgs, "confirm-demo-order"), cancellationToken);
+            WriteDemoOrderLifecycleResult(lifecycleResult);
+            return lifecycleResult.Status == "Failed" ? 1 : lifecycleResult.Status == "Skipped" ? 2 : 0;
+        }
+
         if (command.Equals("fix-order-status-dry-run", StringComparison.OrdinalIgnoreCase))
         {
             var dryRunResult = BuildOrderStatusDryRun(options, optionArgs);
@@ -142,23 +172,30 @@ public sealed class LmaxConnectivityLabRunner(
         var clOrdId = GetStringArg(args, "cl-ord-id") ?? "DRYRUN-CLORDID";
         var target = options.FixOrderTargetCompId ?? options.FixTargetCompId ?? "LMXBD";
         var sender = string.IsNullOrWhiteSpace(options.FixSenderCompId) ? "DRYRUN-SENDER" : options.FixSenderCompId!;
-        var message = LmaxFixRecoveryCodec.BuildOrderStatusRequest(
+        var message = LmaxFixRecoveryCodec.BuildOrderStatusRequestDryRun(
             sender,
             target,
             sequenceNumber: 2,
-            clOrdId,
-            GetStringArg(args, "account"),
-            GetStringArg(args, "security-id"),
-            GetStringArg(args, "security-id-source"),
-            GetStringArg(args, "side"),
-            GetStringArg(args, "ord-status-req-id"));
+            new LmaxFixOrderStatusRequest(
+                clOrdId,
+                GetStringArg(args, "account"),
+                GetStringArg(args, "security-id"),
+                GetStringArg(args, "security-id-source"),
+                GetStringArg(args, "side"),
+                GetStringArg(args, "ord-status-req-id")));
+        if (message.Status == "Blocked")
+        {
+            return LabCommandResult.Blocked("fix-order-status-dry-run", message.Message, LmaxConnectivityLabSafetyValidator.DecisionsForExternalCommand(options).Concat(message.Warnings).ToList());
+        }
+
         var decisions = LmaxConnectivityLabSafetyValidator.DecisionsForExternalCommand(options)
             .Concat([
                 "Built read-only OrderStatusRequest 35=H.",
                 "No network call was made.",
                 "No order was submitted.",
-                $"FIX: {LmaxFixMarketDataCodec.SanitizeMessage(message)}"
+                $"FIX: {message.FixMessageSanitized}"
             ])
+            .Concat(message.Warnings)
             .ToList();
         return LabCommandResult.Ok("fix-order-status-dry-run", $"Built OrderStatusRequest dry-run for ClOrdID={clOrdId}.", decisions);
     }
@@ -227,6 +264,42 @@ public sealed class LmaxConnectivityLabRunner(
         return 0;
     }
 
+    private static int ReplayExecutionReportFixture(LmaxConnectivityLabOptions options, string? fixturePath)
+    {
+        var path = string.IsNullOrWhiteSpace(fixturePath) ? DefaultExecutionReportReplayFixturePath() : Path.GetFullPath(fixturePath);
+        Console.WriteLine("Command: fix-execution-report-replay");
+        Console.WriteLine("Status: Running");
+        Console.WriteLine("ExternalConnections: False");
+        Console.WriteLine($"FixturePath: {path}");
+        if (!File.Exists(path))
+        {
+            Console.WriteLine("Status: Skipped");
+            Console.WriteLine("Message: Synthetic execution report replay fixture was not found. No network call was made.");
+            return 0;
+        }
+
+        var messages = File.ReadLines(path)
+            .Select(x => x.Trim())
+            .Where(x => !string.IsNullOrWhiteSpace(x) && !x.StartsWith('#'))
+            .Select(NormalizeReplayFixLine)
+            .ToList();
+        var normalized = messages.Select(x => LmaxFixRecoveryCodec.NormalizeExecutionReport(x, options)).ToList();
+        Console.WriteLine("Status: Ok");
+        Console.WriteLine($"MessageCount: {messages.Count}");
+        foreach (var item in normalized)
+        {
+            var report = item.Report;
+            var orderEvent = item.InternalEvent;
+            Console.WriteLine($"Report: ExecID={report.ExecId} OrderID={report.OrderId} ClOrdID={report.ClOrdId} ExecType={report.ExecType} OrdStatus={report.OrdStatus} SecurityID={report.SecurityId} Symbol={report.Symbol} InternalSymbol={report.InternalSymbol} Side={report.Side?.ToString() ?? report.SideRaw} OrderQty={report.OrderQty} LeavesQty={report.LeavesQty} CumQty={report.CumQty} LastQty={report.LastQty} LastPx={report.LastPx} AvgPx={report.AvgPx} Price={report.Price} OrdType={report.OrdType} TimeInForce={report.TimeInForce} TransactTimeUtc={report.TransactTimeUtc:O} Account={report.Account} CanMapToInternalOrderEvent={report.CanMapToInternalOrderEvent}");
+            Console.WriteLine($"InternalEvent: EventType={orderEvent.EventType} ExecID={orderEvent.ExecId} OrderID={orderEvent.OrderId} ClOrdID={orderEvent.ClOrdId} Symbol={orderEvent.InternalSymbol} Side={orderEvent.Side} LastQty={orderEvent.LastQty} LastPx={orderEvent.LastPx} CumQty={orderEvent.CumQty} LeavesQty={orderEvent.LeavesQty} TransactTimeUtc={orderEvent.TransactTimeUtc:O} Message={orderEvent.Message}");
+            if (item.MissingForInternalOrderEvent.Count > 0) Console.WriteLine($"MissingForInternalOrderEvent: {string.Join("; ", item.MissingForInternalOrderEvent)}");
+            if (item.Warnings.Count > 0) Console.WriteLine($"Warnings: {string.Join("; ", item.Warnings)}");
+        }
+
+        Console.WriteLine("Message: Synthetic ExecutionReport replay completed. No network call was made and no data was persisted.");
+        return 0;
+    }
+
     private static string NormalizeReplayFixLine(string line)
     {
         var trimmed = line.Trim();
@@ -236,6 +309,9 @@ public sealed class LmaxConnectivityLabRunner(
 
     private static string DefaultTradeCaptureReplayFixturePath()
         => Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "fixtures", "synthetic-trade-capture-ae.fix"));
+
+    private static string DefaultExecutionReportReplayFixturePath()
+        => Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "fixtures", "synthetic-execution-report-35-8.fix"));
 
     private static void WriteResult(LabCommandResult result)
     {
@@ -293,6 +369,12 @@ public sealed class LmaxConnectivityLabRunner(
 
     private static int GetIntArg(IEnumerable<string> args, string name, int defaultValue)
         => int.TryParse(GetStringArg(args, name), out var parsed) ? parsed : defaultValue;
+
+    private static decimal? GetDecimalArg(IEnumerable<string> args, string name)
+        => decimal.TryParse(GetStringArg(args, name), System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out var parsed) ? parsed : null;
+
+    private static bool GetBoolArg(IEnumerable<string> args, string name, bool defaultValue)
+        => bool.TryParse(GetStringArg(args, name), out var parsed) ? parsed : defaultValue;
 
     private static DateTimeOffset? GetDateTimeOffsetArg(IEnumerable<string> args, string name)
         => DateTimeOffset.TryParse(GetStringArg(args, name), out var parsed) ? parsed.ToUniversalTime() : null;
@@ -389,6 +471,49 @@ public sealed class LmaxConnectivityLabRunner(
         foreach (var attempt in result.Attempts)
         {
             Console.WriteLine($"Attempt: {attempt}");
+        }
+
+        foreach (var decision in result.SafetyDecisions)
+        {
+            Console.WriteLine($"- {decision}");
+        }
+    }
+
+    private static void WriteDemoOrderLifecycleResult(LmaxFixDemoOrderLifecycleResult result)
+    {
+        Console.WriteLine($"Command: {result.Command}");
+        Console.WriteLine($"Status: {result.Status}");
+        Console.WriteLine($"Connected: {result.Connected}");
+        Console.WriteLine($"LoggedOn: {result.LoggedOn}");
+        Console.WriteLine($"OrderSent: {result.OrderSent}");
+        Console.WriteLine($"ExecutionReportReceived: {result.ExecutionReportReceived}");
+        Console.WriteLine($"TerminalExecutionReportReceived: {result.TerminalExecutionReportReceived}");
+        Console.WriteLine($"RequestRejected: {result.RequestRejected}");
+        if (!string.IsNullOrWhiteSpace(result.RejectMsgType)) Console.WriteLine($"RejectMsgType: {result.RejectMsgType}");
+        if (!string.IsNullOrWhiteSpace(result.RejectRefTagId)) Console.WriteLine($"RejectRefTagId: {result.RejectRefTagId}");
+        if (!string.IsNullOrWhiteSpace(result.RejectRefMsgType)) Console.WriteLine($"RejectRefMsgType: {result.RejectRefMsgType}");
+        if (!string.IsNullOrWhiteSpace(result.RejectReasonCode)) Console.WriteLine($"RejectReasonCode: {result.RejectReasonCode}");
+        if (!string.IsNullOrWhiteSpace(result.RejectText)) Console.WriteLine($"RejectText: {result.RejectText}");
+        if (!string.IsNullOrWhiteSpace(result.FinalStatus)) Console.WriteLine($"FinalStatus: {result.FinalStatus}");
+        Console.WriteLine($"LogoutSent: {result.LogoutSent}");
+        if (!string.IsNullOrWhiteSpace(result.ClientOrderId)) Console.WriteLine($"ClientOrderId: {result.ClientOrderId}");
+        if (!string.IsNullOrWhiteSpace(result.LastReceivedMsgType)) Console.WriteLine($"LastReceivedMsgType: {result.LastReceivedMsgType}");
+        Console.WriteLine($"StartedAtUtc: {result.StartedAtUtc:O}");
+        Console.WriteLine($"CompletedAtUtc: {result.CompletedAtUtc:O}");
+        Console.WriteLine($"Message: {result.Message}");
+        foreach (var report in result.ExecutionReports)
+        {
+            Console.WriteLine($"ExecutionReport: ExecID={report.ExecId} OrderID={report.OrderId} ClOrdID={report.ClOrdId} ExecType={report.ExecType} OrdStatus={report.OrdStatus} Symbol={report.InternalSymbol ?? report.Symbol} Side={report.Side} LastQty={report.LastQty} LastPx={report.LastPx} CumQty={report.CumQty} LeavesQty={report.LeavesQty} Text={report.Text}");
+        }
+
+        foreach (var decision in result.DemoSafetyDecisions)
+        {
+            Console.WriteLine($"SafetyGate: {decision.Gate} Passed={decision.Passed} Message={decision.Message}");
+        }
+
+        foreach (var diagnostic in result.Diagnostics)
+        {
+            Console.WriteLine($"Diagnostic: {diagnostic}");
         }
 
         foreach (var decision in result.SafetyDecisions)

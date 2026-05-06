@@ -26,6 +26,132 @@ public enum LmaxFixTradeCaptureSide
     Sell
 }
 
+public enum LmaxFixExecutionReportType
+{
+    New,
+    Canceled,
+    Rejected,
+    Trade,
+    OrderStatus,
+    Expired,
+    Replaced,
+    PendingCancel,
+    PendingNew,
+    Unknown
+}
+
+public enum LmaxFixOrderStatus
+{
+    New,
+    PartiallyFilled,
+    Filled,
+    Canceled,
+    Rejected,
+    Expired,
+    PendingCancel,
+    PendingNew,
+    Unknown
+}
+
+public enum LmaxFixInternalOrderEventType
+{
+    OrderAck,
+    OrderReject,
+    Fill,
+    PartialFill,
+    CancelAck,
+    Expired,
+    Unknown
+}
+
+public enum LmaxFixDemoOrderSide
+{
+    Buy,
+    Sell
+}
+
+public enum LmaxFixDemoOrderType
+{
+    Market,
+    Limit
+}
+
+public enum LmaxFixDemoOrderTimeInForce
+{
+    IOC,
+    FOK
+}
+
+public sealed record LmaxFixDemoOrderSafetyDecision(string Gate, bool Passed, string Message);
+
+public sealed record LmaxFixDemoOrderRequest(
+    string InstrumentSymbol,
+    string LmaxInstrumentId,
+    LmaxFixDemoOrderSide Side,
+    LmaxFixDemoOrderType OrderType,
+    LmaxFixDemoOrderTimeInForce TimeInForce,
+    decimal VenueQuantity,
+    decimal? LimitPrice,
+    decimal? MaxNotionalUsd,
+    string? ClientOrderId,
+    string? Account,
+    bool ConfirmDemoOrder,
+    bool DryRun,
+    int MaxWaitSeconds,
+    bool ShowFixMessages,
+    bool IncludeHandlInst = false)
+{
+    public static LmaxFixDemoOrderRequest From(LmaxConnectivityLabOptions options, string? side, string? orderType, string? timeInForce, decimal? quantity, decimal? limitPrice, decimal? maxNotionalUsd, string? clientOrderId, string? account, bool confirmDemoOrder, bool dryRun, int maxWaitSeconds, bool showFixMessages)
+        => new(
+            options.InstrumentSymbol,
+            options.LmaxInstrumentId,
+            Enum.TryParse<LmaxFixDemoOrderSide>(side, ignoreCase: true, out var parsedSide) ? parsedSide : LmaxFixDemoOrderSide.Buy,
+            Enum.TryParse<LmaxFixDemoOrderType>(orderType, ignoreCase: true, out var parsedType) ? parsedType : LmaxFixDemoOrderType.Market,
+            Enum.TryParse<LmaxFixDemoOrderTimeInForce>(timeInForce, ignoreCase: true, out var parsedTif) ? parsedTif : LmaxFixDemoOrderTimeInForce.IOC,
+            quantity ?? 0.1m,
+            limitPrice,
+            maxNotionalUsd ?? options.MaxDemoOrderNotionalUsd,
+            string.IsNullOrWhiteSpace(clientOrderId) ? null : clientOrderId.Trim(),
+            string.IsNullOrWhiteSpace(account) ? null : account.Trim(),
+            confirmDemoOrder,
+            dryRun,
+            Math.Max(1, maxWaitSeconds),
+            showFixMessages);
+}
+
+public sealed record LmaxFixDemoOrderLifecycleResult(
+    string Command,
+    string Status,
+    bool Connected,
+    bool LoggedOn,
+    bool OrderSent,
+    bool ExecutionReportReceived,
+    bool TerminalExecutionReportReceived,
+    bool RequestRejected,
+    string? RejectMsgType,
+    string? RejectRefTagId,
+    string? RejectRefMsgType,
+    string? RejectReasonCode,
+    string? RejectText,
+    string? FinalStatus,
+    bool LogoutSent,
+    string? ClientOrderId,
+    string? LastReceivedMsgType,
+    IReadOnlyList<LmaxFixExecutionReport> ExecutionReports,
+    DateTimeOffset StartedAtUtc,
+    DateTimeOffset CompletedAtUtc,
+    string Message,
+    IReadOnlyList<string> SafetyDecisions,
+    IReadOnlyList<LmaxFixDemoOrderSafetyDecision> DemoSafetyDecisions,
+    IReadOnlyList<string> Diagnostics)
+{
+    public static LmaxFixDemoOrderLifecycleResult Skipped(string message, IReadOnlyList<string> safetyDecisions, IReadOnlyList<LmaxFixDemoOrderSafetyDecision>? demoSafetyDecisions = null)
+    {
+        var now = DateTimeOffset.UtcNow;
+        return new("fix-demo-order-lifecycle", "Skipped", false, false, false, false, false, false, null, null, null, null, null, null, false, null, null, [], now, now, message, safetyDecisions, demoSafetyDecisions ?? [], []);
+    }
+}
+
 public sealed record LmaxFixTradeCaptureReport(
     string? TradeRequestId,
     string? ExecId,
@@ -74,6 +200,76 @@ public sealed record LmaxFixTradeCaptureNormalizationResult(
     LmaxFixTradeCaptureEodShape EodShape,
     IReadOnlyList<string> Warnings,
     IReadOnlyList<string> MissingForEodComparison);
+
+public sealed record LmaxFixExecutionReport(
+    string? ExecId,
+    string? OrderId,
+    string? ClOrdId,
+    string? OrigClOrdId,
+    LmaxFixExecutionReportType ExecType,
+    string? ExecTypeRaw,
+    LmaxFixOrderStatus OrdStatus,
+    string? OrdStatusRaw,
+    string? SecurityId,
+    string? SecurityIdSource,
+    string? Symbol,
+    string? InternalSymbol,
+    LmaxFixTradeCaptureSide? Side,
+    string? SideRaw,
+    decimal? OrderQty,
+    decimal? LeavesQty,
+    decimal? CumQty,
+    decimal? LastQty,
+    decimal? LastPx,
+    decimal? AvgPx,
+    decimal? Price,
+    decimal? StopPx,
+    string? TimeInForce,
+    string? TimeInForceRaw,
+    string? OrdType,
+    string? OrdTypeRaw,
+    DateTimeOffset? TransactTimeUtc,
+    string? Text,
+    string? Account,
+    string? RawFixMessageSanitized,
+    DateTimeOffset ParsedAtUtc,
+    IReadOnlyList<string> Warnings,
+    bool CanMapToInternalOrderEvent,
+    IReadOnlyList<string> MissingForInternalOrderEvent);
+
+public sealed record LmaxFixExecutionReportNormalizationResult(
+    LmaxFixExecutionReport Report,
+    LmaxFixInternalOrderEvent InternalEvent,
+    IReadOnlyList<string> Warnings,
+    IReadOnlyList<string> MissingForInternalOrderEvent);
+
+public sealed record LmaxFixInternalOrderEvent(
+    LmaxFixInternalOrderEventType EventType,
+    string? ExecId,
+    string? OrderId,
+    string? ClOrdId,
+    string? InternalSymbol,
+    LmaxFixTradeCaptureSide? Side,
+    decimal? LastQty,
+    decimal? LastPx,
+    decimal? CumQty,
+    decimal? LeavesQty,
+    DateTimeOffset? TransactTimeUtc,
+    string? Message);
+
+public sealed record LmaxFixOrderStatusRequest(
+    string ClOrdId,
+    string? Account,
+    string? SecurityId,
+    string? SecurityIdSource,
+    string? Side,
+    string? OrdStatusReqId);
+
+public sealed record LmaxFixOrderStatusRequestBuilderResult(
+    string Status,
+    string Message,
+    string? FixMessageSanitized,
+    IReadOnlyList<string> Warnings);
 
 public sealed record LmaxFixTradeCaptureSmokeResult(
     string Command,
@@ -208,6 +404,62 @@ public static class LmaxFixRecoveryCodec
         if (tradeRequestId.Any(ch => ch > 127 || char.IsWhiteSpace(ch))) throw new ArgumentException("TradeRequestID tag 568 must be ASCII and contain no whitespace.", nameof(tradeRequestId));
     }
 
+    public static LmaxFixOrderStatusRequestBuilderResult BuildOrderStatusRequestDryRun(string senderCompId, string targetCompId, int sequenceNumber, LmaxFixOrderStatusRequest request)
+    {
+        var warnings = new List<string>();
+        if (string.IsNullOrWhiteSpace(request.ClOrdId))
+        {
+            return new("Blocked", "ClOrdID is required for OrderStatusRequest dry-run.", null, warnings);
+        }
+
+        if (request.ClOrdId.Length > 32)
+        {
+            warnings.Add("ClOrdID is longer than 32 characters; LMAX-specific max length was not confirmed, so this is a warning only.");
+        }
+
+        var message = BuildOrderStatusRequest(senderCompId, targetCompId, sequenceNumber, request.ClOrdId, request.Account, request.SecurityId, request.SecurityIdSource, request.Side, request.OrdStatusReqId);
+        return new("Ok", $"Built OrderStatusRequest dry-run for ClOrdID={request.ClOrdId}.", LmaxFixMarketDataCodec.SanitizeMessage(message), warnings);
+    }
+
+    public static string BuildNewOrderSingle(string senderCompId, string targetCompId, int sequenceNumber, LmaxFixDemoOrderRequest request, string clOrdId, string? securityIdSource)
+    {
+        ValidateClientOrderId(clOrdId);
+        var fields = new List<(string Tag, string Value)>
+        {
+            ("11", clOrdId)
+        };
+        if (request.IncludeHandlInst) fields.Add(("21", "1"));
+        fields.Add(("48", request.LmaxInstrumentId));
+        if (!string.IsNullOrWhiteSpace(securityIdSource)) fields.Add(("22", securityIdSource!));
+        if (!string.IsNullOrWhiteSpace(request.InstrumentSymbol)) fields.Add(("55", request.InstrumentSymbol));
+        fields.Add(("54", request.Side == LmaxFixDemoOrderSide.Buy ? "1" : "2"));
+        fields.Add(("60", FormatFixTime(DateTimeOffset.UtcNow)));
+        fields.Add(("38", request.VenueQuantity.ToString(CultureInfo.InvariantCulture)));
+        fields.Add(("40", request.OrderType == LmaxFixDemoOrderType.Market ? "1" : "2"));
+        if (request.OrderType == LmaxFixDemoOrderType.Limit)
+        {
+            if (request.LimitPrice is null) throw new ArgumentException("LimitPrice is required for Limit demo orders.", nameof(request));
+            fields.Add(("44", request.LimitPrice.Value.ToString(CultureInfo.InvariantCulture)));
+        }
+
+        fields.Add(("59", request.TimeInForce == LmaxFixDemoOrderTimeInForce.IOC ? "3" : "4"));
+        if (!string.IsNullOrWhiteSpace(request.Account)) fields.Add(("1", request.Account!));
+        return LmaxFixMarketDataCodec.BuildMessage("D", sequenceNumber, senderCompId, targetCompId, fields);
+    }
+
+    public static string GenerateClientOrderId(DateTimeOffset now, int sequenceNumber)
+    {
+        var suffix = Math.Abs(sequenceNumber % 100).ToString("00", CultureInfo.InvariantCulture);
+        return $"DL{now.UtcDateTime:yyMMddHHmmss}{suffix}";
+    }
+
+    public static void ValidateClientOrderId(string clOrdId)
+    {
+        if (string.IsNullOrWhiteSpace(clOrdId)) throw new ArgumentException("ClOrdID must be configured.", nameof(clOrdId));
+        if (clOrdId.Length > 20) throw new ArgumentException("ClOrdID tag 11 must be 20 characters or fewer for this demo lab command.", nameof(clOrdId));
+        if (clOrdId.Any(ch => ch > 127 || char.IsWhiteSpace(ch))) throw new ArgumentException("ClOrdID tag 11 must be ASCII and contain no whitespace.", nameof(clOrdId));
+    }
+
     public static string BuildOrderStatusRequest(string senderCompId, string targetCompId, int sequenceNumber, string clOrdId, string? account = null, string? securityId = null, string? securityIdSource = null, string? side = null, string? ordStatusReqId = null)
     {
         var fields = new List<(string Tag, string Value)> { ("11", clOrdId) };
@@ -326,6 +578,70 @@ public static class LmaxFixRecoveryCodec
         return new(report, LmaxFixTradeCaptureToEodShapeMapper.Map(report), warnings, missing);
     }
 
+    public static LmaxFixExecutionReportNormalizationResult NormalizeExecutionReport(string message, LmaxConnectivityLabOptions? options)
+    {
+        var warnings = new List<string>();
+        var missing = new List<string>();
+        var msgType = LmaxFixMarketDataCodec.GetMsgType(message);
+        if (msgType != "8") warnings.Add($"Expected MsgType 8 but received {msgType ?? "(missing)"}.");
+
+        var execTypeRaw = LmaxFixMarketDataCodec.GetTag(message, "150");
+        var ordStatusRaw = LmaxFixMarketDataCodec.GetTag(message, "39");
+        var sideRaw = LmaxFixMarketDataCodec.GetTag(message, "54");
+        var ordTypeRaw = LmaxFixMarketDataCodec.GetTag(message, "40");
+        var tifRaw = LmaxFixMarketDataCodec.GetTag(message, "59");
+        var securityId = LmaxFixMarketDataCodec.GetTag(message, "48");
+        var symbol = LmaxFixMarketDataCodec.GetTag(message, "55");
+        var execId = LmaxFixMarketDataCodec.GetTag(message, "17");
+        var orderId = LmaxFixMarketDataCodec.GetTag(message, "37");
+        var clOrdId = LmaxFixMarketDataCodec.GetTag(message, "11");
+
+        var report = new LmaxFixExecutionReport(
+            execId,
+            orderId,
+            clOrdId,
+            LmaxFixMarketDataCodec.GetTag(message, "41"),
+            ParseExecType(execTypeRaw, warnings),
+            execTypeRaw,
+            ParseOrdStatus(ordStatusRaw, warnings),
+            ordStatusRaw,
+            securityId,
+            LmaxFixMarketDataCodec.GetTag(message, "22"),
+            symbol,
+            ResolveInternalSymbol(securityId, symbol, options),
+            ParseSide(sideRaw, warnings),
+            sideRaw,
+            ParseDecimalWithWarning(LmaxFixMarketDataCodec.GetTag(message, "38"), "OrderQty(38)", warnings),
+            ParseDecimalWithWarning(LmaxFixMarketDataCodec.GetTag(message, "151"), "LeavesQty(151)", warnings),
+            ParseDecimalWithWarning(LmaxFixMarketDataCodec.GetTag(message, "14"), "CumQty(14)", warnings),
+            ParseDecimalWithWarning(LmaxFixMarketDataCodec.GetTag(message, "32"), "LastQty(32)", warnings),
+            ParseDecimalWithWarning(LmaxFixMarketDataCodec.GetTag(message, "31"), "LastPx(31)", warnings),
+            ParseDecimalWithWarning(LmaxFixMarketDataCodec.GetTag(message, "6"), "AvgPx(6)", warnings),
+            ParseDecimalWithWarning(LmaxFixMarketDataCodec.GetTag(message, "44"), "Price(44)", warnings),
+            ParseDecimalWithWarning(LmaxFixMarketDataCodec.GetTag(message, "99"), "StopPx(99)", warnings),
+            MapTimeInForce(tifRaw, warnings),
+            tifRaw,
+            MapOrdType(ordTypeRaw, warnings),
+            ordTypeRaw,
+            ParseFixTimeWithWarning(LmaxFixMarketDataCodec.GetTag(message, "60"), "TransactTime(60)", warnings),
+            LmaxFixMarketDataCodec.GetTag(message, "58"),
+            LmaxFixMarketDataCodec.GetTag(message, "1"),
+            LmaxFixMarketDataCodec.SanitizeMessage(message),
+            DateTimeOffset.UtcNow,
+            warnings,
+            false,
+            missing);
+
+        if (string.IsNullOrWhiteSpace(execId)) missing.Add("Missing ExecID.");
+        if (string.IsNullOrWhiteSpace(orderId) && string.IsNullOrWhiteSpace(clOrdId)) missing.Add("Missing both OrderID and ClOrdID.");
+        if (string.IsNullOrWhiteSpace(securityId) && string.IsNullOrWhiteSpace(symbol)) missing.Add("Missing both SecurityID and Symbol.");
+        if (report.TransactTimeUtc is null) missing.Add("Missing TransactTimeUtc.");
+
+        var canMap = missing.Count == 0 || (!string.IsNullOrWhiteSpace(execId) && (!string.IsNullOrWhiteSpace(orderId) || !string.IsNullOrWhiteSpace(clOrdId)));
+        report = report with { CanMapToInternalOrderEvent = canMap, MissingForInternalOrderEvent = missing };
+        return new(report, LmaxFixExecutionReportToInternalEventMapper.Map(report), warnings, missing);
+    }
+
     private static decimal? ParseDecimal(string? value) => decimal.TryParse(value, NumberStyles.Any, CultureInfo.InvariantCulture, out var parsed) ? parsed : null;
     private static int? ParseInt(string? value) => int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed) ? parsed : null;
     private static DateTimeOffset? ParseFixTime(string? value) => DateTimeOffset.TryParseExact(value, "yyyyMMdd-HH:mm:ss.fff", CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out var parsed) ? parsed.ToUniversalTime() : null;
@@ -360,6 +676,85 @@ public static class LmaxFixRecoveryCodec
     private static LmaxFixTradeCaptureSide? AddSideWarning(string value, ICollection<string> warnings)
     {
         warnings.Add($"Unsupported FIX Side(54) value '{value}'.");
+        return null;
+    }
+
+    private static LmaxFixExecutionReportType ParseExecType(string? value, ICollection<string> warnings)
+    {
+        return value switch
+        {
+            "0" => LmaxFixExecutionReportType.New,
+            "4" => LmaxFixExecutionReportType.Canceled,
+            "8" => LmaxFixExecutionReportType.Rejected,
+            "F" => LmaxFixExecutionReportType.Trade,
+            "I" => LmaxFixExecutionReportType.OrderStatus,
+            "C" => LmaxFixExecutionReportType.Expired,
+            "5" => LmaxFixExecutionReportType.Replaced,
+            "6" => LmaxFixExecutionReportType.PendingCancel,
+            "A" => LmaxFixExecutionReportType.PendingNew,
+            null or "" => LmaxFixExecutionReportType.Unknown,
+            _ => AddUnknownExecType(value, warnings)
+        };
+    }
+
+    private static LmaxFixExecutionReportType AddUnknownExecType(string value, ICollection<string> warnings)
+    {
+        warnings.Add($"Unsupported ExecType(150) value '{value}'.");
+        return LmaxFixExecutionReportType.Unknown;
+    }
+
+    private static LmaxFixOrderStatus ParseOrdStatus(string? value, ICollection<string> warnings)
+    {
+        return value switch
+        {
+            "0" => LmaxFixOrderStatus.New,
+            "1" => LmaxFixOrderStatus.PartiallyFilled,
+            "2" => LmaxFixOrderStatus.Filled,
+            "4" => LmaxFixOrderStatus.Canceled,
+            "8" => LmaxFixOrderStatus.Rejected,
+            "C" => LmaxFixOrderStatus.Expired,
+            "6" => LmaxFixOrderStatus.PendingCancel,
+            "A" => LmaxFixOrderStatus.PendingNew,
+            null or "" => LmaxFixOrderStatus.Unknown,
+            _ => AddUnknownOrdStatus(value, warnings)
+        };
+    }
+
+    private static LmaxFixOrderStatus AddUnknownOrdStatus(string value, ICollection<string> warnings)
+    {
+        warnings.Add($"Unsupported OrdStatus(39) value '{value}'.");
+        return LmaxFixOrderStatus.Unknown;
+    }
+
+    private static string? MapOrdType(string? value, ICollection<string> warnings)
+    {
+        return value switch
+        {
+            "1" => "Market",
+            "2" => "Limit",
+            "3" => "Stop",
+            "4" => "StopLimit",
+            null or "" => null,
+            _ => AddUnknownNamedValue("OrdType(40)", value, warnings)
+        };
+    }
+
+    private static string? MapTimeInForce(string? value, ICollection<string> warnings)
+    {
+        return value switch
+        {
+            "0" => "Day",
+            "1" => "GTC",
+            "3" => "IOC",
+            "4" => "FOK",
+            null or "" => null,
+            _ => AddUnknownNamedValue("TimeInForce(59)", value, warnings)
+        };
+    }
+
+    private static string? AddUnknownNamedValue(string fieldName, string value, ICollection<string> warnings)
+    {
+        warnings.Add($"Unsupported {fieldName} value '{value}'.");
         return null;
     }
 
@@ -409,5 +804,44 @@ public static class LmaxFixTradeCaptureToEodShapeMapper
             },
             report.LastQty.HasValue && report.LastPx.HasValue ? report.LastQty.Value * report.LastPx.Value : null,
             null);
+    }
+}
+
+public static class LmaxFixExecutionReportToInternalEventMapper
+{
+    public static LmaxFixInternalOrderEvent Map(LmaxFixExecutionReport report)
+    {
+        var eventType = report.ExecType switch
+        {
+            LmaxFixExecutionReportType.New => LmaxFixInternalOrderEventType.OrderAck,
+            LmaxFixExecutionReportType.Rejected => LmaxFixInternalOrderEventType.OrderReject,
+            LmaxFixExecutionReportType.Trade when report.LeavesQty.GetValueOrDefault() == 0 => LmaxFixInternalOrderEventType.Fill,
+            LmaxFixExecutionReportType.Trade => LmaxFixInternalOrderEventType.PartialFill,
+            LmaxFixExecutionReportType.Canceled => LmaxFixInternalOrderEventType.CancelAck,
+            LmaxFixExecutionReportType.Expired => LmaxFixInternalOrderEventType.Expired,
+            _ => report.OrdStatus switch
+            {
+                LmaxFixOrderStatus.Filled => LmaxFixInternalOrderEventType.Fill,
+                LmaxFixOrderStatus.PartiallyFilled => LmaxFixInternalOrderEventType.PartialFill,
+                LmaxFixOrderStatus.Canceled => LmaxFixInternalOrderEventType.CancelAck,
+                LmaxFixOrderStatus.Expired => LmaxFixInternalOrderEventType.Expired,
+                LmaxFixOrderStatus.Rejected => LmaxFixInternalOrderEventType.OrderReject,
+                _ => LmaxFixInternalOrderEventType.Unknown
+            }
+        };
+
+        return new(
+            eventType,
+            report.ExecId,
+            report.OrderId,
+            report.ClOrdId,
+            report.InternalSymbol,
+            report.Side,
+            report.LastQty,
+            report.LastPx,
+            report.CumQty,
+            report.LeavesQty,
+            report.TransactTimeUtc,
+            report.Text);
     }
 }

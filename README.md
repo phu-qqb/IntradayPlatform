@@ -532,6 +532,10 @@ The lab includes read-only FIX Trading recovery tools: `fix-capabilities` scans 
 
 `fix-trade-capture-replay` replays synthetic sanitized `35=AE` messages, normalizes them into lab-only trade capture DTOs, and projects an EOD-like comparison shape. This is comparison-readiness only: no live FIX call, no order submission, and no persistence.
 
+`fix-execution-report-replay` replays synthetic sanitized `35=8` messages, normalizes acknowledgements/rejections/fills/cancels/expiries, and projects conceptual internal order events such as `OrderAck`, `OrderReject`, `Fill`, `PartialFill`, and `CancelAck`. This remains lab-only readiness tooling and is not wired into the main execution engine.
+
+`fix-demo-order-lifecycle` is a controlled LMAX Demo-only `NewOrderSingle` (`35=D`) lab command. Its dry-run script prints a sanitized tiny EURUSD Market IOC demo order without opening a socket. The default LMAX Demo order shape omits `21 HandlInst` because Demo rejected it as an unknown tag. Live demo submission is blocked unless external connections, order submission, `DryRun=false`, explicit confirmation, Demo/UAT host checks, and quantity/notional limits all pass. This remains outside the API/Worker runtime.
+
 Useful dry-run commands:
 
 ```powershell
@@ -543,6 +547,8 @@ Useful dry-run commands:
 .\scripts\lmax-lab-fix-capabilities.ps1
 .\scripts\lmax-lab-fix-order-status-dry-run.ps1
 .\scripts\lmax-lab-fix-trade-capture-replay.ps1
+.\scripts\lmax-lab-fix-execution-report-replay.ps1
+.\scripts\lmax-lab-fix-demo-order-dry-run.ps1
 .\scripts\lmax-lab-order-dry-run.ps1
 ```
 

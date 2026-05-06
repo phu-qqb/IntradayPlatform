@@ -174,6 +174,125 @@ Session-level rejects (`35=3`) are parsed explicitly. If LMAX rejects an `AD` re
 
 `fix-order-status-dry-run` builds a read-only `OrderStatusRequest` (`35=H`) and prints a sanitized FIX message. It does not open a socket. `fix-order-status-smoke` remains parked until an explicit ClOrdID recovery scenario is needed. `fix-order-mass-status-smoke` and `fix-position-report-smoke` return `Skipped` when the dictionary does not support those messages.
 
+## FIX ExecutionReport Normalization
+
+The lab can replay and normalize synthetic `ExecutionReport` (`35=8`) messages before any demo order lifecycle work. This is readiness tooling only: it does not submit orders, does not persist data, and does not wire execution reports into the main API/Worker runtime.
+
+The parser extracts:
+
+- `17 ExecID`
+- `37 OrderID`
+- `11 ClOrdID`
+- `41 OrigClOrdID`
+- `150 ExecType`
+- `39 OrdStatus`
+- `48 SecurityID`
+- `22 SecurityIDSource`
+- `55 Symbol`
+- `54 Side`
+- `38 OrderQty`
+- `151 LeavesQty`
+- `14 CumQty`
+- `32 LastQty`
+- `31 LastPx`
+- `6 AvgPx`
+- `44 Price`
+- `99 StopPx`
+- `59 TimeInForce`
+- `40 OrdType`
+- `60 TransactTime`
+- `58 Text`
+- `1 Account`
+
+Common FIX values are normalized for operator readability. `ExecType` values such as `0 New`, `F Trade`, `8 Rejected`, `4 Canceled`, `C Expired`, `6 PendingCancel`, and `I OrderStatus` are mapped to named values. `OrdStatus` values such as `0 New`, `1 PartiallyFilled`, `2 Filled`, `4 Canceled`, `8 Rejected`, and `C Expired` are also mapped. Side `54=1` maps to `Buy`; `54=2` maps to `Sell`. Order type `40=1/2/3/4` maps to `Market`, `Limit`, `Stop`, and `StopLimit`. Time-in-force `59=0/1/3/4` maps to `Day`, `GTC`, `IOC`, and `FOK`.
+
+Unknown enum values are preserved through the raw value fields and reported as warnings. Malformed decimal quantities/prices or malformed timestamps produce warnings rather than crashing the replay command. `SecurityID=4001` maps to `EURUSD` in the same lab-only readiness style used by trade capture normalization.
+
+The lab also projects each normalized execution report into a conceptual internal order event:
+
+- `OrderAck`
+- `OrderReject`
+- `Fill`
+- `PartialFill`
+- `CancelAck`
+- `Expired`
+- `Unknown`
+
+This projection is for comparison and design readiness only. It is not persisted and is not consumed by `ProcessModelRunService` or the main execution engine.
+
+Replay synthetic sanitized fixtures with:
+
+```powershell
+.\scripts\lmax-lab-fix-execution-report-replay.ps1
+```
+
+The replay fixture covers new acknowledgement, rejected order, full fill, partial fill, cancelled, expired, pending cancel, order-status response, and malformed value warning cases. It makes no network call.
+
+## Controlled Demo Order Lifecycle Lab
+
+The lab includes a controlled `NewOrderSingle` (`35=D`) demo lifecycle command for future LMAX Demo validation. This is lab-only and is not wired into the API, Worker, `ProcessModelRunService`, OMS UI controls, or any main trading workflow.
+
+Start with the dry-run:
+
+```powershell
+.\scripts\lmax-lab-fix-demo-order-dry-run.ps1
+```
+
+Dry-run builds and prints a sanitized `35=D` message only. It opens no socket, submits no order, and persists nothing.
+
+The default demo request is deliberately small:
+
+- `EURUSD`
+- `SecurityID=4001`
+- `Market`
+- `IOC`
+- `VenueQuantity=0.1`
+- `MaxNotionalUsd=5000`
+- `DryRun=true`
+- `ConfirmDemoOrder=false`
+
+The `NewOrderSingle` builder sends:
+
+- `35=D`
+- `11 ClOrdID`
+- `48 SecurityID`
+- `22 SecurityIDSource` when configured, normally `8`
+- `55 Symbol`
+- `54 Side`, `1 Buy` or `2 Sell`
+- `60 TransactTime`
+- `38 OrderQty`
+- `40 OrdType`, `1 Market` or `2 Limit`
+- `44 Price` for limit orders
+- `59 TimeInForce`, `3 IOC` or `4 FOK`
+- `1 Account` when provided
+
+LMAX Demo rejected `21 HandlInst` with a session-level `UnknownTag` reject (`35=3`, `371=21`, `372=D`), so the lab does not send tag `21` by default. A diagnostic `--include-handl-inst` option exists only for dictionary experiments and should not be used for the validated Demo path.
+
+Live demo submission is blocked unless every gate passes:
+
+- `EnvironmentName` is `Demo` or `UAT`
+- `AllowExternalConnections=true`
+- `AllowOrderSubmission=true`
+- `AllowLiveTrading=false`
+- `DryRun=false`
+- `ConfirmDemoOrder=true`
+- the command includes `--confirm-demo-order`
+- FIX order host is an LMAX demo/UAT host
+- quantity is positive and within the configured demo max quantity
+- limit-order notional is within the configured max notional
+
+The script also refuses a live run unless the required switches are present:
+
+```powershell
+.\scripts\lmax-lab-fix-demo-order-lifecycle.ps1 `
+  -AllowExternalConnections `
+  -AllowOrderSubmission `
+  -ConfirmDemoOrder `
+  -DryRun:$false
+```
+
+Do not run the live lifecycle unless you intentionally want to submit a tiny LMAX Demo order. If submitted, the lab logs on to the FIX Trading session, sends one `35=D`, reads `ExecutionReport` (`35=8`) messages until a terminal state or timeout, and logs out. The normalized execution reports are printed only; no live data is persisted into the main database.
+
 ## FIX Trade Capture Normalization
 
 When `fix-trade-capture-smoke` receives `TradeCaptureReport` (`35=AE`) messages, the lab normalizes them into a lab-only DTO aligned with the shape needed for later EOD comparison. This is still read-only: reports are printed, not persisted, and the main API/Worker do not consume them.

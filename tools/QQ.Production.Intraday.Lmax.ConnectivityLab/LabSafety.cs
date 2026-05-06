@@ -21,6 +21,44 @@ public sealed class LmaxConnectivityLabSafetyValidator
         return issues;
     }
 
+    public IReadOnlyList<LmaxFixDemoOrderSafetyDecision> ValidateForDemoOrderLifecycle(LmaxConnectivityLabOptions options, LmaxFixDemoOrderRequest request, bool explicitConfirmation)
+    {
+        var decisions = new List<LmaxFixDemoOrderSafetyDecision>
+        {
+            Decision("Environment", IsDemoOrUat(options.EnvironmentName), "EnvironmentName must be Demo or UAT."),
+            Decision("AllowExternalConnections", options.AllowExternalConnections, "AllowExternalConnections must be true."),
+            Decision("AllowOrderSubmission", options.AllowOrderSubmission, "AllowOrderSubmission must be true."),
+            Decision("AllowLiveTrading", !options.AllowLiveTrading, "AllowLiveTrading must remain false."),
+            Decision("DryRun", !request.DryRun && !options.DryRun, "DryRun must be false for live demo order send."),
+            Decision("ConfirmDemoOrder", request.ConfirmDemoOrder, "ConfirmDemoOrder must be true."),
+            Decision("ExplicitCommandFlag", explicitConfirmation, "Command must include --confirm-demo-order."),
+            Decision("DemoHost", IsKnownLmaxDemoOrUatHost(options.FixOrderHost ?? string.Empty), "FIX order host must be an LMAX demo/UAT host."),
+            Decision("QuantityLimit", request.VenueQuantity > 0m && request.VenueQuantity <= options.MaxDemoOrderQuantity, $"VenueQuantity must be > 0 and <= {options.MaxDemoOrderQuantity}.")
+        };
+
+        if (request.OrderType == LmaxFixDemoOrderType.Limit && request.LimitPrice is null)
+        {
+            decisions.Add(Decision("LimitPrice", false, "LimitPrice is required for Limit demo orders."));
+        }
+        else if (request.LimitPrice.HasValue && request.MaxNotionalUsd.HasValue)
+        {
+            var notional = request.VenueQuantity * request.LimitPrice.Value;
+            decisions.Add(Decision("NotionalLimit", notional <= request.MaxNotionalUsd.Value, $"Estimated notional {notional} must be <= {request.MaxNotionalUsd.Value}."));
+        }
+        else
+        {
+            decisions.Add(Decision("NotionalLimit", true, "No limit price was available; max notional check is informational for market orders."));
+        }
+
+        if (string.IsNullOrWhiteSpace(options.FixOrderHost)) decisions.Add(Decision("FixOrderHost", false, "Missing FixOrderHost."));
+        if (options.FixOrderPort is null) decisions.Add(Decision("FixOrderPort", false, "Missing FixOrderPort."));
+        if (string.IsNullOrWhiteSpace(options.FixOrderTargetCompId ?? options.FixTargetCompId)) decisions.Add(Decision("FixOrderTargetCompId", false, "Missing FixOrderTargetCompId."));
+        if (string.IsNullOrWhiteSpace(options.FixSenderCompId)) decisions.Add(Decision("FixSenderCompId", false, "Missing FixSenderCompId."));
+        if (string.IsNullOrWhiteSpace(options.FixUsername)) decisions.Add(Decision("FixUsername", false, "Missing FixUsername."));
+        if (string.IsNullOrWhiteSpace(options.FixPassword)) decisions.Add(Decision("FixPassword", false, "Missing FixPassword."));
+        return decisions;
+    }
+
     public IReadOnlyList<string> ValidateForFixLogon(LmaxConnectivityLabOptions options, bool marketData)
     {
         var issues = new List<string>();
@@ -88,4 +126,7 @@ public sealed class LmaxConnectivityLabSafetyValidator
     private static bool IsKnownLmaxDemoOrUatHost(string host)
         => host.EndsWith(".lmax.com", StringComparison.OrdinalIgnoreCase)
            && (host.Contains("demo", StringComparison.OrdinalIgnoreCase) || host.Contains("uat", StringComparison.OrdinalIgnoreCase));
+
+    private static LmaxFixDemoOrderSafetyDecision Decision(string gate, bool passed, string message)
+        => new(gate, passed, message);
 }

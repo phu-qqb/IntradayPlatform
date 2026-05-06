@@ -1,6 +1,7 @@
 namespace QQ.Production.Intraday.Lmax.ConnectivityLab;
 
 using System.Text.Json;
+using System.Globalization;
 
 public sealed class LmaxConnectivityLabOptions
 {
@@ -47,6 +48,8 @@ public sealed class LmaxConnectivityLabOptions
     public LmaxFixMarketDataSymbolEncodingMode MarketDataSymbolEncodingMode { get; set; } = LmaxFixMarketDataSymbolEncodingMode.SecurityIdAndSymbol;
     public bool ShowFixMessages { get; set; } = false;
     public int RequestTimeoutSeconds { get; set; } = 10;
+    public decimal MaxDemoOrderQuantity { get; set; } = 0.1m;
+    public decimal MaxDemoOrderNotionalUsd { get; set; } = 5000m;
 
     public static LmaxConnectivityLabOptions FromEnvironmentAndArgs(string[] args)
     {
@@ -103,6 +106,8 @@ public sealed class LmaxConnectivityLabOptions
             if (key == "logon-timeout-seconds") options.LogonTimeoutSeconds = int.Parse(value);
             if (key == "max-wait-seconds") options.MarketDataMaxWaitSeconds = int.Parse(value);
             if (key == "max-messages") options.MarketDataMaxMessages = int.Parse(value);
+            if (key == "max-demo-order-quantity") options.MaxDemoOrderQuantity = decimal.Parse(value, CultureInfo.InvariantCulture);
+            if (key == "max-demo-order-notional-usd") options.MaxDemoOrderNotionalUsd = decimal.Parse(value, CultureInfo.InvariantCulture);
         }
 
         return options;
@@ -151,7 +156,9 @@ public sealed class LmaxConnectivityLabOptions
             ["MarketDataMaxMessages"] = MarketDataMaxMessages.ToString(),
             ["MarketDataSymbolEncodingMode"] = MarketDataSymbolEncodingMode.ToString(),
             ["ShowFixMessages"] = ShowFixMessages.ToString(),
-            ["RequestTimeoutSeconds"] = RequestTimeoutSeconds.ToString()
+            ["RequestTimeoutSeconds"] = RequestTimeoutSeconds.ToString(),
+            ["MaxDemoOrderQuantity"] = MaxDemoOrderQuantity.ToString(),
+            ["MaxDemoOrderNotionalUsd"] = MaxDemoOrderNotionalUsd.ToString()
         };
 
     public static string Mask(string? value)
@@ -257,6 +264,8 @@ public sealed class LmaxConnectivityLabOptions
         SetIfPresent(values, "LmaxConnectivityLab:MarketDataSymbolEncodingMode", "QQ_LMAX_MARKET_DATA_SYMBOL_ENCODING_MODE", "LmaxConnectivityLab__MarketDataSymbolEncodingMode");
         SetIfPresent(values, "LmaxConnectivityLab:ShowFixMessages", "QQ_LMAX_SHOW_FIX_MESSAGES", "LmaxConnectivityLab__ShowFixMessages");
         SetIfPresent(values, "LmaxConnectivityLab:RequestTimeoutSeconds", "QQ_LMAX_REQUEST_TIMEOUT_SECONDS", "LmaxConnectivityLab__RequestTimeoutSeconds");
+        SetIfPresent(values, "LmaxConnectivityLab:MaxDemoOrderQuantity", "QQ_LMAX_MAX_DEMO_ORDER_QUANTITY", "LmaxConnectivityLab__MaxDemoOrderQuantity");
+        SetIfPresent(values, "LmaxConnectivityLab:MaxDemoOrderNotionalUsd", "QQ_LMAX_MAX_DEMO_ORDER_NOTIONAL_USD", "LmaxConnectivityLab__MaxDemoOrderNotionalUsd");
     }
 
     private static void SetIfPresent(IDictionary<string, string> values, string key, params string[] environmentNames)
@@ -315,6 +324,8 @@ public sealed class LmaxConnectivityLabOptions
         options.MarketDataSymbolEncodingMode = GetEnum(values, nameof(MarketDataSymbolEncodingMode), options.MarketDataSymbolEncodingMode);
         options.ShowFixMessages = GetBool(values, nameof(ShowFixMessages), options.ShowFixMessages);
         options.RequestTimeoutSeconds = GetInt(values, nameof(RequestTimeoutSeconds), options.RequestTimeoutSeconds) ?? options.RequestTimeoutSeconds;
+        options.MaxDemoOrderQuantity = GetDecimal(values, nameof(MaxDemoOrderQuantity), options.MaxDemoOrderQuantity) ?? options.MaxDemoOrderQuantity;
+        options.MaxDemoOrderNotionalUsd = GetDecimal(values, nameof(MaxDemoOrderNotionalUsd), options.MaxDemoOrderNotionalUsd) ?? options.MaxDemoOrderNotionalUsd;
         options.AccountApiKey = GetString(values, nameof(AccountApiKey), options.AccountApiKey);
     }
 
@@ -326,6 +337,9 @@ public sealed class LmaxConnectivityLabOptions
 
     private static int? GetInt(IReadOnlyDictionary<string, string> values, string key, int? defaultValue)
         => values.TryGetValue($"LmaxConnectivityLab:{key}", out var value) && int.TryParse(value, out var parsed) ? parsed : defaultValue;
+
+    private static decimal? GetDecimal(IReadOnlyDictionary<string, string> values, string key, decimal? defaultValue)
+        => values.TryGetValue($"LmaxConnectivityLab:{key}", out var value) && decimal.TryParse(value, NumberStyles.Any, CultureInfo.InvariantCulture, out var parsed) ? parsed : defaultValue;
 
     private static TEnum GetEnum<TEnum>(IReadOnlyDictionary<string, string> values, string key, TEnum defaultValue)
         where TEnum : struct
@@ -373,6 +387,7 @@ public interface ILmaxFixSessionClient
     Task<LabCommandResult> LogonSmokeAsync(LmaxConnectivityLabOptions options, bool marketData, CancellationToken cancellationToken);
     Task<LmaxFixMarketDataSmokeResult> MarketDataSnapshotSmokeAsync(LmaxConnectivityLabOptions options, CancellationToken cancellationToken);
     Task<LmaxFixTradeCaptureSmokeResult> TradeCaptureSmokeAsync(LmaxConnectivityLabOptions options, LmaxFixTradeCaptureRequestOptions request, CancellationToken cancellationToken);
+    Task<LmaxFixDemoOrderLifecycleResult> DemoOrderLifecycleAsync(LmaxConnectivityLabOptions options, LmaxFixDemoOrderRequest request, bool explicitConfirmation, CancellationToken cancellationToken);
 }
 
 public sealed class PlaceholderLmaxPublicDataClient : ILmaxPublicDataClient
@@ -435,6 +450,9 @@ public sealed class PlaceholderLmaxFixSessionClient : ILmaxFixSessionClient
 
     public Task<LmaxFixTradeCaptureSmokeResult> TradeCaptureSmokeAsync(LmaxConnectivityLabOptions options, LmaxFixTradeCaptureRequestOptions request, CancellationToken cancellationToken)
         => Task.FromResult(LmaxFixTradeCaptureSmokeResult.Skipped("Read-only trade capture smoke is not implemented in this placeholder client.", LmaxConnectivityLabSafetyValidator.DecisionsForExternalCommand(options)));
+
+    public Task<LmaxFixDemoOrderLifecycleResult> DemoOrderLifecycleAsync(LmaxConnectivityLabOptions options, LmaxFixDemoOrderRequest request, bool explicitConfirmation, CancellationToken cancellationToken)
+        => Task.FromResult(LmaxFixDemoOrderLifecycleResult.Skipped("Demo order lifecycle is not implemented in this placeholder client.", LmaxConnectivityLabSafetyValidator.DecisionsForExternalCommand(options)));
 
     private static IEnumerable<string> RequiredFixFields(LmaxConnectivityLabOptions options, bool marketData)
     {

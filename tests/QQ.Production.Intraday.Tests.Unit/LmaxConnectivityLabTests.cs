@@ -890,6 +890,107 @@ public sealed class LmaxConnectivityLabTests
     }
 
     [Fact]
+    public void Execution_report_parser_extracts_and_maps_order_ack_fields()
+    {
+        var message = FixMessage("35=8", "17=EXEC-NEW-1", "37=ORD1", "11=CL1", "150=0", "39=0", "48=4001", "22=8", "55=EUR/USD", "54=1", "38=1000", "151=1000", "14=0", "44=1.17360", "40=2", "59=3", "60=20260505-17:10:01.123", "1=ACC1");
+
+        var normalized = LmaxFixRecoveryCodec.NormalizeExecutionReport(message, CompleteFixOptions());
+
+        Assert.Equal("EXEC-NEW-1", normalized.Report.ExecId);
+        Assert.Equal("ORD1", normalized.Report.OrderId);
+        Assert.Equal("CL1", normalized.Report.ClOrdId);
+        Assert.Equal(LmaxFixExecutionReportType.New, normalized.Report.ExecType);
+        Assert.Equal(LmaxFixOrderStatus.New, normalized.Report.OrdStatus);
+        Assert.Equal("4001", normalized.Report.SecurityId);
+        Assert.Equal("EURUSD", normalized.Report.InternalSymbol);
+        Assert.Equal(LmaxFixTradeCaptureSide.Buy, normalized.Report.Side);
+        Assert.Equal(1000m, normalized.Report.OrderQty);
+        Assert.Equal(1000m, normalized.Report.LeavesQty);
+        Assert.Equal(0m, normalized.Report.CumQty);
+        Assert.Equal(1.17360m, normalized.Report.Price);
+        Assert.Equal("Limit", normalized.Report.OrdType);
+        Assert.Equal("IOC", normalized.Report.TimeInForce);
+        Assert.Equal(new DateTimeOffset(2026, 5, 5, 17, 10, 1, 123, TimeSpan.Zero), normalized.Report.TransactTimeUtc);
+        Assert.Equal("ACC1", normalized.Report.Account);
+        Assert.Equal(LmaxFixInternalOrderEventType.OrderAck, normalized.InternalEvent.EventType);
+    }
+
+    [Fact]
+    public void Execution_report_parser_maps_trade_rejected_filled_and_expired_values()
+    {
+        var trade = LmaxFixRecoveryCodec.NormalizeExecutionReport(FixMessage("35=8", "17=EXEC-FILL", "37=ORD1", "11=CL1", "150=F", "39=2", "48=4001", "54=1", "32=1000", "31=1.17361", "151=0", "14=1000", "6=1.17361", "60=20260505-17:10:01.123"), CompleteFixOptions());
+        var rejected = LmaxFixRecoveryCodec.NormalizeExecutionReport(FixMessage("35=8", "17=EXEC-REJ", "37=ORD2", "11=CL2", "150=8", "39=8", "48=4001", "54=1", "58=Nope", "60=20260505-17:10:02.123"), CompleteFixOptions());
+        var expired = LmaxFixRecoveryCodec.NormalizeExecutionReport(FixMessage("35=8", "17=EXEC-EXP", "37=ORD3", "11=CL3", "150=C", "39=C", "48=4001", "54=1", "60=20260505-17:10:03.123"), CompleteFixOptions());
+
+        Assert.Equal(LmaxFixExecutionReportType.Trade, trade.Report.ExecType);
+        Assert.Equal(LmaxFixOrderStatus.Filled, trade.Report.OrdStatus);
+        Assert.Equal(1000m, trade.Report.LastQty);
+        Assert.Equal(1.17361m, trade.Report.LastPx);
+        Assert.Equal(1000m, trade.Report.CumQty);
+        Assert.Equal(0m, trade.Report.LeavesQty);
+        Assert.Equal(LmaxFixInternalOrderEventType.Fill, trade.InternalEvent.EventType);
+        Assert.Equal(LmaxFixExecutionReportType.Rejected, rejected.Report.ExecType);
+        Assert.Equal(LmaxFixOrderStatus.Rejected, rejected.Report.OrdStatus);
+        Assert.Equal(LmaxFixInternalOrderEventType.OrderReject, rejected.InternalEvent.EventType);
+        Assert.Equal(LmaxFixExecutionReportType.Expired, expired.Report.ExecType);
+        Assert.Equal(LmaxFixOrderStatus.Expired, expired.Report.OrdStatus);
+        Assert.Equal(LmaxFixInternalOrderEventType.Expired, expired.InternalEvent.EventType);
+    }
+
+    [Fact]
+    public void Execution_report_internal_event_mapper_distinguishes_partial_fill_and_cancel()
+    {
+        var partial = LmaxFixRecoveryCodec.NormalizeExecutionReport(FixMessage("35=8", "17=EXEC-PART", "37=ORD1", "11=CL1", "150=F", "39=1", "48=4001", "54=2", "32=400", "31=1.17368", "151=600", "14=400", "60=20260505-17:10:01.123"), CompleteFixOptions());
+        var canceled = LmaxFixRecoveryCodec.NormalizeExecutionReport(FixMessage("35=8", "17=EXEC-CXL", "37=ORD2", "11=CL2", "41=CL1", "150=4", "39=4", "48=4001", "54=1", "60=20260505-17:10:02.123"), CompleteFixOptions());
+
+        Assert.Equal(LmaxFixTradeCaptureSide.Sell, partial.Report.Side);
+        Assert.Equal(LmaxFixInternalOrderEventType.PartialFill, partial.InternalEvent.EventType);
+        Assert.Equal(LmaxFixExecutionReportType.Canceled, canceled.Report.ExecType);
+        Assert.Equal(LmaxFixInternalOrderEventType.CancelAck, canceled.InternalEvent.EventType);
+        Assert.Equal("CL1", canceled.Report.OrigClOrdId);
+    }
+
+    [Fact]
+    public void Execution_report_parser_warns_for_unknown_values_and_malformed_fields()
+    {
+        var message = FixMessage("35=8", "17=EXEC-BAD", "37=ORD1", "11=CL1", "150=Z", "39=Z", "48=4001", "54=9", "38=bad-qty", "60=bad-time", "40=9", "59=9");
+
+        var normalized = LmaxFixRecoveryCodec.NormalizeExecutionReport(message, CompleteFixOptions());
+
+        Assert.Equal(LmaxFixExecutionReportType.Unknown, normalized.Report.ExecType);
+        Assert.Equal(LmaxFixOrderStatus.Unknown, normalized.Report.OrdStatus);
+        Assert.Contains(normalized.Warnings, x => x.Contains("ExecType", StringComparison.Ordinal));
+        Assert.Contains(normalized.Warnings, x => x.Contains("OrdStatus", StringComparison.Ordinal));
+        Assert.Contains(normalized.Warnings, x => x.Contains("Side", StringComparison.Ordinal));
+        Assert.Contains(normalized.Warnings, x => x.Contains("OrderQty", StringComparison.Ordinal));
+        Assert.Contains(normalized.Warnings, x => x.Contains("TransactTime", StringComparison.Ordinal));
+        Assert.Contains(normalized.Warnings, x => x.Contains("OrdType", StringComparison.Ordinal));
+        Assert.Contains(normalized.Warnings, x => x.Contains("TimeInForce", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task Execution_report_replay_command_is_local_only()
+    {
+        var runner = CreateRunner();
+        using var output = new StringWriter();
+        var original = Console.Out;
+        Console.SetOut(output);
+        try
+        {
+            var fixture = Path.Combine(FindRepoRoot(), "tools", "QQ.Production.Intraday.Lmax.ConnectivityLab", "fixtures", "synthetic-execution-report-35-8.fix");
+            var exitCode = await runner.RunAsync(["fix-execution-report-replay", $"--fixture={fixture}"], CancellationToken.None);
+
+            Assert.Equal(0, exitCode);
+            Assert.Contains("No network call was made", output.ToString(), StringComparison.Ordinal);
+            Assert.Contains("Synthetic ExecutionReport replay completed", output.ToString(), StringComparison.Ordinal);
+        }
+        finally
+        {
+            Console.SetOut(original);
+        }
+    }
+
+    [Fact]
     public void Order_status_request_builder_emits_read_only_h_request()
     {
         var request = LmaxFixRecoveryCodec.BuildOrderStatusRequest("SENDER", "LMXBD", 2, "CL1", account: "ACC1", securityId: "4001", securityIdSource: "8", side: "1", ordStatusReqId: "OSR1");
@@ -897,6 +998,182 @@ public sealed class LmaxConnectivityLabTests
         Assert.Contains($"{LmaxFixMarketDataCodec.Soh}35=H{LmaxFixMarketDataCodec.Soh}", request, StringComparison.Ordinal);
         Assert.Contains($"{LmaxFixMarketDataCodec.Soh}11=CL1{LmaxFixMarketDataCodec.Soh}", request, StringComparison.Ordinal);
         Assert.Contains($"{LmaxFixMarketDataCodec.Soh}790=OSR1{LmaxFixMarketDataCodec.Soh}", request, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Order_status_request_dry_run_validates_cl_ord_id()
+    {
+        var result = LmaxFixRecoveryCodec.BuildOrderStatusRequestDryRun("SENDER", "LMXBD", 2, new LmaxFixOrderStatusRequest("", null, null, null, null, null));
+
+        Assert.Equal("Blocked", result.Status);
+        Assert.Contains("ClOrdID", result.Message, StringComparison.Ordinal);
+        Assert.Null(result.FixMessageSanitized);
+    }
+
+    [Fact]
+    public async Task Demo_order_lifecycle_safety_blocks_by_default()
+    {
+        var fix = new RawLmaxFixSessionClient(new LmaxConnectivityLabSafetyValidator());
+        var options = CompleteFixOptions();
+        var request = DemoOrderRequest(options) with { DryRun = false, ConfirmDemoOrder = true };
+
+        var result = await fix.DemoOrderLifecycleAsync(options, request, explicitConfirmation: true, CancellationToken.None);
+
+        Assert.Equal("Skipped", result.Status);
+        Assert.False(result.OrderSent);
+        Assert.Contains(result.DemoSafetyDecisions, x => x.Gate == "AllowExternalConnections" && !x.Passed);
+        Assert.Contains(result.DemoSafetyDecisions, x => x.Gate == "AllowOrderSubmission" && !x.Passed);
+    }
+
+    [Fact]
+    public async Task Demo_order_lifecycle_safety_blocks_live_trading_dry_run_confirmation_and_production()
+    {
+        var fix = new RawLmaxFixSessionClient(new LmaxConnectivityLabSafetyValidator());
+        var options = CompleteFixOptions(liveTrading: true, orderSubmission: true);
+        options.AllowExternalConnections = true;
+        options.DryRun = false;
+        options.EnvironmentName = "Production";
+        var request = DemoOrderRequest(options) with { DryRun = true, ConfirmDemoOrder = false };
+
+        var result = await fix.DemoOrderLifecycleAsync(options, request, explicitConfirmation: false, CancellationToken.None);
+
+        Assert.Equal("Ok", result.Status);
+        Assert.False(result.OrderSent);
+        Assert.Contains("dry-run", result.Message, StringComparison.OrdinalIgnoreCase);
+        var decisions = new LmaxConnectivityLabSafetyValidator().ValidateForDemoOrderLifecycle(options, request, explicitConfirmation: false);
+        Assert.Contains(decisions, x => x.Gate == "Environment" && !x.Passed);
+        Assert.Contains(decisions, x => x.Gate == "AllowLiveTrading" && !x.Passed);
+        Assert.Contains(decisions, x => x.Gate == "DryRun" && !x.Passed);
+        Assert.Contains(decisions, x => x.Gate == "ConfirmDemoOrder" && !x.Passed);
+        Assert.Contains(decisions, x => x.Gate == "ExplicitCommandFlag" && !x.Passed);
+    }
+
+    [Fact]
+    public void Demo_order_lifecycle_safety_blocks_quantity_and_limit_notional()
+    {
+        var options = CompleteFixOptions(orderSubmission: true);
+        options.AllowExternalConnections = true;
+        options.DryRun = false;
+        options.MaxDemoOrderQuantity = 0.1m;
+        var request = DemoOrderRequest(options) with
+        {
+            DryRun = false,
+            ConfirmDemoOrder = true,
+            VenueQuantity = 0.2m,
+            OrderType = LmaxFixDemoOrderType.Limit,
+            LimitPrice = 100000m,
+            MaxNotionalUsd = 5000m
+        };
+
+        var decisions = new LmaxConnectivityLabSafetyValidator().ValidateForDemoOrderLifecycle(options, request, explicitConfirmation: true);
+
+        Assert.Contains(decisions, x => x.Gate == "QuantityLimit" && !x.Passed);
+        Assert.Contains(decisions, x => x.Gate == "NotionalLimit" && !x.Passed);
+    }
+
+    [Fact]
+    public void New_order_single_builder_emits_market_ioc_demo_order()
+    {
+        var request = DemoOrderRequest(CompleteFixOptions()) with { ClientOrderId = "DL26050607000101" };
+
+        var message = LmaxFixRecoveryCodec.BuildNewOrderSingle("SENDER", "LMXBD", 2, request, request.ClientOrderId!, "8");
+
+        Assert.Contains($"{LmaxFixMarketDataCodec.Soh}35=D{LmaxFixMarketDataCodec.Soh}", message, StringComparison.Ordinal);
+        Assert.Contains($"{LmaxFixMarketDataCodec.Soh}11=DL26050607000101{LmaxFixMarketDataCodec.Soh}", message, StringComparison.Ordinal);
+        Assert.DoesNotContain($"{LmaxFixMarketDataCodec.Soh}21=1{LmaxFixMarketDataCodec.Soh}", message, StringComparison.Ordinal);
+        Assert.Contains($"{LmaxFixMarketDataCodec.Soh}48=4001{LmaxFixMarketDataCodec.Soh}", message, StringComparison.Ordinal);
+        Assert.Contains($"{LmaxFixMarketDataCodec.Soh}22=8{LmaxFixMarketDataCodec.Soh}", message, StringComparison.Ordinal);
+        Assert.Contains($"{LmaxFixMarketDataCodec.Soh}54=1{LmaxFixMarketDataCodec.Soh}", message, StringComparison.Ordinal);
+        Assert.Contains($"{LmaxFixMarketDataCodec.Soh}38=0.1{LmaxFixMarketDataCodec.Soh}", message, StringComparison.Ordinal);
+        Assert.Contains($"{LmaxFixMarketDataCodec.Soh}40=1{LmaxFixMarketDataCodec.Soh}", message, StringComparison.Ordinal);
+        Assert.Contains($"{LmaxFixMarketDataCodec.Soh}59=3{LmaxFixMarketDataCodec.Soh}", message, StringComparison.Ordinal);
+        Assert.DoesNotContain($"{LmaxFixMarketDataCodec.Soh}44=", message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void New_order_single_builder_can_optionally_include_handl_inst()
+    {
+        var request = DemoOrderRequest(CompleteFixOptions()) with { ClientOrderId = "DL26050607000103", IncludeHandlInst = true };
+
+        var message = LmaxFixRecoveryCodec.BuildNewOrderSingle("SENDER", "LMXBD", 2, request, request.ClientOrderId!, "8");
+
+        Assert.Contains($"{LmaxFixMarketDataCodec.Soh}21=1{LmaxFixMarketDataCodec.Soh}", message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void New_order_single_builder_emits_limit_ioc_with_price()
+    {
+        var request = DemoOrderRequest(CompleteFixOptions()) with
+        {
+            ClientOrderId = "DL26050607000102",
+            OrderType = LmaxFixDemoOrderType.Limit,
+            LimitPrice = 1.17361m,
+            TimeInForce = LmaxFixDemoOrderTimeInForce.IOC,
+            Account = "ACC1"
+        };
+
+        var message = LmaxFixRecoveryCodec.BuildNewOrderSingle("SENDER", "LMXBD", 2, request, request.ClientOrderId!, "8");
+
+        Assert.Contains($"{LmaxFixMarketDataCodec.Soh}40=2{LmaxFixMarketDataCodec.Soh}", message, StringComparison.Ordinal);
+        Assert.Contains($"{LmaxFixMarketDataCodec.Soh}44=1.17361{LmaxFixMarketDataCodec.Soh}", message, StringComparison.Ordinal);
+        Assert.Contains($"{LmaxFixMarketDataCodec.Soh}59=3{LmaxFixMarketDataCodec.Soh}", message, StringComparison.Ordinal);
+        Assert.Contains($"{LmaxFixMarketDataCodec.Soh}1=ACC1{LmaxFixMarketDataCodec.Soh}", message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Demo_order_dry_run_does_not_make_network_call_or_leak_password()
+    {
+        var fix = new RawLmaxFixSessionClient(new LmaxConnectivityLabSafetyValidator());
+        var options = CompleteFixOptions();
+        options.FixPassword = "demo-order-secret-password";
+        var request = DemoOrderRequest(options);
+
+        var result = await fix.DemoOrderLifecycleAsync(options, request, explicitConfirmation: false, CancellationToken.None);
+
+        Assert.Equal("Ok", result.Status);
+        Assert.False(result.Connected);
+        Assert.False(result.OrderSent);
+        Assert.Contains("No network call", result.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("demo-order-secret-password", string.Join("|", result.Diagnostics), StringComparison.Ordinal);
+        Assert.DoesNotContain("demo-order-secret-password", result.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Demo_order_lifecycle_result_can_report_session_protocol_reject()
+    {
+        var reject = LmaxFixRecoveryCodec.ParseSessionReject(FixMessage("35=3", "45=2", "371=21", "372=D", "373=0", "58=Error code UnknownTag occurred while parsing a FIX message. Tag ID is 21."));
+        var result = new LmaxFixDemoOrderLifecycleResult(
+            "fix-demo-order-lifecycle",
+            "Failed",
+            Connected: true,
+            LoggedOn: true,
+            OrderSent: true,
+            ExecutionReportReceived: false,
+            TerminalExecutionReportReceived: false,
+            RequestRejected: true,
+            RejectMsgType: "3",
+            RejectRefTagId: reject.RefTagId,
+            RejectRefMsgType: reject.RefMsgType,
+            RejectReasonCode: reject.SessionRejectReason,
+            RejectText: reject.Text,
+            FinalStatus: "ProtocolRejected",
+            LogoutSent: true,
+            ClientOrderId: "DL26050607335402",
+            LastReceivedMsgType: "3",
+            ExecutionReports: [],
+            StartedAtUtc: DateTimeOffset.UtcNow,
+            CompletedAtUtc: DateTimeOffset.UtcNow,
+            Message: $"NewOrderSingle was rejected at FIX session level: {reject.Text}",
+            SafetyDecisions: [],
+            DemoSafetyDecisions: [],
+            Diagnostics: []);
+
+        Assert.True(result.RequestRejected);
+        Assert.Equal("21", result.RejectRefTagId);
+        Assert.Equal("D", result.RejectRefMsgType);
+        Assert.Equal("0", result.RejectReasonCode);
+        Assert.Equal("ProtocolRejected", result.FinalStatus);
+        Assert.DoesNotContain("timeout", result.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -987,6 +1264,23 @@ public sealed class LmaxConnectivityLabTests
             LmaxFixMarketDataSymbolEncodingMode.SecurityIdAndSymbol,
             "8",
             false);
+
+    private static LmaxFixDemoOrderRequest DemoOrderRequest(LmaxConnectivityLabOptions options)
+        => new(
+            options.InstrumentSymbol,
+            options.LmaxInstrumentId,
+            LmaxFixDemoOrderSide.Buy,
+            LmaxFixDemoOrderType.Market,
+            LmaxFixDemoOrderTimeInForce.IOC,
+            0.1m,
+            null,
+            5000m,
+            null,
+            null,
+            ConfirmDemoOrder: false,
+            DryRun: true,
+            MaxWaitSeconds: 10,
+            ShowFixMessages: false);
 
     private static string FixMessage(params string[] fields)
         => string.Join(LmaxFixMarketDataCodec.Soh, fields) + LmaxFixMarketDataCodec.Soh;
