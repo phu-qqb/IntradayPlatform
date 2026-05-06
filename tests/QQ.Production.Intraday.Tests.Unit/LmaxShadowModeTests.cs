@@ -1,3 +1,5 @@
+using System.Text.Json;
+using System.Text.Json.Serialization;
 using QQ.Production.Intraday.Application;
 using QQ.Production.Intraday.Domain;
 
@@ -98,6 +100,40 @@ public sealed class LmaxShadowModeTests
     }
 
     [Fact]
+    public async Task Lifecycle_evidence_fixture_replays_to_shadow_without_treating_order_status_as_fill()
+    {
+        var (state, service) = CreateService();
+        SeedFilledOrder(state, "aJBPhQAAAACZXTEG", "DL26050607454402", OrderStatus.Filled);
+        var beforeFillCount = state.Fills.Count;
+        var beforeOrderCount = state.ChildOrders.Count;
+        var request = LoadLifecycleEvidenceFixture();
+
+        var run = await service.ReplayAsync(request, CancellationToken.None);
+
+        Assert.Equal(LmaxShadowInputSource.LabEvidenceFile, run.InputSource);
+        Assert.Equal(LmaxShadowReplayStatus.Completed, run.Status);
+        Assert.Equal(beforeFillCount, state.Fills.Count);
+        Assert.Equal(beforeOrderCount, state.ChildOrders.Count);
+        Assert.Contains(state.LmaxShadowObservations, x => x.Type == LmaxShadowObservationType.ExecutionReportMatchesInternalFill);
+        Assert.Contains(state.LmaxShadowObservations, x => x.Type == LmaxShadowObservationType.TradeCaptureMatchesInternalFill);
+        Assert.Contains(state.LmaxShadowObservations, x => x.Type == LmaxShadowObservationType.OrderStatusMatchesInternalOrder);
+        Assert.DoesNotContain(state.LmaxShadowObservations, x => x.BrokerExecutionId == "status-1" && x.Type == LmaxShadowObservationType.ExecutionReportMatchesInternalFill);
+    }
+
+    [Fact]
+    public void Lifecycle_evidence_fixture_is_sanitized()
+    {
+        var path = FindRepoFile("tests", "fixtures", "lmax-shadow", "lmax-fix-lifecycle-evidence-v1.json");
+        var json = File.ReadAllText(path);
+
+        Assert.DoesNotContain("554=", json, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("password", json, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("authorization", json, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("secret", json, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("token", json, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public async Task Observation_actions_require_reason_and_create_audit()
     {
         var (state, service) = CreateService();
@@ -147,5 +183,44 @@ public sealed class LmaxShadowModeTests
         state.ExecutionReports.Add(report);
         state.Fills.Add(fill);
         return fill;
+    }
+
+    private static LmaxShadowReplayRequest LoadLifecycleEvidenceFixture()
+    {
+        var path = FindRepoFile("tests", "fixtures", "lmax-shadow", "lmax-fix-lifecycle-evidence-v1.json");
+        using var document = JsonDocument.Parse(File.ReadAllText(path));
+        var root = document.RootElement;
+        var options = new JsonSerializerOptions(JsonSerializerDefaults.Web);
+        options.Converters.Add(new JsonStringEnumConverter());
+
+        return new LmaxShadowReplayRequest(
+            LmaxShadowInputSource.LabEvidenceFile,
+            DeserializeList<LmaxShadowExecutionReportInput>(root, "executionReports", options),
+            DeserializeList<LmaxShadowTradeCaptureInput>(root, "tradeCaptureReports", options),
+            DeserializeList<LmaxShadowOrderStatusInput>(root, "orderStatusReports", options),
+            DeserializeList<LmaxShadowProtocolRejectInput>(root, "protocolRejects", options),
+            "Replay LMAX lab lifecycle evidence fixture");
+    }
+
+    private static IReadOnlyList<T> DeserializeList<T>(JsonElement root, string propertyName, JsonSerializerOptions options)
+        => root.TryGetProperty(propertyName, out var value)
+            ? JsonSerializer.Deserialize<IReadOnlyList<T>>(value.GetRawText(), options) ?? []
+            : [];
+
+    private static string FindRepoFile(params string[] parts)
+    {
+        var directory = new DirectoryInfo(AppContext.BaseDirectory);
+        while (directory is not null)
+        {
+            var candidate = Path.Combine(new[] { directory.FullName }.Concat(parts).ToArray());
+            if (File.Exists(candidate))
+            {
+                return candidate;
+            }
+
+            directory = directory.Parent;
+        }
+
+        throw new FileNotFoundException($"Could not find repo file {Path.Combine(parts)} from {AppContext.BaseDirectory}.");
     }
 }

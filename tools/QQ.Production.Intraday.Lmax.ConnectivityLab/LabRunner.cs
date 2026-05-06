@@ -1,3 +1,6 @@
+using System.Text.Json;
+using System.Text.Json.Serialization;
+
 namespace QQ.Production.Intraday.Lmax.ConnectivityLab;
 
 public sealed class LmaxConnectivityLabRunner(
@@ -102,6 +105,11 @@ public sealed class LmaxConnectivityLabRunner(
                 HasFlag(optionArgs, "show-fix-messages"));
             var evidenceResult = await fixClient.DemoLifecycleEvidenceAsync(options, request, tradeCaptureOptions, explicitConfirm || HasFlag(optionArgs, "confirm-demo-order"), cancellationToken);
             WriteLifecycleEvidenceResult(evidenceResult);
+            var outputJsonPath = GetStringArg(optionArgs, "output-json-path");
+            if (!string.IsNullOrWhiteSpace(outputJsonPath))
+            {
+                WriteLifecycleEvidenceJson(outputJsonPath, evidenceResult);
+            }
             return evidenceResult.Status == "Failed" ? 1 : evidenceResult.Status == "Skipped" ? 2 : 0;
         }
 
@@ -627,6 +635,158 @@ public sealed class LmaxConnectivityLabRunner(
         {
             Console.WriteLine($"- {decision}");
         }
+    }
+
+    private static void WriteLifecycleEvidenceJson(string outputJsonPath, LmaxFixLifecycleEvidenceResult result)
+    {
+        var fullPath = Path.GetFullPath(outputJsonPath);
+        if (fullPath.StartsWith(@"\\", StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException("Refusing to write lifecycle evidence JSON to a UNC path.");
+        }
+
+        var directory = Path.GetDirectoryName(fullPath);
+        if (!string.IsNullOrWhiteSpace(directory))
+        {
+            Directory.CreateDirectory(directory);
+        }
+
+        var report = result.EvidenceReport;
+        var exported = new
+        {
+            schemaVersion = "lmax-fix-lifecycle-evidence-v1",
+            createdAtUtc = DateTimeOffset.UtcNow,
+            source = "ConnectivityLab",
+            dryRun = !report.OrderSent,
+            clientOrderId = report.ClientOrderId,
+            brokerOrderId = report.BrokerOrderId,
+            instrumentSymbol = report.InstrumentSymbol,
+            securityId = report.SecurityId,
+            side = report.Side,
+            requestedQuantity = report.RequestedQuantity,
+            requestedOrderType = report.RequestedOrderType,
+            requestedTimeInForce = report.RequestedTimeInForce,
+            executionReports = report.OrderSubmission.ExecutionReports.Select(ToShadowExecutionReport).ToArray(),
+            orderStatusReports = report.OrderStatusRecovery?.ExecutionReports.Select(ToShadowOrderStatusReport).ToArray() ?? [],
+            tradeCaptureReports = report.TradeCaptureRecovery?.Reports.Select(ToShadowTradeCaptureReport).ToArray() ?? [],
+            protocolRejects = result.OrderSubmission.RequestRejected
+                ? new object[]
+                {
+                    new
+                    {
+                        refMsgType = result.OrderSubmission.RejectRefMsgType,
+                        refTagId = TryParseIntOrNull(result.OrderSubmission.RejectRefTagId),
+                        reasonCode = TryParseIntOrNull(result.OrderSubmission.RejectReasonCode),
+                        text = result.OrderSubmission.RejectText,
+                        clientOrderId = report.ClientOrderId,
+                        brokerOrderId = report.BrokerOrderId
+                    }
+                }
+                : Array.Empty<object>(),
+            consistencyChecks = report.ConsistencyChecks.Select(x => new
+            {
+                name = x.Name,
+                status = x.Status.ToString(),
+                expected = x.Expected,
+                actual = x.Actual,
+                message = x.Message
+            }).ToArray(),
+            warnings = report.Warnings
+        };
+
+        var json = JsonSerializer.Serialize(exported, new JsonSerializerOptions(JsonSerializerDefaults.Web)
+        {
+            WriteIndented = true,
+            DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
+            Converters = { new JsonStringEnumConverter() }
+        });
+
+        if (ContainsSensitiveEvidence(json))
+        {
+            throw new InvalidOperationException("Refusing to write lifecycle evidence JSON because sanitized output contains sensitive markers.");
+        }
+
+        File.WriteAllText(fullPath, json);
+        Console.WriteLine($"LifecycleEvidenceJsonPath: {fullPath}");
+    }
+
+    private static object ToShadowExecutionReport(LmaxFixExecutionReport report) => new
+    {
+        execId = report.ExecId,
+        brokerOrderId = report.OrderId,
+        clientOrderId = report.ClOrdId,
+        executionType = report.ExecType.ToString(),
+        orderStatus = report.OrdStatus.ToString(),
+        symbol = report.InternalSymbol ?? report.Symbol,
+        side = report.Side?.ToString(),
+        lastQty = report.LastQty,
+        lastPx = report.LastPx,
+        leavesQty = report.LeavesQty,
+        cumQty = report.CumQty,
+        avgPx = report.AvgPx,
+        transactTimeUtc = report.TransactTimeUtc,
+        payload = new
+        {
+            securityId = report.SecurityId,
+            securityIdSource = report.SecurityIdSource,
+            text = report.Text
+        }
+    };
+
+    private static object ToShadowOrderStatusReport(LmaxFixExecutionReport report) => new
+    {
+        brokerOrderId = report.OrderId,
+        clientOrderId = report.ClOrdId,
+        symbol = report.InternalSymbol ?? report.Symbol,
+        orderStatus = report.OrdStatus.ToString(),
+        cumQty = report.CumQty,
+        leavesQty = report.LeavesQty,
+        transactTimeUtc = report.TransactTimeUtc,
+        payload = new
+        {
+            execId = report.ExecId,
+            executionType = report.ExecType.ToString(),
+            securityId = report.SecurityId,
+            securityIdSource = report.SecurityIdSource,
+            text = report.Text
+        }
+    };
+
+    private static object ToShadowTradeCaptureReport(LmaxFixTradeCaptureReport report) => new
+    {
+        execId = report.ExecId,
+        secondaryExecId = report.SecondaryExecId,
+        brokerOrderId = report.OrderId,
+        clientOrderId = report.ClOrdId,
+        symbol = report.InternalSymbol ?? report.Symbol,
+        side = report.NormalizedSide?.ToString() ?? report.Side,
+        lastQty = report.LastQty,
+        lastPx = report.LastPx,
+        tradeDate = report.TradeDate,
+        transactTimeUtc = report.TransactTime,
+        tradeUti = (string?)null,
+        lastReportRequested = report.LastReportRequested,
+        payload = new
+        {
+            securityId = report.SecurityId,
+            securityIdSource = report.SecurityIdSource,
+            tradeReportId = report.TradeReportId
+        }
+    };
+
+    private static int? TryParseIntOrNull(string? value)
+        => int.TryParse(value, out var parsed) ? parsed : null;
+
+    private static bool ContainsSensitiveEvidence(string json)
+    {
+        var lower = json.ToLowerInvariant();
+        return lower.Contains("554=", StringComparison.Ordinal)
+            || lower.Contains("password", StringComparison.Ordinal)
+            || lower.Contains("authorization", StringComparison.Ordinal)
+            || lower.Contains("bearer ", StringComparison.Ordinal)
+            || lower.Contains("x-api-key", StringComparison.Ordinal)
+            || lower.Contains("secret", StringComparison.Ordinal)
+            || lower.Contains("token", StringComparison.Ordinal);
     }
 
     private static void WriteOrderStatusResult(LmaxFixOrderStatusSmokeResult result)

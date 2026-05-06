@@ -316,6 +316,29 @@ describe('cockpit UI primitives', () => {
     expect(screen.queryByRole('button', { name: /submit order/i })).toBeNull();
   });
 
+  it('renders LMAX shadow replay source, status, and observation counts', () => {
+    render(
+      <DataTable
+        rows={[{ id: 'replay-1', inputSource: 'LabEvidenceFile', status: 'Completed', observationCount: 3, blockingObservationCount: 0, warningObservationCount: 1 }]}
+        getRowKey={(row) => row.id}
+        columns={[
+          { key: 'id', header: 'Replay ID', render: (row) => row.id },
+          { key: 'inputSource', header: 'Source', render: (row) => row.inputSource },
+          { key: 'status', header: 'Status', render: (row) => <StatusChip label={row.status} tone={toneForStatus(row.status)} /> },
+          { key: 'observationCount', header: 'Obs', render: (row) => String(row.observationCount) },
+          { key: 'blockingObservationCount', header: 'Blocking', render: (row) => String(row.blockingObservationCount) },
+          { key: 'warningObservationCount', header: 'Warnings', render: (row) => String(row.warningObservationCount) }
+        ]}
+      />
+    );
+
+    expect(screen.getByText('LabEvidenceFile')).toBeTruthy();
+    expect(screen.getByText('Completed')).toBeTruthy();
+    expect(screen.getByText('Warnings')).toBeTruthy();
+    expect(screen.queryByLabelText(/password/i)).toBeNull();
+    expect(screen.queryByRole('button', { name: /live/i })).toBeNull();
+  });
+
   it('renders risk decision explainability with observed and limit values', () => {
     render(
       <DataTable

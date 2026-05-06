@@ -1,0 +1,84 @@
+{
+  "schemaVersion": "lmax-fix-lifecycle-evidence-v1",
+  "createdAtUtc": "2026-05-06T09:00:00Z",
+  "source": "ConnectivityLab",
+  "dryRun": false,
+  "clientOrderId": "DL26050607454402",
+  "brokerOrderId": "AAAESQAAAABd6+b7",
+  "instrumentSymbol": "EURUSD",
+  "securityId": "4001",
+  "side": "Buy",
+  "requestedQuantity": 0.1,
+  "requestedOrderType": "Market",
+  "requestedTimeInForce": "IOC",
+  "executionReports": [
+    {
+      "execId": "aJBPhQAAAACZXTEG",
+      "brokerOrderId": "AAAESQAAAABd6+b7",
+      "clientOrderId": "DL26050607454402",
+      "executionType": "Trade",
+      "orderStatus": "Filled",
+      "symbol": "EURUSD",
+      "side": "Buy",
+      "lastQty": 0.1,
+      "lastPx": 1.17394,
+      "leavesQty": 0,
+      "cumQty": 0.1,
+      "avgPx": 1.17394,
+      "transactTimeUtc": "2026-05-06T07:45:44.123Z",
+      "payload": {
+        "securityId": "4001",
+        "securityIdSource": "8"
+      }
+    }
+  ],
+  "orderStatusReports": [
+    {
+      "brokerOrderId": "AAAESQAAAABd6+b7",
+      "clientOrderId": "DL26050607454402",
+      "symbol": "EURUSD",
+      "orderStatus": "Filled",
+      "cumQty": 0.1,
+      "leavesQty": 0,
+      "transactTimeUtc": "2026-05-06T07:46:00Z",
+      "payload": {
+        "execId": "status-1",
+        "executionType": "OrderStatus",
+        "securityId": "4001",
+        "securityIdSource": "8"
+      }
+    }
+  ],
+  "tradeCaptureReports": [
+    {
+      "execId": "aJBPhQAAAACZXTEG",
+      "secondaryExecId": "mtf-1",
+      "brokerOrderId": "AAAESQAAAABd6+b7",
+      "clientOrderId": "DL26050607454402",
+      "symbol": "EURUSD",
+      "side": "Buy",
+      "lastQty": 0.1,
+      "lastPx": 1.17394,
+      "tradeDate": "2026-05-06",
+      "transactTimeUtc": "2026-05-06T07:45:44.123Z",
+      "tradeUti": null,
+      "lastReportRequested": true,
+      "payload": {
+        "securityId": "4001",
+        "securityIdSource": "8",
+        "tradeReportId": "tr-1"
+      }
+    }
+  ],
+  "protocolRejects": [],
+  "consistencyChecks": [
+    {
+      "name": "ExecType=I OrderStatus report is status-only",
+      "status": "Passed",
+      "message": "OrderStatusRequest recovery returned ExecType=I and was not counted as a fill."
+    }
+  ],
+  "warnings": [
+    "FIX AE does not currently provide TradeUTI."
+  ]
+}

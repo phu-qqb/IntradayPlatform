@@ -1077,11 +1077,13 @@ function LmaxShadowPage({ dashboard, actions }: { dashboard: DashboardState; act
         actions={<StatusChip label="Replay only" tone="info" />}
       />
       <div className="critical-box">Shadow mode compares normalized evidence to internal state and writes observations only. It does not mutate orders, fills, positions, risk decisions, or reconciliation state.</div>
+      <div className="operator-note">Replay is local API processing only. It does not call LMAX, open FIX sessions, submit orders, or use credentials.</div>
       <div className="metric-grid">
         <MetricCard label="Observations" value={dashboard.lmaxShadowObservations.length} sublabel="Stored local shadow observations" tone="neutral" />
         <MetricCard label="Blocking" value={openBlocking.length} sublabel="Creates exception cases when produced" tone={openBlocking.length ? 'danger' : 'ok'} />
         <MetricCard label="Warnings" value={openWarnings.length} sublabel="Operator review items" tone={openWarnings.length ? 'warning' : 'ok'} />
         <MetricCard label="Matches" value={matches.length} sublabel="Info observations" tone="ok" />
+        <MetricCard label="Replay Source" value={formatStatus(dashboard.lmaxShadowReplayRuns[0]?.inputSource ?? 'None')} sublabel={dashboard.lmaxShadowReplayRuns[0]?.id ? `Replay ${formatIdShort(dashboard.lmaxShadowReplayRuns[0].id)}` : 'No replay id'} tone="neutral" />
         <MetricCard label="Latest Replay" value={dashboard.lmaxShadowReplayRuns[0]?.status ?? 'Not run'} sublabel={dashboard.lmaxShadowReplayRuns[0]?.message ?? 'No replay history'} tone={toneForStatus(dashboard.lmaxShadowReplayRuns[0]?.status)} />
       </div>
       <div className="form-grid compact">
@@ -1105,9 +1107,12 @@ function LmaxShadowPage({ dashboard, actions }: { dashboard: DashboardState; act
           <SectionHeader title="Replay Runs" />
           <DataTable rows={dashboard.lmaxShadowReplayRuns} getRowKey={(row) => row.id} onRowClick={actions.setSelected} columns={[
             { key: 'startedAtUtc', header: 'Started', render: (row) => formatUtc(row.startedAtUtc), sortValue: (row) => row.startedAtUtc },
+            { key: 'id', header: 'Replay ID', render: (row) => formatIdShort(row.id), sortValue: (row) => row.id },
             { key: 'inputSource', header: 'Source', render: (row) => formatStatus(row.inputSource), sortValue: (row) => row.inputSource },
             { key: 'status', header: 'Status', render: (row) => <StatusChip label={formatStatus(row.status)} tone={toneForStatus(row.status)} />, sortValue: (row) => row.status },
             { key: 'observationCount', header: 'Obs', render: (row) => String(row.observationCount), sortValue: (row) => row.observationCount, className: 'numeric' },
+            { key: 'blockingObservationCount', header: 'Blocking', render: (row) => String(row.blockingObservationCount), sortValue: (row) => row.blockingObservationCount, className: 'numeric' },
+            { key: 'warningObservationCount', header: 'Warnings', render: (row) => String(row.warningObservationCount), sortValue: (row) => row.warningObservationCount, className: 'numeric' },
             { key: 'message', header: 'Message', render: (row) => row.message ?? '-' }
           ]} />
         </div>
@@ -1133,6 +1138,7 @@ function LmaxShadowPage({ dashboard, actions }: { dashboard: DashboardState; act
             { key: 'symbol', header: 'Symbol', render: (row) => row.symbol ?? '-' },
             { key: 'brokerExecutionId', header: 'Broker Exec', render: (row) => row.brokerExecutionId ?? '-' },
             { key: 'clientOrderId', header: 'Client Order', render: (row) => row.clientOrderId ?? '-' },
+            { key: 'replayRunId', header: 'Replay', render: (row) => row.replayRunId ? formatIdShort(row.replayRunId) : '-' },
             { key: 'description', header: 'Description', render: (row) => row.description },
             { key: 'actions', header: 'Actions', render: (row) => (
               <div className="row-actions">

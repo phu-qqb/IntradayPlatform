@@ -232,7 +232,7 @@ code, .id-token, .mono { font-family: "Cascadia Mono", "SFMono-Regular", Consola
 .chip.danger { color: var(--danger); border-color: var(--danger-border); background: rgba(248, 81, 73, 0.16); }
 .chip.neutral { color: var(--text-secondary); background: var(--bg-surface-raised); }
 
-.critical-box, .error-state, .notice, .info-box, .warning-box, .loading-state, .empty-state {
+.critical-box, .error-state, .notice, .info-box, .warning-box, .operator-note, .loading-state, .empty-state {
   border-radius: var(--radius-sm);
   padding: var(--space-3);
 }
@@ -240,6 +240,7 @@ code, .id-token, .mono { font-family: "Cascadia Mono", "SFMono-Regular", Consola
 .notice { border: 1px solid var(--success-border); background: rgba(46, 160, 67, 0.12); color: var(--success); }
 .info-box { border: 1px solid var(--info-border); background: rgba(56, 139, 253, 0.12); color: var(--info); }
 .warning-box { border: 1px solid var(--warning-border); background: rgba(183, 121, 31, 0.16); color: var(--warning); }
+.operator-note { border: 1px solid var(--info-border); background: rgba(56, 139, 253, 0.10); color: var(--text-secondary); }
 .loading-state, .empty-state { color: var(--text-muted); border: 1px dashed var(--border-strong); background: rgba(13, 20, 29, .35); }
 .action-toast {
   position: fixed;

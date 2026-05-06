@@ -16,6 +16,7 @@ param(
     [int]$TradeCaptureLookbackMinutes = 1440,
     [int]$MaxReports = 50,
     [int]$MaxWaitSeconds = 10,
+    [string]$OutputJsonPath,
     [switch]$ShowFixMessages
 )
 
@@ -51,6 +52,15 @@ if ($LimitPrice.HasValue) {
     $arguments += "--limit-price=$($LimitPrice.Value)"
 }
 
+if ($OutputJsonPath) {
+    $resolvedOutputPath = [IO.Path]::GetFullPath($OutputJsonPath)
+    if ($resolvedOutputPath.StartsWith("\\")) {
+        throw "Refusing to write lifecycle evidence JSON to a UNC path: $OutputJsonPath"
+    }
+
+    $arguments += "--output-json-path=$resolvedOutputPath"
+}
+
 if ($ConfirmDemoOrder.IsPresent) {
     $arguments += "--confirm-demo-order=true"
     $arguments += "--confirm-demo-order"
@@ -63,6 +73,9 @@ if (-not $DryRun -and (-not $AllowExternalConnections -or -not $AllowOrderSubmis
 
 Write-Host "Running lab-only FIX lifecycle evidence command."
 Write-Host "DryRun=$DryRun AllowExternalConnections=$($AllowExternalConnections.IsPresent) AllowOrderSubmission=$($AllowOrderSubmission.IsPresent) ConfirmDemoOrder=$($ConfirmDemoOrder.IsPresent)"
+if ($OutputJsonPath) {
+    Write-Host "OutputJsonPath=$resolvedOutputPath"
+}
 Write-Host "No command in this script stores credentials, persists live FIX data into the main DB, or wires LMAX into API/Worker."
 
 & dotnet @arguments

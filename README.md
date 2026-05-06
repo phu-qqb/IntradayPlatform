@@ -602,3 +602,5 @@ See [docs/LMAX_CONNECTIVITY_LAB.md](docs/LMAX_CONNECTIVITY_LAB.md) for configura
 
 The platform includes a local LMAX shadow replay store for normalized lab evidence. Replay creates auditable observations and optional blocking exception cases without mutating orders, fills, positions, risk, or reconciliation state. This is not live LMAX integration; API and Worker remain FakeLmax-only.
 
+Lifecycle evidence from the isolated Connectivity Lab can now be exported as sanitized JSON and replayed through the local shadow API. Use `scripts/lmax-lab-fix-demo-lifecycle-evidence.ps1 -OutputJsonPath .\artifacts\lmax\evidence.json` to write the lab report, then `scripts/replay-lmax-lab-evidence.ps1 -Path .\artifacts\lmax\evidence.json` while the local API is running. Replay calls localhost only, never opens FIX sessions, and does not contain credentials or raw logon messages. A synthetic fixture smoke is available at `scripts/smoke-lmax-shadow-local.ps1`.
+

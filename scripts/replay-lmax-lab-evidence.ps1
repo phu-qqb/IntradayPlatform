@@ -42,27 +42,70 @@ function Invoke-LocalApi {
     }
 }
 
+function Get-ItemsFromResponse {
+    param([object]$Response)
+
+    if ($null -eq $Response) { return @() }
+    if ($Response -is [array]) { return @($Response) }
+
+    foreach ($name in @("value", "Value", "items", "Items", "observations", "replayRuns", "data")) {
+        if ($Response.PSObject.Properties.Name -contains $name) {
+            $items = $Response.$name
+            if ($null -eq $items) { return @() }
+            return @($items)
+        }
+    }
+
+    return @($Response)
+}
+
+function Convert-EvidenceToReplayBody {
+    param([object]$Evidence)
+
+    $executionReports = @()
+    $tradeCaptureReports = @()
+    $orderStatuses = @()
+    $protocolRejects = @()
+
+    if ($Evidence.PSObject.Properties.Name -contains "executionReports") {
+        $executionReports = @($Evidence.executionReports)
+    }
+
+    if ($Evidence.PSObject.Properties.Name -contains "tradeCaptureReports") {
+        $tradeCaptureReports = @($Evidence.tradeCaptureReports)
+    }
+
+    if ($Evidence.PSObject.Properties.Name -contains "orderStatusReports") {
+        $orderStatuses = @($Evidence.orderStatusReports)
+    } elseif ($Evidence.PSObject.Properties.Name -contains "orderStatuses") {
+        $orderStatuses = @($Evidence.orderStatuses)
+    }
+
+    if ($Evidence.PSObject.Properties.Name -contains "protocolRejects") {
+        $protocolRejects = @($Evidence.protocolRejects)
+    }
+
+    return [ordered]@{
+        inputSource = "LabEvidenceFile"
+        reason = $Reason
+        executionReports = $executionReports
+        tradeCaptureReports = $tradeCaptureReports
+        orderStatuses = $orderStatuses
+        protocolRejects = $protocolRejects
+    }
+}
+
 Assert-LocalUrl $BaseUrl
 $resolvedPath = Resolve-Path -LiteralPath $Path
 $raw = Get-Content -LiteralPath $resolvedPath -Raw
 $evidence = $raw | ConvertFrom-Json
 
-$body = [ordered]@{
-    inputSource = "LabEvidenceFile"
-    reason = $Reason
-    executionReports = @()
-    tradeCaptureReports = @()
-    orderStatuses = @()
-    protocolRejects = @()
-}
-
-foreach ($name in @("executionReports", "tradeCaptureReports", "orderStatuses", "protocolRejects")) {
-    if ($evidence.PSObject.Properties.Name -contains $name) {
-        $body[$name] = $evidence.$name
-    }
-}
+$body = Convert-EvidenceToReplayBody -Evidence $evidence
 
 Write-Host "Replaying LMAX lab evidence file: $resolvedPath"
+Write-Host "ExecutionReports=$(@($body.executionReports).Count) OrderStatuses=$(@($body.orderStatuses).Count) TradeCaptureReports=$(@($body.tradeCaptureReports).Count) ProtocolRejects=$(@($body.protocolRejects).Count)"
 $result = Invoke-LocalApi -Method "POST" -Endpoint "/lmax-shadow/replay" -Body $body
+$replayRunId = if ($result.PSObject.Properties.Name -contains "id") { $result.id } elseif ($result.PSObject.Properties.Name -contains "replayRunId") { $result.replayRunId } else { $null }
+Write-Host "ReplayRunId: $replayRunId"
 Write-Host "Replay $($result.status): $($result.observationCount) observations, $($result.blockingObservationCount) blocking, $($result.warningObservationCount) warnings" -ForegroundColor Green
 $result

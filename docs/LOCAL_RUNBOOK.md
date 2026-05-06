@@ -590,6 +590,14 @@ The lifecycle evidence command is also lab-only and dry-run by default:
 
 When intentionally run in live Demo mode with all explicit gates, it opens one FIX Trading session, submits the tiny gated demo order, collects `35=8` execution reports, keeps the session logged on, recovers status with read-only `35=H`, recovers fills with read-only `35=AD`/`35=AE`, and logs out once at the end. The trade-capture window is computed after the fill timestamp is known and diagnostics print `FillTransactTimeUtc`, `TradeCaptureStartUtc`, and `TradeCaptureEndUtc`. Diagnostics also show same-session recovery and FIX sequence-number progression. `ExecType=I` from order-status recovery is status-only and is not counted as a fill; fills are identified by `ExecType=F` and matching TradeCapture `ExecID`. If the order fills but recovery evidence is incomplete, the command reports partial success rather than claiming the order failed. The command persists nothing and is not wired into API/Worker.
 
+The lifecycle evidence command can export a sanitized local JSON evidence file:
+
+```powershell
+.\scripts\lmax-lab-fix-demo-lifecycle-evidence.ps1 -OutputJsonPath .\artifacts\lmax\evidence.json
+```
+
+The export uses schema `lmax-fix-lifecycle-evidence-v1`, contains normalized execution reports, order-status reports, trade-capture reports, consistency checks, and warnings, and deliberately omits credentials, authorization headers, and raw logon messages. Dry-run exports are marked with `dryRun=true`.
+
 After a Demo order exists, `fix-order-status-smoke` can recover its status by known `ClOrdID` without submitting anything:
 
 ```powershell
@@ -634,5 +642,13 @@ To replay a local evidence file while the API is running:
 .\scripts\replay-lmax-lab-evidence.ps1 -Path .\path\to\evidence.json
 ```
 
-The script only posts to localhost and never opens FIX connections.
+The script converts exported lifecycle evidence into `POST /lmax-shadow/replay` with `inputSource=LabEvidenceFile`. It only posts to localhost and never opens FIX connections.
+
+To validate the local replay path with a sanitized synthetic fixture:
+
+```powershell
+.\scripts\smoke-lmax-shadow-local.ps1
+```
+
+The smoke validates FakeLmax-only health, replays `tests/fixtures/lmax-shadow/lmax-fix-lifecycle-evidence-v1.json`, checks replay and observation endpoints, verifies shadow audit events, and makes no external calls.
 

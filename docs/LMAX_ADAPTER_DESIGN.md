@@ -162,3 +162,5 @@ Shadow mode now has a local observation store and replay harness. The store acce
 
 Blocking shadow observations create operator-visible exception cases. Warning observations remain review items. This is replay infrastructure only; live shadow mode remains a future activation gate and the API/Worker remain FakeLmax-only.
 
+The isolated Connectivity Lab can export a sanitized lifecycle evidence file with schema `lmax-fix-lifecycle-evidence-v1`. That file contains normalized execution reports, `ExecType=I` order-status reports, trade-capture reports, consistency checks, and warnings, but no credentials, authorization headers, raw FIX logon password tags, or main-database persistence. `scripts/replay-lmax-lab-evidence.ps1` converts the evidence JSON into a local `POST /lmax-shadow/replay` request using `inputSource=LabEvidenceFile`; `scripts/smoke-lmax-shadow-local.ps1` replays the synthetic fixture under `tests/fixtures/lmax-shadow` to verify the loop without any FIX/network call.
+
