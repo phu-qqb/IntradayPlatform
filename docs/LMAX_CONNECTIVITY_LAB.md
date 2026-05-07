@@ -649,6 +649,74 @@ Before real connectivity work:
 
 After logon works, next safe steps are read-only market data snapshot investigation and FIX trade-capture recovery. Account REST API exploration is parked. Any demo order lifecycle remains a separate future approval and is not implemented here.
 
+## Live Read-Only Evidence Capture Lab
+
+The Connectivity Lab now includes a lab-only read-only capture command for collecting a small amount of LMAX Demo FIX evidence and exporting it as sanitized JSON for local shadow replay.
+
+```powershell
+.\scripts\lmax-lab-fix-readonly-evidence-capture.ps1
+.\scripts\lmax-lab-fix-readonly-evidence-capture.ps1 -AllowExternalConnections -TradeCaptureLookbackMinutes 60 -MaxReports 20
+.\scripts\lmax-lab-fix-readonly-evidence-capture.ps1 -AllowExternalConnections -ClOrdID "known-demo-client-order-id"
+```
+
+Without `-AllowExternalConnections`, the script exits as skipped and makes no network call. With the flag, the lab command can run only read-only actions: a FIX Market Data snapshot for EURUSD / `SecurityID=4001`, a bounded `TradeCaptureReportRequest`, and optionally an `OrderStatusRequest` when an explicit `ClOrdID` is supplied. It never builds or sends `NewOrderSingle`, requires `AllowOrderSubmission=false`, and writes no data to the main platform database.
+
+Generated evidence files are written under `artifacts/lmax-lab/evidence/` by default with names like:
+
+```text
+lmax-readonly-evidence-YYYYMMDD-HHMMSS.json
+```
+
+Generated evidence uses schema `lmax-fix-lifecycle-evidence-v1` and contains normalized sections compatible with `POST /lmax-shadow/replay`: `executionReports`, `orderStatuses`, `tradeCaptureReports`, and `protocolRejects`. Metadata records `source=ConnectivityLab`, `captureMode=ReadOnly`, instrument details, capture timestamps, and redaction markers. Evidence files must not contain credentials, authorization headers, raw logon password tag `554`, or account secrets, and generated files are ignored through the repository `artifacts/` ignore rule.
+
+Replay is a separate local-only step:
+
+```powershell
+.\scripts\replay-lmax-lab-evidence-file.ps1 -EvidenceFile .\artifacts\lmax-lab\evidence\lmax-readonly-evidence-YYYYMMDD-HHMMSS.json
+```
+
+The replay script posts only to the local API, does not connect to LMAX, verifies safe mutation counts when available, and prints replay and observation counts.
+
+### Evidence Contract Validation
+
+Read-only and lifecycle evidence files use schema `lmax-fix-lifecycle-evidence-v1`. Required replay arrays are `executionReports`, `orderStatuses`, `tradeCaptureReports`, and `protocolRejects`; generated evidence must use `orderStatuses`, not the legacy `orderStatusReports` name. TradeCapture `tradeDate` is normalized to `yyyy-MM-dd`, raw FIX side values `1`/`2` are normalized to `Buy`/`Sell`, and missing FIX TradeUTI is represented as explicit `tradeUti: null`.
+
+Evidence validation checks schema version, replay-compatible metadata, array shapes, ISO timestamps, numeric quantity/price fields, normalized side values, redaction markers, and credential-like content. The replay helper refuses files with validation errors unless `-AllowInvalidEvidence` is used for diagnostics.
+
+The validator also infers an evidence mode and writes it into normalized JSON as `evidenceMode`:
+
+- `EmptyReadOnly`: all replay arrays are present and empty.
+- `MarketDataOnly`: market-data snapshot context is present, with no execution/order/trade/reject evidence.
+- `TradeCaptureOnly`: one or more `35=AE` trade-capture reports, with no other replay evidence.
+- `OrderStatusOnly`: one or more status-only `ExecType=I` order-status reports; these are never fill evidence.
+- `ProtocolRejectOnly`: one or more session-level `35=3` rejects.
+- `MixedReadOnly`: read-only combinations such as market data plus order-status and trade-capture evidence.
+- `SyntheticLifecycle`: lifecycle fixture or evidence containing execution, order-status, and trade-capture sections.
+
+Market data is captured as context only and does not currently create shadow observations. TradeCapture AE is recovery evidence, not the official daily reconciliation source; EOD files remain authoritative for daily reconciliation and TradeUTI.
+
+### Shadow Observation Policy
+
+Replay classification is policy-driven:
+
+- Empty and market-data-only evidence replays successfully with zero trading observations.
+- TradeCapture-only AE that does not match an internal fill is a `Warning` in lab/read-only mode. It is recovery evidence for review, not an instruction to create a fill.
+- OrderStatus-only `ExecType=I` is status-only. It is never treated as fill evidence; unknown internal orders from status-only evidence are non-blocking warnings in lab mode.
+- Synthetic lifecycle fills missing internally are warnings in offline fixture context.
+- Protocol rejects for read-only recovery requests such as `35=AD` or `35=H` are warnings. Protocol rejects for `35=D` or unknown order-path requests are blocking and create exception cases.
+- Mixed read-only evidence applies these rules per observation and dedupes repeated logical observations by fingerprint.
+
+Observation DTOs expose the policy code, evidence mode, source event type, rationale, suggested operator action, and whether an exception case is created.
+
+Validate a file without API or LMAX access:
+
+```powershell
+.\scripts\validate-lmax-lab-evidence-file.ps1 -EvidenceFile .\tests\fixtures\lmax-shadow\lmax-fix-lifecycle-evidence-v1.json
+.\scripts\validate-lmax-lab-evidence-file.ps1 -EvidenceFile .\artifacts\lmax-lab\evidence\lmax-readonly-evidence-YYYYMMDD-HHMMSS.json -WriteNormalizedCopy
+```
+
+Generated evidence files are local artifacts and should not be committed.
+
 ## Current Limitations
 
 - No official LMAX client library is wired in.

@@ -1,0 +1,38 @@
+{
+  "schemaVersion": "lmax-fix-lifecycle-evidence-v1",
+  "createdAtUtc": "2026-05-06T10:03:00Z",
+  "capturedAtUtc": "2026-05-06T10:03:00Z",
+  "source": "ConnectivityLab",
+  "inputSource": "LabEvidenceFile",
+  "reason": "Replay sanitized order-status-only LMAX evidence",
+  "environment": "Demo",
+  "captureMode": "ReadOnly",
+  "redaction": "SanitizedNoCredentialsNoRawLogon",
+  "dryRun": false,
+  "instrumentSymbol": "EURUSD",
+  "securityId": "4001",
+  "slashSymbol": "EUR/USD",
+  "executionReports": [],
+  "orderStatuses": [
+    {
+      "brokerOrderId": "BO-STATUS-ONLY-1",
+      "clientOrderId": "CO-STATUS-ONLY-1",
+      "symbol": "EURUSD",
+      "orderStatus": "Filled",
+      "cumQty": 0.1,
+      "leavesQty": 0,
+      "transactTimeUtc": "2026-05-06T17:04:00Z",
+      "payload": {
+        "execId": "status-only-1",
+        "executionType": "OrderStatus",
+        "securityId": "4001",
+        "securityIdSource": "8"
+      }
+    }
+  ],
+  "tradeCaptureReports": [],
+  "protocolRejects": [],
+  "warnings": [
+    "ExecType=I OrderStatus is status-only and must not be treated as fill evidence."
+  ]
+}

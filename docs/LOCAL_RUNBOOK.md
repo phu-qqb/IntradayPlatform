@@ -93,6 +93,8 @@ The adapter contract parity gate is documented in `docs/ADAPTER_CONTRACTS.md`. I
 
 The adapter skeleton includes pure FIX message builders and mappers plus a runtime safety validator. It is disabled by default and not registered. There is no local runbook step, UI control, or API endpoint that enables it.
 
+The live shadow reader skeleton is separate from the adapter skeleton and is disabled by default. Its local status/run endpoints are diagnostics for future read-only shadow work only. They do not accept credentials, do not call the Connectivity Lab, do not open FIX sessions, do not submit orders, and do not mutate trading state.
+
 ## Run UI
 
 The local operator cockpit lives at:
@@ -651,4 +653,67 @@ To validate the local replay path with a sanitized synthetic fixture:
 ```
 
 The smoke validates FakeLmax-only health, replays `tests/fixtures/lmax-shadow/lmax-fix-lifecycle-evidence-v1.json`, checks replay and observation endpoints, verifies shadow audit events, and makes no external calls.
+
+The lab can also capture a small read-only LMAX Demo evidence file for later local replay:
+
+```powershell
+.\scripts\lmax-lab-fix-readonly-evidence-capture.ps1
+.\scripts\lmax-lab-fix-readonly-evidence-capture.ps1 -AllowExternalConnections -TradeCaptureLookbackMinutes 60 -MaxReports 20
+.\scripts\replay-lmax-lab-evidence-file.ps1 -EvidenceFile .\artifacts\lmax-lab\evidence\lmax-readonly-evidence-YYYYMMDD-HHMMSS.json
+```
+
+The first command skips without network access. The capture command is Connectivity Lab only, requires explicit `-AllowExternalConnections`, uses read-only market-data/trade-capture/order-status requests, requires `AllowOrderSubmission=false`, never sends `NewOrderSingle`, and writes sanitized JSON under `artifacts/lmax-lab/evidence/`. The replay command posts the file to the local shadow API only and makes no live FIX call.
+
+Validate evidence before replaying:
+
+```powershell
+.\scripts\validate-lmax-lab-evidence-file.ps1 -EvidenceFile .\tests\fixtures\lmax-shadow\lmax-fix-lifecycle-evidence-v1.json
+```
+
+Validation enforces schema `lmax-fix-lifecycle-evidence-v1`, `orderStatuses` arrays, normalized `yyyy-MM-dd` TradeCapture dates, explicit `tradeUti: null` when absent, redaction markers, and no credential-like content. The replay helper prints validation issues and refuses invalid evidence unless explicitly overridden for diagnostics.
+
+Supported evidence modes are `EmptyReadOnly`, `MarketDataOnly`, `TradeCaptureOnly`, `OrderStatusOnly`, `ProtocolRejectOnly`, `MixedReadOnly`, and `SyntheticLifecycle`. Empty and market-data-only files are valid and replay with zero observations. OrderStatus `ExecType=I` is status-only and never fill evidence. TradeCapture AE is recovery evidence for shadow comparison; EOD files remain the official daily reconciliation source.
+
+Observation policy is explicit. Warning observations are operator review items and do not create exception cases by default. Blocking observations create/link exception cases and include policy code, evidence mode, replay id, observation id, and fingerprint in metadata. TradeCapture-only missing internal fills are warnings in lab/read-only mode; protocol rejects for order-path messages such as `35=D` are blocking; protocol rejects for read-only recovery requests are warnings.
+
+To validate and replay the coverage fixtures while the local API is running:
+
+```powershell
+.\scripts\smoke-lmax-evidence-coverage-local.ps1
+```
+
+The smoke validates all supported evidence-mode fixtures, replays them through localhost shadow replay, checks mutation counts where endpoints are available, and makes no LMAX/FIX/network call beyond the local API.
+
+## LMAX Shadow Reader Skeleton
+
+The live shadow reader skeleton is intentionally inert. It is a future-readiness shell for a later read-only LMAX evidence reader, not a live integration.
+
+Current guarantees:
+
+- `LmaxShadowReader:Enabled=false`
+- `LmaxShadowReader:AllowExternalConnections=false`
+- `LmaxShadowReader:AllowCredentialUse=false`
+- `LmaxShadowReader:ReadOnly=true`
+- `LmaxShadowReader:AllowOrderSubmission=false`
+- `LmaxShadowReader:PersistRawFixMessages=false`
+- `LmaxShadowReader:PersistToTradingTables=false`
+- `LmaxShadowReader:DryRun=true`
+
+Useful local checks:
+
+```powershell
+Invoke-RestMethod "http://localhost:5050/lmax-shadow-reader/status"
+Invoke-RestMethod -Method Post -ContentType "application/json" -Body '{"reason":"Verify disabled reader","dryRun":true}' "http://localhost:5050/lmax-shadow-reader/run"
+.\scripts\smoke-lmax-shadow-reader-local.ps1
+```
+
+The smoke validates `GET /health`, confirms the runtime remains `FakeLmaxGateway` with live trading and external connections disabled, checks that the reader reports `Disabled`, verifies the run endpoint is blocked by default, and confirms available mutation counts are unchanged. It posts only to localhost and makes no FIX/network call.
+
+Shadow Reader Quality Gate #1 proves the disabled skeleton remains blocked under unsafe and contradictory configuration. Safety gate DTOs include gate name, status, observed value, expected safe value, and message. Dangerous settings such as `AllowOrderSubmission=true`, `PersistToTradingTables=true`, `ReadOnly=false`, `DryRun=false`, invalid event limits, or raw FIX persistence produce failed gates and do not execute. Blocked run attempts are audited with failed gate names and sanitized metadata.
+
+Activating a real live shadow reader remains future work and would require explicit configuration, governance approval, runbook controls, operational rehearsal, and a separate safety gate. There is no scheduler auto-run and no UI control to enable LMAX.
+
+Shadow observations include stable fingerprints. Duplicate observations are collapsed inside one replay, but replaying the same file again creates a new replay run with matching fingerprints so history is retained. The smoke also checks that available order/fill/position counts are unchanged by replay.
+
+Blocking shadow observations create exception cases once per replay/fingerprint. Warning observations do not create exception cases by default. Observation acknowledge, resolve, and ignore actions require a reason, remain queryable after transition, and create operator audit events.
 

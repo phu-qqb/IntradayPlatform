@@ -1237,6 +1237,10 @@ namespace QQ.Production.Intraday.Infrastructure.SqlServer.Migrations
                     b.Property<string>("DifferenceJson")
                         .HasColumnType("nvarchar(max)");
 
+                    b.Property<string>("Fingerprint")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(450)");
+
                     b.Property<Guid?>("InstrumentId")
                         .HasColumnType("uniqueidentifier");
 
@@ -1280,9 +1284,13 @@ namespace QQ.Production.Intraday.Infrastructure.SqlServer.Migrations
 
                     b.HasIndex("CreatedAtUtc");
 
+                    b.HasIndex("Fingerprint");
+
                     b.HasIndex("InstrumentId");
 
                     b.HasIndex("ReplayRunId");
+
+                    b.HasIndex("ReplayRunId", "Fingerprint");
 
                     b.HasIndex("Severity");
 
@@ -1310,6 +1318,12 @@ namespace QQ.Production.Intraday.Infrastructure.SqlServer.Migrations
                     b.Property<DateTimeOffset>("CreatedAtUtc")
                         .HasColumnType("datetimeoffset");
 
+                    b.Property<int>("DuplicateEventCount")
+                        .HasColumnType("int");
+
+                    b.Property<int>("InputEventCount")
+                        .HasColumnType("int");
+
                     b.Property<string>("InputJson")
                         .HasColumnType("nvarchar(max)");
 
@@ -1329,6 +1343,9 @@ namespace QQ.Production.Intraday.Infrastructure.SqlServer.Migrations
                         .HasColumnType("datetimeoffset");
 
                     b.Property<int>("Status")
+                        .HasColumnType("int");
+
+                    b.Property<int>("UniqueEventCount")
                         .HasColumnType("int");
 
                     b.Property<int>("WarningObservationCount")

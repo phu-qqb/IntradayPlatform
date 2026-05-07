@@ -225,6 +225,8 @@ public sealed class IntradayDbContext(DbContextOptions<IntradayDbContext> option
         modelBuilder.Entity<LmaxShadowObservation>().HasIndex(x => x.BrokerOrderId);
         modelBuilder.Entity<LmaxShadowObservation>().HasIndex(x => x.InstrumentId);
         modelBuilder.Entity<LmaxShadowObservation>().HasIndex(x => x.ReplayRunId);
+        modelBuilder.Entity<LmaxShadowObservation>().HasIndex(x => x.Fingerprint);
+        modelBuilder.Entity<LmaxShadowObservation>().HasIndex(x => new { x.ReplayRunId, x.Fingerprint });
         modelBuilder.Entity<LmaxShadowObservation>().HasIndex(x => x.CreatedAtUtc);
         modelBuilder.Entity<LmaxShadowReplayRun>().HasIndex(x => x.Status);
         modelBuilder.Entity<LmaxShadowReplayRun>().HasIndex(x => x.InputSource);
@@ -1367,7 +1369,9 @@ public sealed class SqlServerLmaxShadowRepository(IntradayDbContext dbContext) :
         if (filter.Type is not null) query = query.Where(x => x.Type == filter.Type);
         if (!string.IsNullOrWhiteSpace(filter.Symbol)) query = query.Where(x => x.Symbol == filter.Symbol);
         if (!string.IsNullOrWhiteSpace(filter.BrokerExecutionId)) query = query.Where(x => x.BrokerExecutionId == filter.BrokerExecutionId);
+        if (!string.IsNullOrWhiteSpace(filter.BrokerOrderId)) query = query.Where(x => x.BrokerOrderId == filter.BrokerOrderId);
         if (!string.IsNullOrWhiteSpace(filter.ClientOrderId)) query = query.Where(x => x.ClientOrderId == filter.ClientOrderId);
+        if (!string.IsNullOrWhiteSpace(filter.Fingerprint)) query = query.Where(x => x.Fingerprint == filter.Fingerprint);
         return await query.OrderByDescending(x => x.CreatedAtUtc).Take(Math.Clamp(filter.Limit, 1, 500)).ToListAsync(cancellationToken);
     }
 }

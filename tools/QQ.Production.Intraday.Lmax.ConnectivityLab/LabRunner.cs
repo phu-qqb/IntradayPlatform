@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
@@ -37,6 +38,31 @@ public sealed class LmaxConnectivityLabRunner(
             var tradeCaptureResult = await fixClient.TradeCaptureSmokeAsync(options, tradeCaptureOptions, cancellationToken);
             WriteTradeCaptureResult(tradeCaptureResult);
             return tradeCaptureResult.Status == "Failed" ? 1 : 0;
+        }
+
+        if (command.Equals("fix-readonly-evidence-capture", StringComparison.OrdinalIgnoreCase) ||
+            command.Equals("capture-readonly-evidence", StringComparison.OrdinalIgnoreCase))
+        {
+            var captureResult = await CaptureReadOnlyEvidenceAsync(
+                options,
+                GetIntArg(optionArgs, "trade-capture-lookback-minutes", GetIntArg(optionArgs, "lookback-minutes", 60)),
+                GetIntArg(optionArgs, "max-reports", 20),
+                GetStringArg(optionArgs, "output-directory") ?? Path.Combine("artifacts", "lmax-lab", "evidence"),
+                GetStringArg(optionArgs, "cl-ord-id"),
+                GetStringArg(optionArgs, "account"),
+                GetIntArg(optionArgs, "max-wait-seconds", 10),
+                HasFlag(optionArgs, "show-fix-messages"),
+                cancellationToken);
+            WriteReadOnlyEvidenceCaptureResult(captureResult);
+            return captureResult.Status == "Failed" ? 1 : captureResult.Status == "Skipped" ? 2 : 0;
+        }
+
+        if (command.Equals("validate-evidence-file", StringComparison.OrdinalIgnoreCase) ||
+            command.Equals("validate-lmax-evidence-file", StringComparison.OrdinalIgnoreCase))
+        {
+            var path = GetStringArg(optionArgs, "evidence-file") ?? GetStringArg(optionArgs, "path");
+            var writeNormalized = HasFlag(optionArgs, "write-normalized-copy");
+            return ValidateEvidenceFile(path, writeNormalized);
         }
 
         if (command.Equals("fix-trade-capture-replay", StringComparison.OrdinalIgnoreCase))
@@ -206,6 +232,85 @@ public sealed class LmaxConnectivityLabRunner(
         if (string.IsNullOrWhiteSpace(options.PublicDataApiBaseUrl)) return LabCommandResult.Skipped("check-public-data-config", "Public data API base URL is not configured.", decisions);
         if (string.IsNullOrWhiteSpace(options.InstrumentSymbol) || string.IsNullOrWhiteSpace(options.LmaxInstrumentId)) return LabCommandResult.Skipped("check-public-data-config", "Instrument symbol or LMAX instrument id is not configured.", decisions);
         return LabCommandResult.Ok("check-public-data-config", $"Configured mapping {options.InstrumentSymbol} -> {options.LmaxInstrumentId}. No network call was made.", decisions);
+    }
+
+    public async Task<LmaxFixReadOnlyEvidenceCaptureResult> CaptureReadOnlyEvidenceAsync(
+        LmaxConnectivityLabOptions options,
+        int tradeCaptureLookbackMinutes,
+        int maxReports,
+        string outputDirectory,
+        string? clOrdId,
+        string? account,
+        int maxWaitSeconds,
+        bool showFixMessages,
+        CancellationToken cancellationToken)
+    {
+        var startedAt = DateTimeOffset.UtcNow;
+        var diagnostics = new List<string>
+        {
+            "CaptureMode=ReadOnly",
+            $"Instrument={options.InstrumentSymbol}",
+            $"LmaxInstrumentId={options.LmaxInstrumentId}",
+            $"OrderStatusRequested={!string.IsNullOrWhiteSpace(clOrdId)}"
+        };
+        var safetyDecisions = LmaxConnectivityLabSafetyValidator.DecisionsForExternalCommand(options)
+            .Concat([
+                "LAB ONLY: read-only evidence capture.",
+                "No NewOrderSingle is built or sent.",
+                "No order submission path is used.",
+                "No data is persisted to the main trading database."
+            ])
+            .ToList();
+
+        if (!options.AllowExternalConnections)
+        {
+            return new LmaxFixReadOnlyEvidenceCaptureResult("fix-readonly-evidence-capture", "Skipped", "AllowExternalConnections=false. No FIX/network call was made.", startedAt, DateTimeOffset.UtcNow, null, null, null, string.Empty, safetyDecisions, diagnostics);
+        }
+
+        if (options.AllowOrderSubmission)
+        {
+            return new LmaxFixReadOnlyEvidenceCaptureResult("fix-readonly-evidence-capture", "Failed", "AllowOrderSubmission must be false for read-only evidence capture.", startedAt, DateTimeOffset.UtcNow, null, null, null, string.Empty, safetyDecisions, diagnostics);
+        }
+
+        options.ShowFixMessages = showFixMessages;
+        options.MarketDataMaxMessages = Math.Max(1, options.MarketDataMaxMessages);
+        options.MarketDataMaxWaitSeconds = Math.Max(1, maxWaitSeconds);
+        var marketData = await fixClient.MarketDataSnapshotSmokeAsync(options, cancellationToken);
+        var tradeCaptureOptions = LmaxFixTradeCaptureRequestOptions.From(
+            DateTimeOffset.UtcNow,
+            Math.Max(1, tradeCaptureLookbackMinutes),
+            null,
+            null,
+            account,
+            Math.Max(1, maxWaitSeconds),
+            Math.Max(1, maxReports),
+            showFixMessages);
+        var tradeCapture = await fixClient.TradeCaptureSmokeAsync(options, tradeCaptureOptions, cancellationToken);
+        LmaxFixOrderStatusSmokeResult? orderStatus = null;
+        if (!string.IsNullOrWhiteSpace(clOrdId))
+        {
+            orderStatus = await fixClient.OrderStatusSmokeAsync(
+                options,
+                new LmaxFixOrderStatusSmokeRequest(clOrdId, account, options.LmaxInstrumentId, options.FixSecurityIdSource, null, null, Math.Max(1, maxWaitSeconds), showFixMessages),
+                cancellationToken);
+        }
+
+        var completedAt = DateTimeOffset.UtcNow;
+        var path = WriteReadOnlyEvidenceJson(outputDirectory, options, startedAt, completedAt, marketData, tradeCapture, orderStatus, diagnostics);
+        var failed = marketData.Status == "Failed" || tradeCapture.Status == "Failed" || orderStatus?.Status == "Failed";
+        var skipped = marketData.Status == "Skipped" && tradeCapture.Status == "Skipped" && orderStatus is null;
+        return new LmaxFixReadOnlyEvidenceCaptureResult(
+            "fix-readonly-evidence-capture",
+            failed ? "Failed" : skipped ? "Skipped" : "Ok",
+            $"Read-only evidence capture completed. Evidence JSON: {path}",
+            startedAt,
+            completedAt,
+            marketData,
+            tradeCapture,
+            orderStatus,
+            path,
+            safetyDecisions,
+            diagnostics);
     }
 
     public LabCommandResult OrderLifecycleDryRun(LmaxConnectivityLabOptions options)
@@ -637,6 +742,165 @@ public sealed class LmaxConnectivityLabRunner(
         }
     }
 
+    private static void WriteReadOnlyEvidenceCaptureResult(LmaxFixReadOnlyEvidenceCaptureResult result)
+    {
+        Console.WriteLine($"Command: {result.Command}");
+        Console.WriteLine($"Status: {result.Status}");
+        Console.WriteLine($"StartedAtUtc: {result.StartedAtUtc:O}");
+        Console.WriteLine($"CompletedAtUtc: {result.CompletedAtUtc:O}");
+        if (!string.IsNullOrWhiteSpace(result.EvidenceJsonPath)) Console.WriteLine($"EvidenceJsonPath: {result.EvidenceJsonPath}");
+        if (!string.IsNullOrWhiteSpace(result.EvidenceJsonPath) && File.Exists(result.EvidenceJsonPath))
+        {
+            var validation = LmaxEvidenceContractValidator.ValidateAndNormalize(File.ReadAllText(result.EvidenceJsonPath));
+            Console.WriteLine($"EvidenceValidation: {(validation.IsValid ? "Ok" : "Failed")} Mode={validation.EvidenceMode} Errors={validation.ErrorCount} Warnings={validation.WarningCount} Info={validation.Issues.Count(x => x.Severity == LmaxEvidenceContractIssueSeverity.Info)}");
+            Console.WriteLine($"NoSensitiveContent: {!LmaxEvidenceContractValidator.ContainsSensitiveEvidence(validation.NormalizedJson)}");
+            foreach (var issue in validation.Issues)
+            {
+                Console.WriteLine($"EvidenceValidationIssue: {issue.Severity} {issue.Path} {issue.Code} {issue.Message}");
+            }
+        }
+        Console.WriteLine($"MarketDataStatus: {result.MarketData?.Status ?? "(not run)"}");
+        Console.WriteLine($"MarketDataSnapshotReceived: {result.MarketData?.MarketDataSnapshotReceived ?? false}");
+        Console.WriteLine($"ExecutionReportCount: 0");
+        Console.WriteLine($"TradeCaptureStatus: {result.TradeCapture?.Status ?? "(not run)"}");
+        Console.WriteLine($"TradeCaptureReportCount: {result.TradeCapture?.TradeReportCount ?? 0}");
+        Console.WriteLine($"OrderStatusStatus: {result.OrderStatus?.Status ?? "(not requested)"}");
+        Console.WriteLine($"OrderStatusExecutionReportCount: {result.OrderStatus?.ExecutionReports.Count ?? 0}");
+        Console.WriteLine($"ProtocolRejectCount: {BuildReadOnlyProtocolRejects(result.TradeCapture, result.OrderStatus).Count()}");
+        Console.WriteLine($"Message: {result.Message}");
+        foreach (var diagnostic in result.Diagnostics)
+        {
+            Console.WriteLine($"Diagnostic: {diagnostic}");
+        }
+
+        foreach (var decision in result.SafetyDecisions)
+        {
+            Console.WriteLine($"- {decision}");
+        }
+    }
+
+    private static string WriteReadOnlyEvidenceJson(
+        string outputDirectory,
+        LmaxConnectivityLabOptions options,
+        DateTimeOffset startedAtUtc,
+        DateTimeOffset completedAtUtc,
+        LmaxFixMarketDataSmokeResult? marketData,
+        LmaxFixTradeCaptureSmokeResult? tradeCapture,
+        LmaxFixOrderStatusSmokeResult? orderStatus,
+        IReadOnlyList<string> diagnostics)
+    {
+        var directory = Path.GetFullPath(outputDirectory);
+        if (directory.StartsWith(@"\\", StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException("Refusing to write read-only evidence JSON to a UNC path.");
+        }
+
+        Directory.CreateDirectory(directory);
+        var path = Path.Combine(directory, $"lmax-readonly-evidence-{completedAtUtc:yyyyMMdd-HHmmss}.json");
+        var exported = new
+        {
+            schemaVersion = "lmax-fix-lifecycle-evidence-v1",
+            createdAtUtc = completedAtUtc,
+            capturedAtUtc = completedAtUtc,
+            source = "ConnectivityLab",
+            inputSource = "LabEvidenceFile",
+            reason = "Replay LMAX read-only lab evidence",
+            environment = options.EnvironmentName,
+            captureMode = "ReadOnly",
+            redaction = "SanitizedNoCredentialsNoRawLogon",
+            dryRun = false,
+            instrument = options.InstrumentSymbol,
+            instrumentSymbol = options.InstrumentSymbol,
+            lmaxInstrumentId = options.LmaxInstrumentId,
+            securityId = options.LmaxInstrumentId,
+            slashSymbol = options.LmaxSlashSymbol,
+            startedAtUtc,
+            completedAtUtc,
+            marketData = marketData is null ? null : new
+            {
+                status = marketData.Status,
+                snapshotReceived = marketData.MarketDataSnapshotReceived,
+                bestBid = marketData.BestBid,
+                bestAsk = marketData.BestAsk,
+                mid = marketData.Mid,
+                entryCount = marketData.Entries.Count,
+                entries = marketData.Entries.Select(x => new
+                {
+                    symbol = x.Symbol,
+                    securityId = x.SecurityId,
+                    entryType = x.EntryType,
+                    price = x.Price,
+                    size = x.Size
+                }).ToArray()
+            },
+            executionReports = Array.Empty<object>(),
+            orderStatuses = orderStatus?.ExecutionReports.Select(ToShadowOrderStatusReport).ToArray() ?? [],
+            tradeCaptureReports = tradeCapture?.Reports.Select(ToShadowTradeCaptureReport).ToArray() ?? [],
+            protocolRejects = BuildReadOnlyProtocolRejects(tradeCapture, orderStatus).ToArray(),
+            consistencyChecks = Array.Empty<object>(),
+            warnings = BuildReadOnlyEvidenceWarnings(marketData, tradeCapture, orderStatus).Concat(diagnostics).ToArray()
+        };
+
+        var json = JsonSerializer.Serialize(exported, new JsonSerializerOptions(JsonSerializerDefaults.Web)
+        {
+            WriteIndented = true,
+            Converters = { new JsonStringEnumConverter() }
+        });
+
+        var validation = LmaxEvidenceContractValidator.ValidateAndNormalize(json);
+        if (validation.ErrorCount > 0)
+        {
+            throw new InvalidOperationException("Refusing to write read-only evidence JSON because contract validation failed: " + string.Join("; ", validation.Issues.Where(x => x.Severity == LmaxEvidenceContractIssueSeverity.Error).Select(x => $"{x.Path}:{x.Code}")));
+        }
+
+        if (ContainsSensitiveEvidence(validation.NormalizedJson))
+        {
+            throw new InvalidOperationException("Refusing to write read-only evidence JSON because sanitized output contains sensitive markers.");
+        }
+
+        File.WriteAllText(path, validation.NormalizedJson);
+        return path;
+    }
+
+    private static IEnumerable<object> BuildReadOnlyProtocolRejects(LmaxFixTradeCaptureSmokeResult? tradeCapture, LmaxFixOrderStatusSmokeResult? orderStatus)
+    {
+        if (tradeCapture?.RequestRejected == true)
+        {
+            yield return new
+            {
+                refMsgType = tradeCapture.RejectRefMsgType,
+                refTagId = TryParseIntOrNull(tradeCapture.RejectRefTagId),
+                reasonCode = TryParseIntOrNull(tradeCapture.RejectReasonCode),
+                text = tradeCapture.RejectText ?? tradeCapture.AckRejectText,
+                clientOrderId = (string?)null,
+                brokerOrderId = (string?)null,
+                payload = new { source = "TradeCaptureReportRequest" }
+            };
+        }
+
+        if (orderStatus?.RequestRejected == true)
+        {
+            yield return new
+            {
+                refMsgType = orderStatus.RejectRefMsgType,
+                refTagId = TryParseIntOrNull(orderStatus.RejectRefTagId),
+                reasonCode = (int?)null,
+                text = orderStatus.RejectText,
+                clientOrderId = orderStatus.ClOrdId,
+                brokerOrderId = orderStatus.BrokerOrderId,
+                payload = new { source = "OrderStatusRequest" }
+            };
+        }
+    }
+
+    private static IEnumerable<string> BuildReadOnlyEvidenceWarnings(LmaxFixMarketDataSmokeResult? marketData, LmaxFixTradeCaptureSmokeResult? tradeCapture, LmaxFixOrderStatusSmokeResult? orderStatus)
+    {
+        if (marketData?.Status is "Skipped" or "Failed") yield return $"MarketData: {marketData.Message}";
+        if (tradeCapture?.Status is "Skipped" or "Failed") yield return $"TradeCapture: {tradeCapture.Message}";
+        if (orderStatus?.Status is "Skipped" or "Failed") yield return $"OrderStatus: {orderStatus.Message}";
+        if (tradeCapture?.Reports.Count > 0) yield return "FIX AE does not currently provide TradeUTI; EOD remains official reconciliation source.";
+    }
+
     private static void WriteLifecycleEvidenceJson(string outputJsonPath, LmaxFixLifecycleEvidenceResult result)
     {
         var fullPath = Path.GetFullPath(outputJsonPath);
@@ -656,7 +920,13 @@ public sealed class LmaxConnectivityLabRunner(
         {
             schemaVersion = "lmax-fix-lifecycle-evidence-v1",
             createdAtUtc = DateTimeOffset.UtcNow,
+            capturedAtUtc = DateTimeOffset.UtcNow,
             source = "ConnectivityLab",
+            inputSource = "LabEvidenceFile",
+            reason = "Replay LMAX lab lifecycle evidence",
+            environment = "Demo",
+            captureMode = "DemoLifecycleEvidence",
+            redaction = "SanitizedNoCredentialsNoRawLogon",
             dryRun = !report.OrderSent,
             clientOrderId = report.ClientOrderId,
             brokerOrderId = report.BrokerOrderId,
@@ -667,7 +937,7 @@ public sealed class LmaxConnectivityLabRunner(
             requestedOrderType = report.RequestedOrderType,
             requestedTimeInForce = report.RequestedTimeInForce,
             executionReports = report.OrderSubmission.ExecutionReports.Select(ToShadowExecutionReport).ToArray(),
-            orderStatusReports = report.OrderStatusRecovery?.ExecutionReports.Select(ToShadowOrderStatusReport).ToArray() ?? [],
+            orderStatuses = report.OrderStatusRecovery?.ExecutionReports.Select(ToShadowOrderStatusReport).ToArray() ?? [],
             tradeCaptureReports = report.TradeCaptureRecovery?.Reports.Select(ToShadowTradeCaptureReport).ToArray() ?? [],
             protocolRejects = result.OrderSubmission.RequestRejected
                 ? new object[]
@@ -697,17 +967,60 @@ public sealed class LmaxConnectivityLabRunner(
         var json = JsonSerializer.Serialize(exported, new JsonSerializerOptions(JsonSerializerDefaults.Web)
         {
             WriteIndented = true,
-            DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
             Converters = { new JsonStringEnumConverter() }
         });
 
-        if (ContainsSensitiveEvidence(json))
+        var validation = LmaxEvidenceContractValidator.ValidateAndNormalize(json);
+        if (validation.ErrorCount > 0)
+        {
+            throw new InvalidOperationException("Refusing to write lifecycle evidence JSON because contract validation failed: " + string.Join("; ", validation.Issues.Where(x => x.Severity == LmaxEvidenceContractIssueSeverity.Error).Select(x => $"{x.Path}:{x.Code}")));
+        }
+
+        if (ContainsSensitiveEvidence(validation.NormalizedJson))
         {
             throw new InvalidOperationException("Refusing to write lifecycle evidence JSON because sanitized output contains sensitive markers.");
         }
 
-        File.WriteAllText(fullPath, json);
+        File.WriteAllText(fullPath, validation.NormalizedJson);
         Console.WriteLine($"LifecycleEvidenceJsonPath: {fullPath}");
+    }
+
+    private static int ValidateEvidenceFile(string? path, bool writeNormalizedCopy)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            Console.WriteLine("Evidence file path is required. Use --evidence-file=<path>.");
+            return 2;
+        }
+
+        var fullPath = Path.GetFullPath(path);
+        if (!File.Exists(fullPath))
+        {
+            Console.WriteLine($"Evidence file not found: {fullPath}");
+            return 2;
+        }
+
+        var validation = LmaxEvidenceContractValidator.ValidateAndNormalize(File.ReadAllText(fullPath));
+        Console.WriteLine($"EvidenceFile: {fullPath}");
+        Console.WriteLine($"SchemaVersion: {validation.SchemaVersion}");
+        Console.WriteLine($"EvidenceMode: {validation.EvidenceMode}");
+        Console.WriteLine($"ValidationStatus: {(validation.IsValid ? "Ok" : "Failed")}");
+        Console.WriteLine($"Errors: {validation.ErrorCount}");
+        Console.WriteLine($"Warnings: {validation.WarningCount}");
+        Console.WriteLine($"NoSensitiveContent: {!LmaxEvidenceContractValidator.ContainsSensitiveEvidence(validation.NormalizedJson)}");
+        foreach (var issue in validation.Issues)
+        {
+            Console.WriteLine($"{issue.Severity}: {issue.Path} {issue.Code} - {issue.Message}");
+        }
+
+        if (writeNormalizedCopy && validation.NormalizedJson.Length > 0)
+        {
+            var normalizedPath = Path.Combine(Path.GetDirectoryName(fullPath) ?? ".", Path.GetFileNameWithoutExtension(fullPath) + ".normalized.json");
+            File.WriteAllText(normalizedPath, validation.NormalizedJson);
+            Console.WriteLine($"NormalizedEvidencePath: {normalizedPath}");
+        }
+
+        return validation.IsValid ? 0 : 1;
     }
 
     private static object ToShadowExecutionReport(LmaxFixExecutionReport report) => new
@@ -762,7 +1075,7 @@ public sealed class LmaxConnectivityLabRunner(
         side = report.NormalizedSide?.ToString() ?? report.Side,
         lastQty = report.LastQty,
         lastPx = report.LastPx,
-        tradeDate = report.TradeDate,
+        tradeDate = NormalizeTradeDateForEvidence(report.TradeDate),
         transactTimeUtc = report.TransactTime,
         tradeUti = (string?)null,
         lastReportRequested = report.LastReportRequested,
@@ -776,6 +1089,22 @@ public sealed class LmaxConnectivityLabRunner(
 
     private static int? TryParseIntOrNull(string? value)
         => int.TryParse(value, out var parsed) ? parsed : null;
+
+    private static string? NormalizeTradeDateForEvidence(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return null;
+        if (DateOnly.TryParseExact(value, "yyyyMMdd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var compact))
+        {
+            return compact.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+        }
+
+        if (DateOnly.TryParse(value, CultureInfo.InvariantCulture, DateTimeStyles.None, out var parsed))
+        {
+            return parsed.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+        }
+
+        return value;
+    }
 
     private static bool ContainsSensitiveEvidence(string json)
     {

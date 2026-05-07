@@ -596,10 +596,12 @@ public enum OperatorAuditEventType
     DailyOperationsSummaryViewed,
     LmaxShadowReplayStarted,
     LmaxShadowReplayCompleted,
+    LmaxShadowReplayFailed,
     LmaxShadowObservationCreated,
     LmaxShadowObservationAcknowledged,
     LmaxShadowObservationResolved,
     LmaxShadowObservationIgnored,
+    LmaxShadowReaderRunBlocked,
     Unknown
 }
 

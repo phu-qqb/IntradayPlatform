@@ -83,6 +83,7 @@ Session reject mapping:
 - ExecutionReport fills and TradeCapture fills with the same `ExecID` are correlated.
 - Protocol rejects and OrderStatus reports never create fills.
 - Partial fill plus expired creates one fill and an expired child order state.
+- Shadow replay observations have deterministic fingerprints and duplicate fingerprints are collapsed within one replay run.
 
 ## Shadow Mode Observations
 
@@ -121,4 +122,48 @@ The current `LmaxVenueGatewaySkeleton` is intentionally inert. It is a named pla
 The shadow replay harness is the observable side of the adapter contract gate. It accepts normalized contract-shaped evidence and produces observations such as matching fills, missing internal fills, order status mismatches, duplicate executions, and protocol rejects. TradeCapture AE evidence is recovery/evidence and must not double-count fills. OrderStatus ExecType=I remains status-only.
 
 Replay is local JSON/API driven and does not connect to LMAX. Observation actions require a reason and are audited.
+
+Repeated replay of the same evidence creates a separate replay run and separate observations, but the fingerprints remain stable. That preserves the audit/history trail while making recurring observations groupable. Replay summaries expose input, unique, duplicate, warning, blocking, and total observation counts.
+
+Shadow replay may write only replay runs, observations, audit events, and configured exception cases for blocking observations. It must not update internal orders, fills, positions, risk decisions, model runs, target positions, drift snapshots, or reconciliation state.
+
+The read-only Connectivity Lab evidence capture command writes the same replay-compatible normalized contract shape to local JSON. It can include market-data metadata, TradeCapture AE recovery evidence, optional OrderStatus `ExecType=I` reports for a supplied `ClOrdID`, and protocol rejects. It cannot submit orders, does not persist raw FIX into trading tables, and is replayed through the same `/lmax-shadow/replay` contract with `inputSource=LabEvidenceFile`.
+
+Evidence schema `lmax-fix-lifecycle-evidence-v1` requires `executionReports`, `orderStatuses`, `tradeCaptureReports`, and `protocolRejects` arrays. Contract normalization converts compact FIX trade dates to `yyyy-MM-dd`, raw FIX side values to `Buy`/`Sell`, legacy `orderStatusReports` to `orderStatuses`, missing arrays to empty arrays, and absent TradeUTI to explicit `tradeUti: null`. Validation errors stop replay before `POST /lmax-shadow/replay` unless explicitly overridden for diagnostics.
+
+Supported evidence modes are explicit in the validator: empty read-only evidence, market-data-only context, TradeCapture-only recovery, OrderStatus-only recovery, protocol-reject-only diagnostics, mixed read-only evidence, and synthetic lifecycle evidence. Market data is contextual and does not create observations today. OrderStatus `ExecType=I` is status-only. TradeCapture AE is recovery evidence and must not double-count fills; EOD files remain the official daily reconciliation source.
+
+## Shadow Observation Policy
+
+LMAX Shadow Observation Policy Hardening #1 makes observation classification explicit. Each observation now carries policy metadata in its difference payload and API DTO: `policyCode`, `evidenceMode`, `sourceEventType`, `rationale`, `suggestedOperatorAction`, and whether the policy creates an exception case.
+
+| Evidence / event | Policy semantics | Severity | Exception |
+| --- | --- | --- | --- |
+| `EmptyReadOnly` | No execution/order/trade/reject events; replay records zero observations. | None | No |
+| `MarketDataOnly` | Market data is context only and creates no trading observation. | None | No |
+| `TradeCaptureOnly` missing internal fill | AE is recovery evidence in lab/read-only mode; investigate without mutating state. | Warning | No |
+| `OrderStatusOnly` missing internal order | `ExecType=I` is status-only and never a fill. Missing internal order is a review item. | Warning | No |
+| `SyntheticLifecycle` missing internal fill | Offline lab fixture may be ahead of internal state; replay records mismatch. | Warning | No |
+| `ProtocolRejectOnly` for `35=D` or unknown path | Order-path or unknown protocol rejects block future adapter activation until reviewed. | Blocking | Yes |
+| Protocol reject for read-only `35=AD`, `35=H`, or market data | Recovery/read-only request rejected; review request shape. | Warning | No |
+| Mixed read-only evidence | Applies the max severity of individual observations and dedupes by fingerprint. | Max applicable | Blocking only |
+
+Warnings are audit-visible operator review items and do not create exception cases by default. Blocking observations create/link exception cases with replay id, observation id, fingerprint, policy code, and evidence mode. Shadow replay remains non-mutating for orders, fills, positions, model state, risk state, and reconciliation state.
+
+## Live Shadow Reader Boundary
+
+The live shadow reader skeleton is a blocked, read-only shell around the replay contract. It exists so future work can route normalized LMAX evidence into the same observation pipeline, but it is disabled by default and is not a live FIX connection.
+
+The reader skeleton must preserve the same contract rules as replay:
+
+- no order submission
+- no raw FIX persistence into trading tables
+- no mutation of orders, fills, positions, risk, model, or reconciliation state
+- no credential input through API/UI
+- no scheduler auto-run
+- API and Worker remain `FakeLmaxGateway` only
+
+Until a later explicit activation gate, the reader status/run APIs are expected to return `Disabled` or `Blocked` and expose safety-check diagnostics only.
+
+Shadow Reader Quality Gate #1 adds a dangerous-configuration matrix around this boundary. Contradictory settings produce multiple failed gates rather than hiding behind the first failure, blocked run attempts are audited, and mutation guards verify that only audit can change during a blocked diagnostic run.
 

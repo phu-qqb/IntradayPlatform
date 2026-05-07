@@ -49,9 +49,13 @@ function Invoke-LocalApi {
 
         $json = $Body | ConvertTo-Json -Depth 30
         Write-Host "$Method $Endpoint"
+        Write-Host "Body: $json"
         return Invoke-RestMethod -Method $Method -Uri $uri -Headers $headers -ContentType "application/json" -Body $json
     } catch {
         Write-Host "FAILED $Method $Endpoint" -ForegroundColor Red
+        if ($_.Exception.Response) {
+            Write-Host "HTTP status: $([int]$_.Exception.Response.StatusCode) $($_.Exception.Response.StatusCode)"
+        }
         if ($_.ErrorDetails.Message) {
             Write-Host $_.ErrorDetails.Message
         }
@@ -74,6 +78,18 @@ function Get-ItemsFromResponse {
     }
 
     return @($Response)
+}
+
+function Get-CountSafely {
+    param([string]$Endpoint)
+    try {
+        $response = Invoke-LocalApi -Method "GET" -Endpoint $Endpoint
+        $items = Get-ItemsFromResponse -Response $response
+        return @{ available = $true; count = $items.Count }
+    } catch {
+        Write-Host ("Skipping mutation count check for {0}: {1}" -f $Endpoint, $_.Exception.Message) -ForegroundColor Yellow
+        return @{ available = $false; count = 0 }
+    }
 }
 
 function Convert-EvidenceToReplayBody {
@@ -113,6 +129,12 @@ function Convert-EvidenceToReplayBody {
 
 Assert-LocalUrl $BaseUrl
 $resolvedFixturePath = Resolve-Path -LiteralPath $FixturePath
+$rawFixture = Get-Content -LiteralPath $resolvedFixturePath -Raw
+foreach ($forbidden in @("554=", "password", "authorization", "secret", "token")) {
+    Assert-True (-not ($rawFixture -match [regex]::Escape($forbidden))) "fixture does not contain forbidden sensitive text: $forbidden"
+}
+$evidence = $rawFixture | ConvertFrom-Json
+Assert-True (($evidence.PSObject.Properties.Name -contains "schemaVersion") -and $evidence.schemaVersion -eq "lmax-fix-lifecycle-evidence-v1") "fixture schemaVersion is lmax-fix-lifecycle-evidence-v1"
 
 Write-Step "Health"
 $health = Invoke-LocalApi -Method "GET" -Endpoint "/health"
@@ -121,8 +143,13 @@ Assert-True (-not [bool]$health.liveTradingEnabled) "live trading remains disabl
 Assert-True (-not [bool]$health.externalConnectionsEnabled) "external connections remain disabled"
 Write-Success "Runtime safety flags are unchanged"
 
+Write-Step "Mutation guard baseline"
+$beforeOrders = Get-CountSafely -Endpoint "/orders"
+$beforeFills = Get-CountSafely -Endpoint "/fills"
+$beforePositions = Get-CountSafely -Endpoint "/positions/internal"
+Write-Success "Captured available baseline counts"
+
 Write-Step "Replay fixture"
-$evidence = (Get-Content -LiteralPath $resolvedFixturePath -Raw) | ConvertFrom-Json
 $body = Convert-EvidenceToReplayBody -Evidence $evidence
 $result = Invoke-LocalApi -Method "POST" -Endpoint "/lmax-shadow/replay" -Body $body
 $replayRunId = if ($result.PSObject.Properties.Name -contains "id") { $result.id } elseif ($result.PSObject.Properties.Name -contains "replayRunId") { $result.replayRunId } else { $null }
@@ -139,8 +166,18 @@ Write-Step "Observations"
 $observationsResponse = Invoke-LocalApi -Method "GET" -Endpoint "/lmax-shadow/observations?replayRunId=$replayRunId&limit=100"
 $observations = Get-ItemsFromResponse -Response $observationsResponse
 Assert-True ($observations.Count -gt 0) "observations endpoint returned replay observations"
+Assert-True (@($observations | Where-Object { -not [string]::IsNullOrWhiteSpace($_.fingerprint) }).Count -eq $observations.Count) "all observations include fingerprints"
 $types = ($observations | ForEach-Object { $_.type } | Sort-Object -Unique) -join ", "
 Write-Success "Observation types: $types"
+
+Write-Step "Mutation guard after replay"
+$afterOrders = Get-CountSafely -Endpoint "/orders"
+$afterFills = Get-CountSafely -Endpoint "/fills"
+$afterPositions = Get-CountSafely -Endpoint "/positions/internal"
+if ($beforeOrders.available -and $afterOrders.available) { Assert-True ($beforeOrders.count -eq $afterOrders.count) "order count unchanged" }
+if ($beforeFills.available -and $afterFills.available) { Assert-True ($beforeFills.count -eq $afterFills.count) "fill count unchanged" }
+if ($beforePositions.available -and $afterPositions.available) { Assert-True ($beforePositions.count -eq $afterPositions.count) "position count unchanged" }
+Write-Success "Available internal counts are unchanged"
 
 Write-Step "Audit events"
 $auditResponse = Invoke-LocalApi -Method "GET" -Endpoint "/audit/events?limit=100"

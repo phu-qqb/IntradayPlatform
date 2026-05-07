@@ -1,4 +1,7 @@
+using QQ.Production.Intraday.Application;
+using QQ.Production.Intraday.Domain;
 using QQ.Production.Intraday.Lmax.ConnectivityLab;
+using System.Text.Json;
 
 namespace QQ.Production.Intraday.Tests.Unit;
 
@@ -1419,6 +1422,285 @@ public sealed class LmaxConnectivityLabTests
     }
 
     [Fact]
+    public async Task Read_only_evidence_capture_skips_without_external_permission()
+    {
+        var runner = CreateRunner();
+        var outputDirectory = Path.Combine(Path.GetTempPath(), $"qq-lmax-readonly-{Guid.NewGuid():N}");
+
+        var result = await runner.CaptureReadOnlyEvidenceAsync(
+            new LmaxConnectivityLabOptions(),
+            tradeCaptureLookbackMinutes: 60,
+            maxReports: 20,
+            outputDirectory,
+            clOrdId: null,
+            account: null,
+            maxWaitSeconds: 10,
+            showFixMessages: false,
+            CancellationToken.None);
+
+        Assert.Equal("Skipped", result.Status);
+        Assert.Equal(string.Empty, result.EvidenceJsonPath);
+        Assert.Contains("AllowExternalConnections=false", result.Message, StringComparison.Ordinal);
+        Assert.False(Directory.Exists(outputDirectory));
+    }
+
+    [Fact]
+    public async Task Read_only_evidence_capture_blocks_order_submission_flag()
+    {
+        var runner = CreateRunner();
+        var options = CompleteFixOptions(orderSubmission: true);
+        options.AllowExternalConnections = true;
+        var outputDirectory = Path.Combine(Path.GetTempPath(), $"qq-lmax-readonly-{Guid.NewGuid():N}");
+
+        var result = await runner.CaptureReadOnlyEvidenceAsync(
+            options,
+            tradeCaptureLookbackMinutes: 60,
+            maxReports: 20,
+            outputDirectory,
+            clOrdId: null,
+            account: null,
+            maxWaitSeconds: 10,
+            showFixMessages: false,
+            CancellationToken.None);
+
+        Assert.Equal("Failed", result.Status);
+        Assert.Equal(string.Empty, result.EvidenceJsonPath);
+        Assert.Contains("AllowOrderSubmission must be false", result.Message, StringComparison.Ordinal);
+        Assert.False(Directory.Exists(outputDirectory));
+    }
+
+    [Fact]
+    public async Task Read_only_evidence_capture_writes_sanitized_replay_compatible_json()
+    {
+        var runner = CreateRunner();
+        var options = CompleteFixOptions();
+        options.AllowExternalConnections = true;
+        options.AllowOrderSubmission = false;
+        options.AllowLiveTrading = false;
+        options.FixPassword = "do-not-export-this-password";
+        var outputDirectory = Path.Combine(Path.GetTempPath(), $"qq-lmax-readonly-{Guid.NewGuid():N}");
+
+        var result = await runner.CaptureReadOnlyEvidenceAsync(
+            options,
+            tradeCaptureLookbackMinutes: 60,
+            maxReports: 20,
+            outputDirectory,
+            clOrdId: null,
+            account: null,
+            maxWaitSeconds: 10,
+            showFixMessages: false,
+            CancellationToken.None);
+
+        Assert.True(File.Exists(result.EvidenceJsonPath));
+        var json = await File.ReadAllTextAsync(result.EvidenceJsonPath);
+        Assert.DoesNotContain("do-not-export-this-password", json, StringComparison.Ordinal);
+        Assert.DoesNotContain("554=", json, StringComparison.Ordinal);
+        Assert.DoesNotContain("Authorization", json, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("Bearer ", json, StringComparison.OrdinalIgnoreCase);
+
+        using var document = JsonDocument.Parse(json);
+        var root = document.RootElement;
+        Assert.Equal("lmax-fix-lifecycle-evidence-v1", root.GetProperty("schemaVersion").GetString());
+        Assert.Equal("ConnectivityLab", root.GetProperty("source").GetString());
+        Assert.Equal("ReadOnly", root.GetProperty("captureMode").GetString());
+        Assert.Equal("LabEvidenceFile", root.GetProperty("inputSource").GetString());
+        Assert.Equal("EURUSD", root.GetProperty("instrumentSymbol").GetString());
+        Assert.Equal("4001", root.GetProperty("securityId").GetString());
+        Assert.Equal(JsonValueKind.Array, root.GetProperty("executionReports").ValueKind);
+        Assert.Equal(JsonValueKind.Array, root.GetProperty("tradeCaptureReports").ValueKind);
+        Assert.Equal(JsonValueKind.Array, root.GetProperty("orderStatuses").ValueKind);
+        Assert.False(root.TryGetProperty("orderStatusReports", out _));
+        Assert.Equal(JsonValueKind.Array, root.GetProperty("protocolRejects").ValueKind);
+    }
+
+    [Fact]
+    public async Task Read_only_evidence_capture_requires_explicit_clordid_for_order_status_section()
+    {
+        var runner = CreateRunner();
+        var options = CompleteFixOptions();
+        options.AllowExternalConnections = true;
+        var outputDirectory = Path.Combine(Path.GetTempPath(), $"qq-lmax-readonly-{Guid.NewGuid():N}");
+
+        var result = await runner.CaptureReadOnlyEvidenceAsync(
+            options,
+            tradeCaptureLookbackMinutes: 60,
+            maxReports: 20,
+            outputDirectory,
+            clOrdId: null,
+            account: null,
+            maxWaitSeconds: 10,
+            showFixMessages: false,
+            CancellationToken.None);
+
+        Assert.Null(result.OrderStatus);
+        Assert.Contains(result.Diagnostics, x => x == "OrderStatusRequested=False");
+        using var document = JsonDocument.Parse(await File.ReadAllTextAsync(result.EvidenceJsonPath));
+        Assert.Equal(0, document.RootElement.GetProperty("orderStatuses").GetArrayLength());
+    }
+
+    [Fact]
+    public async Task Read_only_evidence_capture_writes_trade_capture_shape_replay_can_bind()
+    {
+        var (_, _, _, tradeCapture) = MatchingLifecycleEvidenceInputs();
+        var runner = new LmaxConnectivityLabRunner(
+            new PlaceholderLmaxPublicDataClient(),
+            new LmaxAccountApiClient(new LmaxConnectivityLabSafetyValidator()),
+            new StubReadOnlyFixSessionClient(tradeCapture),
+            new LmaxConnectivityLabSafetyValidator());
+        var options = CompleteFixOptions();
+        options.AllowExternalConnections = true;
+        var outputDirectory = Path.Combine(Path.GetTempPath(), $"qq-lmax-readonly-{Guid.NewGuid():N}");
+
+        var result = await runner.CaptureReadOnlyEvidenceAsync(
+            options,
+            tradeCaptureLookbackMinutes: 60,
+            maxReports: 20,
+            outputDirectory,
+            clOrdId: null,
+            account: null,
+            maxWaitSeconds: 10,
+            showFixMessages: false,
+            CancellationToken.None);
+
+        using var document = JsonDocument.Parse(await File.ReadAllTextAsync(result.EvidenceJsonPath));
+        var root = document.RootElement;
+        Assert.True(root.TryGetProperty("orderStatuses", out var orderStatuses));
+        Assert.Equal(JsonValueKind.Array, orderStatuses.ValueKind);
+        Assert.False(root.TryGetProperty("orderStatusReports", out _));
+        var report = Assert.Single(root.GetProperty("tradeCaptureReports").EnumerateArray());
+        Assert.Equal("2026-05-06", report.GetProperty("tradeDate").GetString());
+        Assert.True(report.TryGetProperty("tradeUti", out var tradeUti));
+        Assert.Equal(JsonValueKind.Null, tradeUti.ValueKind);
+
+        var replayRequest = new LmaxShadowReplayRequest(
+            LmaxShadowInputSource.LabEvidenceFile,
+            [],
+            DeserializeList<LmaxShadowTradeCaptureInput>(root, "tradeCaptureReports", new JsonSerializerOptions(JsonSerializerDefaults.Web)),
+            DeserializeList<LmaxShadowOrderStatusInput>(root, "orderStatuses", new JsonSerializerOptions(JsonSerializerDefaults.Web)),
+            [],
+            "Replay generated read-only evidence");
+        Assert.Single(replayRequest.TradeCaptureReports!);
+        Assert.Equal(new DateOnly(2026, 5, 6), replayRequest.TradeCaptureReports![0].TradeDate);
+    }
+
+    [Fact]
+    public void Evidence_contract_validator_accepts_fixture()
+    {
+        var json = File.ReadAllText(Path.Combine(FindRepoRoot(), "tests", "fixtures", "lmax-shadow", "lmax-fix-lifecycle-evidence-v1.json"));
+
+        var validation = LmaxEvidenceContractValidator.ValidateAndNormalize(json);
+
+        Assert.True(validation.IsValid);
+        Assert.Equal("lmax-fix-lifecycle-evidence-v1", validation.SchemaVersion);
+        Assert.Equal(LmaxEvidenceMode.SyntheticLifecycle, validation.EvidenceMode);
+        using var document = JsonDocument.Parse(validation.NormalizedJson);
+        Assert.Equal(JsonValueKind.Array, document.RootElement.GetProperty("executionReports").ValueKind);
+        Assert.Equal(JsonValueKind.Array, document.RootElement.GetProperty("orderStatuses").ValueKind);
+    }
+
+    [Theory]
+    [InlineData("lmax-readonly-empty-evidence-v1.json", LmaxEvidenceMode.EmptyReadOnly)]
+    [InlineData("lmax-marketdata-only-evidence-v1.json", LmaxEvidenceMode.MarketDataOnly)]
+    [InlineData("lmax-tradecapture-only-evidence-v1.json", LmaxEvidenceMode.TradeCaptureOnly)]
+    [InlineData("lmax-orderstatus-only-evidence-v1.json", LmaxEvidenceMode.OrderStatusOnly)]
+    [InlineData("lmax-protocolreject-only-evidence-v1.json", LmaxEvidenceMode.ProtocolRejectOnly)]
+    [InlineData("lmax-mixed-readonly-evidence-v1.json", LmaxEvidenceMode.MixedReadOnly)]
+    [InlineData("lmax-fix-lifecycle-evidence-v1.json", LmaxEvidenceMode.SyntheticLifecycle)]
+    public void Evidence_contract_validator_accepts_supported_evidence_mode_fixtures(string fileName, LmaxEvidenceMode expectedMode)
+    {
+        var json = File.ReadAllText(Path.Combine(FindRepoRoot(), "tests", "fixtures", "lmax-shadow", fileName));
+
+        var validation = LmaxEvidenceContractValidator.ValidateAndNormalize(json);
+
+        Assert.True(validation.IsValid);
+        Assert.Equal(expectedMode, validation.EvidenceMode);
+        Assert.Contains(validation.Issues, x => x.Code == "EvidenceModeInferred");
+        using var document = JsonDocument.Parse(validation.NormalizedJson);
+        var root = document.RootElement;
+        Assert.Equal(expectedMode.ToString(), root.GetProperty("evidenceMode").GetString());
+        Assert.Equal(JsonValueKind.Array, root.GetProperty("executionReports").ValueKind);
+        Assert.Equal(JsonValueKind.Array, root.GetProperty("orderStatuses").ValueKind);
+        Assert.Equal(JsonValueKind.Array, root.GetProperty("tradeCaptureReports").ValueKind);
+        Assert.Equal(JsonValueKind.Array, root.GetProperty("protocolRejects").ValueKind);
+    }
+
+    [Fact]
+    public void Evidence_contract_validator_normalizes_legacy_and_compact_trade_capture_evidence()
+    {
+        var json = """
+        {
+          "schemaVersion": "lmax-fix-lifecycle-evidence-v1",
+          "source": "ConnectivityLab",
+          "inputSource": "LabEvidenceFile",
+          "reason": "Unit test",
+          "captureMode": "ReadOnly",
+          "redaction": "SanitizedNoCredentialsNoRawLogon",
+          "executionReports": [],
+          "orderStatusReports": [],
+          "tradeCaptureReports": [
+            {
+              "execId": "exec-compact",
+              "brokerOrderId": "bo",
+              "clientOrderId": "co",
+              "symbol": "EURUSD",
+              "side": "1",
+              "lastQty": 0.1,
+              "lastPx": 1.17,
+              "tradeDate": "20260506",
+              "transactTimeUtc": "2026-05-06T17:02:33.394Z",
+              "lastReportRequested": true,
+              "payload": { "securityId": "4001", "securityIdSource": "8" }
+            }
+          ],
+          "protocolRejects": []
+        }
+        """;
+
+        var validation = LmaxEvidenceContractValidator.ValidateAndNormalize(json);
+
+        Assert.True(validation.IsValid);
+        Assert.Equal(LmaxEvidenceMode.TradeCaptureOnly, validation.EvidenceMode);
+        Assert.Contains(validation.Issues, x => x.Code == "LegacyOrderStatusReports");
+        Assert.Contains(validation.Issues, x => x.Code == "CompactTradeDateNormalized");
+        Assert.Contains(validation.Issues, x => x.Code == "MissingTradeUtiAdded");
+        using var document = JsonDocument.Parse(validation.NormalizedJson);
+        Assert.False(document.RootElement.TryGetProperty("orderStatusReports", out _));
+        Assert.Equal(JsonValueKind.Array, document.RootElement.GetProperty("orderStatuses").ValueKind);
+        var report = Assert.Single(document.RootElement.GetProperty("tradeCaptureReports").EnumerateArray());
+        Assert.Equal("2026-05-06", report.GetProperty("tradeDate").GetString());
+        Assert.Equal("Buy", report.GetProperty("side").GetString());
+        Assert.Equal(JsonValueKind.Null, report.GetProperty("tradeUti").ValueKind);
+    }
+
+    [Fact]
+    public void Evidence_contract_validator_rejects_sensitive_content_and_invalid_trade_date()
+    {
+        var json = """
+        {
+          "schemaVersion": "lmax-fix-lifecycle-evidence-v1",
+          "source": "ConnectivityLab",
+          "inputSource": "LabEvidenceFile",
+          "reason": "Unit test",
+          "captureMode": "ReadOnly",
+          "redaction": "SanitizedNoCredentialsNoRawLogon",
+          "executionReports": [],
+          "orderStatuses": [],
+          "tradeCaptureReports": [
+            { "execId": "exec", "side": "Buy", "tradeDate": "06/05/2026", "tradeUti": null }
+          ],
+          "protocolRejects": [],
+          "note": "password=bad"
+        }
+        """;
+
+        var validation = LmaxEvidenceContractValidator.ValidateAndNormalize(json);
+
+        Assert.False(validation.IsValid);
+        Assert.Contains(validation.Issues, x => x.Code == "SensitiveContent");
+        Assert.Contains(validation.Issues, x => x.Code == "InvalidTradeDate");
+    }
+
+    [Fact]
     public void Api_and_worker_do_not_reference_connectivity_lab()
     {
         var root = FindRepoRoot();
@@ -1532,6 +1814,11 @@ public sealed class LmaxConnectivityLabTests
     private static string FixMessage(params string[] fields)
         => string.Join(LmaxFixMarketDataCodec.Soh, fields) + LmaxFixMarketDataCodec.Soh;
 
+    private static IReadOnlyList<T> DeserializeList<T>(JsonElement root, string propertyName, JsonSerializerOptions options)
+        => root.TryGetProperty(propertyName, out var value)
+            ? JsonSerializer.Deserialize<IReadOnlyList<T>>(value.GetRawText(), options) ?? []
+            : [];
+
     private static string FindRepoRoot()
     {
         var current = new DirectoryInfo(AppContext.BaseDirectory);
@@ -1552,5 +1839,19 @@ public sealed class LmaxConnectivityLabTests
     {
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
             => Task.FromResult(handler(request));
+    }
+
+    private sealed class StubReadOnlyFixSessionClient(LmaxFixTradeCaptureSmokeResult tradeCapture) : ILmaxFixSessionClient
+    {
+        private readonly PlaceholderLmaxFixSessionClient placeholder = new();
+
+        public LabCommandResult Validate(LmaxConnectivityLabOptions options, bool marketData) => placeholder.Validate(options, marketData);
+        public Task<LabCommandResult> SmokeAsync(LmaxConnectivityLabOptions options, bool marketData, CancellationToken cancellationToken) => placeholder.SmokeAsync(options, marketData, cancellationToken);
+        public Task<LabCommandResult> LogonSmokeAsync(LmaxConnectivityLabOptions options, bool marketData, CancellationToken cancellationToken) => placeholder.LogonSmokeAsync(options, marketData, cancellationToken);
+        public Task<LmaxFixMarketDataSmokeResult> MarketDataSnapshotSmokeAsync(LmaxConnectivityLabOptions options, CancellationToken cancellationToken) => placeholder.MarketDataSnapshotSmokeAsync(options, cancellationToken);
+        public Task<LmaxFixTradeCaptureSmokeResult> TradeCaptureSmokeAsync(LmaxConnectivityLabOptions options, LmaxFixTradeCaptureRequestOptions request, CancellationToken cancellationToken) => Task.FromResult(tradeCapture);
+        public Task<LmaxFixDemoOrderLifecycleResult> DemoOrderLifecycleAsync(LmaxConnectivityLabOptions options, LmaxFixDemoOrderRequest request, bool explicitConfirmation, CancellationToken cancellationToken) => placeholder.DemoOrderLifecycleAsync(options, request, explicitConfirmation, cancellationToken);
+        public Task<LmaxFixOrderStatusSmokeResult> OrderStatusSmokeAsync(LmaxConnectivityLabOptions options, LmaxFixOrderStatusSmokeRequest request, CancellationToken cancellationToken) => placeholder.OrderStatusSmokeAsync(options, request, cancellationToken);
+        public Task<LmaxFixLifecycleEvidenceResult> DemoLifecycleEvidenceAsync(LmaxConnectivityLabOptions options, LmaxFixDemoOrderRequest request, LmaxFixTradeCaptureRequestOptions tradeCaptureRequest, bool explicitConfirmation, CancellationToken cancellationToken) => placeholder.DemoLifecycleEvidenceAsync(options, request, tradeCaptureRequest, explicitConfirmation, cancellationToken);
     }
 }

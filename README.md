@@ -41,6 +41,10 @@ The adapter contract parity gate is documented in `docs/ADAPTER_CONTRACTS.md`. I
 
 The LMAX adapter skeleton now includes inert FIX message builders, mappers, runtime safety validation, and a blocked `LmaxVenueGatewaySkeleton`. These components are not registered in API or Worker. `FakeLmaxGateway` remains the only runtime execution gateway.
 
+The live shadow reader skeleton is also disabled by default. It exposes local status/blocking diagnostics for future read-only LMAX shadow work, but it does not open sockets, use credentials, call the Connectivity Lab, submit orders, or write to trading tables.
+
+Shadow Reader Quality Gate #1 hardens that skeleton against dangerous or contradictory configuration. The reader now reports explicit safety gates with status, observed value, expected safe value, and message. Even if options are set toward a future live reader, the current implementation remains blocked by `ImplementationMode` and does not execute.
+
 ## Quality Gate #1
 
 Quality Gate #1 hardened the local simulator foundation without changing the architecture:
@@ -174,6 +178,8 @@ The seeded runbooks orchestrate existing local jobs only. Start of Day runs refe
 - `scripts/smoke-daily-ops-local.ps1`
 - `scripts/run-runbook.ps1`
 - `scripts/smoke-runbooks-local.ps1`
+- `scripts/smoke-lmax-shadow-local.ps1`
+- `scripts/smoke-lmax-shadow-reader-local.ps1`
 - `scripts/run-ui.ps1`
 - `scripts/run-local-stack.ps1`
 
@@ -603,4 +609,22 @@ See [docs/LMAX_CONNECTIVITY_LAB.md](docs/LMAX_CONNECTIVITY_LAB.md) for configura
 The platform includes a local LMAX shadow replay store for normalized lab evidence. Replay creates auditable observations and optional blocking exception cases without mutating orders, fills, positions, risk, or reconciliation state. This is not live LMAX integration; API and Worker remain FakeLmax-only.
 
 Lifecycle evidence from the isolated Connectivity Lab can now be exported as sanitized JSON and replayed through the local shadow API. Use `scripts/lmax-lab-fix-demo-lifecycle-evidence.ps1 -OutputJsonPath .\artifacts\lmax\evidence.json` to write the lab report, then `scripts/replay-lmax-lab-evidence.ps1 -Path .\artifacts\lmax\evidence.json` while the local API is running. Replay calls localhost only, never opens FIX sessions, and does not contain credentials or raw logon messages. A synthetic fixture smoke is available at `scripts/smoke-lmax-shadow-local.ps1`.
+
+The Connectivity Lab also has a read-only evidence capture path for future LMAX shadow analysis. `scripts/lmax-lab-fix-readonly-evidence-capture.ps1` skips by default; with explicit `-AllowExternalConnections` it can collect only read-only FIX market-data/trade-capture evidence and optional order-status evidence for a supplied `ClOrdID`. It never sends orders, requires order submission to stay disabled, writes sanitized JSON under `artifacts/lmax-lab/evidence/`, and can be replayed locally with `scripts/replay-lmax-lab-evidence-file.ps1`.
+
+Evidence files use schema `lmax-fix-lifecycle-evidence-v1` and are validated before replay. The contract requires replay arrays, `orderStatuses`, normalized TradeCapture dates, explicit null `tradeUti` when absent, and no credential-like content. `scripts/validate-lmax-lab-evidence-file.ps1` validates a file without API or LMAX access.
+
+Read-only evidence coverage now includes empty, market-data-only, TradeCapture-only, OrderStatus-only, protocol-reject-only, mixed read-only, and synthetic lifecycle fixtures. Empty and market-data-only evidence replay with zero observations; OrderStatus `ExecType=I` is status-only; TradeCapture AE is recovery evidence, while EOD files remain the official daily reconciliation source. `scripts/smoke-lmax-evidence-coverage-local.ps1` validates and replays the coverage fixtures through the local shadow API without any live FIX call.
+
+Shadow observations are classified by an explicit policy. DTOs expose policy code, evidence mode, source event type, rationale, suggested operator action, and exception behavior. TradeCapture-only missing internal fills and OrderStatus-only unknown orders are lab/read-only warnings, not blocking mutations. Order-path protocol rejects are blocking and create exception cases; read-only recovery rejects are warnings.
+
+### LMAX Shadow Reader Skeleton
+
+The live shadow reader skeleton is present only as a disabled safety shell. `GET /lmax-shadow-reader/status` reports the configured gates, and `POST /lmax-shadow-reader/run` returns blocked by default. The skeleton has no credential fields, no host/password/user DTOs, no FIX client, no Connectivity Lab dependency, no scheduler auto-run, and no order-submission path.
+
+Default `LmaxShadowReader` settings keep `Enabled=false`, `AllowExternalConnections=false`, `AllowCredentialUse=false`, `ReadOnly=true`, `AllowOrderSubmission=false`, `PersistRawFixMessages=false`, `PersistToTradingTables=false`, and `DryRun=true`. Future activation would require a separate governance/runbook/config gate; today the smoke script `scripts/smoke-lmax-shadow-reader-local.ps1` verifies the reader stays disabled and non-mutating.
+
+Quality Gate #1 validates the skeleton under unsafe config combinations such as order submission enabled, trading-table persistence enabled, non-read-only mode, dry-run disabled, invalid event limits, and contradictory gate settings. Blocked run attempts create sanitized audit events with failed gate names. No exceptions, orders, fills, positions, model runs, risk decisions, or reconciliation state are changed.
+
+Shadow observations now include deterministic fingerprints. Duplicate observations are deduped within a replay run, while repeated replays preserve new run history with the same fingerprints for grouping. Replay summaries show input, unique, duplicate, warning, blocking, and total observation counts. Blocking observations create operator exception cases once per replay/fingerprint; warning observations remain review-only by default.
 

@@ -32,9 +32,13 @@ function Invoke-LocalApi {
 
         $json = $Body | ConvertTo-Json -Depth 20
         Write-Host "$Method $Endpoint"
+        Write-Host "Body: $json"
         return Invoke-RestMethod -Method $Method -Uri $uri -Headers $headers -ContentType "application/json" -Body $json
     } catch {
         Write-Host "FAILED $Method $Endpoint" -ForegroundColor Red
+        if ($_.Exception.Response) {
+            Write-Host "HTTP status: $([int]$_.Exception.Response.StatusCode) $($_.Exception.Response.StatusCode)"
+        }
         if ($_.ErrorDetails.Message) {
             Write-Host $_.ErrorDetails.Message
         }
@@ -98,7 +102,15 @@ function Convert-EvidenceToReplayBody {
 Assert-LocalUrl $BaseUrl
 $resolvedPath = Resolve-Path -LiteralPath $Path
 $raw = Get-Content -LiteralPath $resolvedPath -Raw
+foreach ($forbidden in @("554=", "password", "authorization", "secret", "token")) {
+    if ($raw -match [regex]::Escape($forbidden)) {
+        throw "Evidence file appears to contain forbidden sensitive text: $forbidden"
+    }
+}
 $evidence = $raw | ConvertFrom-Json
+if (-not ($evidence.PSObject.Properties.Name -contains "schemaVersion") -or $evidence.schemaVersion -ne "lmax-fix-lifecycle-evidence-v1") {
+    throw "Unsupported evidence schemaVersion. Expected lmax-fix-lifecycle-evidence-v1."
+}
 
 $body = Convert-EvidenceToReplayBody -Evidence $evidence
 

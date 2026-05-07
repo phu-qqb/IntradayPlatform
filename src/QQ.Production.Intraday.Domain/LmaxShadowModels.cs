@@ -79,6 +79,7 @@ public sealed record LmaxShadowObservation(
     string? LmaxPayloadJson,
     string? InternalPayloadJson,
     string? DifferenceJson,
+    string Fingerprint,
     string? CorrelationId,
     DateTimeOffset CreatedAtUtc);
 
@@ -90,6 +91,9 @@ public sealed record LmaxShadowReplayRun(
     DateTimeOffset? CompletedAtUtc,
     string? InputJson,
     string? OutputJson,
+    int InputEventCount,
+    int UniqueEventCount,
+    int DuplicateEventCount,
     int ObservationCount,
     int BlockingObservationCount,
     int WarningObservationCount,

@@ -1,0 +1,82 @@
+{
+  "schemaVersion": "lmax-fix-lifecycle-evidence-v1",
+  "createdAtUtc": "2026-05-06T10:05:00Z",
+  "capturedAtUtc": "2026-05-06T10:05:00Z",
+  "source": "ConnectivityLab",
+  "inputSource": "LabEvidenceFile",
+  "reason": "Replay sanitized mixed read-only LMAX evidence",
+  "environment": "Demo",
+  "captureMode": "ReadOnly",
+  "redaction": "SanitizedNoCredentialsNoRawLogon",
+  "dryRun": false,
+  "instrumentSymbol": "EURUSD",
+  "securityId": "4001",
+  "slashSymbol": "EUR/USD",
+  "marketData": {
+    "status": "Ok",
+    "snapshotReceived": true,
+    "bestBid": 1.17370,
+    "bestAsk": 1.17376,
+    "mid": 1.17373,
+    "entryCount": 2,
+    "entries": [
+      {
+        "symbol": "EUR/USD",
+        "securityId": "4001",
+        "entryType": "0",
+        "price": 1.17370,
+        "size": 75
+      },
+      {
+        "symbol": "EUR/USD",
+        "securityId": "4001",
+        "entryType": "1",
+        "price": 1.17376,
+        "size": 125
+      }
+    ]
+  },
+  "executionReports": [],
+  "orderStatuses": [
+    {
+      "brokerOrderId": "BO-MIXED-1",
+      "clientOrderId": "CO-MIXED-1",
+      "symbol": "EURUSD",
+      "orderStatus": "Filled",
+      "cumQty": 0.1,
+      "leavesQty": 0,
+      "transactTimeUtc": "2026-05-06T17:05:10Z",
+      "payload": {
+        "execId": "status-mixed-1",
+        "executionType": "OrderStatus",
+        "securityId": "4001",
+        "securityIdSource": "8"
+      }
+    }
+  ],
+  "tradeCaptureReports": [
+    {
+      "execId": "tc-mixed-exec-1",
+      "secondaryExecId": "tc-mixed-mtf-1",
+      "brokerOrderId": "BO-MIXED-1",
+      "clientOrderId": "CO-MIXED-1",
+      "symbol": "EURUSD",
+      "side": "Sell",
+      "lastQty": 0.1,
+      "lastPx": 1.17372,
+      "tradeDate": "2026-05-06",
+      "transactTimeUtc": "2026-05-06T17:05:00Z",
+      "tradeUti": null,
+      "lastReportRequested": true,
+      "payload": {
+        "securityId": "4001",
+        "securityIdSource": "8",
+        "tradeReportId": "TR-MIXED-1"
+      }
+    }
+  ],
+  "protocolRejects": [],
+  "warnings": [
+    "Mixed read-only fixture combines market-data context, order-status recovery, and trade-capture recovery."
+  ]
+}

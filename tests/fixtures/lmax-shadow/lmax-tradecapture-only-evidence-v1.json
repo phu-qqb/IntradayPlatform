@@ -1,0 +1,42 @@
+{
+  "schemaVersion": "lmax-fix-lifecycle-evidence-v1",
+  "createdAtUtc": "2026-05-06T10:02:00Z",
+  "capturedAtUtc": "2026-05-06T10:02:00Z",
+  "source": "ConnectivityLab",
+  "inputSource": "LabEvidenceFile",
+  "reason": "Replay sanitized trade-capture-only LMAX evidence",
+  "environment": "Demo",
+  "captureMode": "ReadOnly",
+  "redaction": "SanitizedNoCredentialsNoRawLogon",
+  "dryRun": false,
+  "instrumentSymbol": "EURUSD",
+  "securityId": "4001",
+  "slashSymbol": "EUR/USD",
+  "executionReports": [],
+  "orderStatuses": [],
+  "tradeCaptureReports": [
+    {
+      "execId": "tc-only-exec-1",
+      "secondaryExecId": "tc-only-mtf-1",
+      "brokerOrderId": "BO-TC-ONLY-1",
+      "clientOrderId": "CO-TC-ONLY-1",
+      "symbol": "EURUSD",
+      "side": "Buy",
+      "lastQty": 0.1,
+      "lastPx": 1.17478,
+      "tradeDate": "2026-05-06",
+      "transactTimeUtc": "2026-05-06T17:03:57Z",
+      "tradeUti": null,
+      "lastReportRequested": true,
+      "payload": {
+        "securityId": "4001",
+        "securityIdSource": "8",
+        "tradeReportId": "TR-TC-ONLY-1"
+      }
+    }
+  ],
+  "protocolRejects": [],
+  "warnings": [
+    "FIX AE does not currently provide TradeUTI; EOD remains official reconciliation source."
+  ]
+}

@@ -854,6 +854,9 @@ export type LmaxShadowReplayRunDto = {
   completedAtUtc?: string | null;
   inputJson?: string | null;
   outputJson?: string | null;
+  inputEventCount: number;
+  uniqueEventCount: number;
+  duplicateEventCount: number;
   observationCount: number;
   blockingObservationCount: number;
   warningObservationCount: number;
@@ -880,6 +883,13 @@ export type LmaxShadowObservationDto = {
   lmaxPayloadJson?: string | null;
   internalPayloadJson?: string | null;
   differenceJson?: string | null;
+  fingerprint: string;
+  policyCode?: string | null;
+  evidenceMode?: string | null;
+  sourceEventType?: string | null;
+  rationale?: string | null;
+  suggestedOperatorAction?: string | null;
+  createsExceptionCase: boolean;
   correlationId?: string | null;
   createdAtUtc: string;
 };
@@ -891,6 +901,30 @@ export type LmaxShadowReplayRequest = {
   tradeCaptureReports?: unknown[];
   orderStatuses?: unknown[];
   protocolRejects?: unknown[];
+  evidenceMode?: string | null;
+};
+
+export type LmaxShadowReaderSafetyCheckDto = {
+  gate: string;
+  status: string;
+  passed: boolean;
+  observedValue: string;
+  expectedValue: string;
+  message: string;
+};
+
+export type LmaxShadowReaderRunResultDto = {
+  status: string;
+  blockedReason: string;
+  executed: boolean;
+  connected: boolean;
+  externalConnectionAttempted: boolean;
+  credentialsUsed: boolean;
+  ordersSubmitted: boolean;
+  persistedToTradingTables: boolean;
+  eventsRead: number;
+  message: string;
+  safetyChecks: LmaxShadowReaderSafetyCheckDto[];
 };
 
 export type OperatorUserDto = {

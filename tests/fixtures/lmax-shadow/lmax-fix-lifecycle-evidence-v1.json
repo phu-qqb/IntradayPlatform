@@ -1,7 +1,13 @@
 {
   "schemaVersion": "lmax-fix-lifecycle-evidence-v1",
   "createdAtUtc": "2026-05-06T09:00:00Z",
+  "capturedAtUtc": "2026-05-06T09:00:00Z",
   "source": "ConnectivityLab",
+  "inputSource": "LabEvidenceFile",
+  "reason": "Replay sanitized synthetic LMAX lifecycle evidence",
+  "environment": "Demo",
+  "captureMode": "SyntheticLifecycleFixture",
+  "redaction": "SanitizedNoCredentialsNoRawLogon",
   "dryRun": false,
   "clientOrderId": "DL26050607454402",
   "brokerOrderId": "AAAESQAAAABd6+b7",
@@ -32,7 +38,7 @@
       }
     }
   ],
-  "orderStatusReports": [
+  "orderStatuses": [
     {
       "brokerOrderId": "AAAESQAAAABd6+b7",
       "clientOrderId": "DL26050607454402",

@@ -247,6 +247,19 @@ public sealed record LmaxFixLifecycleEvidenceResult(
     IReadOnlyList<string> SafetyDecisions,
     IReadOnlyList<string> Diagnostics);
 
+public sealed record LmaxFixReadOnlyEvidenceCaptureResult(
+    string Command,
+    string Status,
+    string Message,
+    DateTimeOffset StartedAtUtc,
+    DateTimeOffset CompletedAtUtc,
+    LmaxFixMarketDataSmokeResult? MarketData,
+    LmaxFixTradeCaptureSmokeResult? TradeCapture,
+    LmaxFixOrderStatusSmokeResult? OrderStatus,
+    string EvidenceJsonPath,
+    IReadOnlyList<string> SafetyDecisions,
+    IReadOnlyList<string> Diagnostics);
+
 public sealed record LmaxFixTradeCaptureReport(
     string? TradeRequestId,
     string? ExecId,

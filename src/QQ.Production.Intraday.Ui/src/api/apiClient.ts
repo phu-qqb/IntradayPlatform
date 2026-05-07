@@ -23,6 +23,7 @@ import type {
   LmaxReportImportRunDto,
   LmaxReportValidationIssueDto,
   LmaxShadowObservationDto,
+  LmaxShadowReaderRunResultDto,
   LmaxShadowReplayRequest,
   LmaxShadowReplayRunDto,
   LmaxTradeSummaryDto,
@@ -240,10 +241,13 @@ export const apiClient = {
     request<OperatorAuditEventDto[]>(`/audit/events/by-correlation/${encodeURIComponent(correlationId)}${query({ limit })}`),
   getLmaxShadowReplayRuns: (params: { limit?: number; status?: string; inputSource?: string; fromUtc?: string; toUtc?: string } = {}) =>
     request<LmaxShadowReplayRunDto[]>(`/lmax-shadow/replay-runs${query({ limit: 100, ...params })}`),
-  getLmaxShadowObservations: (params: { limit?: number; replayRunId?: string; severity?: string; status?: string; type?: string; symbol?: string; brokerExecutionId?: string; clientOrderId?: string } = {}) =>
+  getLmaxShadowObservations: (params: { limit?: number; replayRunId?: string; severity?: string; status?: string; type?: string; symbol?: string; brokerExecutionId?: string; brokerOrderId?: string; clientOrderId?: string; fingerprint?: string } = {}) =>
     request<LmaxShadowObservationDto[]>(`/lmax-shadow/observations${query({ limit: 100, ...params })}`),
   runLmaxShadowReplay: (body: LmaxShadowReplayRequest) =>
     request<LmaxShadowReplayRunDto>('/lmax-shadow/replay', { method: 'POST', body: JSON.stringify(body) }),
+  getLmaxShadowReaderStatus: () => request<LmaxShadowReaderRunResultDto>('/lmax-shadow-reader/status'),
+  runLmaxShadowReader: (reason: string) =>
+    request<LmaxShadowReaderRunResultDto>('/lmax-shadow-reader/run', { method: 'POST', body: JSON.stringify({ reason, dryRun: true }) }),
   acknowledgeLmaxShadowObservation: (id: string, reason: string) =>
     request<LmaxShadowObservationDto>(`/lmax-shadow/observations/${id}/acknowledge`, { method: 'POST', body: JSON.stringify({ reason }) }),
   resolveLmaxShadowObservation: (id: string, reason: string) =>

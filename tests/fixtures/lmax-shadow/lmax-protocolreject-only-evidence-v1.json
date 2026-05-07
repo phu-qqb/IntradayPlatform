@@ -1,0 +1,32 @@
+{
+  "schemaVersion": "lmax-fix-lifecycle-evidence-v1",
+  "createdAtUtc": "2026-05-06T10:04:00Z",
+  "capturedAtUtc": "2026-05-06T10:04:00Z",
+  "source": "ConnectivityLab",
+  "inputSource": "LabEvidenceFile",
+  "reason": "Replay sanitized protocol-reject-only LMAX evidence",
+  "environment": "Demo",
+  "captureMode": "ReadOnly",
+  "redaction": "SanitizedNoCredentialsNoRawLogon",
+  "dryRun": false,
+  "instrumentSymbol": "EURUSD",
+  "securityId": "4001",
+  "slashSymbol": "EUR/USD",
+  "executionReports": [],
+  "orderStatuses": [],
+  "tradeCaptureReports": [],
+  "protocolRejects": [
+    {
+      "refMsgType": "D",
+      "refTagId": 21,
+      "reasonCode": 0,
+      "text": "UnknownTag while parsing NewOrderSingle; sanitized synthetic reject.",
+      "clientOrderId": "CO-PROTO-1",
+      "brokerOrderId": null,
+      "payload": {
+        "source": "SyntheticProtocolReject"
+      }
+    }
+  ],
+  "warnings": []
+}
