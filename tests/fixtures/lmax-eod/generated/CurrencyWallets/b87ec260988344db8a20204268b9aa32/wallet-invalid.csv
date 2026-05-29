@@ -1,0 +1,6 @@
+CCY,Balance + Net Deposits,Adjustments,Inter Account Transfers,Profit & Loss,Commission,Dividends,Financing,Wallet Balance,Rate to Base CCY,Account Id
+USD,1000,0,0,10,bad,0,0,1010,1,LMAX_DEMO_LOCAL
+EUR,100,0,0,1,0,0,0,101,0,LMAX_DEMO_LOCAL
+GBP,100,0,0,1,0,0,0,101,1.25,OTHER_ACCOUNT
+JPY,100,0,0,1,0,0,0,999,0.0065,LMAX_DEMO_LOCAL
+JPY,100,0,0,1,0,0,0,101,0.0065,LMAX_DEMO_LOCAL

@@ -1,5 +1,5 @@
 import { RefreshCw } from 'lucide-react';
-import type { HealthDto, ReferenceDataIntegrityDto } from '../api/types';
+import type { HealthDto, OperatorUserDto, ReferenceDataIntegrityDto } from '../api/types';
 import { formatUtc } from '../utils/format';
 import { CommandButton, StatusChip } from './primitives';
 
@@ -7,7 +7,7 @@ function ok(ok: boolean) {
   return ok ? 'ok' : 'danger';
 }
 
-export function TopStatusBar({ health, integrity, onRefresh }: { health?: HealthDto; integrity?: ReferenceDataIntegrityDto; onRefresh: () => void }) {
+export function TopStatusBar({ health, integrity, operator, onRefresh }: { health?: HealthDto; integrity?: ReferenceDataIntegrityDto; operator?: OperatorUserDto; onRefresh: () => void }) {
   const critical =
     !health ||
     health.executionGateway !== 'FakeLmaxGateway' ||
@@ -24,6 +24,7 @@ export function TopStatusBar({ health, integrity, onRefresh }: { health?: Health
       chips: [
         <StatusChip key="env" tone="neutral" label={`Env: ${health?.environment ?? 'Unknown'}`} />,
         <StatusChip key="persistence" tone="neutral" label={`Persistence: ${health?.persistenceProvider ?? 'Unknown'}`} />,
+        <StatusChip key="operator" tone={operator?.isEnabled === false ? 'warning' : 'info'} label={`Operator: ${operator?.operatorId ?? 'unknown'}`} />,
         <StatusChip key="utc" tone="info" label={`UTC: ${formatUtc(health?.utcServerTime)}`} />
       ]
     },
@@ -54,7 +55,7 @@ export function TopStatusBar({ health, integrity, onRefresh }: { health?: Health
   return (
     <header className={`top-status-bar ${critical ? 'critical' : 'safe'}`}>
       <div className="brand-block">
-        {safeLocal && <span className="safe-local-badge">SAFE LOCAL</span>}
+        {safeLocal && <span className="safe-local-badge">SAFE LOCAL / FakeLmax-only</span>}
         <h1>QQ Production Intraday</h1>
         <p>{critical ? 'Critical local safety condition requires attention' : 'Local simulator boundary is intact'}</p>
       </div>

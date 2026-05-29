@@ -127,7 +127,7 @@ public sealed class RawLmaxFixSessionClient(LmaxConnectivityLabSafetyValidator s
         {
             $"Host={options.FixOrderHost ?? "(not configured)"}",
             $"Port={options.FixOrderPort?.ToString(CultureInfo.InvariantCulture) ?? "(not configured)"}",
-            $"TargetCompId={options.FixOrderTargetCompId ?? options.FixTargetCompId ?? "(not configured)"}",
+            $"TargetCompId={LmaxConnectivityLabOptions.Mask(options.FixOrderTargetCompId ?? options.FixTargetCompId)}",
             $"SenderCompId={LmaxConnectivityLabOptions.Mask(options.FixSenderCompId)}",
             $"StartUtc={requestOptions.StartUtc:O}",
             $"EndUtc={requestOptions.EndUtc:O}",
@@ -304,7 +304,7 @@ public sealed class RawLmaxFixSessionClient(LmaxConnectivityLabSafetyValidator s
         {
             $"Host={options.FixOrderHost ?? "(not configured)"}",
             $"Port={options.FixOrderPort?.ToString(CultureInfo.InvariantCulture) ?? "(not configured)"}",
-            $"TargetCompId={options.FixOrderTargetCompId ?? options.FixTargetCompId ?? "(not configured)"}",
+            $"TargetCompId={LmaxConnectivityLabOptions.Mask(options.FixOrderTargetCompId ?? options.FixTargetCompId)}",
             $"SenderCompId={LmaxConnectivityLabOptions.Mask(options.FixSenderCompId)}",
             $"InstrumentSymbol={request.InstrumentSymbol}",
             $"LmaxInstrumentId={request.LmaxInstrumentId}",
@@ -474,7 +474,7 @@ public sealed class RawLmaxFixSessionClient(LmaxConnectivityLabSafetyValidator s
         {
             $"Host={options.FixOrderHost ?? "(not configured)"}",
             $"Port={options.FixOrderPort?.ToString(CultureInfo.InvariantCulture) ?? "(not configured)"}",
-            $"TargetCompId={options.FixOrderTargetCompId ?? options.FixTargetCompId ?? "(not configured)"}",
+            $"TargetCompId={LmaxConnectivityLabOptions.Mask(options.FixOrderTargetCompId ?? options.FixTargetCompId)}",
             $"SenderCompId={LmaxConnectivityLabOptions.Mask(options.FixSenderCompId)}",
             $"ClOrdID={request.ClOrdId ?? "(missing)"}",
             $"SecurityID={request.SecurityId ?? "(not configured)"}",
@@ -683,7 +683,7 @@ public sealed class RawLmaxFixSessionClient(LmaxConnectivityLabSafetyValidator s
         diagnostics.AddRange([
             $"Host={options.FixOrderHost ?? "(not configured)"}",
             $"Port={options.FixOrderPort?.ToString(CultureInfo.InvariantCulture) ?? "(not configured)"}",
-            $"TargetCompId={options.FixOrderTargetCompId ?? options.FixTargetCompId ?? "(not configured)"}",
+            $"TargetCompId={LmaxConnectivityLabOptions.Mask(options.FixOrderTargetCompId ?? options.FixTargetCompId)}",
             $"SenderCompId={LmaxConnectivityLabOptions.Mask(options.FixSenderCompId)}",
             $"ClientOrderId={clOrdId}",
             "SameSessionRecovery=True",
@@ -1473,7 +1473,7 @@ public sealed class RawLmaxFixSessionClient(LmaxConnectivityLabSafetyValidator s
     {
         yield return $"Host={options.FixMarketDataHost ?? "(not configured)"}";
         yield return $"Port={options.FixMarketDataPort?.ToString(CultureInfo.InvariantCulture) ?? "(not configured)"}";
-        yield return $"TargetCompId={options.FixMarketDataTargetCompId ?? options.FixTargetCompId ?? "(not configured)"}";
+        yield return $"TargetCompId={LmaxConnectivityLabOptions.Mask(options.FixMarketDataTargetCompId ?? options.FixTargetCompId)}";
         yield return $"SenderCompId={LmaxConnectivityLabOptions.Mask(options.FixSenderCompId)}";
         yield return $"EnvironmentName={options.EnvironmentName}";
         yield return $"AllowExternalConnections={options.AllowExternalConnections}";

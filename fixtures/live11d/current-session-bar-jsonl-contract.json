@@ -1,0 +1,81 @@
+{
+  "phase": "BOT-LIVE11D",
+  "artifactType": "current_session_bar_jsonl_contract",
+  "expectedInputPath": "fixtures/incoming/current-session-bars/nt8_mnq_current_session_bars.jsonl",
+  "format": "json_lines_one_bar_per_line",
+  "manualExplicitFileOnly": true,
+  "automaticFileDiscovery": false,
+  "watcherAllowed": false,
+  "pollingAllowed": false,
+  "networkAllowed": false,
+  "nt8RuntimeActionAllowedFromCodex": false,
+  "recordShape": {
+    "requiredOneOf": [
+      "phase",
+      "exportSchemaVersion"
+    ],
+    "requiredFields": [
+      "sourceSystem",
+      "artifactType",
+      "monitoringOnly",
+      "nonExecutable",
+      "instrument",
+      "tickSize",
+      "sessionDate",
+      "sessionTimezone",
+      "barPeriodType",
+      "barPeriodValue",
+      "timestampUtc",
+      "open",
+      "high",
+      "low",
+      "close",
+      "isHistorical",
+      "isRealtime"
+    ],
+    "optionalFields": [
+      "instrumentFullName",
+      "masterInstrumentName",
+      "volume",
+      "barsInProgress",
+      "tradingHoursName",
+      "calculateMode"
+    ],
+    "requiredValues": {
+      "sourceSystem": "nt8_local_bar_export",
+      "artifactType": "current_session_strategy_bar",
+      "monitoringOnly": true,
+      "nonExecutable": true
+    }
+  },
+  "fileLevelValidation": [
+    "all records must have the same instrument",
+    "all records must have the same sessionDate",
+    "all records must have the same tickSize",
+    "all records must have the same barPeriodType and barPeriodValue",
+    "timestampUtc must be UTC and strictly increasing",
+    "high must be greater than or equal to max(open, close)",
+    "low must be less than or equal to min(open, close)",
+    "high must be greater than or equal to low",
+    "prices must align to tickSize where possible",
+    "volume cannot be negative when present",
+    "records must be local explicit strategy bars, not observation snapshots",
+    "records must not contain signal, order, execution, broker, credential, network, watcher, polling, scheduler, position sizing, or quantity fields"
+  ],
+  "explicitRejections": [
+    "EXPORT12 observation snapshots",
+    "LIVE10A monitoring targets",
+    "LIVE11B synthetic plumbing bar fixtures unless labelled parser_contract_sample_not_market_real",
+    "objects containing signal, order, recommendation, executionIntent, quantity, positionSize, broker, Tradovate, credential, apiKey, websocket, http, polling, scheduler, or watcher fields"
+  ],
+  "sampleFixture": "fixtures/live11d/parser-contract-sample-valid-not-market-real.jsonl",
+  "sampleFixtureIsMarketReal": false,
+  "monitoringOnly": true,
+  "nonExecutable": true,
+  "levelPackProduced": false,
+  "theoreticalTargetProduced": false,
+  "candidateProduced": false,
+  "signalGenerationAllowed": false,
+  "orderSubmissionAllowed": false,
+  "tradingAllowed": false
+}

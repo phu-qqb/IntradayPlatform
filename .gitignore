@@ -64,7 +64,11 @@ BenchmarkDotNet.Artifacts/
 project.lock.json
 project.fragment.lock.json
 artifacts/
+artifacts/lmax-readonly-runtime-securityid-confirmations/real/*
 .dotnet_home/
+.dotnet-cli/
+.appdata/
+.localappdata/
 .nuget_packages/
 
 # Tye

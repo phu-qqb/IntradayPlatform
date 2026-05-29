@@ -14,6 +14,7 @@
     <PackageReference Include="Serilog.AspNetCore" Version="10.0.0" />
     <ProjectReference Include="..\QQ.Production.Intraday.Application\QQ.Production.Intraday.Application.csproj" />
     <ProjectReference Include="..\QQ.Production.Intraday.Domain\QQ.Production.Intraday.Domain.csproj" />
+    <ProjectReference Include="..\QQ.Production.Intraday.Infrastructure.Lmax\QQ.Production.Intraday.Infrastructure.Lmax.csproj" />
     <ProjectReference Include="..\QQ.Production.Intraday.Infrastructure.Simulator\QQ.Production.Intraday.Infrastructure.Simulator.csproj" />
     <ProjectReference Include="..\QQ.Production.Intraday.Infrastructure.SqlServer\QQ.Production.Intraday.Infrastructure.SqlServer.csproj" />
   </ItemGroup>

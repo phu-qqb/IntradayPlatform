@@ -26,6 +26,9 @@ import type {
   LmaxShadowObservationDto,
   LmaxShadowReaderRunResultDto,
   LmaxShadowReplayRunDto,
+  LmaxReadOnlyAdditionalInstrumentPlanningStatusSummaryDto,
+  LmaxReadOnlyMarketHoursNextActionSummaryDto,
+  LmaxReadOnlyMarketDataWorkflowStatusSummaryDto,
   LmaxTradeSummaryDto,
   OrdersDto,
   OperatorAuditEventDto,
@@ -63,6 +66,7 @@ import { ErrorState } from './components/ErrorState';
 import { FillsPanel } from './components/FillsPanel';
 import { HealthPanel } from './components/HealthPanel';
 import { LmaxEodReportsPanel } from './components/LmaxEodReportsPanel';
+import { LmaxReadOnlyFinalStatusPanel } from './components/LmaxReadOnlyFinalStatusPanel';
 import { LoadingState } from './components/LoadingState';
 import { MarketDataPanel } from './components/MarketDataPanel';
 import { ModelRunsPanel } from './components/ModelRunsPanel';
@@ -129,6 +133,9 @@ type DashboardState = {
   lmaxShadowReplayRuns: LmaxShadowReplayRunDto[];
   lmaxShadowObservations: LmaxShadowObservationDto[];
   lmaxShadowReaderStatus?: LmaxShadowReaderRunResultDto;
+  lmaxReadOnlyMarketDataWorkflowStatus?: LmaxReadOnlyMarketDataWorkflowStatusSummaryDto;
+  lmaxReadOnlyAdditionalInstrumentPlanningStatus?: LmaxReadOnlyAdditionalInstrumentPlanningStatusSummaryDto;
+  lmaxReadOnlyMarketHoursNextAction?: LmaxReadOnlyMarketHoursNextActionSummaryDto;
 };
 
 type PageId = 'command' | 'daily-ops' | 'pms' | 'weights' | 'oms' | 'ems' | 'market' | 'exceptions' | 'recon' | 'lmax-eod' | 'lmax-shadow' | 'risk-admin' | 'governance' | 'audit' | 'connectivity';
@@ -177,7 +184,10 @@ const emptyDashboard: DashboardState = {
   dailyOpsChecklist: [],
   lmaxShadowReplayRuns: [],
   lmaxShadowObservations: [],
-  lmaxShadowReaderStatus: undefined
+  lmaxShadowReaderStatus: undefined,
+  lmaxReadOnlyMarketDataWorkflowStatus: undefined,
+  lmaxReadOnlyAdditionalInstrumentPlanningStatus: undefined,
+  lmaxReadOnlyMarketHoursNextAction: undefined
 };
 
 const navSections: Array<{ label: string; items: Array<{ id: PageId; label: string; icon: typeof Activity }> }> = [
@@ -232,7 +242,7 @@ export default function App() {
   const loadIntegrity = useCallback(async () => setIntegrity(await apiClient.getReferenceDataIntegrity()), []);
 
   const loadDashboard = useCallback(async () => {
-    const [modelRuns, modelWeightBatches, targets, drifts, internalPositions, brokerPositions, reconciliationBreaks, tradeIntents, riskDecisions, orders, fills, snapshots, bars, killSwitch, instruments, venues, lmaxImportRuns, lmaxValidationIssues, lmaxIndividualTrades, lmaxTradeSummaries, lmaxCurrencyWallets, eodReconciliationRuns, eodReconciliationBreaks, exceptionCases, auditEvents, riskLimitSets, activeRiskLimitSet, tradingWindows, riskInstruments, riskVenues, operators, currentOperator, approvalRequests, opsJobDefinitions, opsJobRuns, runbookDefinitions, runbookRuns, scheduleList, dailyOpsSummary, dailyOpsChecklist, lmaxShadowReplayRuns, lmaxShadowObservations, lmaxShadowReaderStatus] = await Promise.all([
+    const [modelRuns, modelWeightBatches, targets, drifts, internalPositions, brokerPositions, reconciliationBreaks, tradeIntents, riskDecisions, orders, fills, snapshots, bars, killSwitch, instruments, venues, lmaxImportRuns, lmaxValidationIssues, lmaxIndividualTrades, lmaxTradeSummaries, lmaxCurrencyWallets, eodReconciliationRuns, eodReconciliationBreaks, exceptionCases, auditEvents, riskLimitSets, activeRiskLimitSet, tradingWindows, riskInstruments, riskVenues, operators, currentOperator, approvalRequests, opsJobDefinitions, opsJobRuns, runbookDefinitions, runbookRuns, scheduleList, dailyOpsSummary, dailyOpsChecklist, lmaxShadowReplayRuns, lmaxShadowObservations, lmaxShadowReaderStatus, lmaxReadOnlyMarketDataWorkflowStatus, lmaxReadOnlyAdditionalInstrumentPlanningStatus, lmaxReadOnlyMarketHoursNextAction] = await Promise.all([
       apiClient.getModelRuns(),
       apiClient.getModelWeightBatches(),
       apiClient.getTargetPositions(),
@@ -275,7 +285,10 @@ export default function App() {
       apiClient.getDailyOpsChecklist(),
       apiClient.getLmaxShadowReplayRuns(),
       apiClient.getLmaxShadowObservations(),
-      apiClient.getLmaxShadowReaderStatus()
+      apiClient.getLmaxShadowReaderStatus(),
+      apiClient.getLmaxReadOnlyMarketDataWorkflowStatus().catch(() => undefined),
+      apiClient.getLmaxReadOnlyAdditionalInstrumentPlanningStatus().catch(() => undefined),
+      apiClient.getLmaxReadOnlyMarketHoursNextAction().catch(() => undefined)
     ]);
 
     const [riskLimits, instrumentRiskLimits, venueRiskLimits] = activeRiskLimitSet
@@ -286,7 +299,7 @@ export default function App() {
         ])
       : [[], [], []];
 
-    setDashboard((current) => ({ ...current, modelRuns, modelWeightBatches, targets, drifts, internalPositions, brokerPositions, reconciliationBreaks, tradeIntents, riskDecisions, orders, fills, snapshots, bars, killSwitch, instruments, venues, lmaxImportRuns, lmaxValidationIssues, lmaxIndividualTrades, lmaxTradeSummaries, lmaxCurrencyWallets, eodReconciliationRuns, eodReconciliationBreaks, exceptionCases, auditEvents, riskLimitSets, activeRiskLimitSet, riskLimits, instrumentRiskLimits, venueRiskLimits, tradingWindows, riskInstruments, riskVenues, operators, currentOperator, approvalRequests, opsJobDefinitions, opsJobRuns, runbookDefinitions, runbookRuns, schedules: scheduleList.value ?? [], schedulerEnabled: scheduleList.schedulerEnabled, dailyOpsSummary, dailyOpsChecklist, lmaxShadowReplayRuns, lmaxShadowObservations, lmaxShadowReaderStatus }));
+    setDashboard((current) => ({ ...current, modelRuns, modelWeightBatches, targets, drifts, internalPositions, brokerPositions, reconciliationBreaks, tradeIntents, riskDecisions, orders, fills, snapshots, bars, killSwitch, instruments, venues, lmaxImportRuns, lmaxValidationIssues, lmaxIndividualTrades, lmaxTradeSummaries, lmaxCurrencyWallets, eodReconciliationRuns, eodReconciliationBreaks, exceptionCases, auditEvents, riskLimitSets, activeRiskLimitSet, riskLimits, instrumentRiskLimits, venueRiskLimits, tradingWindows, riskInstruments, riskVenues, operators, currentOperator, approvalRequests, opsJobDefinitions, opsJobRuns, runbookDefinitions, runbookRuns, schedules: scheduleList.value ?? [], schedulerEnabled: scheduleList.schedulerEnabled, dailyOpsSummary, dailyOpsChecklist, lmaxShadowReplayRuns, lmaxShadowObservations, lmaxShadowReaderStatus, lmaxReadOnlyMarketDataWorkflowStatus, lmaxReadOnlyAdditionalInstrumentPlanningStatus, lmaxReadOnlyMarketHoursNextAction }));
   }, []);
 
   const refreshAll = useCallback(async () => {
@@ -332,7 +345,7 @@ export default function App() {
 
   return (
     <div className="operator-shell">
-      <TopStatusBar health={health} integrity={integrity} onRefresh={refreshAll} />
+      <TopStatusBar health={health} integrity={integrity} operator={dashboard.currentOperator} onRefresh={refreshAll} />
       <div className="operator-context-strip">
         <span>Local operator context only — not production authentication.</span>
         <label>
@@ -526,11 +539,27 @@ function CommandCenter({ dashboard, health, integrity, actions }: { dashboard: D
   const openShadowBlocking = dashboard.lmaxShadowObservations.filter((item) => item.status === 'Open' && item.severity === 'Blocking').length;
   const openShadowWarnings = dashboard.lmaxShadowObservations.filter((item) => item.status === 'Open' && item.severity === 'Warning').length;
   const latestShadowReplay = dashboard.lmaxShadowReplayRuns[0];
+  const safetyOk = health?.executionGateway === 'FakeLmaxGateway' && !health.liveTradingEnabled && !health.externalConnectionsEnabled;
+  const nextActions = [
+    !safetyOk ? { tone: 'danger' as Tone, label: 'Stop and escalate: runtime safety is not SAFE LOCAL / FakeLmax-only.' } : undefined,
+    blockingExceptions ? { tone: 'danger' as Tone, label: 'Review blocking or critical exceptions before continuing operations.' } : undefined,
+    recentRiskBlocks.length ? { tone: 'warning' as Tone, label: 'Review recent blocked risk decisions in Risk Control Center.' } : undefined,
+    pendingApprovals.length ? { tone: 'warning' as Tone, label: 'A different approver should review pending maker/checker requests.' } : undefined,
+    openShadowBlocking ? { tone: 'danger' as Tone, label: 'Investigate blocking LMAX Shadow observations and linked exception cases.' } : undefined,
+    openShadowWarnings && !openShadowBlocking ? { tone: 'warning' as Tone, label: 'Review LMAX Shadow warnings; lab read-only warnings may be expected.' } : undefined,
+    dashboard.dailyOpsSummary?.failedJobCount ? { tone: 'danger' as Tone, label: 'Open Daily Operations and inspect failed job steps/events.' } : undefined,
+    !dashboard.activeRiskLimitSet ? { tone: 'danger' as Tone, label: 'No active risk profile is loaded. Do not process model runs.' } : undefined
+  ].filter(Boolean) as Array<{ tone: Tone; label: string }>;
   return (
     <section className="workspace-page">
       <SectionHeader title="Command Center" eyebrow="Operational overview" actions={<CommandButton tone="info" onClick={() => actions.setSelected(dashboard.auditEvents[0])}>Latest Event</CommandButton>} />
+      <div className={safetyOk ? 'notice' : 'critical-box'}>
+        {safetyOk
+          ? 'SAFE LOCAL runtime confirmed: API/Worker are FakeLmax-only, live trading is disabled, and external connections are disabled.'
+          : 'Safety attention required. Confirm execution gateway, live trading, and external connection flags before continuing.'}
+      </div>
       <div className="metric-grid">
-        <MetricCard label="Runtime Safety" value={health?.executionGateway === 'FakeLmaxGateway' && !health.liveTradingEnabled && !health.externalConnectionsEnabled ? 'Safe Local' : 'Attention'} sublabel="FakeLmax-only runtime boundary" tone={health?.executionGateway === 'FakeLmaxGateway' && !health.liveTradingEnabled && !health.externalConnectionsEnabled ? 'ok' : 'danger'} />
+        <MetricCard label="Runtime Safety" value={safetyOk ? 'Safe Local' : 'Attention'} sublabel="FakeLmax-only runtime boundary" tone={safetyOk ? 'ok' : 'danger'} />
         <MetricCard label="Active Risk Set" value={dashboard.activeRiskLimitSet ? `v${dashboard.activeRiskLimitSet.version}` : '-'} sublabel={dashboard.activeRiskLimitSet?.name ?? 'No active profile loaded'} tone={dashboard.activeRiskLimitSet?.isActive ? 'ok' : 'danger'} />
         <MetricCard label="Trading Window" value={activeWindow ? `${activeWindow.openTime}-${activeWindow.closeTime}` : '-'} sublabel={activeWindow ? `No new orders after ${activeWindow.noNewOrdersAfter} ${activeWindow.timeZoneId}` : 'No active window loaded'} tone={activeWindow ? 'info' : 'warning'} />
         <MetricCard label="Risk Blocks" value={recentRiskBlocks.length} sublabel={recentRiskBlocks[0]?.rejectReason ? `Latest: ${formatStatus(recentRiskBlocks[0].rejectReason)}` : 'Recent decisions loaded'} tone={recentRiskBlocks.length ? 'warning' : 'ok'} />
@@ -551,6 +580,30 @@ function CommandCenter({ dashboard, health, integrity, actions }: { dashboard: D
       <div className="page-grid two overview-grid">
         <HealthPanel health={health} />
         <ReferenceDataPanel integrity={integrity} />
+        <div className="panel">
+          <SectionHeader title="Operator Next Actions" eyebrow="Plain-language triage hints from current dashboard state" />
+          {nextActions.length === 0 ? (
+            <div className="notice">No immediate blocking operator action is indicated by the loaded dashboard data.</div>
+          ) : (
+            <div className="next-action-list">
+              {nextActions.map((item, index) => (
+                <div className={`next-action ${item.tone}`} key={`${item.label}-${index}`}>
+                  <StatusChip label={item.tone === 'danger' ? 'Do not proceed' : 'Review'} tone={item.tone} />
+                  <span>{item.label}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+        <div className="panel">
+          <SectionHeader title="Latest Audit Events" eyebrow="Who did what, with correlation context" />
+          <Timeline items={dashboard.auditEvents.slice(0, 6).map((event) => ({
+            label: `${formatStatus(event.eventType)} by ${event.actorDisplayName}`,
+            time: event.occurredAtUtc,
+            tone: toneForStatus(event.result),
+            detail: event.reason ?? event.description
+          }))} />
+        </div>
       </div>
     </section>
   );
@@ -938,6 +991,11 @@ function ExceptionsPage({ dashboard, actions }: { dashboard: DashboardState; act
   return (
     <section className="workspace-page">
       <SectionHeader title="Exceptions" eyebrow="Operational exception and break management" />
+      <div className={openCases.some((item) => ['Blocking', 'Critical'].includes(item.severity)) ? 'critical-box' : 'operator-note'}>
+        {openCases.some((item) => ['Blocking', 'Critical'].includes(item.severity))
+          ? 'Blocking or critical exceptions are open. Do not waive or resolve them without understanding the break and recording a clear reason.'
+          : 'Use exceptions to track review, assignment, investigation, and resolution. Every action is audited with operator context.'}
+      </div>
       <div className="metric-grid">
         <MetricCard label="Open" value={openCases.length} tone={openCases.length ? 'warning' : 'ok'} />
         <MetricCard label="Blocking" value={openCases.filter((item) => item.severity === 'Blocking').length} tone={openCases.some((item) => item.severity === 'Blocking') ? 'danger' : 'ok'} />
@@ -985,16 +1043,17 @@ function ExceptionsPage({ dashboard, actions }: { dashboard: DashboardState; act
               <p>{selected.description}</p>
               <p><strong>Status:</strong> {selected.status} <strong>Severity:</strong> {selected.severity}</p>
               <p><strong>Assigned:</strong> {selected.assignedTo ?? '-'} <strong>Entity:</strong> {selected.entityType ?? '-'} {formatIdShort(selected.entityId)}</p>
+              <div className="operator-note">Acknowledge means seen. Investigating means actively reviewing. Resolve, waive, and false-positive require a clear reason and may require four-eyes approval for blocking or critical cases.</div>
               <div className="button-row">
-                <CommandButton tone="info" onClick={() => void runAction('Acknowledge', (reason) => apiClient.acknowledgeExceptionCase(selected.id, reason))}>Acknowledge</CommandButton>
+                <CommandButton tone="info" onClick={() => void runAction('Acknowledge', (reason) => apiClient.acknowledgeExceptionCase(selected.id, reason))}>Acknowledge Seen</CommandButton>
                 <CommandButton onClick={() => {
                   const assignedTo = window.prompt('Assign to');
                   if (assignedTo?.trim()) void actions.runOperation('Assigning exception case', () => apiClient.assignExceptionCase(selected.id, assignedTo.trim()), () => 'Exception case assigned.').then(actions.refreshAll);
                 }}>Assign</CommandButton>
-                <CommandButton tone="warning" onClick={() => void runAction('Investigate', (reason) => apiClient.investigateExceptionCase(selected.id, reason))}>Investigating</CommandButton>
-                <CommandButton tone="ok" onClick={() => void runAction('Resolve', (reason) => apiClient.resolveExceptionCase(selected.id, reason ?? ''), true)}>Resolve</CommandButton>
-                <CommandButton tone="warning" onClick={() => void runAction('False Positive', (reason) => apiClient.falsePositiveExceptionCase(selected.id, reason ?? ''), true)}>False Positive</CommandButton>
-                <CommandButton tone={['Blocking', 'Critical'].includes(selected.severity) ? 'danger' : 'warning'} onClick={() => void runAction('Waive', (reason) => apiClient.waiveExceptionCase(selected.id, reason ?? ''), true)}>Waive</CommandButton>
+                <CommandButton tone="warning" onClick={() => void runAction('Investigate', (reason) => apiClient.investigateExceptionCase(selected.id, reason))}>Start Investigation</CommandButton>
+                <CommandButton tone="ok" onClick={() => void runAction('Resolve', (reason) => apiClient.resolveExceptionCase(selected.id, reason ?? ''), true)}>Resolve With Reason</CommandButton>
+                <CommandButton tone="warning" onClick={() => void runAction('False Positive', (reason) => apiClient.falsePositiveExceptionCase(selected.id, reason ?? ''), true)}>Mark False Positive</CommandButton>
+                <CommandButton tone={['Blocking', 'Critical'].includes(selected.severity) ? 'danger' : 'warning'} onClick={() => void runAction('Waive', (reason) => apiClient.waiveExceptionCase(selected.id, reason ?? ''), true)}>Waive With Reason</CommandButton>
                 <CommandButton onClick={() => void runAction('Reopen', (reason) => apiClient.reopenExceptionCase(selected.id, reason))}>Reopen</CommandButton>
                 <CommandButton onClick={() => {
                   const note = window.prompt('Add note');
@@ -1066,6 +1125,8 @@ function LmaxShadowPage({ dashboard, actions }: { dashboard: DashboardState; act
   const [status, setStatus] = useState('');
   const [severity, setSeverity] = useState('');
   const [typeFilter, setTypeFilter] = useState('');
+  const [evidenceModeFilter, setEvidenceModeFilter] = useState('');
+  const [policyFilter, setPolicyFilter] = useState('');
   const [replayFilter, setReplayFilter] = useState('');
   const [symbolFilter, setSymbolFilter] = useState('');
   const [fingerprintFilter, setFingerprintFilter] = useState('');
@@ -1093,6 +1154,8 @@ function LmaxShadowPage({ dashboard, actions }: { dashboard: DashboardState; act
     return (!status || item.status === status)
       && (!severity || item.severity === severity)
       && (!typeFilter || item.type === typeFilter)
+      && (!evidenceModeFilter || item.evidenceMode === evidenceModeFilter)
+      && (!policyFilter || item.policyCode === policyFilter)
       && (!replayFilter || item.replayRunId?.toLowerCase().includes(replayFilter.toLowerCase()))
       && (!symbolFilter || item.symbol?.toLowerCase().includes(symbolFilter.toLowerCase()))
       && (!fingerprintFilter || item.fingerprint.toLowerCase().includes(fingerprintFilter.toLowerCase()))
@@ -1102,6 +1165,9 @@ function LmaxShadowPage({ dashboard, actions }: { dashboard: DashboardState; act
     await actions.runOperation(label, work, () => `${label} completed.`);
     await actions.refreshAll();
   };
+  const evidenceModes = Array.from(new Set(dashboard.lmaxShadowObservations.map((item) => item.evidenceMode).filter(Boolean) as string[])).sort();
+  const policyCodes = Array.from(new Set(dashboard.lmaxShadowObservations.map((item) => item.policyCode).filter(Boolean) as string[])).sort();
+  const typeOptions = Array.from(new Set(dashboard.lmaxShadowObservations.map((item) => item.type).filter(Boolean))).sort();
 
   return (
     <section className="workspace-page">
@@ -1112,6 +1178,123 @@ function LmaxShadowPage({ dashboard, actions }: { dashboard: DashboardState; act
       />
       <div className="critical-box">Shadow mode compares normalized evidence to internal state and writes observations only. It does not mutate orders, fills, positions, risk decisions, or reconciliation state.</div>
       <div className="operator-note">Replay is local API processing only. It does not call LMAX, open FIX sessions, submit orders, or use credentials.</div>
+      <LmaxReadOnlyFinalStatusPanel />
+      <div className="panel wide">
+        <SectionHeader
+          title="LMAX Read-Only Demo MarketData Workflow"
+          eyebrow="Frozen manual workflow status"
+          actions={<StatusChip label={formatStatus(dashboard.lmaxReadOnlyMarketDataWorkflowStatus?.operationalStatus ?? 'NotAvailable')} tone={dashboard.lmaxReadOnlyMarketDataWorkflowStatus?.operationalStatus === 'FrozenManualReadOnly' ? 'ok' : toneForStatus(dashboard.lmaxReadOnlyMarketDataWorkflowStatus?.operationalStatus)} />}
+        />
+        <div className="operator-note">Read-only status summary only. No live controls, credential fields, host fields, scheduler controls, replay buttons, or external connection actions are exposed here.</div>
+        <div className="metric-grid">
+          <MetricCard label="Signoff" value={dashboard.lmaxReadOnlyMarketDataWorkflowStatus?.signoffDecision ?? 'Not available'} sublabel={`Audit pack ${dashboard.lmaxReadOnlyMarketDataWorkflowStatus?.auditPackDecision ?? '-'}`} tone={dashboard.lmaxReadOnlyMarketDataWorkflowStatus?.signoffDecision === 'PASS' ? 'ok' : 'warning'} />
+          <MetricCard label="Artifacts" value={dashboard.lmaxReadOnlyMarketDataWorkflowStatus?.artifactCount ?? '-'} sublabel={`${dashboard.lmaxReadOnlyMarketDataWorkflowStatus?.evidencePreviewCount ?? '-'} evidence previews`} tone="neutral" />
+          <MetricCard label="Manual Replays" value={dashboard.lmaxReadOnlyMarketDataWorkflowStatus?.manualReplayCount ?? '-'} sublabel={`${dashboard.lmaxReadOnlyMarketDataWorkflowStatus?.totalObservationCount ?? '-'} observations`} tone={(dashboard.lmaxReadOnlyMarketDataWorkflowStatus?.totalObservationCount ?? 1) === 0 ? 'ok' : 'warning'} />
+          <MetricCard label="Runtime Submit" value={dashboard.lmaxReadOnlyMarketDataWorkflowStatus?.runtimeShadowReplaySubmit ? 'True' : 'False'} sublabel="Runtime still does not submit to shadow replay" tone={dashboard.lmaxReadOnlyMarketDataWorkflowStatus?.runtimeShadowReplaySubmit ? 'danger' : 'ok'} />
+          <MetricCard label="External Attempt" value={dashboard.lmaxReadOnlyMarketDataWorkflowStatus?.externalConnectionAttempted ? 'True' : 'False'} sublabel="Workflow review is local/reporting only" tone={dashboard.lmaxReadOnlyMarketDataWorkflowStatus?.externalConnectionAttempted ? 'danger' : 'ok'} />
+          <MetricCard label="API / Worker" value={dashboard.lmaxReadOnlyMarketDataWorkflowStatus?.apiWorkerGatewayMode ?? 'FakeLmaxGateway'} sublabel="Expected FakeLmaxGateway only" tone={dashboard.lmaxReadOnlyMarketDataWorkflowStatus?.apiWorkerGatewayMode === 'FakeLmaxGateway' ? 'ok' : 'warning'} />
+        </div>
+        <div className="page-grid two">
+          <div className="info-box">
+            <strong>What this authorizes</strong>
+            <div className="chip-list">
+              {(dashboard.lmaxReadOnlyMarketDataWorkflowStatus?.whatIsAllowed ?? ['Manual Demo MarketData workflow review', 'Artifact, evidence preview, and replay result inspection']).map((item) => <span className="chip ok" key={item}>{item}</span>)}
+            </div>
+          </div>
+          <div className="critical-box">
+            <strong>What this does not authorize</strong>
+            <div className="chip-list">
+              {(dashboard.lmaxReadOnlyMarketDataWorkflowStatus?.whatIsNotAllowed ?? ['Scheduler', 'Polling', 'Runtime shadow replay submit', 'Order submission', 'Gateway registration', 'Production/UAT', 'Multi-instrument expansion']).map((item) => <span className="chip warning" key={item}>{item}</span>)}
+            </div>
+          </div>
+        </div>
+      </div>
+      <div className="panel wide">
+        <SectionHeader
+          title="LMAX Additional MarketData Instruments — Planning Status"
+          eyebrow="Read-only Phase 6Z-A planning pipeline visibility"
+          actions={<StatusChip label={formatStatus(dashboard.lmaxReadOnlyAdditionalInstrumentPlanningStatus?.aggregateDecision ?? 'NotAvailable')} tone={dashboard.lmaxReadOnlyAdditionalInstrumentPlanningStatus?.aggregateDecision === 'PASS' ? 'ok' : toneForStatus(dashboard.lmaxReadOnlyAdditionalInstrumentPlanningStatus?.aggregateDecision)} />}
+        />
+        <div className="operator-note">Operator summary only. There are no snapshot, replay, scheduler, credential, host, port, gateway, or order controls in this panel.</div>
+        <div className="metric-grid">
+          <MetricCard label="Aggregate" value={dashboard.lmaxReadOnlyAdditionalInstrumentPlanningStatus?.aggregateDecision ?? 'Not available'} sublabel={`${dashboard.lmaxReadOnlyAdditionalInstrumentPlanningStatus?.instrumentCount ?? 0} instruments`} tone={dashboard.lmaxReadOnlyAdditionalInstrumentPlanningStatus?.aggregateDecision === 'PASS' ? 'ok' : 'warning'} />
+          <MetricCard label="Future Consideration" value={dashboard.lmaxReadOnlyAdditionalInstrumentPlanningStatus?.readyForFutureManualConsiderationCount ?? '-'} sublabel="Planning-ready, not executable" tone="info" />
+          <MetricCard label="executableCount" value={dashboard.lmaxReadOnlyAdditionalInstrumentPlanningStatus?.executableCount ?? '-'} sublabel="Must remain zero" tone={(dashboard.lmaxReadOnlyAdditionalInstrumentPlanningStatus?.executableCount ?? 1) === 0 ? 'ok' : 'danger'} />
+          <MetricCard label="API / Worker" value={dashboard.lmaxReadOnlyAdditionalInstrumentPlanningStatus?.apiWorkerGatewayMode ?? 'FakeLmaxGateway'} sublabel="Expected FakeLmaxGateway only" tone={dashboard.lmaxReadOnlyAdditionalInstrumentPlanningStatus?.apiWorkerGatewayMode === 'FakeLmaxGateway' ? 'ok' : 'warning'} />
+          <MetricCard label="Runtime Submit" value={dashboard.lmaxReadOnlyAdditionalInstrumentPlanningStatus?.runtimeShadowReplaySubmit ? 'True' : 'False'} sublabel="Runtime still does not submit to shadow replay" tone={dashboard.lmaxReadOnlyAdditionalInstrumentPlanningStatus?.runtimeShadowReplaySubmit ? 'danger' : 'ok'} />
+          <MetricCard label="Orders" value={dashboard.lmaxReadOnlyAdditionalInstrumentPlanningStatus?.orderSubmission ? 'Enabled' : 'None'} sublabel="No order surface authorized" tone={dashboard.lmaxReadOnlyAdditionalInstrumentPlanningStatus?.orderSubmission ? 'danger' : 'ok'} />
+        </div>
+        <DataTable rows={dashboard.lmaxReadOnlyAdditionalInstrumentPlanningStatus?.instruments ?? []} getRowKey={(row) => row.symbol} columns={[
+          { key: 'symbol', header: 'Symbol', render: (row) => row.symbol },
+          { key: 'slashSymbol', header: 'Slash', render: (row) => row.slashSymbol },
+          { key: 'securityId', header: 'SecurityID', render: (row) => `${row.planningSecurityId} / ${row.securityIdSource}` },
+          { key: 'pipelineDecision', header: 'Pipeline', render: (row) => <StatusChip label={row.pipelineDecision} tone={row.pipelineDecision === 'PASS' ? 'ok' : 'warning'} /> },
+          { key: 'finalReadiness', header: 'Final Readiness', render: (row) => row.finalReadinessDecision },
+          { key: 'canRunExternalSnapshot', header: 'Executable', render: (row) => row.canRunExternalSnapshot ? 'true' : 'false' },
+          { key: 'isApprovedForExternalRun', header: 'Approved', render: (row) => row.isApprovedForExternalRun ? 'true' : 'false' },
+          { key: 'eligibleForManualSnapshotAttempt', header: 'Eligible', render: (row) => row.eligibleForManualSnapshotAttempt ? 'true' : 'false' }
+        ]} emptyLabel="No additional-instrument planning status available" />
+        <div className="page-grid two">
+          <div className="info-box">
+            <strong>Safety flags</strong>
+            <div className="chip-list">
+              <span className={dashboard.lmaxReadOnlyAdditionalInstrumentPlanningStatus?.schedulerOrPolling ? 'chip danger' : 'chip ok'}>No scheduler</span>
+              <span className={dashboard.lmaxReadOnlyAdditionalInstrumentPlanningStatus?.schedulerOrPolling ? 'chip danger' : 'chip ok'}>No polling</span>
+              <span className={dashboard.lmaxReadOnlyAdditionalInstrumentPlanningStatus?.runtimeShadowReplaySubmit ? 'chip danger' : 'chip ok'}>No runtime shadow replay submit</span>
+              <span className={dashboard.lmaxReadOnlyAdditionalInstrumentPlanningStatus?.orderSubmission ? 'chip danger' : 'chip ok'}>No orders</span>
+              <span className={dashboard.lmaxReadOnlyAdditionalInstrumentPlanningStatus?.gatewayRegistration ? 'chip danger' : 'chip ok'}>No gateway registration</span>
+              <span className={dashboard.lmaxReadOnlyAdditionalInstrumentPlanningStatus?.tradingMutation ? 'chip danger' : 'chip ok'}>No trading mutation</span>
+              <span className="chip ok">API/Worker FakeLmaxGateway only</span>
+            </div>
+          </div>
+          <div className="critical-box">
+            <strong>What this does not authorize</strong>
+            <div className="chip-list">
+              {['External run', 'Snapshot attempt', 'Replay', 'Scheduler', 'Polling', 'Runtime shadow replay submit', 'Order submission', 'Gateway registration', 'Trading mutation'].map((item) => <span className="chip warning" key={item}>{item}</span>)}
+            </div>
+          </div>
+        </div>
+      </div>
+      <div className="panel wide">
+        <SectionHeader
+          title="LMAX Market-Hours Next Action"
+          eyebrow="Read-only Phase 6Z-E operator next-step card"
+          actions={<StatusChip label={formatStatus(dashboard.lmaxReadOnlyMarketHoursNextAction?.status ?? 'NotAvailable')} tone={dashboard.lmaxReadOnlyMarketHoursNextAction?.status === 'ReadyForManualMarketHoursAttemptPlanningOnly' ? 'ok' : toneForStatus(dashboard.lmaxReadOnlyMarketHoursNextAction?.status)} />}
+        />
+        <div className="operator-note">Wait for market hours, then use the separate manual operator command for one GBPUSD read-only snapshot attempt. This card has no execution, replay, scheduler, credential, host, port, gateway, or order controls.</div>
+        <div className="metric-grid">
+          <MetricCard label="Recommended Action" value="GBPUSD market-hours attempt" sublabel="Manual operator command only" tone="info" />
+          <MetricCard label="Selected Instrument" value={`${dashboard.lmaxReadOnlyMarketHoursNextAction?.selectedInstrument.symbol ?? 'GBPUSD'} / ${dashboard.lmaxReadOnlyMarketHoursNextAction?.selectedInstrument.securityId ?? '4002'}`} sublabel={`${dashboard.lmaxReadOnlyMarketHoursNextAction?.selectedInstrument.slashSymbol ?? 'GBP/USD'} / SecurityIDSource ${dashboard.lmaxReadOnlyMarketHoursNextAction?.selectedInstrument.securityIdSource ?? '8'}`} tone="info" />
+          <MetricCard label="Previous Result" value={dashboard.lmaxReadOnlyMarketHoursNextAction?.previousAttempt.status ?? 'CompletedWithEmptyBook'} sublabel={dashboard.lmaxReadOnlyMarketHoursNextAction?.previousAttempt.outsideMarketHours ? 'Outside market hours, safe warning' : 'Market-hour context not available'} tone={dashboard.lmaxReadOnlyMarketHoursNextAction?.previousAttempt.safe ? 'warning' : 'warning'} />
+          <MetricCard label="Final Readiness" value={dashboard.lmaxReadOnlyMarketHoursNextAction?.finalReadinessDecision ?? 'PASS'} sublabel="Phase 6V source artifact" tone={dashboard.lmaxReadOnlyMarketHoursNextAction?.finalReadinessDecision === 'PASS' ? 'ok' : 'warning'} />
+          <MetricCard label="Retry Readiness" value={dashboard.lmaxReadOnlyMarketHoursNextAction?.marketHoursRetryReadinessDecision ?? 'PASS'} sublabel="Phase 6Y source artifact" tone={dashboard.lmaxReadOnlyMarketHoursNextAction?.marketHoursRetryReadinessDecision === 'PASS' ? 'ok' : 'warning'} />
+          <MetricCard label="Planning Freeze" value={dashboard.lmaxReadOnlyMarketHoursNextAction?.documentationPackDecision ?? 'PASS'} sublabel="Phase 6Z-D documentation pack" tone={dashboard.lmaxReadOnlyMarketHoursNextAction?.documentationPackDecision === 'PASS' ? 'ok' : 'warning'} />
+          <MetricCard label="executableCount" value={dashboard.lmaxReadOnlyMarketHoursNextAction?.executableCount ?? 0} sublabel="Must remain zero" tone={(dashboard.lmaxReadOnlyMarketHoursNextAction?.executableCount ?? 0) === 0 ? 'ok' : 'danger'} />
+          <MetricCard label="API / Worker" value={dashboard.lmaxReadOnlyMarketHoursNextAction?.apiWorkerGatewayMode ?? 'FakeLmaxGateway'} sublabel="Expected FakeLmaxGateway only" tone={dashboard.lmaxReadOnlyMarketHoursNextAction?.apiWorkerGatewayMode === 'FakeLmaxGateway' ? 'ok' : 'warning'} />
+        </div>
+        <div className="page-grid two">
+          <div className="info-box">
+            <strong>Safety flags</strong>
+            <div className="chip-list">
+              <span className={dashboard.lmaxReadOnlyMarketHoursNextAction?.isApprovedForExternalRun ? 'chip danger' : 'chip ok'}>IsApprovedForExternalRun=false</span>
+              <span className={dashboard.lmaxReadOnlyMarketHoursNextAction?.canRunExternalSnapshot ? 'chip danger' : 'chip ok'}>canRunExternalSnapshot=false</span>
+              <span className={dashboard.lmaxReadOnlyMarketHoursNextAction?.eligibleForManualSnapshotAttempt ? 'chip danger' : 'chip ok'}>eligibleForManualSnapshotAttempt=false</span>
+              <span className={dashboard.lmaxReadOnlyMarketHoursNextAction?.runtimeShadowReplaySubmit ? 'chip danger' : 'chip ok'}>No runtime shadow replay submit</span>
+              <span className={dashboard.lmaxReadOnlyMarketHoursNextAction?.schedulerOrPolling ? 'chip danger' : 'chip ok'}>No scheduler or polling</span>
+              <span className={dashboard.lmaxReadOnlyMarketHoursNextAction?.orderSubmission ? 'chip danger' : 'chip ok'}>No orders</span>
+              <span className={dashboard.lmaxReadOnlyMarketHoursNextAction?.gatewayRegistration ? 'chip danger' : 'chip ok'}>No gateway registration</span>
+              <span className={dashboard.lmaxReadOnlyMarketHoursNextAction?.tradingMutation ? 'chip danger' : 'chip ok'}>No trading mutation</span>
+              <span className="chip ok">API/Worker FakeLmaxGateway only</span>
+            </div>
+          </div>
+          <div className="critical-box">
+            <strong>What this does not authorize</strong>
+            <div className="chip-list">
+              {(dashboard.lmaxReadOnlyMarketHoursNextAction?.whatIsNotAllowed ?? ['Run now from UI', 'Scheduler', 'Polling', 'Runtime shadow replay submit', 'Order submission', 'Gateway registration', 'Production/UAT', 'Multi-instrument batch']).map((item) => <span className="chip warning" key={item}>{item}</span>)}
+            </div>
+          </div>
+        </div>
+      </div>
       <div className="panel">
         <SectionHeader
           title="Live Shadow Reader Skeleton"
@@ -1153,6 +1336,8 @@ function LmaxShadowPage({ dashboard, actions }: { dashboard: DashboardState; act
         <MetricCard label="Matches" value={matches.length} sublabel="Info observations" tone="ok" />
         <MetricCard label="Replay Source" value={formatStatus(dashboard.lmaxShadowReplayRuns[0]?.inputSource ?? 'None')} sublabel={dashboard.lmaxShadowReplayRuns[0]?.id ? `Replay ${formatIdShort(dashboard.lmaxShadowReplayRuns[0].id)}` : 'No replay id'} tone="neutral" />
         <MetricCard label="Latest Replay" value={dashboard.lmaxShadowReplayRuns[0]?.status ?? 'Not run'} sublabel={dashboard.lmaxShadowReplayRuns[0]?.message ?? 'No replay history'} tone={toneForStatus(dashboard.lmaxShadowReplayRuns[0]?.status)} />
+        <MetricCard label="Evidence Modes" value={evidenceModes.length || '-'} sublabel={evidenceModes.slice(0, 2).map(formatStatus).join(', ') || 'No observation modes'} tone="neutral" />
+        <MetricCard label="Exception Policy" value={dashboard.lmaxShadowObservations.filter((item) => item.createsExceptionCase).length} sublabel="Blocking observations can create cases" tone={dashboard.lmaxShadowObservations.some((item) => item.createsExceptionCase && item.status === 'Open') ? 'danger' : 'ok'} />
       </div>
       <div className="form-grid compact">
         <label>
@@ -1211,7 +1396,24 @@ function LmaxShadowPage({ dashboard, actions }: { dashboard: DashboardState; act
             </label>
             <label>
               Type
-              <input value={typeFilter} onChange={(event) => setTypeFilter(event.target.value)} placeholder="Exact observation type" />
+              <select value={typeFilter} onChange={(event) => setTypeFilter(event.target.value)}>
+                <option value="">All types</option>
+                {typeOptions.map((value) => <option key={value} value={value}>{formatStatus(value)}</option>)}
+              </select>
+            </label>
+            <label>
+              Evidence mode
+              <select value={evidenceModeFilter} onChange={(event) => setEvidenceModeFilter(event.target.value)}>
+                <option value="">All modes</option>
+                {evidenceModes.map((value) => <option key={value} value={value}>{formatStatus(value)}</option>)}
+              </select>
+            </label>
+            <label>
+              Policy code
+              <select value={policyFilter} onChange={(event) => setPolicyFilter(event.target.value)}>
+                <option value="">All policies</option>
+                {policyCodes.map((value) => <option key={value} value={value}>{formatStatus(value)}</option>)}
+              </select>
             </label>
             <label>
               Replay ID
@@ -1244,6 +1446,7 @@ function LmaxShadowPage({ dashboard, actions }: { dashboard: DashboardState; act
             { key: 'replayRunId', header: 'Replay', render: (row) => row.replayRunId ? formatIdShort(row.replayRunId) : '-' },
             { key: 'description', header: 'Description', render: (row) => row.description },
             { key: 'suggestedOperatorAction', header: 'Suggested Action', render: (row) => row.suggestedOperatorAction ?? '-' },
+            { key: 'exceptionPolicy', header: 'Exception', render: (row) => row.createsExceptionCase ? <StatusChip label="Creates Case" tone="danger" /> : <StatusChip label="No Case" tone="neutral" /> },
             { key: 'actions', header: 'Actions', render: (row) => (
               <div className="row-actions">
                 <ActionButton className="command-button" idleLabel="Ack" runningLabel="Ack..." disabled={!reason.trim() || row.status !== 'Open'} onClick={(event) => event.stopPropagation()} onAction={() => transition('Acknowledging shadow observation', () => apiClient.acknowledgeLmaxShadowObservation(row.id, reason))} />
@@ -1322,6 +1525,11 @@ function RiskAdminPage({ dashboard, health, integrity, actions }: { dashboard: D
         <SafetyPanel health={health} />
         <ReferenceDataPanel integrity={integrity} />
       </div>
+      {blockedRiskDecisions.length > 0 && (
+        <div className="critical-box">
+          Do not proceed with affected model runs or order processing until blocked risk decisions are understood. Open the recent decisions table below for observed value, limit, and check-level explanation.
+        </div>
+      )}
       <div className="panel wide">
         <SectionHeader title="Active Risk Profile" eyebrow="Active set selection controls simulated/FakeLmax processing only." actions={dashboard.activeRiskLimitSet && <StatusChip label={dashboard.activeRiskLimitSet.status} tone={toneForStatus(dashboard.activeRiskLimitSet.status)} />} />
         <div className="detail-grid">

@@ -2,8 +2,9 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ActionButton, ActionToast } from './ActionFeedback';
 import { DataTable } from './DataTable';
+import { LmaxReadOnlyFinalStatusPanel } from './LmaxReadOnlyFinalStatusPanel';
 import { TopStatusBar } from './TopStatusBar';
-import { SeverityBadge, StatusChip, processResultTone, toneForStatus } from './primitives';
+import { DetailDrawer, SeverityBadge, StatusChip, processResultTone, toneForStatus } from './primitives';
 import { formatIdShort, formatPrice, formatUsd, formatUtc } from '../utils/format';
 import { apiClient, getSelectedOperatorId, setSelectedOperatorId } from '../api/apiClient';
 import type { HealthDto, ReferenceDataIntegrityDto } from '../api/types';
@@ -41,11 +42,12 @@ describe('cockpit UI primitives', () => {
   });
 
   it('renders top status safe local state clearly', () => {
-    render(<TopStatusBar health={safeHealth} integrity={cleanIntegrity} onRefresh={() => undefined} />);
+    render(<TopStatusBar health={safeHealth} integrity={cleanIntegrity} operator={{ id: 'op-1', operatorId: 'local-admin', displayName: 'Local Admin', email: null, isEnabled: true, roles: ['Admin'], permissions: [], createdAtUtc: '2026-05-02T10:15:00Z' }} onRefresh={() => undefined} />);
 
-    expect(screen.getByText('SAFE LOCAL')).toBeTruthy();
+    expect(screen.getByText(/SAFE LOCAL \/ FakeLmax-only/i)).toBeTruthy();
     expect(screen.getByText(/Execution: FakeLmaxGateway/i)).toBeTruthy();
     expect(screen.getByText(/Live trading: false/i)).toBeTruthy();
+    expect(screen.getByText(/Operator: local-admin/i)).toBeTruthy();
   });
 
   it('renders top status critical warning for dangerous runtime state', () => {
@@ -316,6 +318,34 @@ describe('cockpit UI primitives', () => {
     expect(screen.queryByRole('button', { name: /submit order/i })).toBeNull();
   });
 
+  it('shows workflow guidance and links in the shared detail drawer', () => {
+    render(
+      <DetailDrawer
+        item={{
+          id: 'obs-1',
+          severity: 'Warning',
+          status: 'Open',
+          type: 'TradeCaptureMissingInternalFill',
+          evidenceMode: 'TradeCaptureOnly',
+          policyCode: 'LMAX_SHADOW_TC_MISSING_INTERNAL_FILL_READONLY',
+          sourceEventType: 'TradeCaptureReport',
+          replayRunId: 'replay-1',
+          fingerprint: 'fp-1',
+          createsExceptionCase: false,
+          metadataJson: '{"exceptionCaseId":"case-1","correlationId":"corr-1"}'
+        }}
+        onClose={() => undefined}
+      />
+    );
+
+    expect(screen.getByText('Operator Guidance')).toBeTruthy();
+    expect(screen.getByText(/TradeCapture evidence is recovery evidence/i)).toBeTruthy();
+    expect(screen.getByText('Workflow Links')).toBeTruthy();
+    expect(screen.getAllByText('Replay Run Id').length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/Exception Case Id/).length).toBeGreaterThan(0);
+    expect(screen.getByRole('button', { name: /Show advanced raw JSON/i })).toBeTruthy();
+  });
+
   it('renders LMAX shadow replay source, status, and observation counts', () => {
     render(
       <DataTable
@@ -337,6 +367,215 @@ describe('cockpit UI primitives', () => {
     expect(screen.getByText('Warnings')).toBeTruthy();
     expect(screen.queryByLabelText(/password/i)).toBeNull();
     expect(screen.queryByRole('button', { name: /live/i })).toBeNull();
+  });
+
+  it('renders read-only MarketData workflow status without live controls', () => {
+    render(
+      <div>
+        <h2>LMAX Read-Only Demo MarketData Workflow</h2>
+        <span>Status: Frozen / PASS</span>
+        <span>RuntimeShadowReplaySubmit = false</span>
+        <span>ExternalConnectionAttempted = false</span>
+        <span>CredentialValuesReturned = false</span>
+        <span>API/Worker = FakeLmaxGateway only</span>
+        <strong>What this authorizes</strong>
+        <span>Manual Demo MarketData workflow review</span>
+        <strong>What this does not authorize</strong>
+        <span>Scheduler</span>
+        <span>Polling</span>
+        <span>Runtime shadow replay submit</span>
+        <span>Order submission</span>
+        <span>Gateway registration</span>
+      </div>
+    );
+
+    expect(screen.getByText('LMAX Read-Only Demo MarketData Workflow')).toBeTruthy();
+    expect(screen.getByText(/Frozen \/ PASS/i)).toBeTruthy();
+    expect(screen.getByText(/FakeLmaxGateway only/i)).toBeTruthy();
+    expect(screen.queryByLabelText(/password/i)).toBeNull();
+    expect(screen.queryByRole('button', { name: /connect/i })).toBeNull();
+    expect(screen.queryByRole('button', { name: /submit order/i })).toBeNull();
+  });
+
+  it('fetches read-only MarketData workflow status from the local API', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      summaryId: 'summary-1',
+      operationalStatus: 'FrozenManualReadOnly',
+      signoffDecision: 'PASS',
+      auditPackDecision: 'PASS',
+      artifactCount: 3,
+      evidencePreviewCount: 3,
+      manualReplayCount: 3,
+      totalObservationCount: 0,
+      runtimeShadowReplaySubmit: false,
+      externalConnectionAttempted: false,
+      credentialValuesReturned: false,
+      apiWorkerGatewayMode: 'FakeLmaxGateway',
+      workflowFrozen: true,
+      whatIsAllowed: ['Manual Demo MarketData workflow review'],
+      whatIsNotAllowed: ['Scheduler', 'Order submission'],
+      noSensitiveContent: true,
+      issues: []
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await apiClient.getLmaxReadOnlyMarketDataWorkflowStatus();
+
+    expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining('/lmax-readonly-runtime/marketdata-workflow/status'), expect.anything());
+  });
+
+  it('renders additional instrument planning status without live controls', () => {
+    render(
+      <div>
+        <h2>LMAX Additional MarketData Instruments — Planning Status</h2>
+        <span>Aggregate decision PASS</span>
+        <span>executableCount=0</span>
+        <span>GBPUSD / GBP/USD / 4002 / PASS / executable=false</span>
+        <span>EURGBP / EUR/GBP / 4003 / PASS / executable=false</span>
+        <span>USDJPY / USD/JPY / 4004 / PASS / executable=false</span>
+        <span>AUDUSD / AUD/USD / 4007 / PASS / executable=false</span>
+        <strong>What this does not authorize</strong>
+        <span>No scheduler</span>
+        <span>No polling</span>
+        <span>No runtime shadow replay submit</span>
+        <span>No orders</span>
+        <span>No gateway registration</span>
+        <span>No trading mutation</span>
+        <span>API/Worker FakeLmaxGateway only</span>
+      </div>
+    );
+
+    expect(screen.getByText('LMAX Additional MarketData Instruments — Planning Status')).toBeTruthy();
+    expect(screen.getByText(/executableCount=0/i)).toBeTruthy();
+    expect(screen.getByText(/EURGBP \/ EUR\/GBP \/ 4003/i)).toBeTruthy();
+    expect(screen.getByText(/USDJPY \/ USD\/JPY \/ 4004/i)).toBeTruthy();
+    expect(screen.getByText(/AUDUSD \/ AUD\/USD \/ 4007/i)).toBeTruthy();
+    expect(screen.getByText('What this does not authorize')).toBeTruthy();
+    expect(screen.queryByLabelText(/password/i)).toBeNull();
+    expect(screen.queryByRole('button', { name: /run snapshot/i })).toBeNull();
+    expect(screen.queryByRole('button', { name: /submit order/i })).toBeNull();
+    expect(screen.queryByRole('button', { name: /connect/i })).toBeNull();
+  });
+
+  it('fetches additional instrument planning status from the local API', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      summaryId: 'summary-1',
+      aggregateDecision: 'PASS',
+      instrumentCount: 4,
+      readyForFutureManualConsiderationCount: 4,
+      executableCount: 0,
+      runtimeShadowReplaySubmit: false,
+      schedulerOrPolling: false,
+      orderSubmission: false,
+      gatewayRegistration: false,
+      tradingMutation: false,
+      apiWorkerGatewayMode: 'FakeLmaxGateway',
+      instruments: [],
+      noSensitiveContent: true,
+      issues: []
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await apiClient.getLmaxReadOnlyAdditionalInstrumentPlanningStatus();
+
+    expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining('/lmax-readonly-runtime/additional-instruments/planning-status'), expect.anything());
+  });
+
+  it('renders market-hours next action without live controls', () => {
+    render(
+      <div>
+        <h2>LMAX Market-Hours Next Action</h2>
+        <span>Wait for market hours, then run one operator-approved GBPUSD read-only snapshot attempt.</span>
+        <span>GBPUSD / GBP/USD / SecurityID 4002</span>
+        <span>CompletedWithEmptyBook outside market hours</span>
+        <span>Final readiness PASS</span>
+        <span>Phase 6Y retry readiness PASS</span>
+        <span>Phase 6Z-D planning freeze PASS</span>
+        <span>executableCount=0</span>
+        <span>IsApprovedForExternalRun=false</span>
+        <span>canRunExternalSnapshot=false</span>
+        <span>eligibleForManualSnapshotAttempt=false</span>
+        <strong>What this does not authorize</strong>
+        <span>No scheduler</span>
+        <span>No polling</span>
+        <span>No runtime shadow replay submit</span>
+        <span>No orders</span>
+        <span>No gateway registration</span>
+        <span>No trading mutation</span>
+      </div>
+    );
+
+    expect(screen.getByText('LMAX Market-Hours Next Action')).toBeTruthy();
+    expect(screen.getByText(/GBPUSD \/ GBP\/USD \/ SecurityID 4002/i)).toBeTruthy();
+    expect(screen.getByText(/CompletedWithEmptyBook outside market hours/i)).toBeTruthy();
+    expect(screen.getByText(/executableCount=0/i)).toBeTruthy();
+    expect(screen.getByText('What this does not authorize')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /run/i })).toBeNull();
+    expect(screen.queryByRole('button', { name: /replay/i })).toBeNull();
+    expect(screen.queryByRole('button', { name: /scheduler/i })).toBeNull();
+    expect(screen.queryByRole('button', { name: /submit order/i })).toBeNull();
+    expect(screen.queryByLabelText(/password/i)).toBeNull();
+    expect(screen.queryByLabelText(/host/i)).toBeNull();
+    expect(screen.queryByLabelText(/port/i)).toBeNull();
+  });
+
+  it('renders final read-only evidence status without run affordances', () => {
+    render(<LmaxReadOnlyFinalStatusPanel />);
+
+    expect(screen.getByText('LMAX Read-Only Final Evidence Status')).toBeTruthy();
+    expect(screen.getAllByText('NoExternalAttemptsAllowed').length).toBeGreaterThan(0);
+    expect(screen.getByText('Final operator signoff recorded')).toBeTruthy();
+    expect(screen.getByText('GBPUSD')).toBeTruthy();
+    expect(screen.getByText('EURGBP')).toBeTruthy();
+    expect(screen.getByText('AUDUSD')).toBeTruthy();
+    expect(screen.getByText('ParkedSeparateTroubleshootingRail')).toBeTruthy();
+    expect(screen.getByText(/no MarketDataRequest reject and no SecurityID issue proven/i)).toBeTruthy();
+    expect(screen.getByText('FakeLmaxGateway only')).toBeTruthy();
+    expect(screen.getByText('Optional replay health timeout')).toBeTruthy();
+    expect(screen.getByText(/Not an LMAX evidence failure/i)).toBeTruthy();
+    expect(screen.getAllByText('false').length).toBe(4);
+    expect(screen.queryByRole('button', { name: /run/i })).toBeNull();
+    expect(screen.queryByRole('button', { name: /snapshot/i })).toBeNull();
+    expect(screen.queryByRole('button', { name: /replay/i })).toBeNull();
+    expect(screen.queryByRole('button', { name: /connect/i })).toBeNull();
+    expect(screen.queryByRole('button', { name: /submit order/i })).toBeNull();
+    expect(screen.queryByLabelText(/password/i)).toBeNull();
+    expect(screen.queryByLabelText(/host/i)).toBeNull();
+    expect(screen.queryByLabelText(/port/i)).toBeNull();
+  });
+
+  it('fetches market-hours next action from the local API', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      summaryId: 'next-action-1',
+      recommendedAction: 'OperatorApprovedGbpusdMarketHoursSnapshotAttempt',
+      status: 'ReadyForManualMarketHoursAttemptPlanningOnly',
+      selectedInstrument: { symbol: 'GBPUSD', slashSymbol: 'GBP/USD', securityId: '4002', securityIdSource: '8', requestMode: 'SnapshotPlusUpdates', symbolEncodingMode: 'SecurityIdOnly', marketDepth: 1 },
+      sourceArtifacts: { finalReadinessFile: 'final.json', marketHoursRetryReadinessFile: 'retry.json', phase6XReviewFile: 'review.json', documentationPackFile: 'doc-pack.json' },
+      previousAttempt: { status: 'CompletedWithEmptyBook', outsideMarketHours: true, safe: true, snapshotReceived: true, entryCount: 0, warningClassification: 'CompletedWithEmptyBook' },
+      finalReadinessDecision: 'PASS',
+      marketHoursRetryReadinessDecision: 'PASS',
+      phase6XReviewDecision: 'PASS_WITH_KNOWN_WARNINGS',
+      documentationPackDecision: 'PASS',
+      executableCount: 0,
+      isApprovedForExternalRun: false,
+      canRunExternalSnapshot: false,
+      eligibleForManualSnapshotAttempt: false,
+      runtimeShadowReplaySubmit: false,
+      schedulerOrPolling: false,
+      orderSubmission: false,
+      gatewayRegistration: false,
+      tradingMutation: false,
+      apiWorkerGatewayMode: 'FakeLmaxGateway',
+      whatIsAllowed: ['Review readiness'],
+      whatIsNotAllowed: ['Run now from UI'],
+      noSensitiveContent: true,
+      issues: []
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await apiClient.getLmaxReadOnlyMarketHoursNextAction();
+
+    expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining('/lmax-readonly-runtime/market-hours-next-action'), expect.anything());
   });
 
   it('renders risk decision explainability with observed and limit values', () => {

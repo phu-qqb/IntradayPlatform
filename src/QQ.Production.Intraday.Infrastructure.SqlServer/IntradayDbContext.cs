@@ -18,6 +18,9 @@ public sealed class IntradayDbContext(DbContextOptions<IntradayDbContext> option
     public DbSet<ModelWeightBatch> ModelWeightBatches => Set<ModelWeightBatch>();
     public DbSet<ModelWeightRow> ModelWeightRows => Set<ModelWeightRow>();
     public DbSet<ModelWeightValidationIssue> ModelWeightValidationIssues => Set<ModelWeightValidationIssue>();
+    public DbSet<QubesWeightAuditBatch> QubesWeightAuditBatches => Set<QubesWeightAuditBatch>();
+    public DbSet<QubesRawWeightAuditRow> QubesRawWeightAuditRows => Set<QubesRawWeightAuditRow>();
+    public DbSet<QubesNormalizedWeightAuditRow> QubesNormalizedWeightAuditRows => Set<QubesNormalizedWeightAuditRow>();
     public DbSet<TargetPosition> TargetPositions => Set<TargetPosition>();
     public DbSet<DriftSnapshot> DriftSnapshots => Set<DriftSnapshot>();
     public DbSet<MarketDataSnapshot> MarketDataSnapshots => Set<MarketDataSnapshot>();
@@ -83,6 +86,9 @@ public sealed class IntradayDbContext(DbContextOptions<IntradayDbContext> option
         modelBuilder.Entity<ModelWeightBatch>().HasKey(x => x.Id);
         modelBuilder.Entity<ModelWeightRow>().HasKey(x => x.Id);
         modelBuilder.Entity<ModelWeightValidationIssue>().HasKey(x => x.Id);
+        modelBuilder.Entity<QubesWeightAuditBatch>().HasKey(x => x.Id);
+        modelBuilder.Entity<QubesRawWeightAuditRow>().HasKey(x => x.Id);
+        modelBuilder.Entity<QubesNormalizedWeightAuditRow>().HasKey(x => x.Id);
         modelBuilder.Entity<TargetPosition>().HasKey(nameof(TargetPosition.ModelRunId), nameof(TargetPosition.InstrumentId));
         modelBuilder.Entity<DriftSnapshot>().HasKey(nameof(DriftSnapshot.ModelRunId), nameof(DriftSnapshot.InstrumentId));
         modelBuilder.Entity<MarketDataSnapshot>().HasKey(x => x.Id);
@@ -169,6 +175,10 @@ public sealed class IntradayDbContext(DbContextOptions<IntradayDbContext> option
         modelBuilder.Entity<ModelWeightRow>().HasIndex(x => new { x.BatchId, x.RawSecurityId }).IsUnique();
         modelBuilder.Entity<ModelWeightRow>().HasIndex(x => new { x.BatchId, x.InstrumentId }).IsUnique().HasFilter("[InstrumentId] IS NOT NULL");
         modelBuilder.Entity<ModelWeightValidationIssue>().HasIndex(x => new { x.BatchId, x.Severity, x.IssueType });
+        modelBuilder.Entity<QubesWeightAuditBatch>().HasIndex(x => x.QubesRunId).IsUnique();
+        modelBuilder.Entity<QubesWeightAuditBatch>().HasIndex(x => new { x.SourceSystem, x.ProducedAtUtc });
+        modelBuilder.Entity<QubesRawWeightAuditRow>().HasIndex(x => new { x.AuditBatchId, x.RowNumber }).IsUnique();
+        modelBuilder.Entity<QubesNormalizedWeightAuditRow>().HasIndex(x => new { x.AuditBatchId, x.Symbol }).IsUnique();
         modelBuilder.Entity<LmaxReportImportRun>().HasIndex(x => new { x.ReportDate, x.ReportType, x.VenueId, x.BrokerAccountId });
         modelBuilder.Entity<LmaxIndividualTrade>().HasIndex(x => new { x.VenueId, x.AccountId, x.ExecutionId }).IsUnique();
         modelBuilder.Entity<LmaxIndividualTrade>().HasIndex(x => new { x.VenueId, x.AccountId, x.TradeUti }).IsUnique();
@@ -245,6 +255,13 @@ public sealed class IntradayDbContext(DbContextOptions<IntradayDbContext> option
         modelBuilder.Entity<ModelWeightRow>().HasOne<Instrument>().WithMany().HasForeignKey(x => x.InstrumentId).OnDelete(DeleteBehavior.Restrict);
         modelBuilder.Entity<ModelWeightValidationIssue>().HasOne<ModelWeightBatch>().WithMany().HasForeignKey(x => x.BatchId).OnDelete(DeleteBehavior.Restrict);
         modelBuilder.Entity<ModelWeightValidationIssue>().HasOne<ModelWeightRow>().WithMany().HasForeignKey(x => x.RowId).OnDelete(DeleteBehavior.Restrict);
+        modelBuilder.Entity<QubesWeightAuditBatch>().HasOne<ModelWeightBatch>().WithMany().HasForeignKey(x => x.ModelWeightBatchId).OnDelete(DeleteBehavior.Restrict);
+        modelBuilder.Entity<QubesWeightAuditBatch>().HasOne<ModelRun>().WithMany().HasForeignKey(x => x.PromotedModelRunId).OnDelete(DeleteBehavior.Restrict);
+        modelBuilder.Entity<QubesRawWeightAuditRow>().HasOne<QubesWeightAuditBatch>().WithMany().HasForeignKey(x => x.AuditBatchId).OnDelete(DeleteBehavior.Restrict);
+        modelBuilder.Entity<QubesNormalizedWeightAuditRow>().HasOne<QubesWeightAuditBatch>().WithMany().HasForeignKey(x => x.AuditBatchId).OnDelete(DeleteBehavior.Restrict);
+        modelBuilder.Entity<QubesNormalizedWeightAuditRow>().HasOne<ModelWeightBatch>().WithMany().HasForeignKey(x => x.ModelWeightBatchId).OnDelete(DeleteBehavior.Restrict);
+        modelBuilder.Entity<QubesNormalizedWeightAuditRow>().HasOne<ModelRun>().WithMany().HasForeignKey(x => x.ModelRunId).OnDelete(DeleteBehavior.Restrict);
+        modelBuilder.Entity<QubesNormalizedWeightAuditRow>().HasOne<Instrument>().WithMany().HasForeignKey(x => x.TargetWeightInstrumentId).OnDelete(DeleteBehavior.Restrict);
         modelBuilder.Entity<TargetPosition>().HasOne<ModelRun>().WithMany().HasForeignKey(x => x.ModelRunId).OnDelete(DeleteBehavior.Restrict);
         modelBuilder.Entity<TargetPosition>().HasOne<Instrument>().WithMany().HasForeignKey(x => x.InstrumentId).OnDelete(DeleteBehavior.Restrict);
         modelBuilder.Entity<DriftSnapshot>().HasOne<ModelRun>().WithMany().HasForeignKey(x => x.ModelRunId).OnDelete(DeleteBehavior.Restrict);
@@ -398,6 +415,16 @@ public sealed class IntradayDbContext(DbContextOptions<IntradayDbContext> option
         modelBuilder.Entity<ModelWeightRow>().Property(x => x.InstrumentId).HasConversion(x => x.HasValue ? x.Value.Value : (Guid?)null, x => x.HasValue ? new InstrumentId(x.Value) : null);
         modelBuilder.Entity<ModelWeightValidationIssue>().Property(x => x.BatchId).HasConversion(x => x.Value, x => new ModelWeightBatchId(x));
         modelBuilder.Entity<ModelWeightValidationIssue>().Property(x => x.RowId).HasConversion(x => x.HasValue ? x.Value.Value : (Guid?)null, x => x.HasValue ? new ModelWeightRowId(x.Value) : null);
+        modelBuilder.Entity<QubesWeightAuditBatch>().Property(x => x.Id).HasConversion(x => x.Value, x => new QubesWeightAuditBatchId(x));
+        modelBuilder.Entity<QubesWeightAuditBatch>().Property(x => x.ModelWeightBatchId).HasConversion(x => x.HasValue ? x.Value.Value : (Guid?)null, x => x.HasValue ? new ModelWeightBatchId(x.Value) : null);
+        modelBuilder.Entity<QubesWeightAuditBatch>().Property(x => x.PromotedModelRunId).HasConversion(x => x.HasValue ? x.Value.Value : (Guid?)null, x => x.HasValue ? new ModelRunId(x.Value) : null);
+        modelBuilder.Entity<QubesRawWeightAuditRow>().Property(x => x.Id).HasConversion(x => x.Value, x => new QubesRawWeightAuditRowId(x));
+        modelBuilder.Entity<QubesRawWeightAuditRow>().Property(x => x.AuditBatchId).HasConversion(x => x.Value, x => new QubesWeightAuditBatchId(x));
+        modelBuilder.Entity<QubesNormalizedWeightAuditRow>().Property(x => x.Id).HasConversion(x => x.Value, x => new QubesNormalizedWeightAuditRowId(x));
+        modelBuilder.Entity<QubesNormalizedWeightAuditRow>().Property(x => x.AuditBatchId).HasConversion(x => x.Value, x => new QubesWeightAuditBatchId(x));
+        modelBuilder.Entity<QubesNormalizedWeightAuditRow>().Property(x => x.ModelWeightBatchId).HasConversion(x => x.HasValue ? x.Value.Value : (Guid?)null, x => x.HasValue ? new ModelWeightBatchId(x.Value) : null);
+        modelBuilder.Entity<QubesNormalizedWeightAuditRow>().Property(x => x.ModelRunId).HasConversion(x => x.HasValue ? x.Value.Value : (Guid?)null, x => x.HasValue ? new ModelRunId(x.Value) : null);
+        modelBuilder.Entity<QubesNormalizedWeightAuditRow>().Property(x => x.TargetWeightInstrumentId).HasConversion(x => x.HasValue ? x.Value.Value : (Guid?)null, x => x.HasValue ? new InstrumentId(x.Value) : null);
         modelBuilder.Entity<TargetPosition>().Property(x => x.ModelRunId).HasConversion(x => x.Value, x => new ModelRunId(x));
         modelBuilder.Entity<TargetPosition>().Property(x => x.InstrumentId).HasConversion(x => x.Value, x => new InstrumentId(x));
         modelBuilder.Entity<DriftSnapshot>().Property(x => x.ModelRunId).HasConversion(x => x.Value, x => new ModelRunId(x));
@@ -1014,6 +1041,37 @@ public sealed class SqlServerModelWeightBatchRepository(IntradayDbContext dbCont
     {
         var batch = await dbContext.ModelWeightBatches.FirstAsync(x => x.Id == batchId, cancellationToken);
         dbContext.Entry(batch).CurrentValues.SetValues(batch with { Status = ModelWeightBatchStatus.Promoted, PromotedAtUtc = promotedAtUtc, PromotedModelRunId = modelRunId, Message = "Promoted to model run." });
+        await dbContext.SaveChangesAsync(cancellationToken);
+    }
+}
+
+public sealed class SqlServerQubesWeightAuditRepository(IntradayDbContext dbContext) : IQubesWeightAuditRepository
+{
+    public Task<QubesWeightAuditBatch?> GetByRunIdAsync(string qubesRunId, CancellationToken cancellationToken)
+        => dbContext.QubesWeightAuditBatches.AsNoTracking().FirstOrDefaultAsync(x => x.QubesRunId == qubesRunId, cancellationToken);
+
+    public async Task<IReadOnlyList<QubesRawWeightAuditRow>> GetRawRowsAsync(QubesWeightAuditBatchId auditBatchId, CancellationToken cancellationToken)
+        => await dbContext.QubesRawWeightAuditRows.AsNoTracking()
+            .Where(x => x.AuditBatchId == auditBatchId)
+            .OrderBy(x => x.RowNumber)
+            .ToListAsync(cancellationToken);
+
+    public async Task<IReadOnlyList<QubesNormalizedWeightAuditRow>> GetNormalizedRowsAsync(QubesWeightAuditBatchId auditBatchId, CancellationToken cancellationToken)
+        => await dbContext.QubesNormalizedWeightAuditRows.AsNoTracking()
+            .Where(x => x.AuditBatchId == auditBatchId)
+            .OrderBy(x => x.Symbol)
+            .ToListAsync(cancellationToken);
+
+    public async Task AddAsync(QubesWeightAuditBatch batch, IReadOnlyList<QubesRawWeightAuditRow> rawRows, IReadOnlyList<QubesNormalizedWeightAuditRow> normalizedRows, CancellationToken cancellationToken)
+    {
+        if (await dbContext.QubesWeightAuditBatches.AnyAsync(x => x.QubesRunId == batch.QubesRunId, cancellationToken))
+        {
+            return;
+        }
+
+        dbContext.QubesWeightAuditBatches.Add(batch);
+        dbContext.QubesRawWeightAuditRows.AddRange(rawRows);
+        dbContext.QubesNormalizedWeightAuditRows.AddRange(normalizedRows);
         await dbContext.SaveChangesAsync(cancellationToken);
     }
 }

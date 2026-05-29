@@ -1,0 +1,21 @@
+﻿{
+    "QuoteFileManifestId":  "polygon-gbpusd-20251124191500-20251125020000-manifest",
+    "ProviderName":  "PolygonOfflineFile",
+    "ProviderDatasetType":  "HistoricalBboQuotes",
+    "ProviderSymbol":  "C:GBP-USD",
+    "ExecutionTradableSymbol":  "GBPUSD",
+    "NormalizedPortfolioSymbol":  "GBPUSD",
+    "RequiresInversion":  false,
+    "FilePath":  "data\\offline-quotes\\polygon\\incoming\\gbpusd-20251124191500-20251125020000.ndjson",
+    "FileFormat":  "NDJSON",
+    "FileHash":  "F2D44FA464B22932BC14A43C67F71FB0DDD38CFDD91B0E890F4F2E29E28F03C6",
+    "FileSizeBytes":  14143801,
+    "RowCountDeclared":  35596,
+    "TimeRangeStartUtc":  "2025-11-24T19:15:00Z",
+    "TimeRangeEndUtc":  "2025-11-25T02:00:00Z",
+    "CreatedAtUtc":  "2026-05-23T17:52:04Z",
+    "ProvidedBySanitized":  "operator",
+    "ContainsRawProviderPayload":  false,
+    "ContainsSecrets":  false,
+    "IntakeStatus":  "OperatorProvidedPendingAuthorization"
+}

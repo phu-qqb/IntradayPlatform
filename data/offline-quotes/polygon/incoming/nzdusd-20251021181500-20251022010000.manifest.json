@@ -1,0 +1,21 @@
+﻿{
+    "QuoteFileManifestId":  "polygon-nzdusd-20251021181500-20251022010000-manifest",
+    "ProviderName":  "PolygonOfflineFile",
+    "ProviderDatasetType":  "HistoricalBboQuotes",
+    "ProviderSymbol":  "C:NZD-USD",
+    "ExecutionTradableSymbol":  "NZDUSD",
+    "NormalizedPortfolioSymbol":  "NZDUSD",
+    "RequiresInversion":  false,
+    "FilePath":  "data\\offline-quotes\\polygon\\incoming\\nzdusd-20251021181500-20251022010000.ndjson",
+    "FileFormat":  "NDJSON",
+    "FileHash":  "848CF7A2E48056879E2C28D450D5E32A4A278EC265604C43A81798F0D4B43824",
+    "FileSizeBytes":  6265054,
+    "RowCountDeclared":  15786,
+    "TimeRangeStartUtc":  "2025-10-21T18:15:00Z",
+    "TimeRangeEndUtc":  "2025-10-22T01:00:00Z",
+    "CreatedAtUtc":  "2026-05-23T17:04:01Z",
+    "ProvidedBySanitized":  "operator",
+    "ContainsRawProviderPayload":  false,
+    "ContainsSecrets":  false,
+    "IntakeStatus":  "OperatorProvidedPendingAuthorization"
+}

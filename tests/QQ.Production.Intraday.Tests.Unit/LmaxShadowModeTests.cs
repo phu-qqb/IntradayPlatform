@@ -171,6 +171,43 @@ public sealed class LmaxShadowModeTests
     }
 
     [Fact]
+    public async Task Market_data_only_runtime_snapshot_preview_replays_with_zero_observations()
+    {
+        var mapped = Infrastructure.Lmax.LmaxReadOnlyDemoSnapshotArtifactEvidencePreviewMapper.MapJson(SuccessRuntimeSnapshotArtifactJson());
+        Assert.True(mapped.IsValid);
+        var validation = LmaxEvidenceContractValidator.ValidateAndNormalize(mapped.NormalizedEvidenceJson);
+        Assert.True(validation.IsValid);
+        Assert.Equal(LmaxEvidenceMode.MarketDataOnly, validation.EvidenceMode);
+
+        using var document = JsonDocument.Parse(validation.NormalizedJson);
+        var root = document.RootElement;
+        Assert.Empty(root.GetProperty("executionReports").EnumerateArray());
+        Assert.Empty(root.GetProperty("orderStatuses").EnumerateArray());
+        Assert.Empty(root.GetProperty("tradeCaptureReports").EnumerateArray());
+        Assert.Empty(root.GetProperty("protocolRejects").EnumerateArray());
+
+        var (state, service) = CreateService();
+        var beforeCounts = CaptureMutationGuardCounts(state);
+
+        var run = await service.ReplayAsync(new LmaxShadowReplayRequest(
+            LmaxShadowInputSource.LabEvidenceFile,
+            [],
+            [],
+            [],
+            [],
+            "Phase 5N unit test MarketDataOnly runtime snapshot preview replay",
+            "MarketDataOnly"), CancellationToken.None);
+
+        Assert.Equal(LmaxShadowReplayStatus.Completed, run.Status);
+        Assert.Equal(0, run.InputEventCount);
+        Assert.Equal(0, run.ObservationCount);
+        Assert.Equal(0, run.BlockingObservationCount);
+        Assert.Equal(0, run.WarningObservationCount);
+        Assert.Empty(state.LmaxShadowObservations);
+        AssertMutationGuardCountsUnchanged(beforeCounts, state);
+    }
+
+    [Fact]
     public async Task Trade_capture_only_evidence_fixture_replays_safely()
     {
         var (state, service) = CreateService();
@@ -498,6 +535,48 @@ public sealed class LmaxShadowModeTests
 
         throw new FileNotFoundException($"Could not find repo file {Path.Combine(parts)} from {AppContext.BaseDirectory}.");
     }
+
+    private static string SuccessRuntimeSnapshotArtifactJson()
+        => """
+           {
+             "runId": "phase5n-test-run",
+             "startedAtUtc": "2026-05-08T11:26:46.4132214+00:00",
+             "completedAtUtc": "2026-05-08T11:26:46.7030664+00:00",
+             "status": "Completed",
+             "environmentName": "Demo",
+             "venueProfileName": "DemoLondon",
+             "credentialProfileName": "LmaxDemoReadOnlyProfile",
+             "reason": "Phase 5N unit test sanitized snapshot",
+             "operatorId": "local-operator",
+             "externalConnectionAttempted": true,
+             "credentialReadAttempted": true,
+             "credentialValuesReturned": false,
+             "logonAttempted": true,
+             "logonSucceeded": true,
+             "snapshotRequestAttempted": true,
+             "snapshotReceived": true,
+             "logoutAttempted": true,
+             "logoutSucceeded": true,
+             "orderSubmissionAttempted": false,
+             "shadowReplaySubmitAttempted": false,
+             "tradingMutationAttempted": false,
+             "schedulerStarted": false,
+             "entryCount": 2,
+             "marketDataSnapshotReceived": true,
+             "instrument": "EURUSD",
+             "securityId": "4001",
+             "bestBid": 1.17662,
+             "bestAsk": 1.17667,
+             "mid": 1.176645,
+             "snapshotReceivedAtUtc": "2026-05-08T11:26:46.7000639+00:00",
+             "noSensitiveContent": true,
+             "redactionStatus": "Redacted",
+             "warnings": [],
+             "errors": [],
+             "retryEnabled": false,
+             "retryAllowed": false
+           }
+           """;
 
     private static Dictionary<string, int> CaptureMutationGuardCounts(PlatformState state)
         => new()

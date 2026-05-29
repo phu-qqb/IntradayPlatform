@@ -1,0 +1,21 @@
+﻿{
+    "QuoteFileManifestId":  "polygon-usdcad-20260519120000-20260519160000-manifest",
+    "ProviderName":  "PolygonOfflineFile",
+    "ProviderDatasetType":  "HistoricalBboQuotes",
+    "ProviderSymbol":  "C:USD-CAD",
+    "ExecutionTradableSymbol":  "USDCAD",
+    "NormalizedPortfolioSymbol":  "CADUSD",
+    "RequiresInversion":  true,
+    "FilePath":  "data\\offline-quotes\\polygon\\incoming\\usdcad-20260519120000-20260519160000.ndjson",
+    "FileFormat":  "NDJSON",
+    "FileHash":  "A2D4997B3C5355B5C20DB9F8F80B5F74A362403551CCD138561FC2D561DA53DE",
+    "FileSizeBytes":  22176055,
+    "RowCountDeclared":  55828,
+    "TimeRangeStartUtc":  "2026-05-19T12:00:00Z",
+    "TimeRangeEndUtc":  "2026-05-19T16:00:00Z",
+    "CreatedAtUtc":  "2026-05-21T15:02:18Z",
+    "ProvidedBySanitized":  "operator",
+    "ContainsRawProviderPayload":  false,
+    "ContainsSecrets":  false,
+    "IntakeStatus":  "OperatorProvidedPendingAuthorization"
+}

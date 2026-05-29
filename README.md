@@ -2,6 +2,24 @@
 
 Local simulator foundation for `QQ.Production.Intraday`, an institutional PMS/OMS/EMS-style intraday execution platform. This first version is intentionally local-only: it does not connect to LMAX, cannot send live orders, and registers only `FakeLmaxGateway`.
 
+## Documentation
+
+Start with these guides:
+
+- [Developer Guide](docs/DEVELOPER_GUIDE.md) - architecture, projects, API routes, persistence, UI, scripts, LMAX evidence/shadow behavior, and extension rules.
+- [Operator Manual](docs/OPERATOR_MANUAL.md) - plain-language daily workflow, page guide, safety rules, exception handling, governance, and escalation.
+- [Operational Readiness Checklist](docs/OPERATIONAL_READINESS_CHECKLIST.md) - release/readiness gate, validation commands, safety checklist, and next-phase criteria.
+- [Local Runbook](docs/LOCAL_RUNBOOK.md) - local setup, database reset/update, API/UI startup, smoke scripts, and operational procedures.
+- [LMAX Connectivity Lab](docs/LMAX_CONNECTIVITY_LAB.md) - isolated lab-only LMAX FIX diagnostics and evidence capture.
+- [LMAX Read-Only Runtime Adapter Design](docs/LMAX_READONLY_RUNTIME_ADAPTER_DESIGN.md) - future read-only shadow reader design, activation levels, safety gates, and non-mutating evidence flow. Design-only; no runtime connectivity.
+- [LMAX Read-Only Runtime Adapter Implementation Plan](docs/LMAX_READONLY_RUNTIME_ADAPTER_IMPLEMENTATION_PLAN.md) - phased future delivery plan with entry/exit gates, tests, smokes, rollback criteria, and next eligible phase.
+- [LMAX Read-Only Runtime Phase Gates](docs/LMAX_READONLY_RUNTIME_PHASE_GATES.md) - concise quick-review checklist for each future phase.
+- [LMAX Read-Only Runtime First Transport Preflight](docs/LMAX_READONLY_RUNTIME_FIRST_TRANSPORT_PREFLIGHT.md) - Phase 5A preflight, kill/rollback, abort conditions, and entry criteria before any future socket prototype.
+- [LMAX Read-Only Demo MarketData Workflow Final Doc](docs/LMAX_READONLY_DEMO_MARKETDATA_WORKFLOW_FINAL_DOC.md) - Phase 5Y final documentation pack for the frozen manual Demo MarketData workflow.
+- [LMAX Read-Only Runtime Phase 6 Operationalization Plan](docs/LMAX_READONLY_RUNTIME_PHASE6_OPERATIONALIZATION_PLAN.md) - Phase 6A planning boundary and recommended next safe frontier.
+- [Adapter Contracts](docs/ADAPTER_CONTRACTS.md) - neutral venue contract, FakeLmax parity, and future LMAX adapter requirements.
+- [Documentation Index](docs/INDEX.md) - audience-oriented map of the documentation set.
+
 ## Scope
 
 - Modular monolith targeting .NET 10 (`net10.0`)
@@ -41,7 +59,9 @@ The adapter contract parity gate is documented in `docs/ADAPTER_CONTRACTS.md`. I
 
 The LMAX adapter skeleton now includes inert FIX message builders, mappers, runtime safety validation, and a blocked `LmaxVenueGatewaySkeleton`. These components are not registered in API or Worker. `FakeLmaxGateway` remains the only runtime execution gateway.
 
-The live shadow reader skeleton is also disabled by default. It exposes local status/blocking diagnostics for future read-only LMAX shadow work, but it does not open sockets, use credentials, call the Connectivity Lab, submit orders, or write to trading tables.
+The live shadow reader skeleton is also disabled by default. It exposes local status/blocking diagnostics for future read-only LMAX shadow work, but it does not open sockets, use credentials, call the Connectivity Lab, submit orders, or write to trading tables. The future read-only runtime adapter design and implementation plan are documented separately. Phase 1 adds inert interfaces and disabled/no-op behavior only. Phase 2 adds a service-level fake/in-memory fixture preview only. Phase 3 adds local diagnostic endpoints under `/lmax-readonly-runtime/*`; they are disabled/blocked by default, fixture-only when explicitly fake-enabled, and still add no runtime connectivity. Phase 3.5 proves the explicit fake-enabled path in integration tests while keeping default `appsettings.json` disabled/design-only and keeping `SubmitToShadowReplay` blocked.
+
+Phase 4 preflight locks the future external read-only boundary before any socket code exists. It adds documentation, tests, config-gate checks, and a local preflight script only. Phase 4A adds external-session contracts and a disabled stub only. Phase 4B adds an in-memory fake transport harness only. Phase 4C adds sanitized fake-event evidence preview mapping only, with no shadow replay submit. Phase 4D exposes the fake transport preview through a local manual endpoint, still fake-only/no-shadow-submit/no-persistence. Phase 4E adds a hard-disabled external-session skeleton only, with no socket activation or FIX logon. Phase 4F adds a guarded transport interface and disabled transport only, still with no network implementation. Phase 4G adds a typed configuration envelope and inactive sample only, with no credential values. Phase 4H adds a disabled credential-profile boundary only; `CredentialProfileName` is a label and no credential values are read, used, stored, logged, or returned. Phase 4I adds a disabled venue-profile boundary only; `VenueProfileName` is a label and no host, port, user, account, endpoint, session, or credential values are exposed. Phase 4J adds a validate-only run-intent envelope; it requires a manual reason and operator id but starts no session. Phase 4K exposes that envelope through `POST /lmax-readonly-runtime/external-run-intent/validate`; it validates only and always reports no session start, no external connection, no credential read, no shadow replay submit, and no trading mutation. Phase 4L adds `POST /lmax-readonly-runtime/external-run-intent/dry-run-report`; it aggregates the same intent validation with options, venue, credential resolver, guarded transport, skeleton, safety-gate, expected-outcome, and operator-guidance status while still starting no session and attempting no external connection, credential read, shadow replay submit, or trading mutation. Phase 4M adds `POST /lmax-readonly-runtime/external-run-intent/signoff/validate`; it validates manual signoff metadata and attestations, but cannot authorize execution and still starts no session or external action. Phase 4N adds `POST /lmax-readonly-runtime/external-run-intent/pre-activation-audit/validate`; it validates the intent/report/signoff audit envelope, but cannot authorize execution and still starts no session or external action. Phase 4O adds `POST /lmax-readonly-runtime/external-run-intent/readiness-snapshot`; it aggregates the full blocked chain into one snapshot, but cannot start a session or external action. Phase 4P adds the final no-socket release gate at `scripts/run-lmax-readonly-runtime-no-socket-release-gate.ps1`; passing it only means the no-socket boundary is ready to consider a separately prompted future socket prototype. Phase 5A adds first-transport preflight, kill/rollback, abort-condition, and operator-control planning only through `docs/LMAX_READONLY_RUNTIME_FIRST_TRANSPORT_PREFLIGHT.md` and `scripts/check-lmax-readonly-runtime-phase5a-preflight.ps1`; it still adds no socket capability. Functional external transport implementation has not started.
 
 Shadow Reader Quality Gate #1 hardens that skeleton against dangerous or contradictory configuration. The reader now reports explicit safety gates with status, observed value, expected safe value, and message. Even if options are set toward a future live reader, the current implementation remains blocked by `ImplementationMode` and does not execute.
 
@@ -604,6 +624,205 @@ See [docs/LMAX_CONNECTIVITY_LAB.md](docs/LMAX_CONNECTIVITY_LAB.md) for configura
 - Old local databases may contain stale demo model runs from earlier seed behavior; `scripts/reset-local-db.ps1 -SeedDemoData` recreates a clean local database where demo seed contains fake snapshots only.
 - NuGet advisory audit currently reports `System.Security.Cryptography.Xml` as a vulnerable transitive package through the SQL Server infrastructure dependency graph. Directly pinning available .NET 10 package versions did not clear the advisory, so this is documented rather than masked with an unstable package workaround.
 
+### LMAX Read-Only Runtime Phase 5B Prototype Boundary
+
+Phase 5B adds a dedicated Demo/manual read-only prototype boundary and scripts, but it remains blocked before any socket/logon attempt because credential resolver hardening is still required. The manual script is:
+
+```powershell
+.\scripts\run-lmax-readonly-runtime-demo-snapshot-prototype.ps1 -AllowExternalConnections -ConfirmDemoReadOnly -Reason "manual demo read-only prototype check"
+```
+
+It prints sanitized diagnostics and rollback instructions, returns blocked, and does not connect, read credentials, submit orders, schedule work, submit to shadow replay, register a gateway, or mutate trading state. Verify the boundary with:
+
+```powershell
+.\scripts\check-lmax-readonly-runtime-phase5b-prototype-gate.ps1
+```
+
+Phase 5C adds a local credential availability check. It checks only whether required environment labels are present and never prints, stores, returns, or logs credential values:
+
+```powershell
+.\scripts\check-lmax-readonly-runtime-demo-credentials.ps1 -ConfirmCredentialAvailabilityCheck
+.\scripts\check-lmax-readonly-runtime-phase5c-credential-gate.ps1
+```
+
+Required labels are `LMAX_DEMO_FIX_USERNAME`, `LMAX_DEMO_FIX_PASSWORD`, `LMAX_DEMO_SENDER_COMP_ID`, and `LMAX_DEMO_TARGET_COMP_ID`. Keep values in the local shell/user profile or a future approved user-secret flow only. Do not commit values to appsettings, docs, evidence, reports, or logs.
+
+Phase 5D adds the first isolated manual Demo read-only socket prototype for a single EURUSD / SecurityID `4001` market-data snapshot. It is not registered in API/Worker and keeps `FakeLmaxGateway` as the execution gateway. It requires explicit operator flags and local credential labels:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\run-lmax-readonly-runtime-demo-snapshot-prototype.ps1 -AllowExternalConnections -ConfirmDemoReadOnly -Reason "manual demo snapshot"
+```
+
+Without complete credential labels it returns sanitized `Blocked` output and `externalConnectionAttempted=false`. With complete labels it may attempt the Demo market-data logon/snapshot/logout path, but still submits no orders, starts no scheduler, submits no shadow replay, writes no trading tables, and mutates no trading state.
+
+Phase 5E hardens the prototype failure paths and retry metadata. Missing credentials classify as `BlockedMissingCredentials`; connection/logon/snapshot/logout failures classify as failed-safe statuses. Retry metadata is disabled (`retryEnabled=false`, `retryAllowed=false`, `maxAttempts=1`) and no gate or test makes an external attempt.
+
+Phase 5F adds operator-approved manual result capture. The same script may attempt the Demo EURUSD / SecurityID `4001` market-data snapshot only when the operator deliberately supplies the required flags and local Demo credential labels. It prints planned safety flags, keeps `retryEnabled=false`, writes only sanitized JSON under `artifacts/lmax-readonly-runtime-demo-snapshot/`, and never registers a gateway, starts a scheduler, submits to shadow replay, or mutates trading state. Validate the boundary without a live attempt:
+
+```powershell
+.\scripts\check-lmax-readonly-runtime-phase5f-manual-snapshot-gate.ps1
+```
+
+Phase 5G adds sanitized transport diagnostics after the first operator-approved Demo run logged on and logged out but timed out waiting for a snapshot. Results/artifacts now include request mode, request metadata, message-type counters, response classification, timeout timing, and sanitized session warnings/errors. Optional request modes are `SecurityIdOnly`, `SlashSymbolOnly`, `SymbolOnly`, and `AutoSequence`; all remain read-only market-data only and manual-only. Validate diagnostics without a live attempt:
+
+```powershell
+.\scripts\check-lmax-readonly-runtime-phase5g-snapshot-diagnostics-gate.ps1
+```
+
+Phase 5H hardens LMAX MarketDataRequest compatibility after observed Demo rejects. The safe default is now `SnapshotPlusUpdates` with `SecurityIdOnly`, which sends `263=1`, `48` present, `22=8`, and omits `55`. Known rejected profiles such as `SnapshotOnly` / `263=0`, symbol encodings with tag `55`, and `InternalSymbol` are marked as known-rejected and block locally unless `-AllowKnownRejectedDiagnostics` is explicitly supplied. Validate compatibility without a live attempt:
+
+```powershell
+.\scripts\check-lmax-readonly-runtime-phase5h-marketdata-compatibility-gate.ps1
+```
+
+Phase 5J adds sanitized MarketData logon/session diagnostics after both runtime and Connectivity Lab reached TCP/TLS but did not confirm FIX Logon. Add `-ShowSanitizedLogonDiagnostics` to the manual script to print presence/length-only credential and comp-id diagnostics, FIX session settings, first inbound message type, sanitized Logout/Reject text, and runtime-vs-lab profile-label comparison. It does not print credential values, comp-id values, or raw sensitive FIX. Validate the diagnostics boundary without a live attempt:
+
+```powershell
+.\scripts\check-lmax-readonly-runtime-phase5j-logon-diagnostics-gate.ps1
+```
+
+Phase 5L closes the first successful Demo read-only EURUSD snapshot artifact. Validate the successful sanitized artifact locally:
+
+```powershell
+.\scripts\validate-lmax-readonly-runtime-demo-snapshot-artifact.ps1 -ArtifactFile .\artifacts\lmax-readonly-runtime-demo-snapshot\lmax-readonly-demo-snapshot-result-20260508-132646.json
+.\scripts\check-lmax-readonly-runtime-phase5l-successful-snapshot-closure-gate.ps1 -ArtifactFile .\artifacts\lmax-readonly-runtime-demo-snapshot\lmax-readonly-demo-snapshot-result-20260508-132646.json
+```
+
+The closure validates Demo logon, EURUSD snapshot, logout, sanitized artifact status, no secret leakage, no order submission, no scheduler, no shadow replay submit, and no trading mutation. It does not enable scheduler, register a gateway, submit to shadow replay, persist live FIX data, or generalize toward orders.
+
+Phase 5M maps the validated successful Demo snapshot artifact into a sanitized `MarketDataOnly` evidence preview using the existing `lmax-fix-lifecycle-evidence-v1` contract. This is preview-only: it validates the artifact first, writes only ignored sanitized preview JSON under `artifacts/lmax-readonly-runtime-demo-snapshot/evidence-preview/`, and does not submit to shadow replay or create observations.
+
+```powershell
+.\scripts\preview-lmax-readonly-demo-snapshot-evidence.ps1 -ArtifactFile .\artifacts\lmax-readonly-runtime-demo-snapshot\lmax-readonly-demo-snapshot-result-20260508-132646.json
+.\scripts\check-lmax-readonly-runtime-phase5m-evidence-preview-gate.ps1 -ArtifactFile .\artifacts\lmax-readonly-runtime-demo-snapshot\lmax-readonly-demo-snapshot-result-20260508-132646.json
+```
+
+The preview contains Demo EURUSD / SecurityID `4001` market data, empty execution/order/trade/reject arrays, `noSensitiveContent=true`, and `redactionStatus=Redacted`. It still adds no order submission, gateway registration, scheduler, shadow replay submit, live FIX persistence, or trading-state mutation.
+
+Phase 5N adds a manual/offline replay dry-run for that `MarketDataOnly` preview. This uses only the existing local shadow replay API or script path; runtime still does not call shadow replay. Expected result is `Completed` with zero observations and unchanged orders/fills/positions:
+
+```powershell
+.\scripts\replay-lmax-readonly-demo-snapshot-evidence-preview.ps1 -EvidencePreviewFile .\artifacts\lmax-readonly-runtime-demo-snapshot\evidence-preview\<preview-file>.json
+.\scripts\check-lmax-readonly-runtime-phase5n-marketdata-replay-dryrun-gate.ps1 -EvidencePreviewFile .\artifacts\lmax-readonly-runtime-demo-snapshot\evidence-preview\<preview-file>.json
+```
+
+Phase 5O adds a manual repeated-snapshot stability workflow. It is not a scheduler and not polling: the operator must provide `-AllowExternalConnections`, `-ConfirmDemoReadOnly`, `-ConfirmRepeatedManualSnapshots`, a non-empty `-Reason`, and an explicit capped `-AttemptCount` of 1..5. Each planned attempt reuses the existing manual Demo EURUSD snapshot prototype, validates successful artifacts, maps them to `MarketDataOnly` previews, and writes only a sanitized ignored summary under `artifacts/lmax-readonly-runtime-demo-snapshot/stability/`. Evidence replay remains off by default and is available only through the explicit `-ReplayEvidencePreviews` manual flag.
+
+```powershell
+.\scripts\check-lmax-readonly-runtime-phase5o-stability-gate.ps1
+.\scripts\run-lmax-readonly-runtime-demo-snapshot-stability-check.ps1 -AllowExternalConnections -ConfirmDemoReadOnly -ConfirmRepeatedManualSnapshots -AttemptCount 3 -DelaySeconds 2 -Reason "Phase 5O operator-approved repeated Demo EURUSD read-only snapshot stability check"
+```
+
+Phase 5O adds no scheduler, automatic polling, runtime shadow replay submit, order submission, gateway registration, live FIX persistence, or trading-state mutation. API and Worker remain `FakeLmaxGateway` only.
+
+Phase 5P reviews the operator-run 3/3 stability summary and closes the repeated manual snapshot milestone. It validates the stability summary, referenced snapshot artifacts, and referenced `MarketDataOnly` previews without connecting to LMAX or calling the runtime prototype:
+
+```powershell
+.\scripts\review-lmax-readonly-runtime-phase5o-stability-results.ps1 -StabilitySummaryFile .\artifacts\lmax-readonly-runtime-demo-snapshot\stability\lmax-readonly-demo-snapshot-stability-20260508-144517.json
+.\scripts\check-lmax-readonly-runtime-phase5p-stability-readiness-gate.ps1 -StabilitySummaryFile .\artifacts\lmax-readonly-runtime-demo-snapshot\stability\lmax-readonly-demo-snapshot-stability-20260508-144517.json
+```
+
+The Phase 5P decision is `PASS`, meaning the project is ready to consider a separate Phase 5Q prompt for controlled manual MarketData evidence workflow hardening. It does not authorize scheduler, polling, order submission, gateway registration, runtime shadow replay submit, trading mutation, broader instruments, or production use.
+
+Phase 5Q hardens the complete manual MarketData evidence workflow without adding runtime power. The workflow review script accepts the Phase 5O stability summary or explicit sanitized snapshot artifacts, validates each Phase 5L artifact, confirms or regenerates `MarketDataOnly` previews, validates those previews, and writes a sanitized ignored workflow manifest under `artifacts/lmax-readonly-runtime-demo-snapshot/workflow/`. Replay is off by default; optional replay requires explicit local replay flags and uses only the existing manual local shadow replay path.
+
+```powershell
+.\scripts\run-lmax-readonly-marketdata-manual-workflow-review.ps1 -StabilitySummaryFile .\artifacts\lmax-readonly-runtime-demo-snapshot\stability\lmax-readonly-demo-snapshot-stability-20260508-144517.json
+.\scripts\check-lmax-readonly-runtime-phase5q-workflow-hardening-gate.ps1 -StabilitySummaryFile .\artifacts\lmax-readonly-runtime-demo-snapshot\stability\lmax-readonly-demo-snapshot-stability-20260508-144517.json
+```
+
+Expected default decision is `PASS_WITH_WARNINGS` when replay is omitted intentionally. Phase 5Q still adds no scheduler, automatic polling, runtime shadow replay submit, order submission, gateway registration, live FIX persistence, or trading-state mutation. API and Worker remain `FakeLmaxGateway` only.
+
+Phase 5R keeps the same workflow but closes the optional replay warning when the operator explicitly requests local manual replay. Replay requires localhost API availability and `-ReplayEvidencePreviews -ConfirmLocalManualReplay`; the workflow replays each `MarketDataOnly` preview through the existing local `/lmax-shadow/replay` script/API, records replay run ids and zero-observation results in the manifest, and expects `FinalDecision=PASS` when all previews replay as `Completed` with unchanged mutation guards.
+
+```powershell
+.\scripts\run-lmax-readonly-marketdata-manual-workflow-review.ps1 -StabilitySummaryFile .\artifacts\lmax-readonly-runtime-demo-snapshot\stability\lmax-readonly-demo-snapshot-stability-20260508-144517.json -ReplayEvidencePreviews -ConfirmLocalManualReplay
+.\scripts\check-lmax-readonly-runtime-phase5r-manual-replay-review-gate.ps1 -WorkflowManifestFile .\artifacts\lmax-readonly-runtime-demo-snapshot\workflow\<workflow-manifest>.json
+```
+
+Phase 5R still adds no external socket attempt, scheduler, automatic polling, runtime shadow replay submit, order submission, gateway registration, live FIX persistence, or trading-state mutation. API and Worker remain `FakeLmaxGateway` only.
+
+Phase 5S adds the controlled manual workflow release gate. It validates the Phase 5O stability summary, the Phase 5L snapshot artifacts, and the Phase 5M `MarketDataOnly` previews, then writes a fixed sanitized release manifest at `artifacts/lmax-readonly-runtime-demo-snapshot/workflow/phase5s-manual-release-manifest.json`. Replay is optional and still requires `-ReplayEvidencePreviews -ConfirmLocalManualReplay`; skipped replay produces `PASS_WITH_WARNINGS`.
+
+```powershell
+.\scripts\run-lmax-readonly-marketdata-manual-workflow-release.ps1 -AllowExternalConnections -ConfirmDemoReadOnly -ConfirmRepeatedManualSnapshots -ReplayEvidencePreviews -ConfirmLocalManualReplay -AttemptCount 3 -DelaySeconds 5 -Reason "Phase 5S manual workflow release test"
+.\scripts\check-lmax-readonly-runtime-phase5s-release-gate.ps1
+```
+
+If the workflow is stopped or fails, clear any Phase 5S shell variables, verify `/health` still reports `FakeLmaxGateway`, and rerun the Phase 5O and 5S gates. Phase 5S does not authorize scheduler, polling, runtime shadow replay submit, order submission, gateway registration, trading mutation, broader instruments, or production use.
+
+Phase 5T freezes that controlled manual workflow as an operator/developer/risk runbook. It adds only documentation and a local gate:
+
+```powershell
+.\scripts\check-lmax-readonly-runtime-phase5t-runbook-freeze-gate.ps1
+```
+
+The freeze gate validates the Phase 5S manifest/report, confirms `PASS` or `PASS_WITH_WARNINGS`, verifies the replay-skipped warning reason when applicable, and checks that runtime still has no scheduler/polling, shadow replay submit, order path, gateway registration, trading mutation, or credential-value exposure. It does not connect to LMAX and does not perform manual replay. The frozen runbook is `docs/LMAX_READONLY_RUNTIME_CONTROLLED_MANUAL_WORKFLOW_REVIEW.md`.
+
+Phase 5V creates the final local audit pack for the controlled manual Demo MarketData workflow. It gathers the Phase 5O stability summary, sanitized snapshot artifacts, `MarketDataOnly` previews, replay-enabled workflow manifest, replay results, safety confirmations, and gate references into ignored JSON/Markdown reports:
+
+```powershell
+.\scripts\build-lmax-readonly-marketdata-workflow-audit-pack.ps1 -StabilitySummaryFile .\artifacts\lmax-readonly-runtime-demo-snapshot\stability\lmax-readonly-demo-snapshot-stability-20260508-144517.json -WorkflowManifestFile .\artifacts\lmax-readonly-runtime-demo-snapshot\workflow\lmax-readonly-marketdata-workflow-20260508-162327.json
+.\scripts\check-lmax-readonly-runtime-phase5v-final-audit-pack-gate.ps1 -AuditPackFile .\artifacts\lmax-readonly-runtime-demo-snapshot\audit-pack\<audit-pack>.json
+```
+
+`PASS` means the controlled manual Demo MarketData workflow is validated as an audit package. It still does not authorize scheduler, polling, runtime shadow replay submit, order submission, gateway registration, UAT/production use, multi-instrument expansion, or trading-state mutation.
+
+Phase 5W adds the operational signoff over the Phase 5V audit pack. It is local signoff/reporting only and does not run LMAX, snapshots, replay, scheduler, orders, gateway registration, or mutation paths:
+
+```powershell
+.\scripts\signoff-lmax-readonly-marketdata-workflow.ps1 `
+  -AuditPackFile .\artifacts\lmax-readonly-runtime-demo-snapshot\audit-pack\lmax-readonly-marketdata-workflow-audit-pack-20260508-163430.json `
+  -AuditPackMarkdownFile .\artifacts\lmax-readonly-runtime-demo-snapshot\audit-pack\lmax-readonly-marketdata-workflow-audit-pack-20260508-163430.md `
+  -SignoffBy "local-operator" `
+  -Role "Operator" `
+  -Reason "Phase 5W operational signoff for controlled manual Demo MarketData workflow"
+.\scripts\check-lmax-readonly-runtime-phase5w-operational-signoff-gate.ps1 -SignoffFile .\artifacts\readiness\<signoff-file>.json
+```
+
+`PASS` authorizes only recognition that the controlled manual Demo read-only MarketData workflow has been validated. It does not authorize scheduler, polling, runtime shadow replay submit, order submission, gateway registration, UAT/production use, multi-instrument expansion, automatic execution, or trading-state mutation. The detailed signoff runbook is `docs/LMAX_READONLY_RUNTIME_OPERATIONAL_SIGNOFF.md`.
+
+Phase 5X exposes that frozen status to operators without adding runtime capability. Use the local script or the read-only API/UI panel:
+
+```powershell
+.\scripts\show-lmax-readonly-marketdata-workflow-status.ps1 -SignoffFile .\artifacts\readiness\lmax-readonly-marketdata-operational-signoff-20260508-165858.json
+.\scripts\check-lmax-readonly-runtime-phase5x-operator-summary-gate.ps1 -SignoffFile .\artifacts\readiness\lmax-readonly-marketdata-operational-signoff-20260508-165858.json
+```
+
+The endpoint is `GET /lmax-readonly-runtime/marketdata-workflow/status`, and the cockpit panel appears on the LMAX Shadow page as `LMAX Read-Only Demo MarketData Workflow`. This is status/reporting only: no scheduler, polling, runtime replay submit, orders, gateway registration, production/UAT, multi-instrument expansion, or mutation is authorized.
+
+Phase 6A adds the planning boundary after the frozen Phase 5 workflow. It creates `docs/LMAX_READONLY_RUNTIME_PHASE6_OPERATIONALIZATION_PLAN.md`, `docs/LMAX_READONLY_RUNTIME_PHASE6_BOUNDARY_CHECKLIST.md`, and `scripts/check-lmax-readonly-runtime-phase6a-planning-gate.ps1`. The recommended next phase is `Phase 6B - Manual Additional MarketData Instrument Allowlist Design, No External Run`. Phase 6A adds no runtime capability: no external run, scheduler, polling, runtime shadow replay submit, order submission, gateway registration, credential exposure, or trading-state mutation.
+
+Phase 6B adds the manual additional MarketData instrument allowlist design only. `LmaxReadOnlyInstrumentAllowlist` documents planning candidates GBPUSD, USDJPY, EURGBP, and AUDUSD with Demo-only metadata and confirmation-required SecurityID labels. The allowlist validator requires `MarketDataOnly`, blocks external-run approval, and keeps scheduler, polling, runtime shadow replay submit, order submission, gateway registration, credential values, and trading mutation disabled. Run `scripts/check-lmax-readonly-runtime-phase6b-instrument-allowlist-gate.ps1`; it writes `artifacts/readiness/phase6b-instrument-allowlist-gate.json` and does not connect to LMAX or replay anything.
+
+Phase 6D adds the local SecurityID discovery manifest for those candidate instruments. `LmaxReadOnlyInstrumentSecurityIdDiscoveryManifest` stores placeholder candidate values for GBPUSD, USDJPY, EURGBP, and AUDUSD, and every entry remains `IsApprovedForExternalRun=false`. Run `scripts/check-lmax-readonly-runtime-phase6d-securityid-discovery-gate.ps1`; it writes `artifacts/readiness/phase6d-securityid-discovery-gate.json` and does not connect to LMAX, call external APIs, run snapshots, replay evidence, schedule/poll, submit orders, register a gateway, expose credentials, or mutate trading state.
+
+Phase 6E adds the SecurityID source evidence review process before any Phase 6D placeholder can be replaced by an accepted planning value. `LmaxReadOnlyInstrumentSecurityIdSourceEvidenceValidator` requires allowlisted symbols, source references, reviewer metadata for accepted records, High/Confirmed confidence, no sensitive content, and `IsApprovedForExternalRun=false`. The default state is `NeedsMoreEvidence`, so `scripts/check-lmax-readonly-runtime-phase6e-securityid-evidence-review-gate.ps1` currently writes `artifacts/readiness/phase6e-securityid-evidence-review-gate.json` with `PASS_WITH_KNOWN_WARNINGS`. It does not authorize external runs.
+
+Phase 6F adds the local SecurityID confirmation record workflow. Use `scripts/new-lmax-readonly-securityid-confirmation-record.ps1` to write sanitized planning records under ignored artifacts, `scripts/review-lmax-readonly-securityid-confirmation-records.ps1` to summarize them, and `scripts/check-lmax-readonly-runtime-phase6f-confirmation-records-gate.ps1` for the phase gate. Missing records are a known warning; accepted records still keep `IsApprovedForExternalRun=false` and do not authorize external runs, snapshots, replay, scheduler/polling, orders, gateway registration, or trading mutation.
+
+Phase 6G hardens that record-entry workflow. `scripts/new-lmax-readonly-securityid-confirmation-record-template.ps1 -Symbol All -Force` generates ignored per-symbol templates, creation supports `-WhatIfPreview`, and `scripts/check-lmax-readonly-runtime-phase6g-record-entry-workflow-gate.ps1` validates the workflow without requiring real records. Current expected state is `PASS_WITH_KNOWN_WARNINGS` while accepted records are missing.
+
+Phase 6H implements local-only entry and review for real, trusted, sanitized SecurityID confirmation records under `artifacts/lmax-readonly-runtime-securityid-confirmations/real/`. Use `scripts/new-lmax-readonly-securityid-confirmation-record.ps1 -WhatIfPreview` before writing, then create records only from operator-approved evidence; `scripts/review-lmax-readonly-securityid-confirmation-records.ps1` reviews the real directory by default and `scripts/check-lmax-readonly-runtime-phase6h-real-confirmation-records-gate.ps1` writes `artifacts/readiness/phase6h-real-confirmation-records-gate.json`. `PASS` means all four candidates have valid `AcceptedForPlanning` records; `PASS_WITH_KNOWN_WARNINGS` means records remain missing/pending but safe; `FAIL` means unsafe, conflicting, sensitive, or externally approved content. `AcceptedForPlanning` is planning-only: `IsApprovedForExternalRun=false` remains mandatory and no snapshot, replay, scheduler, order path, gateway registration, or trading mutation is authorized. Next recommended phase is Phase 6I to apply accepted planning values while still keeping every candidate non-executable, or remain pending evidence if records are missing.
+
+Phase 6I adds a manual Demo-only FIX `SecurityListRequest` discovery path for the four additional Phase 6 candidates. The operator command is `scripts/run-lmax-readonly-runtime-demo-securitylist-discovery.ps1 -AllowExternalConnections -ConfirmDemoReadOnly -Reason "<reason>"`; validation gates never run it automatically. The script sends only SecurityListRequest on the Demo market-data FIX session, writes sanitized planning artifacts under `artifacts/lmax-readonly-runtime-securityid-discovery/`, and records candidate matches/unmatched instruments with `IsApprovedForExternalRun=false`. `scripts/check-lmax-readonly-runtime-phase6i-securitylist-discovery-gate.ps1` is local-only and returns `PASS_WITH_KNOWN_WARNINGS` until a valid discovery artifact exists. Phase 6I adds no market-data snapshot, replay, scheduler/polling, order message, gateway registration, credential exposure, or trading mutation. Next recommended phase is Phase 6J to prepare confirmation records from successful discovery, or Phase 6J security-list failure diagnostics if discovery fails.
+
+Phase 6J adds SecurityList failure diagnostics and request-profile compatibility hardening after the first manual attempt failed safely. `LmaxReadOnlySecurityListDiscoveryArtifactValidator` and `LmaxReadOnlySecurityListFailureDiagnostics` parse sanitized failure artifacts, classify reject details, and verify all safety flags. The manual script now exposes `AllSecurities`, `ProductFx`, `SymbolExact`, `SecurityTypeFx`, `CandidateSymbolsOneByOne`, `MinimalRequest`, `LabCompatibleFallback`, and `AutoSequence` profiles plus `-AllowKnownRejectedDiagnostics`. `AutoSequence` skips known-rejected profiles by default. `scripts/check-lmax-readonly-runtime-phase6j-securitylist-diagnostics-gate.ps1` validates the failed artifact and the profile model without connecting to LMAX. Next recommended phase is Phase 6K for an operator-approved AutoSequence discovery attempt, or VendorSupportConfirmation if LMAX Demo does not support SecurityListRequest.
+
+Phase 6L analyzes the operator-approved Phase 6K AutoSequence failure artifact locally, without another LMAX request. `scripts/review-lmax-readonly-runtime-securitylist-discovery-failure.ps1 -DiscoveryArtifactFile <artifact>` writes `artifacts/readiness/phase6l-securitylist-fallback-decision.json`, reporting attempted profiles, sanitized reject diagnostics if present, unmatched candidates, and a non-authorizing fallback decision. `scripts/check-lmax-readonly-runtime-phase6l-securitylist-fallback-gate.ps1` validates the fallback report and safety boundaries. The Phase 6K artifact had zero candidate matches and no attempt-level reject tag/text, so the recommended fallback is vendor/support or other official manual confirmation; all candidates remain `IsApprovedForExternalRun=false`, and no snapshots, replay, scheduler/polling, orders, gateway registration, or trading mutation are authorized. Next recommended phase is Phase 6M - VendorSupportConfirmation Record Preparation, No External Run.
+
+Phase 6M adds local extraction and record creation from uploaded LMAX instrument CSVs. Use `scripts/new-lmax-readonly-securityid-records-from-instrument-csv.ps1 -InstrumentCsvFile <LMAX-Instruments.csv> -SecondaryCsvFile <LMAX-NewYork-Instruments.csv> -VenueProfileName DemoLondon -CapturedBy "local-operator" -ReviewedBy "local-operator" -ReviewReason "Phase 6M accepted planning values from uploaded LMAX instrument CSVs" -ConfirmPlanningOnly` to create four `AcceptedForPlanning` records. The selected DemoLondon/NewYork IDs are GBP/USD=4002, EUR/GBP=4003, USD/JPY=4004, and AUD/USD=4007; Tokyo 600x IDs are documented but not selected for the current DemoLondon profile. The records use `OfficialLmaxDocument`, `Confirmed`, and `IsApprovedForExternalRun=false`. This phase is planning-only and adds no external run, SecurityListRequest, snapshot, replay, scheduler/polling, order path, gateway registration, credential exposure, or trading mutation. Next recommended phase is Phase 6N - Apply Accepted SecurityID Planning Values to Planning Manifest, Still IsApprovedForExternalRun=false.
+
+Phase 6N applies those accepted record values to a local planning manifest under `artifacts/lmax-readonly-runtime-securityid-planning/` using `scripts/apply-lmax-readonly-securityid-planning-values.ps1`. The manifest contains GBP/USD=4002, EUR/GBP=4003, USD/JPY=4004, and AUD/USD=4007 with `securityIdSource=8`, `environmentName=Demo`, `venueProfileName=DemoLondon`, and `IsApprovedForExternalRun=false`. Validate it with `scripts/check-lmax-readonly-runtime-phase6n-planning-values-gate.ps1 -PlanningManifestFile <manifest>`. The manifest is non-executable and authorizes no external run, snapshot, replay, scheduler/polling, orders, gateway registration, or trading mutation. Next recommended phase is Phase 6O - Manual Additional Instrument Snapshot Preflight Design, No External Run, or Phase 6O - Per-Instrument Safety Gate Design, No External Run.
+
+Phase 6O defines the per-instrument safety gate for the additional DemoLondon instruments. Use `scripts/build-lmax-readonly-additional-instrument-safety-gates.ps1 -PlanningManifestFile <phase-6n-manifest>` to write `artifacts/lmax-readonly-runtime-securityid-planning/lmax-readonly-additional-instrument-safety-gates-*.json`, then validate it with `scripts/check-lmax-readonly-runtime-phase6o-per-instrument-safety-gate.ps1 -PlanningManifestFile <phase-6n-manifest> -SafetyGateManifestFile <phase-6o-manifest>`. The gate checks GBP/USD=4002, EUR/GBP=4003, USD/JPY=4004, and AUD/USD=4007 with `securityIdSource=8`, Demo/DemoLondon scope, MarketDataOnly intent, no scheduler/polling, no runtime shadow replay submit, no order capability, and no trading mutation. `PASS` means planning data is safe and complete, not executable; `IsApprovedForExternalRun=false` and `eligibleForManualSnapshotAttempt=false` remain mandatory. Next recommended phase is Phase 6P - Manual Additional Instrument Snapshot Preflight Design, No External Run, or fix planning records if Phase 6O fails.
+
+Phase 6P defines the future one-off manual additional-instrument snapshot preflight envelope without authorizing a run. Use `scripts/build-lmax-readonly-additional-instrument-snapshot-preflights.ps1 -PlanningManifestFile <phase-6n-manifest> -SafetyGateManifestFile <phase-6o-manifest> -RequestedByOperatorId "local-operator" -Reason "Phase 6P additional instrument snapshot preflight design"` to create `lmax-readonly-additional-instrument-snapshot-preflights-*.json`, then validate it with `scripts/check-lmax-readonly-runtime-phase6p-additional-snapshot-preflight-gate.ps1`. The preflight profile remains `SnapshotPlusUpdates`, `SecurityIdOnly`, `SecurityIDSource=8`, `MarketDepth=1`, and capped runtime/wait/event limits. `PASS` means the preflight design is safe, not executable: `canRunExternalSnapshot=false`, `eligibleForManualSnapshotAttempt=false`, and `IsApprovedForExternalRun=false` remain mandatory. Next recommended phase is Phase 6Q - Manual Additional Instrument Snapshot Attempt Approval Envelope, No External Run, or Phase 6Q - Single-Instrument Manual Snapshot Dry-Run Report, No External Run.
+
+Phase 6Q adds a non-executable approval envelope for one future single-instrument manual Demo read-only MarketData snapshot attempt. Create an envelope with `scripts/new-lmax-readonly-additional-instrument-snapshot-approval-envelope.ps1 -PreflightManifestFile <phase-6p-manifest> -Symbol GBPUSD -RequestedByOperatorId "local-operator" -ReviewedByOperatorId "local-operator" -Reason "<planning reason>" -Decision AcceptedForPlanning -ConfirmAllPlanningAttestations`, review it with `scripts/review-lmax-readonly-additional-instrument-snapshot-approval-envelopes.ps1`, and gate it with `scripts/check-lmax-readonly-runtime-phase6q-approval-envelope-gate.ps1`. `AcceptedForPlanning` means the envelope is complete for planning only; it does not authorize a run, and `canRunExternalSnapshot=false`, `eligibleForManualSnapshotAttempt=false`, and `IsApprovedForExternalRun=false` remain mandatory. Next recommended phase is Phase 6R - Single-Instrument Manual Snapshot Dry-Run Report, No External Run.
+
+Phase 6R creates a non-executable GBPUSD single-instrument dry-run report from Phase 6N planning, Phase 6O safety gate, Phase 6P preflight, and Phase 6Q approval envelope artifacts. Use `scripts/new-lmax-readonly-additional-instrument-snapshot-dry-run-report.ps1` with those source files, then review with `scripts/review-lmax-readonly-additional-instrument-snapshot-dry-run-reports.ps1` and gate with `scripts/check-lmax-readonly-runtime-phase6r-single-instrument-dryrun-gate.ps1`. `PASS` means report consistency only, not executable authorization; `canRunExternalSnapshot=false`, `eligibleForManualSnapshotAttempt=false`, and `IsApprovedForExternalRun=false` remain mandatory. Next recommended phase is Phase 6S - Single-Instrument Manual Snapshot Attempt Gate, Still No External Run, or Phase 6S - Operator Signoff for One Future GBPUSD Manual Snapshot Attempt, Still No External Run.
+
 ### LMAX Shadow Observation Store
 
 The platform includes a local LMAX shadow replay store for normalized lab evidence. Replay creates auditable observations and optional blocking exception cases without mutating orders, fills, positions, risk, or reconciliation state. This is not live LMAX integration; API and Worker remain FakeLmax-only.
@@ -628,3 +847,160 @@ Quality Gate #1 validates the skeleton under unsafe config combinations such as 
 
 Shadow observations now include deterministic fingerprints. Duplicate observations are deduped within a replay run, while repeated replays preserve new run history with the same fingerprints for grouping. Replay summaries show input, unique, duplicate, warning, blocking, and total observation counts. Blocking observations create operator exception cases once per replay/fingerprint; warning observations remain review-only by default.
 
+### Phase 6S - Single-Instrument Manual Snapshot Attempt Gate
+
+Phase 6S is implemented as a local-only, non-executable gate for a future GBPUSD Demo read-only MarketData snapshot attempt. It aggregates the Phase 6N planning manifest, Phase 6O safety gate, Phase 6P preflight, Phase 6Q approval envelope, and Phase 6R dry-run report, and produces a consistency decision only.
+
+`PASS` means the pre-execution planning artifacts are internally consistent for future consideration; it does not authorize an external run. `IsApprovedForExternalRun`, `eligibleForManualSnapshotAttempt`, and `canRunExternalSnapshot` remain `false`. Phase 6S performs no LMAX connection, SecurityListRequest, snapshot, replay, scheduler/polling, order submission, gateway registration, or trading-state mutation.
+
+Next recommended phase: Phase 6T - Operator Signoff for One Future GBPUSD Manual Snapshot Attempt, Still No External Run, or Phase 6T - Manual GBPUSD Snapshot Execution Plan / Kill-Rollback Plan, Still No External Run.
+
+### Phase 6T - GBPUSD Manual Snapshot Execution Plan
+
+Phase 6T is implemented as a planning-only execution plan and kill/rollback checklist for a future GBPUSD Demo read-only MarketData snapshot attempt. The plan documents the future command template, abort criteria, rollback steps, and post-run validation requirements, but marks the command `DO NOT RUN IN PHASE 6T`.
+
+The Phase 6T plan does not authorize execution. `IsApprovedForExternalRun=false`, `eligibleForManualSnapshotAttempt=false`, and `canRunExternalSnapshot=false` remain enforced, with no LMAX connection, snapshot, replay, scheduler/polling, orders, real gateway registration, or trading mutation.
+
+Next recommended phase: Phase 6U - Operator Signoff for One Future GBPUSD Manual Snapshot Attempt, Still No External Run, or Phase 6U - GBPUSD Execution Plan Review / Final Pre-Run Gate, Still No External Run.
+
+### Phase 6U - GBPUSD Operator Signoff
+
+Phase 6U is implemented as a final non-executable operator signoff envelope confirming review of the Phase 6T execution plan and kill/rollback checklist. `SignedForPlanning` means the operator reviewed the plan only; it does not authorize execution.
+
+All run eligibility flags remain false: `IsApprovedForExternalRun=false`, `eligibleForManualSnapshotAttempt=false`, and `canRunExternalSnapshot=false`. Phase 6U performs no LMAX connection, snapshot, replay, scheduler/polling, order submission, gateway registration, or trading-state mutation.
+
+Next recommended phase: Phase 6V - Final Manual GBPUSD Snapshot Execution Readiness Gate, Still No External Run, or Phase 6V - Operator-approved Manual GBPUSD Snapshot Attempt, if and only if a final readiness gate is explicitly passed later.
+
+### Phase 6V - GBPUSD Final Readiness Gate
+
+Phase 6V is implemented as the final non-executable readiness aggregation for the GBPUSD chain. It checks planning, safety, preflight, approval, dry-run, attempt gate, execution plan, Phase 6T gate, operator signoff, and Phase 6U gate artifacts in one readiness artifact.
+
+`PASS` means complete pre-execution readiness only. It does not authorize execution. `IsApprovedForExternalRun=false`, `eligibleForManualSnapshotAttempt=false`, and `canRunExternalSnapshot=false` remain enforced.
+
+Next recommended phase: Phase 6W - Operator-approved Manual GBPUSD Snapshot Attempt, if and only if the operator explicitly chooses to execute, or stop here with all readiness closed.
+
+### Phase 6W - Operator-Approved Manual GBPUSD Snapshot Attempt
+
+Phase 6W is implemented as a single-attempt, manual-only GBPUSD wrapper around the existing isolated Demo snapshot prototype path. The wrapper hardcodes GBPUSD / GBP/USD, SecurityID `4002`, SecurityIDSource `8`, `SnapshotPlusUpdates`, `SecurityIdOnly`, and MarketDepth `1`, and requires the Phase 6V final readiness artifact plus explicit operator flags.
+
+The wrapper does not loop or retry, and no scheduler, runtime shadow replay submit, order submission, gateway registration, trading-table persistence, or trading-state mutation is added. Validation/gates remain local-only unless the operator explicitly runs the wrapper command.
+
+Next recommended phase after an operator run: Phase 6X - GBPUSD Snapshot Artifact Review / Evidence Preview Mapping if the snapshot succeeds, or Phase 6X - GBPUSD Snapshot Failure Diagnostics if it fails.
+
+### Phase 6X - GBPUSD Snapshot Artifact Review / Empty Book Diagnostics
+
+Phase 6X is implemented as a local-only review of the first operator-approved GBPUSD Demo read-only snapshot result. The artifact closed as `CompletedWithEmptyBook`: logon succeeded, a MarketDataSnapshot was received, reject counts were zero, and the book contained no entries.
+
+`CompletedWithEmptyBook` is accepted as `PASS_WITH_KNOWN_WARNINGS`, not as an order/reject/mutation and not as authorization for another run. The review and gate scripts do not connect to LMAX, request snapshots, replay evidence, start scheduler/polling, submit to shadow replay, register a gateway, or mutate trading state. Empty-book evidence preview mapping is supported as `MarketDataOnly` with `snapshotReceived=true`, `entryCount=0`, null bid/ask/mid, and a warning.
+
+Next recommended phase: Phase 6Y - Optional second operator-approved GBPUSD snapshot attempt at a different time, or Phase 6Y - GBPUSD EmptyBook Evidence Preview Mapping / Manual Replay.
+
+### Phase 6Y - GBPUSD Market-Hours Retry Preparation
+
+Phase 6Y is implemented as a local-only preparation plan for one future GBPUSD market-hours retry after the Saturday `CompletedWithEmptyBook` result. The empty book is interpreted as expected outside FX market hours: the request reached Demo MarketData and received one empty MarketDataSnapshot with zero rejects, no orders, no credential leakage, and no mutation.
+
+The preparation script writes a non-executable retry readiness artifact and prints the future Phase 6Z command template marked `DO NOT RUN FROM THIS SCRIPT`. It adds no scheduler, polling, background job, automatic retry, runtime shadow replay submit, order surface, gateway registration, or trading mutation.
+
+Next recommended phase: Phase 6Z - Operator-approved GBPUSD Market-Hours Snapshot Attempt, if explicitly run during market hours, or remain paused until market hours.
+
+### Phase 6Z-A - Additional Instruments Planning Pipeline Replication
+
+Phase 6Z-A is implemented as a local-only replication of the non-executable GBPUSD planning chain for EURGBP, USDJPY, and AUDUSD. The pipeline now summarizes GBPUSD=4002, EURGBP=4003, USDJPY=4004, and AUDUSD=4007 with SecurityIDSource `8`, Demo/DemoLondon scope, `SnapshotPlusUpdates`, `SecurityIdOnly`, and MarketDepth `1`.
+
+The aggregate pipeline manifest records approval envelope, dry-run, attempt gate, execution plan, operator signoff, and final readiness coverage for all four additional instruments. `PASS` means planning pipeline completeness only. `executableCount=0`, `IsApprovedForExternalRun=false`, `eligibleForManualSnapshotAttempt=false`, and `canRunExternalSnapshot=false` remain mandatory for every instrument.
+
+Phase 6Z-A adds no external run, SecurityListRequest, snapshot, replay, scheduler/polling, runtime shadow replay submit, order submission, gateway registration, credential exposure, trading-table persistence, or trading-state mutation. Next recommended phase: Phase 6Z-B - Operator-approved Market-Hours Snapshot Attempt for One Selected Additional Instrument, one instrument at a time only, or stop with all planning closed.
+
+### Phase 6Z-C - Additional Instruments Operator Console Summary
+
+Phase 6Z-C adds read-only operator visibility for the additional-instrument planning pipeline. `GET /lmax-readonly-runtime/additional-instruments/planning-status`, `scripts/show-lmax-readonly-additional-instrument-planning-status.ps1`, and the LMAX Shadow console panel summarize GBPUSD=4002, EURGBP=4003, USDJPY=4004, and AUDUSD=4007.
+
+The panel shows aggregate `PASS`, `executableCount=0`, per-instrument pipeline decisions, and safety flags. It has no controls to connect, run snapshots, replay, schedule, enter credentials, configure host/port, register gateways, submit orders, or mutate trading state.
+
+Next recommended phase: Phase 6Z-D - Additional Instruments Documentation Pack / Final Planning Freeze, or wait for market hours and explicitly choose a one-instrument Phase 6Z-B manual attempt.
+
+### Phase 6Z-D - Additional Instruments Documentation Pack / Final Planning Freeze
+
+Phase 6Z-D freezes the additional-instrument planning state as documentation and audit evidence. `docs/LMAX_READONLY_ADDITIONAL_INSTRUMENTS_PLANNING_FINAL_DOC.md`, `scripts/build-lmax-readonly-additional-instruments-planning-doc-pack.ps1`, and `scripts/check-lmax-readonly-runtime-phase6zd-additional-instruments-doc-pack-gate.ps1` summarize the GBPUSD/EURGBP/USDJPY/AUDUSD artifact chain and confirm the state is non-executable.
+
+The frozen state remains `executableCount=0`, `IsApprovedForExternalRun=false`, `eligibleForManualSnapshotAttempt=false`, and `canRunExternalSnapshot=false` for every additional instrument. Phase 6Z-D does not run LMAX, SecurityListRequest, snapshots, replay, scheduler/polling, runtime shadow replay submit, orders, gateway registration, credential exposure, or trading-state mutation.
+
+Next recommended phase: Phase 6Z-B - Operator-approved Market-Hours Snapshot Attempt for one selected additional instrument, only when the market is open and the operator explicitly chooses, or stop with planning frozen.
+
+### Phase 6Z-E - Market-Hours Next Action Card
+
+Phase 6Z-E adds read-only operator visibility for the prepared GBPUSD market-hours retry. `GET /lmax-readonly-runtime/market-hours-next-action`, `scripts/show-lmax-readonly-market-hours-next-action.ps1`, and the LMAX Shadow console panel show the next recommended action: wait for market hours, then use a separate manual operator command for one GBPUSD read-only snapshot attempt.
+
+The card records GBPUSD / GBP/USD / SecurityID `4002`, the previous `CompletedWithEmptyBook` result outside market hours, Phase 6V final readiness `PASS`, Phase 6Y retry readiness `PASS`, and Phase 6Z-D planning freeze `PASS`. It is visibility only and adds no UI execution button, replay button, scheduler button, credential field, host/port field, order control, gateway registration, or mutation capability.
+
+Next recommended phase: Phase 6Z-B - Operator-approved Market-Hours Snapshot Attempt for GBPUSD during market hours, or stop until the market opens.
+
+### Phase 7A - Read-Only Runtime Next Boundary Decision
+
+Phase 7A is implemented as an architecture decision and boundary checklist only. `docs/LMAX_READONLY_RUNTIME_PHASE7_NEXT_BOUNDARY_ADR.md`, `docs/LMAX_READONLY_RUNTIME_PHASE7_BOUNDARY_CHECKLIST.md`, and `scripts/check-lmax-readonly-runtime-phase7a-next-boundary-gate.ps1` formalize the next safe frontier after the frozen EURUSD workflow and additional-instrument planning pipeline.
+
+The recommended next phase is Phase 7B - Controlled Manual Multi-Instrument Read-Only Snapshot Workflow Plan, No External Run. Phase 7A explicitly keeps scheduler/polling, runtime shadow replay submit, order path, production/UAT, real gateway registration, and multi-instrument batch execution rejected for now. It adds no runtime power.
+
+### Phase 7B - Controlled Manual Multi-Instrument Workflow Plan
+
+Phase 7B is implemented as a planning-only workflow plan for future additional-instrument read-only snapshot attempts. It creates a controlled sequence for GBPUSD, EURGBP, USDJPY, and AUDUSD while enforcing one instrument at a time, one attempt per instrument, market-hours only, and retry-by-new-phase.
+
+`PASS` means the workflow plan is safe and complete as documentation/artifact planning only. `executableCount=0`, `batchExecutionAllowed=false`, `IsApprovedForExternalRun=false`, `canRunExternalSnapshot=false`, and `eligibleForManualSnapshotAttempt=false` remain enforced. Phase 7B adds no LMAX connection, snapshot, replay, scheduler/polling, runtime shadow replay submit, orders, gateway registration, or trading mutation.
+
+Next recommended phase: Phase 7C - GBPUSD Market-Hours Manual Snapshot Attempt Closure / Evidence Workflow if a future GBPUSD market-hours attempt is run, or wait for market hours.
+
+### Phase 7C - GBPUSD Market-Hours Closure Workflow
+
+Phase 7C adds local-only closure tooling for the next future operator-approved GBPUSD market-hours snapshot result. It does not run GBPUSD. The workflow reviews a supplied sanitized result artifact, classifies `CompletedWithBook`, `CompletedWithEmptyBook`, `FailedSafe`, or `UnsafeFail`, maps safe results to MarketDataOnly evidence preview when appropriate, supports explicit script-only local replay, and builds a closure manifest.
+
+The Phase 7C gate is `scripts/check-lmax-readonly-runtime-phase7c-gbpusd-closure-gate.ps1`. With no market-hours artifact supplied, the expected result is `PASS_WITH_KNOWN_WARNINGS` because the closure workflow is ready but no new GBPUSD result exists. Runtime shadow replay submit remains disabled; API/Worker remain `FakeLmaxGateway`; no scheduler/polling, order surface, gateway registration, external run, automatic replay, or trading mutation is added.
+
+Next recommended phase: wait for market hours and, only if the operator explicitly chooses, run the existing GBPUSD wrapper manually; then use Phase 7C review, evidence preview, optional manual replay, and closure manifest scripts.
+
+### Phase 7D - Post-GBPUSD Next Instrument Decision
+
+Phase 7D adds a local decision framework for choosing what happens after the future GBPUSD market-hours closure. It reads the controlled manual workflow plan and optional GBPUSD Phase 7C closure/review artifacts, then writes a non-executable decision artifact.
+
+Current expected decision, with no GBPUSD market-hours closure artifact supplied, is `PendingGbpusdMarketHoursAttempt`. A future `CompletedWithBook` / `PASS` GBPUSD closure may proceed to `EURGBP` planning. A safe empty-book warning requires a controlled GBPUSD retry phase, and failed-safe or unsafe results block the sequence for diagnostics.
+
+Phase 7D preserves `canRunExternalSnapshot=false`, `IsApprovedForExternalRun=false`, `eligibleForManualSnapshotAttempt=false`, `batchExecutionAllowed=false`, and `executableCount=0`. It adds no external run, snapshot, replay, scheduler/polling, runtime shadow replay submit, orders, gateway registration, or trading mutation.
+
+### Phase 7E - GBPUSD Market-Hours Execution Checklist Pack
+
+Phase 7E adds the final operator runbook pack for the future GBPUSD market-hours manual snapshot attempt. The checklist document is `docs/LMAX_READONLY_GBPUSD_MARKET_HOURS_EXECUTION_CHECKLIST.md`; the builder is `scripts/build-lmax-readonly-gbpusd-market-hours-execution-checklist-pack.ps1`; the gate is `scripts/check-lmax-readonly-runtime-phase7e-execution-checklist-gate.ps1`.
+
+The pack records the exact future manual command, clearly marked `DO NOT RUN UNTIL MARKET HOURS`, plus pre-run checks, one-attempt/no-retry monitoring, kill switch, post-run Phase 7C closure sequence, Phase 7D decision step, result interpretation, rollback, and non-authorizations.
+
+Phase 7E does not run anything and does not authorize automation. It adds no external connection, snapshot, replay, scheduler/polling, runtime shadow replay submit, orders, gateway registration, or trading mutation.
+
+### Phase 7E2 - EURGBP Readiness Rehydration
+
+Phase 7E2 rehydrates EURGBP / EUR/GBP / SecurityID `4003` planning readiness after the corrected GBPUSD `CompletedWithBook` / `PASS` closure and Phase 7D `ProceedToEurgbpPlanning` decision. It consumes the frozen multi-instrument pipeline, planning manifest, safety gate manifest, and preflight manifest, then writes an EURGBP-specific readiness artifact.
+
+This phase is planning-only. EURGBP remains `IsApprovedForExternalRun=false`, `canRunExternalSnapshot=false`, and `eligibleForManualSnapshotAttempt=false`; `executableCount=0`, `batchExecutionAllowed=false`, and one-instrument-at-a-time control remain enforced. No external run, SecurityListRequest, snapshot, replay, scheduler/polling, runtime shadow replay submit, order surface, gateway registration, credential exposure, or trading mutation is authorized.
+
+### Phase 7F2 - EURGBP Execution Checklist / Kill-Rollback Plan
+
+Phase 7F2 adds the EURGBP manual snapshot execution checklist and kill/rollback plan as a planning-only artifact. The checklist consumes the Phase 7E2 EURGBP readiness artifact, preserves the GBPUSD `PASS` / Phase 7D `ProceedToEurgbpPlanning` bridge, and documents the future EURGBP command template as `DO NOT RUN IN PHASE 7F2`.
+
+EURGBP remains `IsApprovedForExternalRun=false`, `canRunExternalSnapshot=false`, and `eligibleForManualSnapshotAttempt=false`. The checklist keeps `batchExecutionAllowed=false`, `oneInstrumentAtATime=true`, and API/Worker `FakeLmaxGateway` only. Phase 7F2 adds no external run, SecurityListRequest, snapshot, replay, scheduler/polling, runtime shadow replay submit, order surface, gateway registration, or trading mutation.
+
+### Phase 7G2 - EURGBP Final Pre-Run Gate
+
+Phase 7G2 adds the final non-executable pre-run gate before any future operator-approved EURGBP Demo read-only MarketData snapshot attempt. It aggregates the Phase 7D `ProceedToEurgbpPlanning` decision, Phase 7E2 EURGBP readiness `PASS`, and Phase 7F2 execution checklist `PASS`.
+
+`PASS` means pre-run prerequisites are consistent only. It does not authorize execution. EURGBP remains `IsApprovedForExternalRun=false`, `canRunExternalSnapshot=false`, and `eligibleForManualSnapshotAttempt=false`; one-instrument-at-a-time remains enforced; batch execution remains disabled. Phase 7G2 adds no external run, SecurityListRequest, snapshot, replay, scheduler/polling, runtime shadow replay submit, order surface, gateway registration, or trading mutation.
+
+### Phase 7H - Generic Additional Instrument One-Shot Workflow
+
+Phase 7H adds a reusable manual-only wrapper and local closure workflow for exactly one supported additional MarketData instrument per invocation: GBPUSD `4002`, EURGBP `4003`, USDJPY `4004`, or AUDUSD `4007`. The generic path is still Demo-only, read-only, operator-approved, one-instrument-at-a-time, and no batch/no loop/no retry.
+
+The immediate selected instrument remains EURGBP because Phase 7D returned `ProceedToEurgbpPlanning` and Phase 7G2 is `PASS`. The future manual command is `scripts/run-lmax-readonly-runtime-demo-additional-instrument-snapshot-once.ps1 -Symbol EURGBP -FinalPreRunGateFile artifacts\lmax-readonly-runtime-securityid-planning\eurgbp-final-prerun\lmax-readonly-eurgbp-final-prerun-gate-20260511-134130.json -AllowExternalConnections -ConfirmDemoReadOnly -Reason "<operator reason>"`.
+
+Phase 7H also adds generic review, evidence preview, optional local replay, closure manifest, and gate scripts. It does not run LMAX automatically, does not authorize scheduler/polling, does not submit to shadow replay from runtime, does not add orders, does not register a gateway, and does not mutate trading state. API/Worker remain `FakeLmaxGateway` only.
+
+### Phase 7H2 - Generic Final Pre-Run Gate Builder
+
+Phase 7H2 adds a generic final pre-run gate builder for supported additional instruments before they are passed to the Phase 7H one-shot wrapper. The builder creates Phase 7H-compatible local safety artifacts for USDJPY `4004` and AUDUSD `4007` from their existing non-executable planning readiness, while preserving one-instrument-at-a-time control.
+
+The Phase 7H wrapper must be given a Phase 7H-compatible final pre-run gate, not a generic Phase 6Z-A final-readiness artifact. Generic final-readiness artifacts remain rejected by wrapper validation. Phase 7H2 does not authorize execution: `externalRunAuthorized=false`, `IsApprovedForExternalRun=false`, `canRunExternalSnapshot=false`, `eligibleForManualSnapshotAttempt=false`, `batchExecutionAllowed=false`, and API/Worker remain `FakeLmaxGateway` only.

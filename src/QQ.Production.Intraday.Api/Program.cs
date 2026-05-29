@@ -1,10 +1,12 @@
 using Microsoft.EntityFrameworkCore;
+using System.Text.Json;
 using System.Text.Json.Serialization;
 using QQ.Production.Intraday.Application;
 using QQ.Production.Intraday.Domain;
 using QQ.Production.Intraday.Infrastructure.Simulator;
 using QQ.Production.Intraday.Infrastructure.SqlServer;
 using Serilog;
+using LmaxInfra = QQ.Production.Intraday.Infrastructure.Lmax;
 
 var builder = WebApplication.CreateBuilder(args);
 builder.Host.UseSerilog((context, configuration) => configuration.ReadFrom.Configuration(context.Configuration).WriteTo.Console());
@@ -39,6 +41,35 @@ builder.Services.AddScoped<IOperationalJobRunner, OperationalJobRunner>();
 builder.Services.AddScoped<IOperationalRunbookRunner, OperationalRunbookRunner>();
 builder.Services.AddScoped<IDailyOperationsService, DailyOperationsService>();
 builder.Services.AddScoped<ILmaxShadowReplayService, LmaxShadowModeService>();
+var lmaxReadOnlyImplementationMode = ParseConfigurationEnum(builder.Configuration.GetValue("LmaxReadOnlyRuntime:ImplementationMode", "DesignOnly"), LmaxInfra.LmaxReadOnlyRuntimeImplementationMode.DesignOnly);
+var lmaxReadOnlyActivationLevel = ParseConfigurationEnum(builder.Configuration.GetValue("LmaxReadOnlyRuntime:ActivationLevel", "Level1DisabledSkeleton"), LmaxInfra.LmaxReadOnlyRuntimeActivationLevel.Level1DisabledSkeleton);
+var lmaxReadOnlyMaxAllowedActivationLevel = ParseConfigurationEnum(builder.Configuration.GetValue("LmaxReadOnlyRuntime:MaxAllowedActivationLevel", "Level2LocalManualNoExternal"), LmaxInfra.LmaxReadOnlyRuntimeActivationLevel.Level2LocalManualNoExternal);
+builder.Services.AddSingleton(new LmaxInfra.LmaxReadOnlyRuntimeAdapterOptions
+{
+    Enabled = builder.Configuration.GetValue("LmaxReadOnlyRuntime:Enabled", false),
+    ImplementationMode = lmaxReadOnlyImplementationMode,
+    AllowExternalConnections = builder.Configuration.GetValue("LmaxReadOnlyRuntime:AllowExternalConnections", false),
+    AllowCredentialUse = builder.Configuration.GetValue("LmaxReadOnlyRuntime:AllowCredentialUse", false),
+    ReadOnly = builder.Configuration.GetValue("LmaxReadOnlyRuntime:ReadOnly", true),
+    AllowOrderSubmission = builder.Configuration.GetValue("LmaxReadOnlyRuntime:AllowOrderSubmission", false),
+    PersistRawFixMessages = builder.Configuration.GetValue("LmaxReadOnlyRuntime:PersistRawFixMessages", false),
+    PersistToTradingTables = builder.Configuration.GetValue("LmaxReadOnlyRuntime:PersistToTradingTables", false),
+    SubmitToShadowReplay = builder.Configuration.GetValue("LmaxReadOnlyRuntime:SubmitToShadowReplay", false),
+    SchedulerEnabled = builder.Configuration.GetValue("LmaxReadOnlyRuntime:SchedulerEnabled", false),
+    FixtureEvidenceFile = builder.Configuration.GetValue("LmaxReadOnlyRuntime:FixtureEvidenceFile", LmaxInfra.LmaxReadOnlyRuntimeAdapterFakeInMemory.DefaultFixtureRelativePath),
+    MaxEventsPerRun = builder.Configuration.GetValue("LmaxReadOnlyRuntime:MaxEventsPerRun", 100),
+    MaxRuntimeSeconds = builder.Configuration.GetValue("LmaxReadOnlyRuntime:MaxRuntimeSeconds", 30),
+    EnvironmentName = builder.Configuration.GetValue("LmaxReadOnlyRuntime:EnvironmentName", "Local") ?? "Local",
+    OperationalReadinessPassed = builder.Configuration.GetValue("LmaxReadOnlyRuntime:OperationalReadinessPassed", false),
+    GovernanceApproved = builder.Configuration.GetValue("LmaxReadOnlyRuntime:GovernanceApproved", false),
+    LocalOnlyApi = builder.Configuration.GetValue("LmaxReadOnlyRuntime:LocalOnlyApi", true),
+    DryRun = builder.Configuration.GetValue("LmaxReadOnlyRuntime:DryRun", true),
+    RequestedActivationLevel = lmaxReadOnlyActivationLevel,
+    MaxAllowedActivationLevel = lmaxReadOnlyMaxAllowedActivationLevel
+});
+builder.Services.AddSingleton<LmaxInfra.ILmaxReadOnlyRuntimeSafetyGate, LmaxInfra.LmaxReadOnlyRuntimeSafetyGateEvaluator>();
+builder.Services.AddSingleton<LmaxInfra.ILmaxReadOnlyRuntimeRunStore, LmaxInfra.LmaxReadOnlyRuntimeRunStoreInMemory>();
+builder.Services.AddSingleton<LmaxInfra.ILmaxReadOnlyRuntimeAdapter, LmaxInfra.LmaxReadOnlyRuntimeAdapterFakeInMemory>();
 builder.Services.AddSingleton(new LmaxShadowReaderOptions
 {
     Enabled = builder.Configuration.GetValue("LmaxShadowReader:Enabled", false),
@@ -57,6 +88,7 @@ builder.Services.AddSingleton(new LocalSchedulerOptions(
     builder.Configuration.GetValue("LocalScheduler:PollIntervalSeconds", 30)));
 builder.Services.AddScoped<IModelWeightPromotionService, ModelWeightPromotionService>();
 builder.Services.AddScoped<IFakeModelWeightGenerator, FakeModelWeightGenerator>();
+builder.Services.AddScoped<QubesWeightPersistenceService>();
 builder.Services.AddSingleton(new LmaxEodReportOptions());
 builder.Services.AddScoped<ILmaxEodReportImportService, LmaxEodReportImportService>();
 builder.Services.AddScoped<ILmaxReportPairConsistencyService, LmaxReportPairConsistencyService>();
@@ -85,6 +117,7 @@ if (string.Equals(persistenceProvider, "SqlServerLocal", StringComparison.Ordina
     builder.Services.AddScoped<IMarketDataBarRepository, SqlServerMarketDataBarRepository>();
     builder.Services.AddScoped<IBarBuildRunRepository, SqlServerBarBuildRunRepository>();
     builder.Services.AddScoped<IModelWeightBatchRepository, SqlServerModelWeightBatchRepository>();
+    builder.Services.AddScoped<IQubesWeightAuditRepository, SqlServerQubesWeightAuditRepository>();
     builder.Services.AddScoped<ILmaxEodReportRepository, SqlServerLmaxEodReportRepository>();
     builder.Services.AddScoped<IOperatorAuditRepository, SqlServerOperatorAuditRepository>();
     builder.Services.AddScoped<IOperatorGovernanceRepository, SqlServerOperatorGovernanceRepository>();
@@ -105,6 +138,7 @@ else if (string.Equals(persistenceProvider, "InMemory", StringComparison.Ordinal
     builder.Services.AddSingleton<IMarketDataBarRepository, InMemoryMarketDataBarRepository>();
     builder.Services.AddSingleton<IBarBuildRunRepository, InMemoryBarBuildRunRepository>();
     builder.Services.AddSingleton<IModelWeightBatchRepository, InMemoryModelWeightBatchRepository>();
+    builder.Services.AddSingleton<IQubesWeightAuditRepository, InMemoryQubesWeightAuditRepository>();
     builder.Services.AddSingleton<ILmaxEodReportRepository, InMemoryLmaxEodReportRepository>();
     builder.Services.AddSingleton<IOperatorAuditRepository, InMemoryOperatorAuditRepository>();
     builder.Services.AddSingleton<IOperatorGovernanceRepository, InMemoryOperatorGovernanceRepository>();
@@ -929,6 +963,224 @@ app.MapGet("/lmax-shadow-reader/status", async (ILmaxShadowReader reader, Cancel
 app.MapPost("/lmax-shadow-reader/run", async (LmaxShadowReaderRunApiRequest request, ILmaxShadowReader reader, CancellationToken cancellationToken) =>
     Results.Ok(ToLmaxShadowReaderRunResultDto(await reader.RunAsync(new LmaxShadowReaderRunRequest(request.Reason, request.MaxEvents, request.DryRun), cancellationToken))));
 
+app.MapGet("/lmax-readonly-runtime/status", async (LmaxInfra.ILmaxReadOnlyRuntimeAdapter adapter, CancellationToken cancellationToken) =>
+    Results.Ok(ToLmaxReadOnlyRuntimeStatusDto(await adapter.GetStatusAsync(cancellationToken))));
+
+app.MapGet("/lmax-readonly-runtime/marketdata-workflow/status", (IServiceProvider services) =>
+{
+    var gateway = services.GetRequiredService<IVenueExecutionGateway>();
+    var signoffFile = FindLatestReadinessFile("lmax-readonly-marketdata-operational-signoff-*.json");
+    var gateDecision = TryReadJsonString(FindLatestReadinessFile("phase5w-operational-signoff-gate.json"), "finalDecision") ?? "NotAvailable";
+    var result = LmaxInfra.LmaxReadOnlyMarketDataWorkflowStatusSummaryValidator.FromSignoffFile(
+        signoffFile,
+        gateway.GetType().Name,
+        gateDecision);
+    return Results.Ok(ToLmaxReadOnlyMarketDataWorkflowStatusSummaryDto(result.Summary));
+});
+
+app.MapGet("/lmax-readonly-runtime/additional-instruments/planning-status", (IServiceProvider services) =>
+{
+    var gateway = services.GetRequiredService<IVenueExecutionGateway>();
+    var pipelineManifestFile = FindLatestArtifactFile(
+        Path.Combine("artifacts", "lmax-readonly-runtime-securityid-planning", "pipeline"),
+        "lmax-readonly-additional-instrument-planning-pipeline-*.json");
+    var result = LmaxInfra.LmaxReadOnlyAdditionalInstrumentPlanningStatusSummaryValidator.FromPipelineManifestFile(
+        pipelineManifestFile,
+        gateway.GetType().Name);
+    return Results.Ok(ToLmaxReadOnlyAdditionalInstrumentPlanningStatusSummaryDto(result.Summary));
+});
+
+app.MapGet("/lmax-readonly-runtime/market-hours-next-action", (IServiceProvider services) =>
+{
+    var gateway = services.GetRequiredService<IVenueExecutionGateway>();
+    var finalReadinessFile = FindLatestArtifactFile(
+        Path.Combine("artifacts", "lmax-readonly-runtime-securityid-planning", "final-readiness"),
+        "lmax-readonly-gbpusd-manual-snapshot-final-readiness-*.json");
+    var marketHoursRetryReadinessFile = FindLatestArtifactFile(
+        Path.Combine("artifacts", "lmax-readonly-runtime-securityid-planning", "market-hours-retry"),
+        "lmax-readonly-gbpusd-market-hours-retry-*.json");
+    var phase6XReviewFile = FindLatestArtifactFile(
+        Path.Combine("artifacts", "readiness"),
+        "phase6x-gbpusd-snapshot-result-review.json");
+    var documentationPackFile = FindLatestArtifactFile(
+        Path.Combine("artifacts", "lmax-readonly-runtime-securityid-planning", "documentation-pack"),
+        "lmax-readonly-additional-instruments-planning-doc-pack-*.json");
+    var result = LmaxInfra.LmaxReadOnlyMarketHoursNextActionSummaryValidator.FromArtifactFiles(
+        finalReadinessFile,
+        marketHoursRetryReadinessFile,
+        phase6XReviewFile,
+        documentationPackFile,
+        gateway.GetType().Name);
+    return Results.Ok(ToLmaxReadOnlyMarketHoursNextActionSummaryDto(result.Summary));
+});
+
+app.MapPost("/lmax-readonly-runtime/run", async (
+    LmaxReadOnlyRuntimeRunApiRequest request,
+    LmaxInfra.LmaxReadOnlyRuntimeAdapterOptions options,
+    LmaxInfra.ILmaxReadOnlyRuntimeSafetyGate safetyGate,
+    LmaxInfra.ILmaxReadOnlyRuntimeRunStore runStore,
+    CancellationToken cancellationToken) =>
+{
+    if (string.IsNullOrWhiteSpace(request.Reason))
+    {
+        return Results.BadRequest(new { message = "Reason is required for LMAX read-only runtime fake fixture preview." });
+    }
+
+    var fixtureResult = ResolveReadonlyRuntimeFixture(request.FixtureFileName);
+    if (!fixtureResult.Allowed)
+    {
+        return Results.BadRequest(new { message = fixtureResult.Message });
+    }
+
+    var effectiveOptions = options with
+    {
+        FixtureEvidenceFile = fixtureResult.Path ?? options.FixtureEvidenceFile
+    };
+    var adapter = new LmaxInfra.LmaxReadOnlyRuntimeAdapterFakeInMemory(effectiveOptions, safetyGate, runStore);
+    var result = await adapter.RunAsync(new LmaxInfra.LmaxReadOnlyRuntimeRunRequest(request.Reason, request.MaxEvents, request.MaxRuntimeSeconds, request.DryRun, request.RequestedActivationLevel), cancellationToken);
+    return Results.Ok(ToLmaxReadOnlyRuntimeRunResultDto(result));
+});
+
+app.MapPost("/lmax-readonly-runtime/fake-transport-preview", async (
+    LmaxReadOnlyRuntimeFakeTransportPreviewApiRequest request,
+    LmaxInfra.LmaxReadOnlyRuntimeAdapterOptions options,
+    LmaxInfra.ILmaxReadOnlyRuntimeRunStore runStore,
+    CancellationToken cancellationToken) =>
+{
+    if (string.IsNullOrWhiteSpace(request.Reason))
+    {
+        return Results.BadRequest(new { message = "Reason is required for LMAX read-only runtime fake transport preview." });
+    }
+
+    if (request.SubmitToShadowReplay)
+    {
+        return Results.BadRequest(new { message = "SubmitToShadowReplay remains disabled/deferred for Phase 4D fake transport preview." });
+    }
+
+    if (!LmaxInfra.LmaxReadOnlyExternalSessionFakeScenarioBuilder.TryBuild(request.Scenario, out var script))
+    {
+        return Results.BadRequest(new
+        {
+            message = $"Unknown fake transport scenario '{request.Scenario}'.",
+            allowedScenarios = LmaxInfra.LmaxReadOnlyExternalSessionFakeScenarioBuilder.ScenarioNames
+        });
+    }
+
+    var effectiveOptions = options with
+    {
+        RequestedActivationLevel = LmaxInfra.LmaxReadOnlyRuntimeActivationLevel.Level4RuntimeManualReadOnlyConnectionNoReplaySubmit,
+        MaxAllowedActivationLevel = options.MaxAllowedActivationLevel < LmaxInfra.LmaxReadOnlyRuntimeActivationLevel.Level4RuntimeManualReadOnlyConnectionNoReplaySubmit
+            ? options.MaxAllowedActivationLevel
+            : LmaxInfra.LmaxReadOnlyRuntimeActivationLevel.Level4RuntimeManualReadOnlyConnectionNoReplaySubmit
+    };
+    var session = new LmaxInfra.LmaxReadOnlyExternalSessionFake(effectiveOptions, script);
+    var result = await session.RunAsync(new LmaxInfra.LmaxReadOnlyExternalSessionRequest(
+        request.Reason,
+        request.MaxEvents,
+        request.MaxRuntimeSeconds,
+        LmaxInfra.LmaxReadOnlyRuntimeActivationLevel.Level4RuntimeManualReadOnlyConnectionNoReplaySubmit,
+        PreviewEvidence: true), cancellationToken);
+    var runId = Guid.NewGuid().ToString("D");
+    var runResult = ToRuntimeRunResult(runId, request.Scenario, result);
+    await runStore.RecordRunAttemptAsync(runResult, cancellationToken);
+    return Results.Ok(ToLmaxReadOnlyRuntimeFakeTransportPreviewDto(runId, request.Scenario, result));
+});
+
+app.MapPost("/lmax-readonly-runtime/external-run-intent/validate", (
+    LmaxReadOnlyRuntimeExternalRunIntentValidateApiRequest request,
+    IOperatorContext operatorContext,
+    IClock clock) =>
+{
+    if (string.IsNullOrWhiteSpace(request.Reason))
+    {
+        return Results.BadRequest(new { message = "Reason is required for LMAX external read-only run intent validation." });
+    }
+
+    var intent = BuildExternalRunIntent(request, operatorContext, clock);
+    var result = LmaxInfra.LmaxReadOnlyExternalSessionRunIntentValidator.Validate(intent);
+
+    return Results.Ok(ToLmaxReadOnlyRuntimeExternalRunIntentValidationDto(result));
+});
+
+app.MapPost("/lmax-readonly-runtime/external-run-intent/dry-run-report", async (
+    LmaxReadOnlyRuntimeExternalRunIntentValidateApiRequest request,
+    LmaxInfra.LmaxReadOnlyRuntimeAdapterOptions options,
+    IOperatorContext operatorContext,
+    IClock clock,
+    CancellationToken cancellationToken) =>
+{
+    if (string.IsNullOrWhiteSpace(request.Reason))
+    {
+        return Results.BadRequest(new { message = "Reason is required for LMAX external read-only dry-run report." });
+    }
+
+    var intent = BuildExternalRunIntent(request, operatorContext, clock);
+    var generator = new LmaxInfra.LmaxReadOnlyExternalSessionDryRunReportGenerator(options);
+    var report = await generator.GenerateAsync(intent, clock.UtcNow, cancellationToken);
+    return Results.Ok(ToLmaxReadOnlyRuntimeExternalDryRunReportDto(report));
+});
+
+app.MapPost("/lmax-readonly-runtime/external-run-intent/signoff/validate", (
+    LmaxReadOnlyRuntimeExternalSignoffValidateApiRequest request,
+    IOperatorContext operatorContext,
+    IClock clock) =>
+{
+    if (string.IsNullOrWhiteSpace(request.Reason))
+    {
+        return Results.BadRequest(new { message = "Reason is required for LMAX external read-only signoff validation." });
+    }
+
+    var envelope = BuildExternalSignoffEnvelope(request, operatorContext, clock);
+    var result = LmaxInfra.LmaxReadOnlyExternalSessionSignoffValidator.Validate(envelope);
+    return Results.Ok(ToLmaxReadOnlyRuntimeExternalSignoffDto(result));
+});
+
+app.MapPost("/lmax-readonly-runtime/external-run-intent/pre-activation-audit/validate", (
+    LmaxReadOnlyRuntimeExternalPreActivationAuditValidateApiRequest request,
+    IOperatorContext operatorContext,
+    IClock clock) =>
+{
+    if (string.IsNullOrWhiteSpace(request.Reason))
+    {
+        return Results.BadRequest(new { message = "Reason is required for LMAX external read-only pre-activation audit validation." });
+    }
+
+    var envelope = BuildExternalPreActivationAuditEnvelope(request, operatorContext, clock);
+    var result = LmaxInfra.LmaxReadOnlyExternalSessionPreActivationAuditValidator.Validate(envelope);
+    return Results.Ok(ToLmaxReadOnlyRuntimeExternalPreActivationAuditDto(result));
+});
+
+app.MapPost("/lmax-readonly-runtime/external-run-intent/readiness-snapshot", async (
+    LmaxReadOnlyRuntimeExternalRunIntentValidateApiRequest request,
+    LmaxInfra.LmaxReadOnlyRuntimeAdapterOptions options,
+    IOperatorContext operatorContext,
+    IClock clock,
+    CancellationToken cancellationToken) =>
+{
+    if (string.IsNullOrWhiteSpace(request.Reason))
+    {
+        return Results.BadRequest(new { message = "Reason is required for LMAX external read-only readiness snapshot." });
+    }
+
+    var intent = BuildExternalRunIntent(request, operatorContext, clock);
+    var generator = new LmaxInfra.LmaxReadOnlyExternalSessionReadinessSnapshotGenerator(options);
+    var snapshot = await generator.GenerateAsync(intent, clock.UtcNow, cancellationToken);
+    return Results.Ok(ToLmaxReadOnlyRuntimeExternalReadinessSnapshotDto(snapshot));
+});
+
+app.MapGet("/lmax-readonly-runtime/runs", async (LmaxInfra.ILmaxReadOnlyRuntimeRunStore runStore, int? limit, CancellationToken cancellationToken) =>
+{
+    var runs = await runStore.GetRecentRunsAsync(ClampLimit(limit), cancellationToken);
+    return Results.Ok(runs.Select(ToLmaxReadOnlyRuntimeRunSummaryDto));
+});
+
+app.MapGet("/lmax-readonly-runtime/runs/{id}", async (string id, LmaxInfra.ILmaxReadOnlyRuntimeRunStore runStore, CancellationToken cancellationToken) =>
+{
+    var runs = await runStore.GetRecentRunsAsync(100, cancellationToken);
+    var run = runs.FirstOrDefault(x => string.Equals(x.RunId, id, StringComparison.OrdinalIgnoreCase));
+    return run is null ? Results.NotFound() : Results.Ok(ToLmaxReadOnlyRuntimeRunResultDto(run));
+});
+
 app.MapGet("/exceptions", async (IExceptionCaseService service, int? limit, string? status, string? severity, string? type, string? source, string? assignedTo, string? instrument, string? entityType, string? entityId, string? correlationId, DateTimeOffset? fromUtc, DateTimeOffset? toUtc, CancellationToken cancellationToken) =>
 {
     var cases = await service.GetCasesAsync(new ExceptionCaseFilter(
@@ -1739,6 +1991,646 @@ static LmaxShadowReaderRunResultDto ToLmaxShadowReaderRunResultDto(LmaxShadowRea
         x.Message,
         x.SafetyChecks.Select(check => new LmaxShadowReaderSafetyCheckDto(check.Gate, check.Status.ToString(), check.Passed, check.ObservedValue, check.ExpectedValue, check.Message)).ToList());
 
+static LmaxReadOnlyRuntimeStatusDto ToLmaxReadOnlyRuntimeStatusDto(LmaxInfra.LmaxReadOnlyRuntimeStatus x)
+    => new(
+        x.ImplementationMode.ToString(),
+        x.ActivationLevel.ToString(),
+        x.Status.ToString(),
+        x.Enabled,
+        x.ReadOnly,
+        x.AllowExternalConnections,
+        x.AllowCredentialUse,
+        x.AllowOrderSubmission,
+        x.PersistRawFixMessages,
+        x.PersistToTradingTables,
+        x.SubmitToShadowReplay,
+        x.SchedulerEnabled,
+        x.Message,
+        x.SafetyGates.Select(ToLmaxReadOnlyRuntimeSafetyGateDto).ToList());
+
+static LmaxReadOnlyMarketDataWorkflowStatusSummaryDto ToLmaxReadOnlyMarketDataWorkflowStatusSummaryDto(LmaxInfra.LmaxReadOnlyMarketDataWorkflowStatusSummary x)
+    => new(
+        x.SummaryId,
+        x.CreatedAtUtc,
+        x.SignoffDecision,
+        x.AuditPackDecision,
+        x.GateDecision,
+        x.ArtifactCount,
+        x.EvidencePreviewCount,
+        x.ManualReplayCount,
+        x.TotalObservationCount,
+        x.RuntimeShadowReplaySubmit,
+        x.ExternalConnectionAttempted,
+        x.CredentialValuesReturned,
+        x.OrderSubmissionAttempted,
+        x.TradingMutationAttempted,
+        x.SchedulerStarted,
+        x.ApiWorkerGatewayMode,
+        x.WorkflowFrozen,
+        x.OperationalStatus.ToString(),
+        x.WhatIsAllowed,
+        x.WhatIsNotAllowed,
+        x.NoSensitiveContent,
+        x.Issues.Select(ToLmaxReadOnlyMarketDataWorkflowStatusIssueDto).ToList());
+
+static LmaxReadOnlyMarketDataWorkflowStatusIssueDto ToLmaxReadOnlyMarketDataWorkflowStatusIssueDto(LmaxInfra.LmaxReadOnlyMarketDataWorkflowStatusIssue x)
+    => new(x.Severity.ToString(), x.Code, x.Path, x.Message);
+
+static LmaxReadOnlyAdditionalInstrumentPlanningStatusSummaryDto ToLmaxReadOnlyAdditionalInstrumentPlanningStatusSummaryDto(LmaxInfra.LmaxReadOnlyAdditionalInstrumentPlanningStatusSummary x)
+    => new(
+        x.SummaryId,
+        x.CreatedAtUtc,
+        x.AggregateDecision,
+        x.InstrumentCount,
+        x.ReadyForFutureManualConsiderationCount,
+        x.ExecutableCount,
+        x.RuntimeShadowReplaySubmit,
+        x.SchedulerOrPolling,
+        x.OrderSubmission,
+        x.GatewayRegistration,
+        x.TradingMutation,
+        x.ApiWorkerGatewayMode,
+        x.Instruments.Select(ToLmaxReadOnlyAdditionalInstrumentPlanningStatusInstrumentDto).ToList(),
+        x.NoSensitiveContent,
+        x.Issues.Select(ToLmaxReadOnlyAdditionalInstrumentPlanningStatusIssueDto).ToList());
+
+static LmaxReadOnlyAdditionalInstrumentPlanningStatusInstrumentDto ToLmaxReadOnlyAdditionalInstrumentPlanningStatusInstrumentDto(LmaxInfra.LmaxReadOnlyAdditionalInstrumentPlanningStatusInstrument x)
+    => new(
+        x.Symbol,
+        x.SlashSymbol,
+        x.PlanningSecurityId,
+        x.SecurityIdSource,
+        x.PipelineDecision,
+        x.PlanningManifestDecision,
+        x.SafetyGateDecision,
+        x.PreflightDecision,
+        x.ApprovalEnvelopeDecision,
+        x.DryRunDecision,
+        x.AttemptGateDecision,
+        x.ExecutionPlanDecision,
+        x.OperatorSignoffDecision,
+        x.FinalReadinessDecision,
+        x.IsApprovedForExternalRun,
+        x.CanRunExternalSnapshot,
+        x.EligibleForManualSnapshotAttempt,
+        x.RecommendedNextAction);
+
+static LmaxReadOnlyAdditionalInstrumentPlanningStatusIssueDto ToLmaxReadOnlyAdditionalInstrumentPlanningStatusIssueDto(LmaxInfra.LmaxReadOnlyAdditionalInstrumentPlanningStatusIssue x)
+    => new(x.Severity, x.Code, x.Path, x.Message);
+
+static LmaxReadOnlyMarketHoursNextActionSummaryDto ToLmaxReadOnlyMarketHoursNextActionSummaryDto(LmaxInfra.LmaxReadOnlyMarketHoursNextActionSummary x)
+    => new(
+        x.SummaryId,
+        x.CreatedAtUtc,
+        x.RecommendedAction,
+        x.Status,
+        ToLmaxReadOnlyMarketHoursNextActionInstrumentDto(x.SelectedInstrument),
+        ToLmaxReadOnlyMarketHoursNextActionSourceArtifactsDto(x.SourceArtifacts),
+        ToLmaxReadOnlyMarketHoursNextActionPreviousAttemptDto(x.PreviousAttempt),
+        x.FinalReadinessDecision,
+        x.MarketHoursRetryReadinessDecision,
+        x.Phase6XReviewDecision,
+        x.DocumentationPackDecision,
+        x.ExecutableCount,
+        x.IsApprovedForExternalRun,
+        x.CanRunExternalSnapshot,
+        x.EligibleForManualSnapshotAttempt,
+        x.RuntimeShadowReplaySubmit,
+        x.SchedulerOrPolling,
+        x.OrderSubmission,
+        x.GatewayRegistration,
+        x.TradingMutation,
+        x.ApiWorkerGatewayMode,
+        x.WhatIsAllowed.ToList(),
+        x.WhatIsNotAllowed.ToList(),
+        x.NoSensitiveContent,
+        x.Issues.Select(ToLmaxReadOnlyMarketHoursNextActionIssueDto).ToList());
+
+static LmaxReadOnlyMarketHoursNextActionInstrumentDto ToLmaxReadOnlyMarketHoursNextActionInstrumentDto(LmaxInfra.LmaxReadOnlyMarketHoursNextActionInstrument x)
+    => new(x.Symbol, x.SlashSymbol, x.SecurityId, x.SecurityIdSource, x.RequestMode, x.SymbolEncodingMode, x.MarketDepth);
+
+static LmaxReadOnlyMarketHoursNextActionSourceArtifactsDto ToLmaxReadOnlyMarketHoursNextActionSourceArtifactsDto(LmaxInfra.LmaxReadOnlyMarketHoursNextActionSourceArtifacts x)
+    => new(x.FinalReadinessFile, x.MarketHoursRetryReadinessFile, x.Phase6XReviewFile, x.DocumentationPackFile);
+
+static LmaxReadOnlyMarketHoursNextActionPreviousAttemptDto ToLmaxReadOnlyMarketHoursNextActionPreviousAttemptDto(LmaxInfra.LmaxReadOnlyMarketHoursNextActionPreviousAttempt x)
+    => new(x.Status, x.OutsideMarketHours, x.Safe, x.SnapshotReceived, x.EntryCount, x.WarningClassification);
+
+static LmaxReadOnlyMarketHoursNextActionIssueDto ToLmaxReadOnlyMarketHoursNextActionIssueDto(LmaxInfra.LmaxReadOnlyMarketHoursNextActionIssue x)
+    => new(x.Severity, x.Code, x.Path, x.Message);
+
+static LmaxReadOnlyRuntimeRunResultDto ToLmaxReadOnlyRuntimeRunResultDto(LmaxInfra.LmaxReadOnlyRuntimeRunResult x)
+    => new(
+        x.RunId,
+        x.Status.ToString(),
+        x.RunMode.ToString(),
+        x.Message,
+        x.FixtureEvidenceFile is null ? null : Path.GetFileName(x.FixtureEvidenceFile),
+        x.EvidenceMode,
+        x.ExecutionReportCount,
+        x.OrderStatusCount,
+        x.TradeCaptureReportCount,
+        x.ProtocolRejectCount,
+        x.MarketDataSnapshotCount,
+        x.InputEventCount,
+        x.ValidationErrorCount,
+        x.ValidationWarningCount,
+        x.ValidationInfoCount,
+        x.ObservationCount,
+        x.BlockingObservationCount,
+        x.WarningObservationCount,
+        x.ReplayRunId,
+        x.BatchSummary is null ? null : ToLmaxReadOnlyRuntimeEvidencePreviewDto(x.BatchSummary),
+        x.Safety.RunStatus.ToString(),
+        x.Safety.BlockedReason,
+        x.Safety.Gates.Select(ToLmaxReadOnlyRuntimeSafetyGateDto).ToList());
+
+static LmaxReadOnlyRuntimeRunSummaryDto ToLmaxReadOnlyRuntimeRunSummaryDto(LmaxInfra.LmaxReadOnlyRuntimeRunResult x)
+    => new(
+        x.RunId,
+        x.Status.ToString(),
+        x.RunMode.ToString(),
+        x.FixtureEvidenceFile is null ? null : Path.GetFileName(x.FixtureEvidenceFile),
+        x.EvidenceMode,
+        x.ExecutionReportCount,
+        x.OrderStatusCount,
+        x.TradeCaptureReportCount,
+        x.ProtocolRejectCount,
+        x.MarketDataSnapshotCount,
+        x.InputEventCount,
+        x.ValidationErrorCount,
+        x.ValidationWarningCount,
+        x.ValidationInfoCount,
+        x.Message);
+
+static LmaxInfra.LmaxReadOnlyRuntimeRunResult ToRuntimeRunResult(string runId, string scenario, LmaxInfra.LmaxReadOnlyExternalSessionResult x)
+{
+    var preview = x.EvidencePreview;
+    var summary = preview is null
+        ? null
+        : new LmaxInfra.LmaxReadOnlyRuntimeEvidenceBatchSummary(
+            preview.Batch.BatchId,
+            preview.EvidenceMode,
+            preview.Batch.CreatedAtUtc,
+            DateTimeOffset.UtcNow,
+            preview.InputEventCount,
+            preview.InputEventCount,
+            0,
+            SubmittedToShadowReplay: false,
+            preview.Batch.Warnings);
+    var result = new LmaxInfra.LmaxReadOnlyRuntimeRunResult(
+        x.Status,
+        $"Fake transport preview scenario {scenario}: {x.Message}",
+        new LmaxInfra.LmaxReadOnlyRuntimeSafetyEvaluation(x.Safety.RunStatus, x.Safety.BlockedReason, x.Safety.Gates),
+        summary)
+    {
+        RunId = runId,
+        RunMode = LmaxInfra.LmaxReadOnlyRuntimeRunMode.FakeTransportPreview,
+        FixtureEvidenceFile = null,
+        EvidenceMode = preview?.EvidenceMode,
+        ExecutionReportCount = preview?.Batch.ExecutionReportCount ?? 0,
+        OrderStatusCount = preview?.Batch.OrderStatusCount ?? 0,
+        TradeCaptureReportCount = preview?.Batch.TradeCaptureReportCount ?? 0,
+        ProtocolRejectCount = preview?.Batch.ProtocolRejectCount ?? 0,
+        MarketDataSnapshotCount = preview?.Batch.MarketDataSnapshotCount ?? 0,
+        InputEventCount = preview?.InputEventCount ?? 0,
+        ValidationErrorCount = preview?.ValidationErrorCount ?? 0,
+        ValidationWarningCount = preview?.ValidationWarningCount ?? 0,
+        ValidationInfoCount = preview?.ValidationInfoCount ?? 0,
+        ObservationCount = 0,
+        BlockingObservationCount = 0,
+        WarningObservationCount = 0,
+        ReplayRunId = null
+    };
+
+    return result;
+}
+
+static LmaxReadOnlyRuntimeFakeTransportPreviewDto ToLmaxReadOnlyRuntimeFakeTransportPreviewDto(string runId, string scenario, LmaxInfra.LmaxReadOnlyExternalSessionResult x)
+{
+    var preview = x.EvidencePreview;
+    return new LmaxReadOnlyRuntimeFakeTransportPreviewDto(
+        runId,
+        x.Status.ToString(),
+        LmaxInfra.LmaxReadOnlyRuntimeRunMode.FakeTransportPreview.ToString(),
+        scenario,
+        preview?.EvidenceMode,
+        "RuntimeFakeTransport",
+        "FakeRuntimePreview",
+        x.Counters.MarketDataSnapshotCount,
+        x.Counters.TradeCaptureReportCount,
+        x.Counters.OrderStatusReportCount,
+        x.Counters.ProtocolRejectCount,
+        x.Counters.SessionWarningCount,
+        x.Counters.SessionErrorCount,
+        x.Counters.TotalEventCount,
+        preview?.Batch.ExecutionReportCount ?? 0,
+        preview?.Batch.OrderStatusCount ?? 0,
+        preview?.Batch.TradeCaptureReportCount ?? 0,
+        preview?.Batch.ProtocolRejectCount ?? 0,
+        preview?.Batch.MarketDataSnapshotCount ?? 0,
+        preview?.Batch.Warnings.Count ?? 0,
+        preview?.ValidationErrorCount ?? 0,
+        preview?.ValidationWarningCount ?? 0,
+        preview?.ValidationInfoCount ?? 0,
+        preview?.NoSensitiveContent ?? true,
+        SubmitToShadowReplay: false,
+        x.Message,
+        x.Safety.RunStatus.ToString(),
+        x.Safety.BlockedReason,
+        x.Safety.Gates.Select(ToLmaxReadOnlyRuntimeSafetyGateDto).ToList(),
+        preview is null ? null : new LmaxReadOnlyRuntimeFakeTransportEvidencePreviewSummaryDto(
+            preview.SchemaVersion,
+            preview.EvidenceMode,
+            preview.Batch.BatchId,
+            preview.Batch.Sanitized,
+            preview.Batch.ContainsRawFix,
+            preview.Message,
+            preview.Issues.Select(issue => new LmaxReadOnlyRuntimeFakeTransportPreviewIssueDto(issue.Severity, issue.Path, issue.Code, issue.Message)).ToList()));
+}
+
+static LmaxReadOnlyRuntimeExternalRunIntentValidationDto ToLmaxReadOnlyRuntimeExternalRunIntentValidationDto(LmaxInfra.LmaxReadOnlyExternalSessionRunIntentValidationResult x)
+{
+    var status = x.HasErrors
+        ? (x.Issues.Any(issue => issue.Code is "ReasonRequired" or "RequestedByOperatorIdRequired") ? "Invalid" : "Blocked")
+        : "ValidatedOnly";
+    return new LmaxReadOnlyRuntimeExternalRunIntentValidationDto(
+        x.Summary.IntentId.ToString("D"),
+        status,
+        CanStartSession: false,
+        SessionStarted: false,
+        ExternalConnectionAttempted: false,
+        CredentialReadAttempted: false,
+        ShadowReplaySubmitAttempted: false,
+        TradingMutationAttempted: false,
+        x.Summary.RunMode.ToString(),
+        x.Summary.EnvironmentName,
+        x.Summary.VenueProfileName,
+        x.Summary.CredentialProfileName,
+        x.ErrorCount,
+        x.WarningCount,
+        x.InfoCount,
+        x.Issues.Select(issue => new LmaxReadOnlyRuntimeExternalRunIntentIssueDto(issue.Severity.ToString(), issue.Code, issue.Path, issue.Message)).ToList(),
+        x.Issues.Select(issue => new LmaxReadOnlyRuntimeSafetyGateDto(
+            issue.Code,
+            issue.Severity.ToString(),
+            issue.Severity != LmaxInfra.LmaxReadOnlyExternalSessionConfigIssueSeverity.Error,
+            issue.Path,
+            "Phase4K validate-only safe boundary",
+            issue.Message)).ToList(),
+        x.Summary.Message,
+        x.IsBlocked
+            ? "Review the blocked validation issues. Do not start any external session; Phase 4K is validate-only."
+            : "No session can start from this endpoint. Keep using fake/local validation until a separate future gate exists.");
+}
+
+static LmaxReadOnlyRuntimeExternalDryRunReportDto ToLmaxReadOnlyRuntimeExternalDryRunReportDto(LmaxInfra.LmaxReadOnlyExternalSessionDryRunReport x)
+    => new(
+        x.ReportId.ToString("D"),
+        x.CreatedAtUtc,
+        x.RequestedByOperatorId,
+        x.Reason,
+        x.RunMode.ToString(),
+        x.EnvironmentName,
+        x.VenueProfileName,
+        x.CredentialProfileName,
+        x.CanStartSession,
+        x.SessionStarted,
+        x.ExternalConnectionAttempted,
+        x.CredentialReadAttempted,
+        x.ShadowReplaySubmitAttempted,
+        x.TradingMutationAttempted,
+        x.ExpectedOutcome.ToString(),
+        x.BlockedReason,
+        x.NextOperatorAction.ToString(),
+        x.NoSensitiveContent,
+        ToLmaxReadOnlyRuntimeExternalRunIntentValidationDto(x.IntentValidation),
+        x.OptionsValidation.HasErrors,
+        x.OptionsValidation.ErrorCount,
+        x.OptionsValidation.WarningCount,
+        x.OptionsValidation.InfoCount,
+        x.OptionsValidation.Issues.Select(ToLmaxReadOnlyRuntimeExternalRunIntentIssueDto).ToList(),
+        new LmaxReadOnlyRuntimeExternalVenueProfileDto(
+            x.VenueProfile.VenueProfileName,
+            x.VenueProfile.EnvironmentName,
+            x.VenueProfile.IsActive,
+            x.VenueProfile.IsExternalConnectionAllowed,
+            x.VenueProfile.IsCredentialUseAllowed,
+            x.VenueProfile.SafetyStatus,
+            x.VenueProfile.RedactionStatus),
+        new LmaxReadOnlyRuntimeExternalCredentialProfileDto(
+            x.CredentialProfile.CredentialProfileName,
+            x.CredentialProfile.EnvironmentName,
+            x.CredentialProfile.VenueProfileName,
+            x.CredentialProfile.IsConfigured,
+            x.CredentialProfile.SourceKind,
+            x.CredentialProfile.RedactionStatus,
+            x.CredentialProfile.ResolverMode,
+            x.CredentialProfile.CredentialReadImplemented,
+            x.CredentialProfile.CredentialUseImplemented,
+            x.CredentialProfile.SensitiveMaterialReturned),
+        new LmaxReadOnlyRuntimeExternalGuardedTransportDto(
+            x.GuardedTransport.Status,
+            x.GuardedTransport.NetworkTransportImplemented,
+            x.GuardedTransport.SocketActivation,
+            x.GuardedTransport.FixLogonImplemented,
+            x.GuardedTransport.CredentialUseImplemented,
+            x.GuardedTransport.OrderSubmissionImplemented,
+            x.GuardedTransport.ReadOnlyOnly,
+            x.GuardedTransport.ShadowReplaySubmitImplemented,
+            x.GuardedTransport.TradingMutationImplemented,
+            x.GuardedTransport.SchedulerImplemented),
+        new LmaxReadOnlyRuntimeExternalSessionSkeletonDto(
+            x.ExternalSessionSkeleton.ExternalSessionImplementationMode,
+            x.ExternalSessionSkeleton.SocketActivation,
+            x.ExternalSessionSkeleton.FixLogonImplemented,
+            x.ExternalSessionSkeleton.CredentialUseImplemented,
+            x.ExternalSessionSkeleton.OrderSubmissionImplemented,
+            x.ExternalSessionSkeleton.ShadowReplaySubmitImplemented,
+            x.ExternalSessionSkeleton.TradingMutationImplemented,
+            x.ExternalSessionSkeleton.SchedulerImplemented,
+            x.ExternalSessionSkeleton.RuntimeGatewayRegistrationImplemented),
+        x.Sections.Select(section => new LmaxReadOnlyRuntimeExternalDryRunSectionDto(
+            section.Name,
+            section.Status,
+            section.Message,
+            section.Issues.Select(ToLmaxReadOnlyRuntimeExternalRunIntentIssueDto).ToList(),
+            section.Gates.Select(ToLmaxReadOnlyRuntimeSafetyGateDto).ToList())).ToList(),
+        x.SafetyGates.Select(ToLmaxReadOnlyRuntimeSafetyGateDto).ToList());
+
+static LmaxReadOnlyRuntimeExternalRunIntentIssueDto ToLmaxReadOnlyRuntimeExternalRunIntentIssueDto(LmaxInfra.LmaxReadOnlyExternalSessionConfigIssue issue)
+    => new(issue.Severity.ToString(), issue.Code, issue.Path, issue.Message);
+
+static LmaxReadOnlyRuntimeExternalSignoffDto ToLmaxReadOnlyRuntimeExternalSignoffDto(LmaxInfra.LmaxReadOnlyExternalSessionSignoffResult x)
+    => new(
+        x.SignoffId.ToString("D"),
+        x.CreatedAtUtc,
+        x.Status.ToString(),
+        x.Decision.ToString(),
+        x.SignoffRole.ToString(),
+        x.RequestedByOperatorId,
+        x.SignedByOperatorId,
+        x.CanAuthorizeExecution,
+        x.ExecutionStillBlocked,
+        x.SessionStarted,
+        x.ExternalConnectionAttempted,
+        x.CredentialReadAttempted,
+        x.ShadowReplaySubmitAttempted,
+        x.TradingMutationAttempted,
+        x.ValidationIssues.Select(ToLmaxReadOnlyRuntimeExternalRunIntentIssueDto).ToList(),
+        x.SafetyGates.Select(ToLmaxReadOnlyRuntimeSafetyGateDto).ToList(),
+        x.Message,
+        x.NextOperatorAction);
+
+static LmaxReadOnlyRuntimeExternalPreActivationAuditDto ToLmaxReadOnlyRuntimeExternalPreActivationAuditDto(LmaxInfra.LmaxReadOnlyExternalSessionPreActivationAuditResult x)
+    => new(
+        x.AuditEnvelopeId.ToString("D"),
+        x.CreatedAtUtc,
+        x.Status.ToString(),
+        x.FinalOutcome.ToString(),
+        x.RequestedByOperatorId,
+        x.ReviewedByOperatorId,
+        x.SignedByOperatorId,
+        x.CanAuthorizeExecution,
+        x.ExecutionStillBlocked,
+        x.SessionStarted,
+        x.ExternalConnectionAttempted,
+        x.CredentialReadAttempted,
+        x.ShadowReplaySubmitAttempted,
+        x.TradingMutationAttempted,
+        x.NoSensitiveContent,
+        x.StableBlockers,
+        x.ValidationIssues.Select(ToLmaxReadOnlyRuntimeExternalRunIntentIssueDto).ToList(),
+        x.SafetyGates.Select(ToLmaxReadOnlyRuntimeSafetyGateDto).ToList(),
+        x.Message,
+        x.NextOperatorAction);
+
+static LmaxReadOnlyRuntimeExternalReadinessSnapshotDto ToLmaxReadOnlyRuntimeExternalReadinessSnapshotDto(LmaxInfra.LmaxReadOnlyExternalSessionReadinessSnapshot x)
+    => new(
+        x.SnapshotId.ToString("D"),
+        x.CreatedAtUtc,
+        x.Status.ToString(),
+        x.FinalDecision.ToString(),
+        x.RequestedByOperatorId,
+        x.Reason,
+        x.CanStartSession,
+        x.SessionStarted,
+        x.ExternalConnectionAttempted,
+        x.CredentialReadAttempted,
+        x.ShadowReplaySubmitAttempted,
+        x.TradingMutationAttempted,
+        x.NoSensitiveContent,
+        ToLmaxReadOnlyRuntimeExternalRunIntentValidationDto(x.IntentValidation),
+        ToLmaxReadOnlyRuntimeExternalDryRunReportDto(x.DryRunReport),
+        ToLmaxReadOnlyRuntimeExternalSignoffDto(x.Signoff),
+        ToLmaxReadOnlyRuntimeExternalPreActivationAuditDto(x.PreActivationAudit),
+        x.StableBlockers,
+        x.ValidationIssues.Select(ToLmaxReadOnlyRuntimeExternalRunIntentIssueDto).ToList(),
+        x.SafetyGates.Select(ToLmaxReadOnlyRuntimeSafetyGateDto).ToList(),
+        x.Message,
+        x.NextOperatorAction);
+
+static LmaxInfra.LmaxReadOnlyExternalSessionRunIntent BuildExternalRunIntent(
+    LmaxReadOnlyRuntimeExternalRunIntentValidateApiRequest request,
+    IOperatorContext operatorContext,
+    IClock clock)
+{
+    var runMode = request.RunMode ?? LmaxInfra.LmaxReadOnlyExternalSessionRunIntentMode.ValidateOnly;
+    var operatorId = string.IsNullOrWhiteSpace(request.RequestedByOperatorId)
+        ? operatorContext.Current.ActorId
+        : request.RequestedByOperatorId;
+    return new LmaxInfra.LmaxReadOnlyExternalSessionRunIntent(
+        Guid.NewGuid(),
+        request.Reason,
+        operatorId,
+        clock.UtcNow,
+        string.IsNullOrWhiteSpace(request.EnvironmentName) ? "Demo" : request.EnvironmentName,
+        string.IsNullOrWhiteSpace(request.VenueProfileName) ? "DemoLondon" : request.VenueProfileName,
+        string.IsNullOrWhiteSpace(request.CredentialProfileName) ? "LmaxDemoReadOnlyProfile" : request.CredentialProfileName,
+        runMode,
+        request.DryRun ?? true,
+        request.MaxRuntimeSeconds ?? 30,
+        request.MaxEventsPerRun ?? 100,
+        request.RequestedEvidencePreviewOnly ?? true,
+        request.SubmitToShadowReplay ?? false,
+        request.AllowExternalConnections ?? false,
+        request.AllowCredentialUse ?? false,
+        request.AllowOrderSubmission ?? false,
+        request.SchedulerEnabled ?? false,
+        request.PersistToTradingTables ?? false);
+}
+
+static LmaxInfra.LmaxReadOnlyExternalSessionSignoffEnvelope BuildExternalSignoffEnvelope(
+    LmaxReadOnlyRuntimeExternalSignoffValidateApiRequest request,
+    IOperatorContext operatorContext,
+    IClock clock)
+{
+    var role = request.SignoffRole ?? LmaxInfra.LmaxReadOnlyExternalSessionSignoffRole.Operator;
+    var decision = request.Decision ?? LmaxInfra.LmaxReadOnlyExternalSessionSignoffDecision.Signed;
+    var requestedBy = string.IsNullOrWhiteSpace(request.RequestedByOperatorId)
+        ? operatorContext.Current.ActorId
+        : request.RequestedByOperatorId;
+
+    return new LmaxInfra.LmaxReadOnlyExternalSessionSignoffEnvelope(
+        Guid.NewGuid(),
+        clock.UtcNow,
+        request.DryRunReportId,
+        request.IntentId ?? Guid.Empty,
+        requestedBy,
+        request.SignedByOperatorId ?? string.Empty,
+        role,
+        request.Reason,
+        request.ConfirmsReadOnlyIntent ?? false,
+        request.ConfirmsNoOrderSubmission ?? false,
+        request.ConfirmsNoTradingMutation ?? false,
+        request.ConfirmsNoScheduler ?? false,
+        request.ConfirmsNoShadowReplaySubmit ?? false,
+        request.ConfirmsNoCredentialExposure ?? false,
+        request.ConfirmsDemoOnly ?? false,
+        request.ConfirmsDryRunReportReviewed ?? false,
+        request.DryRunReportCanStartSession ?? false,
+        request.DryRunReportSafetyMarkers ?? [],
+        decision);
+}
+
+static LmaxInfra.LmaxReadOnlyExternalSessionPreActivationAuditEnvelope BuildExternalPreActivationAuditEnvelope(
+    LmaxReadOnlyRuntimeExternalPreActivationAuditValidateApiRequest request,
+    IOperatorContext operatorContext,
+    IClock clock)
+{
+    var requestedBy = string.IsNullOrWhiteSpace(request.RequestedByOperatorId)
+        ? operatorContext.Current.ActorId
+        : request.RequestedByOperatorId;
+
+    return new LmaxInfra.LmaxReadOnlyExternalSessionPreActivationAuditEnvelope(
+        Guid.NewGuid(),
+        clock.UtcNow,
+        requestedBy,
+        request.ReviewedByOperatorId,
+        request.SignedByOperatorId,
+        request.Reason,
+        request.IntentId ?? Guid.Empty,
+        request.DryRunReportId ?? Guid.Empty,
+        request.SignoffId ?? Guid.Empty,
+        request.DryRunReportCanStartSession ?? false,
+        request.SignoffCanAuthorizeExecution ?? false,
+        request.SignoffExecutionStillBlocked ?? false,
+        request.SessionStarted ?? false,
+        request.ExternalConnectionAttempted ?? false,
+        request.CredentialReadAttempted ?? false,
+        request.ShadowReplaySubmitAttempted ?? false,
+        request.TradingMutationAttempted ?? false,
+        request.StableBlockers ?? [],
+        request.DryRunReportReviewed ?? false,
+        request.SignoffReviewed ?? false);
+}
+
+static LmaxReadOnlyRuntimeSafetyGateDto ToLmaxReadOnlyRuntimeSafetyGateDto(LmaxInfra.LmaxReadOnlyRuntimeSafetyGateResult x)
+    => new(x.Name, x.Status.ToString(), !x.BlocksRun, x.ObservedValue, x.ExpectedSafeValue, x.Message);
+
+static LmaxReadOnlyRuntimeEvidencePreviewDto ToLmaxReadOnlyRuntimeEvidencePreviewDto(LmaxInfra.LmaxReadOnlyRuntimeEvidenceBatchSummary x)
+    => new(
+        x.BatchId,
+        x.EvidenceMode,
+        x.StartedAtUtc,
+        x.CompletedAtUtc,
+        x.InputEventCount,
+        x.UniqueEventCount,
+        x.DuplicateEventCount,
+        x.SubmittedToShadowReplay,
+        x.Warnings);
+
+static FixtureSelectionResult ResolveReadonlyRuntimeFixture(string? fixtureFileName)
+{
+    if (string.IsNullOrWhiteSpace(fixtureFileName))
+    {
+        return new(true, null, "Default configured fixture selected.");
+    }
+
+    if (Path.IsPathRooted(fixtureFileName) || fixtureFileName.Contains("..", StringComparison.Ordinal) || fixtureFileName.IndexOfAny([Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar]) >= 0)
+    {
+        return new(false, null, "Fixture selection must be a file name from tests/fixtures/lmax-shadow; path traversal and absolute paths are rejected.");
+    }
+
+    var root = FindRepositoryRoot();
+    var path = Path.Combine(root, "tests", "fixtures", "lmax-shadow", fixtureFileName);
+    if (!File.Exists(path))
+    {
+        return new(false, null, $"Unknown LMAX read-only runtime fixture '{fixtureFileName}'.");
+    }
+
+    return new(true, path, "Fixture selected.");
+}
+
+static string FindRepositoryRoot()
+{
+    var current = new DirectoryInfo(AppContext.BaseDirectory);
+    while (current is not null)
+    {
+        if (File.Exists(Path.Combine(current.FullName, "QQ.Production.Intraday.sln")))
+        {
+            return current.FullName;
+        }
+
+        current = current.Parent;
+    }
+
+    return Directory.GetCurrentDirectory();
+}
+
+static string? FindLatestReadinessFile(string filter)
+{
+    var directory = Path.Combine(FindRepositoryRoot(), "artifacts", "readiness");
+    if (!Directory.Exists(directory))
+    {
+        return null;
+    }
+
+    return Directory.GetFiles(directory, filter)
+        .Select(path => new FileInfo(path))
+        .OrderByDescending(file => file.LastWriteTimeUtc)
+        .FirstOrDefault()
+        ?.FullName;
+}
+
+static string? FindLatestArtifactFile(string relativeDirectory, string filter)
+{
+    var directory = Path.Combine(FindRepositoryRoot(), relativeDirectory);
+    if (!Directory.Exists(directory))
+    {
+        return null;
+    }
+
+    return Directory.GetFiles(directory, filter)
+        .Select(path => new FileInfo(path))
+        .OrderByDescending(file => file.LastWriteTimeUtc)
+        .FirstOrDefault()
+        ?.FullName;
+}
+
+static string? TryReadJsonString(string? file, string propertyName)
+{
+    if (string.IsNullOrWhiteSpace(file) || !File.Exists(file))
+    {
+        return null;
+    }
+
+    try
+    {
+        using var document = JsonDocument.Parse(File.ReadAllText(file));
+        return document.RootElement.TryGetProperty(propertyName, out var value) && value.ValueKind == JsonValueKind.String
+            ? value.GetString()
+            : null;
+    }
+    catch (JsonException)
+    {
+        return null;
+    }
+}
+
+static TEnum ParseConfigurationEnum<TEnum>(string? value, TEnum fallback)
+    where TEnum : struct
+    => Enum.TryParse<TEnum>(value, ignoreCase: true, out var parsed) ? parsed : fallback;
+
 static OperatorUserDto ToOperatorUserDto(OperatorUser user, IReadOnlySet<OperatorRole> roles, IReadOnlySet<OperatorPermission> permissions)
     => new(user.Id.Value.ToString("D"), user.OperatorId, user.DisplayName, user.Email, user.IsEnabled, user.CreatedAtUtc, user.UpdatedAtUtc, roles.Select(x => x.ToString()).OrderBy(x => x).ToList(), permissions.Select(x => x.ToString()).OrderBy(x => x).ToList());
 
@@ -1892,6 +2784,38 @@ public sealed record LmaxShadowReplayRunDto(string Id, string InputSource, strin
 public sealed record LmaxShadowObservationDto(string Id, string? ReplayRunId, DateTimeOffset ObservedAtUtc, string Type, string Severity, string Status, string? InstrumentId, string? Symbol, string? BrokerExecutionId, string? BrokerOrderId, string? ClientOrderId, string? InternalFillId, string? InternalOrderId, string Description, string? LmaxPayloadJson, string? InternalPayloadJson, string? DifferenceJson, string Fingerprint, string? PolicyCode, string? EvidenceMode, string? SourceEventType, string? Rationale, string? SuggestedOperatorAction, bool CreatesExceptionCase, string? CorrelationId, DateTimeOffset CreatedAtUtc);
 public sealed record LmaxShadowReaderRunResultDto(string Status, string BlockedReason, bool Executed, bool Connected, bool ExternalConnectionAttempted, bool CredentialsUsed, bool OrdersSubmitted, bool PersistedToTradingTables, int EventsRead, string Message, IReadOnlyList<LmaxShadowReaderSafetyCheckDto> SafetyChecks);
 public sealed record LmaxShadowReaderSafetyCheckDto(string Gate, string Status, bool Passed, string ObservedValue, string ExpectedValue, string Message);
+public sealed record LmaxReadOnlyRuntimeStatusDto(string ImplementationMode, string ActivationLevel, string Status, bool Enabled, bool ReadOnly, bool AllowExternalConnections, bool AllowCredentialUse, bool AllowOrderSubmission, bool PersistRawFixMessages, bool PersistToTradingTables, bool SubmitToShadowReplay, bool SchedulerEnabled, string Message, IReadOnlyList<LmaxReadOnlyRuntimeSafetyGateDto> SafetyGates);
+public sealed record LmaxReadOnlyMarketDataWorkflowStatusSummaryDto(string SummaryId, DateTimeOffset CreatedAtUtc, string SignoffDecision, string AuditPackDecision, string GateDecision, int ArtifactCount, int EvidencePreviewCount, int ManualReplayCount, int TotalObservationCount, bool RuntimeShadowReplaySubmit, bool ExternalConnectionAttempted, bool CredentialValuesReturned, bool OrderSubmissionAttempted, bool TradingMutationAttempted, bool SchedulerStarted, string ApiWorkerGatewayMode, bool WorkflowFrozen, string OperationalStatus, IReadOnlyList<string> WhatIsAllowed, IReadOnlyList<string> WhatIsNotAllowed, bool NoSensitiveContent, IReadOnlyList<LmaxReadOnlyMarketDataWorkflowStatusIssueDto> Issues);
+public sealed record LmaxReadOnlyMarketDataWorkflowStatusIssueDto(string Severity, string Code, string Path, string Message);
+public sealed record LmaxReadOnlyAdditionalInstrumentPlanningStatusSummaryDto(string SummaryId, DateTimeOffset CreatedAtUtc, string AggregateDecision, int InstrumentCount, int ReadyForFutureManualConsiderationCount, int ExecutableCount, bool RuntimeShadowReplaySubmit, bool SchedulerOrPolling, bool OrderSubmission, bool GatewayRegistration, bool TradingMutation, string ApiWorkerGatewayMode, IReadOnlyList<LmaxReadOnlyAdditionalInstrumentPlanningStatusInstrumentDto> Instruments, bool NoSensitiveContent, IReadOnlyList<LmaxReadOnlyAdditionalInstrumentPlanningStatusIssueDto> Issues);
+public sealed record LmaxReadOnlyAdditionalInstrumentPlanningStatusInstrumentDto(string Symbol, string SlashSymbol, string PlanningSecurityId, string SecurityIdSource, string PipelineDecision, string PlanningManifestDecision, string SafetyGateDecision, string PreflightDecision, string ApprovalEnvelopeDecision, string DryRunDecision, string AttemptGateDecision, string ExecutionPlanDecision, string OperatorSignoffDecision, string FinalReadinessDecision, bool IsApprovedForExternalRun, bool CanRunExternalSnapshot, bool EligibleForManualSnapshotAttempt, string RecommendedNextAction);
+public sealed record LmaxReadOnlyAdditionalInstrumentPlanningStatusIssueDto(string Severity, string Code, string Path, string Message);
+public sealed record LmaxReadOnlyMarketHoursNextActionSummaryDto(string SummaryId, DateTimeOffset CreatedAtUtc, string RecommendedAction, string Status, LmaxReadOnlyMarketHoursNextActionInstrumentDto SelectedInstrument, LmaxReadOnlyMarketHoursNextActionSourceArtifactsDto SourceArtifacts, LmaxReadOnlyMarketHoursNextActionPreviousAttemptDto PreviousAttempt, string FinalReadinessDecision, string MarketHoursRetryReadinessDecision, string Phase6XReviewDecision, string DocumentationPackDecision, int ExecutableCount, bool IsApprovedForExternalRun, bool CanRunExternalSnapshot, bool EligibleForManualSnapshotAttempt, bool RuntimeShadowReplaySubmit, bool SchedulerOrPolling, bool OrderSubmission, bool GatewayRegistration, bool TradingMutation, string ApiWorkerGatewayMode, IReadOnlyList<string> WhatIsAllowed, IReadOnlyList<string> WhatIsNotAllowed, bool NoSensitiveContent, IReadOnlyList<LmaxReadOnlyMarketHoursNextActionIssueDto> Issues);
+public sealed record LmaxReadOnlyMarketHoursNextActionInstrumentDto(string Symbol, string SlashSymbol, string SecurityId, string SecurityIdSource, string RequestMode, string SymbolEncodingMode, int MarketDepth);
+public sealed record LmaxReadOnlyMarketHoursNextActionSourceArtifactsDto(string FinalReadinessFile, string MarketHoursRetryReadinessFile, string Phase6XReviewFile, string DocumentationPackFile);
+public sealed record LmaxReadOnlyMarketHoursNextActionPreviousAttemptDto(string Status, bool OutsideMarketHours, bool Safe, bool SnapshotReceived, int EntryCount, string WarningClassification);
+public sealed record LmaxReadOnlyMarketHoursNextActionIssueDto(string Severity, string Code, string Path, string Message);
+public sealed record LmaxReadOnlyRuntimeRunResultDto(string? RunId, string Status, string RunMode, string Message, string? FixtureFileName, string? EvidenceMode, int ExecutionReportCount, int OrderStatusCount, int TradeCaptureReportCount, int ProtocolRejectCount, int MarketDataSnapshotCount, int InputEventCount, int ValidationErrorCount, int ValidationWarningCount, int ValidationInfoCount, int ObservationCount, int BlockingObservationCount, int WarningObservationCount, string? ReplayRunId, LmaxReadOnlyRuntimeEvidencePreviewDto? EvidencePreview, string SafetyStatus, string BlockedReason, IReadOnlyList<LmaxReadOnlyRuntimeSafetyGateDto> SafetyGates);
+public sealed record LmaxReadOnlyRuntimeRunSummaryDto(string? RunId, string Status, string RunMode, string? FixtureFileName, string? EvidenceMode, int ExecutionReportCount, int OrderStatusCount, int TradeCaptureReportCount, int ProtocolRejectCount, int MarketDataSnapshotCount, int InputEventCount, int ValidationErrorCount, int ValidationWarningCount, int ValidationInfoCount, string Message);
+public sealed record LmaxReadOnlyRuntimeSafetyGateDto(string Gate, string Status, bool Passed, string ObservedValue, string ExpectedValue, string Message);
+public sealed record LmaxReadOnlyRuntimeEvidencePreviewDto(string BatchId, string EvidenceMode, DateTimeOffset StartedAtUtc, DateTimeOffset? CompletedAtUtc, int InputEventCount, int UniqueEventCount, int DuplicateEventCount, bool SubmittedToShadowReplay, IReadOnlyList<string> Warnings);
+public sealed record LmaxReadOnlyRuntimeFakeTransportPreviewDto(string RunId, string Status, string RunMode, string Scenario, string? EvidenceMode, string Source, string CaptureMode, int MarketDataSnapshotCount, int TradeCaptureReportCount, int OrderStatusReportCount, int ProtocolRejectCount, int SessionWarningCount, int SessionErrorCount, int TotalEventCount, int ExecutionReportCount, int OrderStatusCount, int TradeCaptureReportEvidenceCount, int ProtocolRejectEvidenceCount, int MarketDataEvidenceCount, int WarningCount, int ValidationErrorCount, int ValidationWarningCount, int ValidationInfoCount, bool NoSensitiveContent, bool SubmitToShadowReplay, string Message, string SafetyStatus, string BlockedReason, IReadOnlyList<LmaxReadOnlyRuntimeSafetyGateDto> SafetyGates, LmaxReadOnlyRuntimeFakeTransportEvidencePreviewSummaryDto? EvidencePreview);
+public sealed record LmaxReadOnlyRuntimeFakeTransportEvidencePreviewSummaryDto(string SchemaVersion, string EvidenceMode, string BatchId, bool Sanitized, bool ContainsRawFix, string Message, IReadOnlyList<LmaxReadOnlyRuntimeFakeTransportPreviewIssueDto> Issues);
+public sealed record LmaxReadOnlyRuntimeFakeTransportPreviewIssueDto(string Severity, string Path, string Code, string Message);
+public sealed record LmaxReadOnlyRuntimeExternalRunIntentValidationDto(string IntentId, string Status, bool CanStartSession, bool SessionStarted, bool ExternalConnectionAttempted, bool CredentialReadAttempted, bool ShadowReplaySubmitAttempted, bool TradingMutationAttempted, string RunMode, string EnvironmentName, string VenueProfileName, string CredentialProfileName, int ValidationErrorCount, int ValidationWarningCount, int ValidationInfoCount, IReadOnlyList<LmaxReadOnlyRuntimeExternalRunIntentIssueDto> ValidationIssues, IReadOnlyList<LmaxReadOnlyRuntimeSafetyGateDto> SafetyGates, string Message, string NextOperatorAction);
+public sealed record LmaxReadOnlyRuntimeExternalRunIntentIssueDto(string Severity, string Code, string Path, string Message);
+public sealed record LmaxReadOnlyRuntimeExternalDryRunReportDto(string ReportId, DateTimeOffset CreatedAtUtc, string RequestedByOperatorId, string Reason, string RunMode, string EnvironmentName, string VenueProfileName, string CredentialProfileName, bool CanStartSession, bool SessionStarted, bool ExternalConnectionAttempted, bool CredentialReadAttempted, bool ShadowReplaySubmitAttempted, bool TradingMutationAttempted, string ExpectedOutcome, string BlockedReason, string NextOperatorAction, bool NoSensitiveContent, LmaxReadOnlyRuntimeExternalRunIntentValidationDto IntentValidation, bool OptionsValidationHasErrors, int OptionsValidationErrorCount, int OptionsValidationWarningCount, int OptionsValidationInfoCount, IReadOnlyList<LmaxReadOnlyRuntimeExternalRunIntentIssueDto> OptionsValidationIssues, LmaxReadOnlyRuntimeExternalVenueProfileDto VenueProfile, LmaxReadOnlyRuntimeExternalCredentialProfileDto CredentialProfile, LmaxReadOnlyRuntimeExternalGuardedTransportDto GuardedTransport, LmaxReadOnlyRuntimeExternalSessionSkeletonDto ExternalSessionSkeleton, IReadOnlyList<LmaxReadOnlyRuntimeExternalDryRunSectionDto> Sections, IReadOnlyList<LmaxReadOnlyRuntimeSafetyGateDto> SafetyGates);
+public sealed record LmaxReadOnlyRuntimeExternalDryRunSectionDto(string Name, string Status, string Message, IReadOnlyList<LmaxReadOnlyRuntimeExternalRunIntentIssueDto> Issues, IReadOnlyList<LmaxReadOnlyRuntimeSafetyGateDto> SafetyGates);
+public sealed record LmaxReadOnlyRuntimeExternalVenueProfileDto(string VenueProfileName, string EnvironmentName, bool IsActive, bool IsExternalConnectionAllowed, bool IsCredentialUseAllowed, string SafetyStatus, string RedactionStatus);
+public sealed record LmaxReadOnlyRuntimeExternalCredentialProfileDto(string CredentialProfileName, string EnvironmentName, string VenueProfileName, bool IsConfigured, string SourceKind, string RedactionStatus, string ResolverMode, bool CredentialReadImplemented, bool CredentialUseImplemented, bool SensitiveMaterialReturned);
+public sealed record LmaxReadOnlyRuntimeExternalGuardedTransportDto(string Status, bool NetworkTransportImplemented, bool SocketActivation, bool FixLogonImplemented, bool CredentialUseImplemented, bool OrderSubmissionImplemented, bool ReadOnlyOnly, bool ShadowReplaySubmitImplemented, bool TradingMutationImplemented, bool SchedulerImplemented);
+public sealed record LmaxReadOnlyRuntimeExternalSessionSkeletonDto(string ExternalSessionImplementationMode, bool SocketActivation, bool FixLogonImplemented, bool CredentialUseImplemented, bool OrderSubmissionImplemented, bool ShadowReplaySubmitImplemented, bool TradingMutationImplemented, bool SchedulerImplemented, bool RuntimeGatewayRegistrationImplemented);
+public sealed record LmaxReadOnlyRuntimeExternalSignoffValidateApiRequest(string Reason, Guid? DryRunReportId = null, Guid? IntentId = null, string? RequestedByOperatorId = null, string? SignedByOperatorId = null, LmaxInfra.LmaxReadOnlyExternalSessionSignoffRole? SignoffRole = null, bool? ConfirmsReadOnlyIntent = null, bool? ConfirmsNoOrderSubmission = null, bool? ConfirmsNoTradingMutation = null, bool? ConfirmsNoScheduler = null, bool? ConfirmsNoShadowReplaySubmit = null, bool? ConfirmsNoCredentialExposure = null, bool? ConfirmsDemoOnly = null, bool? ConfirmsDryRunReportReviewed = null, bool? DryRunReportCanStartSession = null, IReadOnlyList<string>? DryRunReportSafetyMarkers = null, LmaxInfra.LmaxReadOnlyExternalSessionSignoffDecision? Decision = null);
+public sealed record LmaxReadOnlyRuntimeExternalSignoffDto(string SignoffId, DateTimeOffset CreatedAtUtc, string Status, string Decision, string SignoffRole, string RequestedByOperatorId, string SignedByOperatorId, bool CanAuthorizeExecution, bool ExecutionStillBlocked, bool SessionStarted, bool ExternalConnectionAttempted, bool CredentialReadAttempted, bool ShadowReplaySubmitAttempted, bool TradingMutationAttempted, IReadOnlyList<LmaxReadOnlyRuntimeExternalRunIntentIssueDto> ValidationIssues, IReadOnlyList<LmaxReadOnlyRuntimeSafetyGateDto> SafetyGates, string Message, string NextOperatorAction);
+public sealed record LmaxReadOnlyRuntimeExternalPreActivationAuditValidateApiRequest(string Reason, string? RequestedByOperatorId = null, string? ReviewedByOperatorId = null, string? SignedByOperatorId = null, Guid? IntentId = null, Guid? DryRunReportId = null, Guid? SignoffId = null, bool? DryRunReportCanStartSession = null, bool? SignoffCanAuthorizeExecution = null, bool? SignoffExecutionStillBlocked = null, bool? SessionStarted = null, bool? ExternalConnectionAttempted = null, bool? CredentialReadAttempted = null, bool? ShadowReplaySubmitAttempted = null, bool? TradingMutationAttempted = null, IReadOnlyList<string>? StableBlockers = null, bool? DryRunReportReviewed = null, bool? SignoffReviewed = null);
+public sealed record LmaxReadOnlyRuntimeExternalPreActivationAuditDto(string AuditEnvelopeId, DateTimeOffset CreatedAtUtc, string Status, string FinalOutcome, string RequestedByOperatorId, string? ReviewedByOperatorId, string? SignedByOperatorId, bool CanAuthorizeExecution, bool ExecutionStillBlocked, bool SessionStarted, bool ExternalConnectionAttempted, bool CredentialReadAttempted, bool ShadowReplaySubmitAttempted, bool TradingMutationAttempted, bool NoSensitiveContent, IReadOnlyList<string> StableBlockers, IReadOnlyList<LmaxReadOnlyRuntimeExternalRunIntentIssueDto> ValidationIssues, IReadOnlyList<LmaxReadOnlyRuntimeSafetyGateDto> SafetyGates, string Message, string NextOperatorAction);
+public sealed record LmaxReadOnlyRuntimeExternalReadinessSnapshotDto(string SnapshotId, DateTimeOffset CreatedAtUtc, string Status, string FinalDecision, string RequestedByOperatorId, string Reason, bool CanStartSession, bool SessionStarted, bool ExternalConnectionAttempted, bool CredentialReadAttempted, bool ShadowReplaySubmitAttempted, bool TradingMutationAttempted, bool NoSensitiveContent, LmaxReadOnlyRuntimeExternalRunIntentValidationDto Intent, LmaxReadOnlyRuntimeExternalDryRunReportDto DryRun, LmaxReadOnlyRuntimeExternalSignoffDto Signoff, LmaxReadOnlyRuntimeExternalPreActivationAuditDto PreActivationAudit, IReadOnlyList<string> StableBlockers, IReadOnlyList<LmaxReadOnlyRuntimeExternalRunIntentIssueDto> ValidationIssues, IReadOnlyList<LmaxReadOnlyRuntimeSafetyGateDto> SafetyGates, string Message, string NextOperatorAction);
+public sealed record FixtureSelectionResult(bool Allowed, string? Path, string Message);
 public sealed record OperatorUserDto(string Id, string OperatorId, string DisplayName, string? Email, bool IsEnabled, DateTimeOffset CreatedAtUtc, DateTimeOffset? UpdatedAtUtc, IReadOnlyList<string> Roles, IReadOnlyList<string> Permissions);
 public sealed record ApprovalRequestDto(string Id, string Type, string Status, string RequestedByOperatorId, string RequestedByDisplayName, DateTimeOffset RequestedAtUtc, string RequiredApproverRole, string EntityType, string EntityId, string Reason, string PayloadJson, string? BeforeJson, string? AfterJson, string? CorrelationId, DateTimeOffset? ExpiresAtUtc, DateTimeOffset? ApprovedAtUtc, string? ApprovedByOperatorId, DateTimeOffset? RejectedAtUtc, string? RejectedByOperatorId, DateTimeOffset? ExecutedAtUtc, string? ExecutedByOperatorId, string? ResultMessage, DateTimeOffset CreatedAtUtc, DateTimeOffset? UpdatedAtUtc);
 public sealed record ApprovalDecisionDto(string Id, string ApprovalRequestId, string Decision, string DecidedByOperatorId, string DecidedByDisplayName, string Reason, DateTimeOffset DecidedAtUtc, string? CorrelationId);
@@ -1909,6 +2833,9 @@ public sealed record RiskVenueDto(VenueDto Venue);
 public sealed record ReasonRequest(string Reason);
 public sealed record LmaxShadowReplayApiRequest(LmaxShadowInputSource InputSource, IReadOnlyList<LmaxShadowExecutionReportApiInput>? ExecutionReports, IReadOnlyList<LmaxShadowTradeCaptureApiInput>? TradeCaptureReports, IReadOnlyList<LmaxShadowOrderStatusApiInput>? OrderStatuses, IReadOnlyList<LmaxShadowProtocolRejectApiInput>? ProtocolRejects, string Reason, string? EvidenceMode = null);
 public sealed record LmaxShadowReaderRunApiRequest(string Reason, int? MaxEvents = null, bool DryRun = true);
+public sealed record LmaxReadOnlyRuntimeRunApiRequest(string Reason, string? FixtureFileName = null, int? MaxEvents = null, int? MaxRuntimeSeconds = null, bool? DryRun = true, LmaxInfra.LmaxReadOnlyRuntimeActivationLevel? RequestedActivationLevel = null);
+public sealed record LmaxReadOnlyRuntimeFakeTransportPreviewApiRequest(string Reason, string Scenario, int? MaxEvents = null, int? MaxRuntimeSeconds = null, bool DryRun = true, bool SubmitToShadowReplay = false);
+public sealed record LmaxReadOnlyRuntimeExternalRunIntentValidateApiRequest(string Reason, string? RequestedByOperatorId = null, string? EnvironmentName = null, string? VenueProfileName = null, string? CredentialProfileName = null, LmaxInfra.LmaxReadOnlyExternalSessionRunIntentMode? RunMode = null, bool? DryRun = true, int? MaxRuntimeSeconds = null, int? MaxEventsPerRun = null, bool? RequestedEvidencePreviewOnly = true, bool? SubmitToShadowReplay = false, bool? AllowExternalConnections = false, bool? AllowCredentialUse = false, bool? AllowOrderSubmission = false, bool? SchedulerEnabled = false, bool? PersistToTradingTables = false);
 public sealed record LmaxShadowExecutionReportApiInput(string? ExecId, string? BrokerOrderId, string? ClientOrderId, string? ExecutionType, string? OrderStatus, string? InstrumentId, string? Symbol, string? Side, decimal? LastQty, decimal? LastPx, decimal? LeavesQty, decimal? CumQty, decimal? AvgPx, DateTimeOffset? TransactTimeUtc, object? Payload);
 public sealed record LmaxShadowTradeCaptureApiInput(string? ExecId, string? SecondaryExecId, string? BrokerOrderId, string? ClientOrderId, string? InstrumentId, string? Symbol, string? Side, decimal? LastQty, decimal? LastPx, DateOnly? TradeDate, DateTimeOffset? TransactTimeUtc, string? TradeUti, bool? LastReportRequested, object? Payload);
 public sealed record LmaxShadowOrderStatusApiInput(string? BrokerOrderId, string? ClientOrderId, string? InstrumentId, string? Symbol, string? OrderStatus, decimal? CumQty, decimal? LeavesQty, DateTimeOffset? TransactTimeUtc, object? Payload);

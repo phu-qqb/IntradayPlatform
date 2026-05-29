@@ -1,0 +1,21 @@
+﻿{
+    "QuoteFileManifestId":  "polygon-usdjpy-20260519120000-20260519160000-manifest",
+    "ProviderName":  "PolygonOfflineFile",
+    "ProviderDatasetType":  "HistoricalBboQuotes",
+    "ProviderSymbol":  "C:USD-JPY",
+    "ExecutionTradableSymbol":  "USDJPY",
+    "NormalizedPortfolioSymbol":  "JPYUSD",
+    "RequiresInversion":  true,
+    "FilePath":  "data\\offline-quotes\\polygon\\incoming\\usdjpy-20260519120000-20260519160000.ndjson",
+    "FileFormat":  "NDJSON",
+    "FileHash":  "A47065A89F4B0649E6CB1D5691FFF32F0FD16D919F4F153EF391FDDBD1E7AC23",
+    "FileSizeBytes":  23492251,
+    "RowCountDeclared":  59368,
+    "TimeRangeStartUtc":  "2026-05-19T12:00:00Z",
+    "TimeRangeEndUtc":  "2026-05-19T16:00:00Z",
+    "CreatedAtUtc":  "2026-05-21T08:57:19Z",
+    "ProvidedBySanitized":  "operator",
+    "ContainsRawProviderPayload":  false,
+    "ContainsSecrets":  false,
+    "IntakeStatus":  "OperatorProvidedPendingAuthorization"
+}

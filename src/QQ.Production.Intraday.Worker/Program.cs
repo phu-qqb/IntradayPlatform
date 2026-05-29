@@ -28,6 +28,7 @@ builder.Services.AddScoped<IOperationalJobRunner, OperationalJobRunner>();
 builder.Services.AddScoped<IOperationalRunbookRunner, OperationalRunbookRunner>();
 builder.Services.AddScoped<IModelWeightPromotionService, ModelWeightPromotionService>();
 builder.Services.AddScoped<IFakeModelWeightGenerator, FakeModelWeightGenerator>();
+builder.Services.AddScoped<QubesWeightPersistenceService>();
 builder.Services.AddSingleton(new LmaxEodReportOptions());
 builder.Services.AddScoped<ILmaxEodReportImportService, LmaxEodReportImportService>();
 builder.Services.AddScoped<ILmaxReportPairConsistencyService, LmaxReportPairConsistencyService>();
@@ -46,6 +47,7 @@ if (string.Equals(persistenceProvider, "SqlServerLocal", StringComparison.Ordina
     builder.Services.AddScoped<IMarketDataBarRepository, SqlServerMarketDataBarRepository>();
     builder.Services.AddScoped<IBarBuildRunRepository, SqlServerBarBuildRunRepository>();
     builder.Services.AddScoped<IModelWeightBatchRepository, SqlServerModelWeightBatchRepository>();
+    builder.Services.AddScoped<IQubesWeightAuditRepository, SqlServerQubesWeightAuditRepository>();
     builder.Services.AddScoped<ILmaxEodReportRepository, SqlServerLmaxEodReportRepository>();
     builder.Services.AddScoped<IOperatorAuditRepository, SqlServerOperatorAuditRepository>();
     builder.Services.AddScoped<IOperatorGovernanceRepository, SqlServerOperatorGovernanceRepository>();
@@ -65,6 +67,7 @@ else if (string.Equals(persistenceProvider, "InMemory", StringComparison.Ordinal
     builder.Services.AddSingleton<IMarketDataBarRepository, InMemoryMarketDataBarRepository>();
     builder.Services.AddSingleton<IBarBuildRunRepository, InMemoryBarBuildRunRepository>();
     builder.Services.AddSingleton<IModelWeightBatchRepository, InMemoryModelWeightBatchRepository>();
+    builder.Services.AddSingleton<IQubesWeightAuditRepository, InMemoryQubesWeightAuditRepository>();
     builder.Services.AddSingleton<ILmaxEodReportRepository, InMemoryLmaxEodReportRepository>();
     builder.Services.AddSingleton<IOperatorAuditRepository, InMemoryOperatorAuditRepository>();
     builder.Services.AddSingleton<IOperatorGovernanceRepository, InMemoryOperatorGovernanceRepository>();

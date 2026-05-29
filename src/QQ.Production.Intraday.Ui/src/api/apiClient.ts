@@ -26,6 +26,9 @@ import type {
   LmaxShadowReaderRunResultDto,
   LmaxShadowReplayRequest,
   LmaxShadowReplayRunDto,
+  LmaxReadOnlyAdditionalInstrumentPlanningStatusSummaryDto,
+  LmaxReadOnlyMarketHoursNextActionSummaryDto,
+  LmaxReadOnlyMarketDataWorkflowStatusSummaryDto,
   LmaxTradeSummaryDto,
   MarketDataBarDto,
   MarketDataSnapshotDto,
@@ -246,6 +249,9 @@ export const apiClient = {
   runLmaxShadowReplay: (body: LmaxShadowReplayRequest) =>
     request<LmaxShadowReplayRunDto>('/lmax-shadow/replay', { method: 'POST', body: JSON.stringify(body) }),
   getLmaxShadowReaderStatus: () => request<LmaxShadowReaderRunResultDto>('/lmax-shadow-reader/status'),
+  getLmaxReadOnlyMarketDataWorkflowStatus: () => request<LmaxReadOnlyMarketDataWorkflowStatusSummaryDto>('/lmax-readonly-runtime/marketdata-workflow/status'),
+  getLmaxReadOnlyAdditionalInstrumentPlanningStatus: () => request<LmaxReadOnlyAdditionalInstrumentPlanningStatusSummaryDto>('/lmax-readonly-runtime/additional-instruments/planning-status'),
+  getLmaxReadOnlyMarketHoursNextAction: () => request<LmaxReadOnlyMarketHoursNextActionSummaryDto>('/lmax-readonly-runtime/market-hours-next-action'),
   runLmaxShadowReader: (reason: string) =>
     request<LmaxShadowReaderRunResultDto>('/lmax-shadow-reader/run', { method: 'POST', body: JSON.stringify({ reason, dryRun: true }) }),
   acknowledgeLmaxShadowObservation: (id: string, reason: string) =>

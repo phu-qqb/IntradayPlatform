@@ -1,0 +1,2 @@
+Date & Time,Instrument,Type,Currency,Contracts,Average Price,Commission,Notional Value,LMAX Symbol,User Placing Order,Commission (full precision),Account Id
+4/30/2026 16:00,EUR/USD,Market,USD,bad,1.10000,0.22,11000,EUR/USD,test-user,0.220000,LMAX_DEMO_LOCAL

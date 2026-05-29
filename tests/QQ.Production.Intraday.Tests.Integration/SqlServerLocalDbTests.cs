@@ -120,6 +120,52 @@ public sealed class SqlServerLocalDbTests
         Assert.Single(state.KillSwitchStates);
     }
 
+    [Fact]
+    public async Task LocalDb_persists_qubes_raw_and_normalized_weight_lineage()
+    {
+        if (!await IsLocalDbAvailableAsync()) return;
+
+        await using var fixture = await LocalDbFixture.CreateAsync();
+        var producedAt = new DateTimeOffset(2026, 05, 19, 12, 00, 00, TimeSpan.Zero);
+        var effectiveAt = producedAt.AddMinutes(15);
+        var ingestion = new QubesFxWeightsFixtureIngestionService().ParseNormalizeAndMap(new QubesFxWeightsIngestionRequest(
+            new QQ.Production.Intraday.Domain.PmsEmsOmsFoundation.QubesRunId("qubes-r004b-localdb"),
+            producedAt,
+            effectiveAt,
+            15,
+            "QQ_MASTER",
+            "IntradayFxModel",
+            1_000_000m,
+            TargetQuantityMode.PortfolioBaseCurrencyNotional,
+            ["EURUSD Curncy;0.10"]));
+        var generator = new FakeModelWeightGenerator(fixture.ModelWeightBatchRepository, new FixedClock(producedAt));
+        var promotionService = new ModelWeightPromotionService(
+            fixture.ModelWeightBatchRepository,
+            fixture.IntradayRepository,
+            new ReferenceDataIntegrityService(fixture.IntradayRepository, fixture.Clock),
+            new FixedClock(producedAt));
+
+        var batch = await generator.CreateFakeBatchAsync(ingestion.ModelWeightBatchRequest!, CancellationToken.None);
+        var promotion = await promotionService.PromoteBatchAsync(batch.Id, CancellationToken.None);
+        var state = await fixture.IntradayRepository.LoadStateAsync(CancellationToken.None);
+        var targetWeights = state.TargetWeights.Where(x => x.ModelRunId == promotion.ModelRunId).ToList();
+        var persistence = new QubesWeightPersistenceService(fixture.QubesWeightAuditRepository, new FixedClock(producedAt));
+
+        var result = await persistence.PersistAsync(new PersistQubesWeightsRequest(ingestion, batch, promotion, targetWeights), CancellationToken.None);
+        var audit = await fixture.QubesWeightAuditRepository.GetByRunIdAsync("qubes-r004b-localdb", CancellationToken.None);
+        var raw = await fixture.QubesWeightAuditRepository.GetRawRowsAsync(audit!.Id, CancellationToken.None);
+        var normalized = await fixture.QubesWeightAuditRepository.GetNormalizedRowsAsync(audit.Id, CancellationToken.None);
+
+        Assert.NotNull(result);
+        Assert.True(promotion.Succeeded);
+        Assert.Equal(ModelWeightSourceSystem.Qubes, audit.SourceSystem);
+        Assert.Equal(15, audit.CadenceMinutes);
+        Assert.Equal(batch.Id, audit.ModelWeightBatchId);
+        Assert.Equal(promotion.ModelRunId, audit.PromotedModelRunId);
+        Assert.Single(raw, x => x.BloombergTicker == "EURUSD Curncy" && x.Weight == 0.10m);
+        Assert.Single(normalized, x => x.NormalizedTicker == "EURUSD Curncy" && x.ModelWeightBatchId == batch.Id && x.ModelRunId == promotion.ModelRunId && x.TargetWeightInstrumentId == targetWeights.Single().InstrumentId);
+    }
+
     private static async Task<bool> IsLocalDbAvailableAsync()
     {
         try
@@ -163,6 +209,8 @@ public sealed class SqlServerLocalDbTests
         public SqlServerIntradayRepository IntradayRepository { get; }
         public SqlServerMarketDataSnapshotRepository SnapshotRepository { get; }
         public SqlServerMarketDataBarRepository BarRepository { get; }
+        public SqlServerModelWeightBatchRepository ModelWeightBatchRepository { get; }
+        public SqlServerQubesWeightAuditRepository QubesWeightAuditRepository { get; }
         public SqlServerFakeBrokerPositionProvider BrokerPositionProvider { get; }
         public BarBuilderService BarBuilder { get; }
 
@@ -174,6 +222,8 @@ public sealed class SqlServerLocalDbTests
             IntradayRepository = new SqlServerIntradayRepository(dbContext);
             SnapshotRepository = new SqlServerMarketDataSnapshotRepository(dbContext);
             BarRepository = new SqlServerMarketDataBarRepository(dbContext);
+            ModelWeightBatchRepository = new SqlServerModelWeightBatchRepository(dbContext);
+            QubesWeightAuditRepository = new SqlServerQubesWeightAuditRepository(dbContext);
             var buildRunRepository = new SqlServerBarBuildRunRepository(dbContext, clock);
             BrokerPositionProvider = new SqlServerFakeBrokerPositionProvider(dbContext, clock);
             BarBuilder = new BarBuilderService(SeedData.Create(Now), SnapshotRepository, BarRepository, buildRunRepository, clock, new BarBuilderOptions { FifteenMinuteMinimumObservationCount = 3 });

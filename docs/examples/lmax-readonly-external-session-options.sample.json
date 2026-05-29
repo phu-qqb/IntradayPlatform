@@ -1,0 +1,25 @@
+{
+  "LmaxReadOnlyExternalSession": {
+    "Enabled": false,
+    "ImplementationMode": "DesignOnly",
+    "ActivationLevel": "Level1DisabledSkeleton",
+    "EnvironmentName": "Demo",
+    "VenueProfileName": "DemoLondon",
+    "CredentialProfileName": "LmaxDemoReadOnlyProfile",
+    "AllowExternalConnections": false,
+    "AllowCredentialUse": false,
+    "AllowOrderSubmission": false,
+    "PersistRawFixMessages": false,
+    "PersistToTradingTables": false,
+    "SchedulerEnabled": false,
+    "SubmitToShadowReplay": false,
+    "DryRun": true,
+    "RequireReason": true,
+    "RequireOperationalReadinessPass": true,
+    "OperationalReadinessPassed": false,
+    "RequireGovernanceApproval": true,
+    "GovernanceApproved": false,
+    "MaxRuntimeSeconds": 30,
+    "MaxEventsPerRun": 100
+  }
+}

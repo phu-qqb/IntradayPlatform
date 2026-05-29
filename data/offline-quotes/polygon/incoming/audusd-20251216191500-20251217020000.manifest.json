@@ -1,0 +1,21 @@
+﻿{
+    "QuoteFileManifestId":  "polygon-audusd-20251216191500-20251217020000-manifest",
+    "ProviderName":  "PolygonOfflineFile",
+    "ProviderDatasetType":  "HistoricalBboQuotes",
+    "ProviderSymbol":  "C:AUD-USD",
+    "ExecutionTradableSymbol":  "AUDUSD",
+    "NormalizedPortfolioSymbol":  "AUDUSD",
+    "RequiresInversion":  false,
+    "FilePath":  "data\\offline-quotes\\polygon\\incoming\\audusd-20251216191500-20251217020000.ndjson",
+    "FileFormat":  "NDJSON",
+    "FileHash":  "D168D981E1012A671F5B8DF48B266F0BA970E6825A507AADA014AFB7C25B5C79",
+    "FileSizeBytes":  14587213,
+    "RowCountDeclared":  36782,
+    "TimeRangeStartUtc":  "2025-12-16T19:15:00Z",
+    "TimeRangeEndUtc":  "2025-12-17T02:00:00Z",
+    "CreatedAtUtc":  "2026-05-23T18:08:48Z",
+    "ProvidedBySanitized":  "operator",
+    "ContainsRawProviderPayload":  false,
+    "ContainsSecrets":  false,
+    "IntakeStatus":  "OperatorProvidedPendingAuthorization"
+}

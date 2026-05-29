@@ -927,6 +927,145 @@ export type LmaxShadowReaderRunResultDto = {
   safetyChecks: LmaxShadowReaderSafetyCheckDto[];
 };
 
+export type LmaxReadOnlyMarketDataWorkflowStatusIssueDto = {
+  severity: string;
+  code: string;
+  path: string;
+  message: string;
+};
+
+export type LmaxReadOnlyMarketDataWorkflowStatusSummaryDto = {
+  summaryId: string;
+  createdAtUtc: string;
+  signoffDecision: string;
+  auditPackDecision: string;
+  gateDecision: string;
+  artifactCount: number;
+  evidencePreviewCount: number;
+  manualReplayCount: number;
+  totalObservationCount: number;
+  runtimeShadowReplaySubmit: boolean;
+  externalConnectionAttempted: boolean;
+  credentialValuesReturned: boolean;
+  orderSubmissionAttempted: boolean;
+  tradingMutationAttempted: boolean;
+  schedulerStarted: boolean;
+  apiWorkerGatewayMode: string;
+  workflowFrozen: boolean;
+  operationalStatus: string;
+  whatIsAllowed: string[];
+  whatIsNotAllowed: string[];
+  noSensitiveContent: boolean;
+  issues: LmaxReadOnlyMarketDataWorkflowStatusIssueDto[];
+};
+
+export type LmaxReadOnlyAdditionalInstrumentPlanningStatusIssueDto = {
+  severity: string;
+  code: string;
+  path: string;
+  message: string;
+};
+
+export type LmaxReadOnlyAdditionalInstrumentPlanningStatusInstrumentDto = {
+  symbol: string;
+  slashSymbol: string;
+  planningSecurityId: string;
+  securityIdSource: string;
+  pipelineDecision: string;
+  planningManifestDecision: string;
+  safetyGateDecision: string;
+  preflightDecision: string;
+  approvalEnvelopeDecision: string;
+  dryRunDecision: string;
+  attemptGateDecision: string;
+  executionPlanDecision: string;
+  operatorSignoffDecision: string;
+  finalReadinessDecision: string;
+  isApprovedForExternalRun: boolean;
+  canRunExternalSnapshot: boolean;
+  eligibleForManualSnapshotAttempt: boolean;
+  recommendedNextAction: string;
+};
+
+export type LmaxReadOnlyAdditionalInstrumentPlanningStatusSummaryDto = {
+  summaryId: string;
+  createdAtUtc: string;
+  aggregateDecision: string;
+  instrumentCount: number;
+  readyForFutureManualConsiderationCount: number;
+  executableCount: number;
+  runtimeShadowReplaySubmit: boolean;
+  schedulerOrPolling: boolean;
+  orderSubmission: boolean;
+  gatewayRegistration: boolean;
+  tradingMutation: boolean;
+  apiWorkerGatewayMode: string;
+  instruments: LmaxReadOnlyAdditionalInstrumentPlanningStatusInstrumentDto[];
+  noSensitiveContent: boolean;
+  issues: LmaxReadOnlyAdditionalInstrumentPlanningStatusIssueDto[];
+};
+
+export type LmaxReadOnlyMarketHoursNextActionIssueDto = {
+  severity: string;
+  code: string;
+  path: string;
+  message: string;
+};
+
+export type LmaxReadOnlyMarketHoursNextActionInstrumentDto = {
+  symbol: string;
+  slashSymbol: string;
+  securityId: string;
+  securityIdSource: string;
+  requestMode: string;
+  symbolEncodingMode: string;
+  marketDepth: number;
+};
+
+export type LmaxReadOnlyMarketHoursNextActionSourceArtifactsDto = {
+  finalReadinessFile: string;
+  marketHoursRetryReadinessFile: string;
+  phase6XReviewFile: string;
+  documentationPackFile: string;
+};
+
+export type LmaxReadOnlyMarketHoursNextActionPreviousAttemptDto = {
+  status: string;
+  outsideMarketHours: boolean;
+  safe: boolean;
+  snapshotReceived: boolean;
+  entryCount: number;
+  warningClassification: string;
+};
+
+export type LmaxReadOnlyMarketHoursNextActionSummaryDto = {
+  summaryId: string;
+  createdAtUtc: string;
+  recommendedAction: string;
+  status: string;
+  selectedInstrument: LmaxReadOnlyMarketHoursNextActionInstrumentDto;
+  sourceArtifacts: LmaxReadOnlyMarketHoursNextActionSourceArtifactsDto;
+  previousAttempt: LmaxReadOnlyMarketHoursNextActionPreviousAttemptDto;
+  finalReadinessDecision: string;
+  marketHoursRetryReadinessDecision: string;
+  phase6XReviewDecision: string;
+  documentationPackDecision: string;
+  executableCount: number;
+  isApprovedForExternalRun: boolean;
+  canRunExternalSnapshot: boolean;
+  eligibleForManualSnapshotAttempt: boolean;
+  runtimeShadowReplaySubmit: boolean;
+  schedulerOrPolling: boolean;
+  orderSubmission: boolean;
+  gatewayRegistration: boolean;
+  tradingMutation: boolean;
+  apiWorkerGatewayMode: string;
+  whatIsAllowed: string[];
+  whatIsNotAllowed: string[];
+  noSensitiveContent: boolean;
+  issues: LmaxReadOnlyMarketHoursNextActionIssueDto[];
+};
+
 export type OperatorUserDto = {
   id: string;
   operatorId: string;

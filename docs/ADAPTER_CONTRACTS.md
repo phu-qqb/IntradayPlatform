@@ -167,3 +167,17 @@ Until a later explicit activation gate, the reader status/run APIs are expected 
 
 Shadow Reader Quality Gate #1 adds a dangerous-configuration matrix around this boundary. Contradictory settings produce multiple failed gates rather than hiding behind the first failure, blocked run attempts are audited, and mutation guards verify that only audit can change during a blocked diagnostic run.
 
+## Read-Only Runtime Adapter Design Contract
+
+The next future-facing design layer is documented in [LMAX_READONLY_RUNTIME_ADAPTER_DESIGN.md](LMAX_READONLY_RUNTIME_ADAPTER_DESIGN.md). It defines an activation ladder from design-only contracts through possible future manual read-only runtime capture and scheduled read-only shadow mode. The current runtime remains at disabled/no-op status; explicit Connectivity Lab scripts remain the only external LMAX FIX path.
+
+Design-only records in `Infrastructure.Lmax` describe future options, run requests, event envelopes, evidence-batch summaries, and safety-gate evaluations. They intentionally expose no password, token, API key, authorization, socket, or order-submission fields, and they are not registered in API/Worker dependency injection.
+
+Phase 4D adds one local diagnostic adapter-contract surface: `POST /lmax-readonly-runtime/fake-transport-preview`. It accepts only a reason and predefined fake scenario name, produces in-memory sanitized preview counts, rejects `SubmitToShadowReplay=true`, and does not accept raw FIX, file paths, host/user/password fields, credentials, order controls, live connection controls, or scheduler controls. It remains fake/no-network/no-persistence and does not change the execution gateway contract.
+
+Phase 4E adds `LmaxReadOnlyExternalSessionSkeleton` as a hard-disabled future real-session boundary. It implements the external-session contract but always returns disabled/blocked, reports `SkeletonOnly`, and marks socket activation, FIX logon, credential use, order submission, shadow replay submit, scheduler, gateway registration, and trading mutation as not implemented. It does not change DI registration or execution gateway behavior.
+
+Phase 4F adds `ILmaxReadOnlyGuardedTransport` and `LmaxReadOnlyGuardedTransportDisabled` as the future transport boundary. The interface contains read-only transport method names only, and the disabled implementation always blocks connect/read/disconnect, returns no events, and reports no network transport, socket activation, FIX logon, credential use, order submission, shadow replay submit, or trading mutation.
+
+Phase 4G adds `LmaxReadOnlyExternalSessionOptions` and validator records as a typed configuration envelope. It uses non-secret labels such as `EnvironmentName`, `VenueProfileName`, and `CredentialProfileName`, with no credential values or host/user/password fields. The sample config is inactive and defaults to disabled/design-only.
+

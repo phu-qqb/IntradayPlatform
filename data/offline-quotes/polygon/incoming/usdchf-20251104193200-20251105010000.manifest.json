@@ -1,0 +1,21 @@
+﻿{
+    "QuoteFileManifestId":  "polygon-usdchf-20251104193200-20251105010000-manifest",
+    "ProviderName":  "PolygonOfflineFile",
+    "ProviderDatasetType":  "HistoricalBboQuotes",
+    "ProviderSymbol":  "C:USD-CHF",
+    "ExecutionTradableSymbol":  "USDCHF",
+    "NormalizedPortfolioSymbol":  "CHFUSD",
+    "RequiresInversion":  true,
+    "FilePath":  "data\\offline-quotes\\polygon\\incoming\\usdchf-20251104193200-20251105010000.ndjson",
+    "FileFormat":  "NDJSON",
+    "FileHash":  "BA0BED62B4BBC803999DC5D6A138B73A9B0922838223F614032091A9DD9A2015",
+    "FileSizeBytes":  9825008,
+    "RowCountDeclared":  24787,
+    "TimeRangeStartUtc":  "2025-11-04T19:32:00Z",
+    "TimeRangeEndUtc":  "2025-11-05T01:00:00Z",
+    "CreatedAtUtc":  "2026-05-25T09:41:39Z",
+    "ProvidedBySanitized":  "operator",
+    "ContainsRawProviderPayload":  false,
+    "ContainsSecrets":  false,
+    "IntakeStatus":  "OperatorProvidedPendingAuthorization"
+}

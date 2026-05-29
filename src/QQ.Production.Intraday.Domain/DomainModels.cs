@@ -80,6 +80,21 @@ public readonly record struct ModelWeightRowId(Guid Value)
     public static ModelWeightRowId New() => new(Guid.NewGuid());
 }
 
+public readonly record struct QubesWeightAuditBatchId(Guid Value)
+{
+    public static QubesWeightAuditBatchId New() => new(Guid.NewGuid());
+}
+
+public readonly record struct QubesRawWeightAuditRowId(Guid Value)
+{
+    public static QubesRawWeightAuditRowId New() => new(Guid.NewGuid());
+}
+
+public readonly record struct QubesNormalizedWeightAuditRowId(Guid Value)
+{
+    public static QubesNormalizedWeightAuditRowId New() => new(Guid.NewGuid());
+}
+
 public readonly record struct InstrumentAliasId(Guid Value)
 {
     public static InstrumentAliasId New() => new(Guid.NewGuid());
@@ -289,6 +304,43 @@ public sealed record ModelWeightValidationIssue(
     string Message,
     ModelWeightRowId? RowId,
     int? RowNumber,
+    DateTimeOffset CreatedAtUtc);
+
+public sealed record QubesWeightAuditBatch(
+    QubesWeightAuditBatchId Id,
+    string QubesRunId,
+    ModelWeightSourceSystem SourceSystem,
+    DateTimeOffset ProducedAtUtc,
+    DateTimeOffset EffectiveAtUtc,
+    int CadenceMinutes,
+    int RawRowCount,
+    int NormalizedRowCount,
+    ModelWeightBatchId? ModelWeightBatchId,
+    ModelRunId? PromotedModelRunId,
+    DateTimeOffset CreatedAtUtc);
+
+public sealed record QubesRawWeightAuditRow(
+    QubesRawWeightAuditRowId Id,
+    QubesWeightAuditBatchId AuditBatchId,
+    int RowNumber,
+    string BloombergTicker,
+    string Pair,
+    string BaseCurrency,
+    string QuoteCurrency,
+    decimal Weight,
+    DateTimeOffset CreatedAtUtc);
+
+public sealed record QubesNormalizedWeightAuditRow(
+    QubesNormalizedWeightAuditRowId Id,
+    QubesWeightAuditBatchId AuditBatchId,
+    string NormalizedTicker,
+    string Symbol,
+    string Currency,
+    decimal Weight,
+    ModelWeightBatchId? ModelWeightBatchId,
+    ModelRunId? ModelRunId,
+    InstrumentId? TargetWeightInstrumentId,
+    string PromotionStatus,
     DateTimeOffset CreatedAtUtc);
 
 public enum LmaxReportType { IndividualTrades, TradesSummary, CurrencyWallets, ReportSet }

@@ -1,0 +1,4 @@
+{"provider":"Polygon","providerSymbol":"C:EUR-USD","timestampUtc":"2026-05-20T14:47:00Z","bid":1.08000,"ask":1.08010,"sourceFileId":"r007-valid-eurusd","importRowNumber":1}
+{"provider":"Polygon","providerSymbol":"C:EUR-USD","timestampUtc":"2026-05-20T14:52:00Z","bid":1.08020,"ask":1.08030,"sourceFileId":"r007-valid-eurusd","importRowNumber":2}
+{"provider":"Polygon","providerSymbol":"C:EUR-USD","timestampUtc":"2026-05-20T14:59:10Z","bid":1.08040,"ask":1.08050,"sourceFileId":"r007-valid-eurusd","importRowNumber":3}
+{"provider":"Polygon","providerSymbol":"C:EUR-USD","timestampUtc":"2026-05-20T14:59:55Z","bid":1.08045,"ask":1.08055,"sourceFileId":"r007-valid-eurusd","importRowNumber":4}

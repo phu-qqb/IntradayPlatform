@@ -161,6 +161,22 @@ The local endpoints are diagnostics only:
 
 There are no credential DTOs, no host/password/user input fields, no UI enable button, and no scheduler auto-run. The UI panel shows the disabled state and gate reasons so operators can distinguish validated replay infrastructure from not-yet-enabled live shadow reading.
 
+## Read-Only Runtime Adapter Design
+
+The future read-only runtime LMAX shadow reader is documented separately in [LMAX_READONLY_RUNTIME_ADAPTER_DESIGN.md](LMAX_READONLY_RUNTIME_ADAPTER_DESIGN.md). That document defines the proposed component boundaries, activation levels, evidence batching, FIX session requirements, safety gates, and certification path for a possible future runtime reader.
+
+The design is not an implementation. The current codebase includes only inert design contracts in `Infrastructure.Lmax`, and API/Worker remain `FakeLmaxGateway` only. No sockets, credentials, scheduler activation, runtime FIX sessions, order submission, or trading-state mutation are added by that design.
+
+Phase 4 preflight is documented in [LMAX_READONLY_RUNTIME_PHASE4_PREFLIGHT.md](LMAX_READONLY_RUNTIME_PHASE4_PREFLIGHT.md). It is a boundary lock only. Phase 4A adds external read-only session contracts and a disabled stub, Phase 4B adds an in-memory fake transport harness, Phase 4C adds sanitized fake-event evidence preview mapping, and Phase 4D exposes that preview through `POST /lmax-readonly-runtime/fake-transport-preview`, but still no external read-only implementation, socket code, FIX logon/logout, credential use, shadow replay submit, scheduler, or trading-state mutation.
+
+The Phase 4D endpoint supports only predefined fake scenarios and returns mode/count/validation summaries with `submitToShadowReplay=false`. It is disabled/blocked by default and can complete only under explicit local fake-preview configuration.
+
+Phase 4E adds only a hard-disabled external-session skeleton. The skeleton is not a transport, does not open sockets, does not implement FIX logon/logout, does not read credentials, does not create evidence, does not submit to shadow replay, and does not mutate trading state.
+
+Phase 4F adds only a guarded transport interface and disabled transport. The interface names future read-only transport operations, but the disabled implementation always blocks and reads no events. There is still no network transport, socket activation, FIX logon/logout, credential use, order submission, shadow replay submit, scheduler, gateway registration, or trading-state mutation.
+
+Phase 4G adds only a typed configuration envelope and validator. It introduces no credential values, no host/user/password fields, no network transport, no socket activation, no FIX logon/logout, no live controls, no scheduler activation, no order submission, and no trading-state mutation.
+
 ## Runtime Boundary
 
 The main runtime must continue to show:

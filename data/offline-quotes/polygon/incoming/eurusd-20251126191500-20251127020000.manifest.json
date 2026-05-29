@@ -1,0 +1,21 @@
+﻿{
+    "QuoteFileManifestId":  "polygon-eurusd-20251126191500-20251127020000-manifest",
+    "ProviderName":  "PolygonOfflineFile",
+    "ProviderDatasetType":  "HistoricalBboQuotes",
+    "ProviderSymbol":  "C:EUR-USD",
+    "ExecutionTradableSymbol":  "EURUSD",
+    "NormalizedPortfolioSymbol":  "EURUSD",
+    "RequiresInversion":  false,
+    "FilePath":  "data\\offline-quotes\\polygon\\incoming\\eurusd-20251126191500-20251127020000.ndjson",
+    "FileFormat":  "NDJSON",
+    "FileHash":  "EAE781993C9F73255A953828EAE9656D20B682D46CF6BAC732457E5F8F76FDE1",
+    "FileSizeBytes":  10397728,
+    "RowCountDeclared":  26198,
+    "TimeRangeStartUtc":  "2025-11-26T19:15:00Z",
+    "TimeRangeEndUtc":  "2025-11-27T02:00:00Z",
+    "CreatedAtUtc":  "2026-05-23T17:53:46Z",
+    "ProvidedBySanitized":  "operator",
+    "ContainsRawProviderPayload":  false,
+    "ContainsSecrets":  false,
+    "IntakeStatus":  "OperatorProvidedPendingAuthorization"
+}
