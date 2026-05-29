@@ -8,14 +8,22 @@ param(
     [string]$OrderManifestPath,
     [string]$ExecutionAlgoPlanPath,
     [string]$AdapterBindingPath,
+    [string]$MainArtifactName = "lmax-sandbox-global-process-test-run-r001.json",
+    [string]$ApprovedReadyStatus = "LMAX_SANDBOX_GLOBAL_PROCESS_TEST_RUN_EXECUTION_APPROVED_READY_R001",
+    [string]$ReconciledStatus = "LMAX_SANDBOX_GLOBAL_PROCESS_TEST_RUN_RECONCILED_R001",
+    [string]$ExecutedStatus = "LMAX_SANDBOX_GLOBAL_PROCESS_TEST_RUN_EXECUTED_R001",
     [switch]$ExecuteLmaxDemoSandboxOrders,
     [switch]$UseActualLmaxFixClient,
     [switch]$UseMockFixServer,
     [switch]$MockFixServerRejectTag21,
     [switch]$MockFixServerRejectClOrdIdLength,
+    [switch]$MockFixServerRejectDuplicateFirstOrder,
     [switch]$InjectForbiddenTag21ForTest,
     [switch]$InjectLongClOrdIdForTest,
-    [switch]$UseMockLmaxAdapter
+    [switch]$UseMockLmaxAdapter,
+    [string]$ExecutionAttemptId,
+    [switch]$NewExecutionAttempt,
+    [switch]$ResidualOnlyRetry
 )
 
 $ErrorActionPreference = "Stop"
@@ -29,21 +37,56 @@ if ([string]::IsNullOrWhiteSpace($OrderManifestPath)) { $OrderManifestPath = Joi
 if ([string]::IsNullOrWhiteSpace($ExecutionAlgoPlanPath)) { $ExecutionAlgoPlanPath = Join-Path $OutputDir "execution-algo-plan-r001.json" }
 if ([string]::IsNullOrWhiteSpace($AdapterBindingPath)) { $AdapterBindingPath = Join-Path $OutputDir "lmax-demo-actual-adapter-binding-r001.json" }
 
-$MainPath = Join-Path $OutputDir "lmax-sandbox-global-process-test-run-r001.json"
+$MainPath = Join-Path $OutputDir $MainArtifactName
 $ExecutionResultPath = Join-Path $OutputDir "sandbox-execution-result-r001.json"
 $TradeReconPath = Join-Path $OutputDir "sandbox-trade-level-reconciliation-r001.json"
 $PnlPath = Join-Path $OutputDir "sandbox-pnl-r001.json"
 $ClOrdIdMapPath = Join-Path $OutputDir "lmax-demo-clordid-map-r001.json"
 $AdapterBindingStatusPath = Join-Path $OutputDir "lmax-demo-actual-adapter-binding-status-r001.json"
-$LogDir = Join-Path $OutputDir "logs\$RunId"
-$OrderLogPath = Join-Path $LogDir "orders.log"
-$ExecutionReportLogPath = Join-Path $LogDir "execution-reports.log"
 $Soh = [char]1
 $FixEncoding = [Text.Encoding]::ASCII
 $InjectForbiddenTag21ForTestEnabled = $InjectForbiddenTag21ForTest.IsPresent
 $MockFixServerRejectTag21Enabled = $MockFixServerRejectTag21.IsPresent
 $MockFixServerRejectClOrdIdLengthEnabled = $MockFixServerRejectClOrdIdLength.IsPresent
+$MockFixServerRejectDuplicateFirstOrderEnabled = $MockFixServerRejectDuplicateFirstOrder.IsPresent
 $InjectLongClOrdIdForTestEnabled = $InjectLongClOrdIdForTest.IsPresent
+
+$ExecutionAttemptExplicit = -not [string]::IsNullOrWhiteSpace($ExecutionAttemptId)
+$ExecutionAttemptSequence = 1
+if (-not [string]::IsNullOrWhiteSpace($ExecutionAttemptId) -and $ExecutionAttemptId -match "^A(\d{3})$") {
+    $ExecutionAttemptSequence = [int]$Matches[1]
+} elseif ($NewExecutionAttempt.IsPresent -or $ResidualOnlyRetry.IsPresent) {
+    if (Test-Path -LiteralPath $ExecutionResultPath) {
+        try {
+            $existingExecution = Get-Content -Raw -LiteralPath $ExecutionResultPath | ConvertFrom-Json
+            $existingAttempts = @(if ($null -ne $existingExecution.attempts) { $existingExecution.attempts } else { @() })
+            if ($existingAttempts.Count -gt 0) {
+                $maxAttempt = 0
+                foreach ($attempt in $existingAttempts) {
+                    $seq = if ($null -ne $attempt.attempt_sequence) { [int]$attempt.attempt_sequence } else { 0 }
+                    if ($seq -gt $maxAttempt) { $maxAttempt = $seq }
+                }
+                $ExecutionAttemptSequence = $maxAttempt + 1
+            } else {
+                $existingOrdersCount = if ($null -ne $existingExecution.orders_submitted_count) { [int]$existingExecution.orders_submitted_count } else { 0 }
+                $existingFillsCount = if ($null -ne $existingExecution.fills_count) { [int]$existingExecution.fills_count } else { 0 }
+                if ($existingOrdersCount -gt 0 -or $existingFillsCount -gt 0) {
+                $ExecutionAttemptSequence = 2
+                }
+            }
+        } catch {
+            $ExecutionAttemptSequence = 2
+        }
+    }
+}
+if ([string]::IsNullOrWhiteSpace($ExecutionAttemptId)) {
+    $ExecutionAttemptId = "A" + $ExecutionAttemptSequence.ToString("000", [Globalization.CultureInfo]::InvariantCulture)
+}
+$AttemptLogDirName = "attempt-" + $ExecutionAttemptSequence.ToString("000", [Globalization.CultureInfo]::InvariantCulture)
+$LogDir = Join-Path $OutputDir "logs\$RunId\$AttemptLogDirName"
+$OrderLogPath = Join-Path $LogDir "orders.log"
+$ExecutionReportLogPath = Join-Path $LogDir "execution-reports.log"
+$AttemptClOrdIdMapPath = Join-Path $OutputDir "lmax-demo-clordid-map-attempt-$ExecutionAttemptId-r001.json"
 
 function Read-JsonFile([string]$Path) {
     if (-not (Test-Path -LiteralPath $Path)) { throw "Missing required artifact: $Path" }
@@ -225,11 +268,13 @@ function New-LmaxClOrdIdMap([object[]]$OrderRows) {
     $index = 1
     foreach ($order in $OrderRows) {
         $internalOrderId = "$RunId-$($order.symbol)-$($order.side)-$($order.quantity)"
-        $externalClOrdId = if ($InjectLongClOrdIdForTestEnabled) { $internalOrderId } else { "LXR001" + $index.ToString("0000", [Globalization.CultureInfo]::InvariantCulture) }
+        $externalClOrdId = if ($InjectLongClOrdIdForTestEnabled) { $internalOrderId } else { "LXR1" + $ExecutionAttemptId + "O" + $index.ToString("000", [Globalization.CultureInfo]::InvariantCulture) }
         $mappings += [ordered]@{
             internal_order_id = $internalOrderId
             external_cl_ord_id = $externalClOrdId
             run_id = $RunId
+            execution_attempt_id = $ExecutionAttemptId
+            attempt_sequence = $ExecutionAttemptSequence
             symbol = $order.symbol
             side = $order.side
             quantity = $order.quantity
@@ -243,14 +288,39 @@ function New-LmaxClOrdIdMap([object[]]$OrderRows) {
         package = $Package
         artifact_type = "lmax_demo_clordid_map_r001"
         run_id = $RunId
+        execution_attempt_id = $ExecutionAttemptId
+        attempt_sequence = $ExecutionAttemptSequence
         policy = [ordered]@{
             max_external_cl_ord_id_length = 20
             deterministic = $true
             unique_within_run = $true
+            unique_across_attempts = $true
+            attempt_embedded = $true
         }
         mappings = $mappings
     }
-    Write-JsonFile $ClOrdIdMapPath $artifact
+    Write-JsonFile $AttemptClOrdIdMapPath $artifact
+
+    $aggregateMappings = @()
+    if (($ExecutionAttemptSequence -gt 1 -or $NewExecutionAttempt.IsPresent -or $ResidualOnlyRetry.IsPresent -or $ExecutionAttemptExplicit) -and (Test-Path -LiteralPath $ClOrdIdMapPath)) {
+        try {
+            $existingMap = Read-JsonFile $ClOrdIdMapPath
+            $aggregateMappings = @($existingMap.mappings | Where-Object { [string]$_.execution_attempt_id -ne $ExecutionAttemptId })
+        } catch {
+            $aggregateMappings = @()
+        }
+    }
+    $aggregateMappings += $mappings
+    $aggregateArtifact = [ordered]@{
+        package = $Package
+        artifact_type = "lmax_demo_clordid_map_r001"
+        run_id = $RunId
+        latest_execution_attempt_id = $ExecutionAttemptId
+        latest_attempt_sequence = $ExecutionAttemptSequence
+        policy = $artifact.policy
+        mappings = $aggregateMappings
+    }
+    Write-JsonFile $ClOrdIdMapPath $aggregateArtifact
     return $mappings
 }
 
@@ -309,9 +379,12 @@ function Convert-ExecutionReportToObject([string]$Message, [string]$RunIdValue, 
     $leavesQty = Get-FixDecimalValue -Tags $tags -Name "151" -Default $null
     [ordered]@{
         run_id = $RunIdValue
+        execution_attempt_id = $ExecutionAttemptId
+        attempt_sequence = $ExecutionAttemptSequence
         msg_type = if ($tags.ContainsKey("35")) { [string]$tags["35"] } else { $null }
         execution_type = if ($tags.ContainsKey("150")) { [string]$tags["150"] } else { $null }
         order_status = if ($tags.ContainsKey("39")) { [string]$tags["39"] } else { $null }
+        ord_rej_reason = if ($tags.ContainsKey("103")) { [string]$tags["103"] } else { $null }
         exec_id = if ($tags.ContainsKey("17")) { [string]$tags["17"] } else { $null }
         order_id = if ($tags.ContainsKey("37")) { [string]$tags["37"] } else { $null }
         client_order_id = $externalClOrdId
@@ -372,6 +445,27 @@ function New-MockExecutionReportMessage($Order, [string]$ClientOrderId, [int]$Se
     New-FixMessage -MsgType "8" -SeqNum $SeqNum -SenderCompId $TargetCompId -TargetCompId $SenderCompId -Fields $fields
 }
 
+function New-MockDuplicateOrderRejectExecutionReport($Order, [string]$ClientOrderId, [int]$SeqNum, [string]$SenderCompId, [string]$TargetCompId) {
+    $fields = @(
+        @("37", "0"),
+        @("17", "REJECT-$SeqNum-$ClientOrderId"),
+        @("11", $ClientOrderId),
+        @("150", "8"),
+        @("39", "8"),
+        @("103", "6"),
+        @("58", "DUPLICATE_ORDER"),
+        @("54", (Convert-OrderSideToFix ([string]$Order.side))),
+        @("14", "0"),
+        @("151", "0"),
+        @("6", "0"),
+        @("60", [DateTime]::UtcNow.ToString("yyyyMMdd-HH:mm:ss.fff", [Globalization.CultureInfo]::InvariantCulture))
+    )
+    if (-not [string]::IsNullOrWhiteSpace([string]$Order.security_id)) {
+        $fields += @(@("48", [string]$Order.security_id), @("22", [string]$Order.security_id_source_tag22))
+    }
+    New-FixMessage -MsgType "8" -SeqNum $SeqNum -SenderCompId $TargetCompId -TargetCompId $SenderCompId -Fields $fields
+}
+
 function New-MockSessionRejectMessage([string]$ClientOrderId, [int]$SeqNum, [string]$SenderCompId, [string]$TargetCompId, [string]$RefTagId, [string]$Text) {
     $fields = @(
         @("45", "0"),
@@ -393,6 +487,8 @@ function Convert-SessionRejectToObject([string]$Message, [string]$RunIdValue, [s
     $refTagId = if ($tags.ContainsKey("371")) { [string]$tags["371"] } else { $null }
     [ordered]@{
         run_id = $RunIdValue
+        execution_attempt_id = $ExecutionAttemptId
+        attempt_sequence = $ExecutionAttemptSequence
         msg_type = "3"
         client_order_id = $externalClOrdId
         external_cl_ord_id = $externalClOrdId
@@ -449,6 +545,8 @@ function Invoke-ActualLmaxFixClient {
             $seq++
             $ordersSubmitted += [ordered]@{
                 run_id = $RunId
+                execution_attempt_id = $ExecutionAttemptId
+                attempt_sequence = $ExecutionAttemptSequence
                 client_order_id = $clientOrderId
                 external_cl_ord_id = $clientOrderId
                 internal_order_id = $internalOrderId
@@ -466,6 +564,8 @@ function Invoke-ActualLmaxFixClient {
                 $rejects += Convert-SessionRejectToObject -Message $rejectMsg -RunIdValue $RunId -ClientOrderId $clientOrderId -ClOrdIdLookup $clOrdIdLookup
                 $finalResiduals += [ordered]@{
                     run_id = $RunId
+                    execution_attempt_id = $ExecutionAttemptId
+                    attempt_sequence = $ExecutionAttemptSequence
                     symbol = $order.symbol
                     client_order_id = $clientOrderId
                     external_cl_ord_id = $clientOrderId
@@ -482,6 +582,28 @@ function Invoke-ActualLmaxFixClient {
                 $rejects += Convert-SessionRejectToObject -Message $rejectMsg -RunIdValue $RunId -ClientOrderId $clientOrderId -ClOrdIdLookup $clOrdIdLookup
                 $finalResiduals += [ordered]@{
                     run_id = $RunId
+                    execution_attempt_id = $ExecutionAttemptId
+                    attempt_sequence = $ExecutionAttemptSequence
+                    symbol = $order.symbol
+                    client_order_id = $clientOrderId
+                    external_cl_ord_id = $clientOrderId
+                    internal_order_id = $internalOrderId
+                    final_residual_quantity = [decimal]$order.quantity
+                    residual_zero = $false
+                }
+                $inSeq++
+                continue
+            }
+            if ($MockFixServerRejectDuplicateFirstOrderEnabled -and $clOrdIdMappings.IndexOf($mapping) -eq 0) {
+                $rejectMsg = New-MockDuplicateOrderRejectExecutionReport -Order $order -ClientOrderId $clientOrderId -SeqNum $inSeq -SenderCompId $SenderCompId -TargetCompId $TargetCompId
+                Write-LogTextLine $ExecutionReportLogPath ("IN " + (ConvertTo-SanitizedFixLine $rejectMsg))
+                $rejectReport = Convert-ExecutionReportToObject -Message $rejectMsg -RunIdValue $RunId -ClOrdIdLookup $clOrdIdLookup
+                $rejects += $rejectReport
+                $executionReports += $rejectReport
+                $finalResiduals += [ordered]@{
+                    run_id = $RunId
+                    execution_attempt_id = $ExecutionAttemptId
+                    attempt_sequence = $ExecutionAttemptSequence
                     symbol = $order.symbol
                     client_order_id = $clientOrderId
                     external_cl_ord_id = $clientOrderId
@@ -504,6 +626,8 @@ function Invoke-ActualLmaxFixClient {
             $inSeq++
             $finalResiduals += [ordered]@{
                 run_id = $RunId
+                execution_attempt_id = $ExecutionAttemptId
+                attempt_sequence = $ExecutionAttemptSequence
                 symbol = $order.symbol
                 client_order_id = $clientOrderId
                 external_cl_ord_id = $clientOrderId
@@ -514,19 +638,21 @@ function Invoke-ActualLmaxFixClient {
         }
         $allRejectsAreTag21 = ($rejects.Count -eq $OrderRows.Count -and $OrderRows.Count -gt 0 -and @($rejects | Where-Object { [string]$_.msg_type -ne "3" -or [string]$_.ref_tag_id -ne "21" }).Count -eq 0)
         $allRejectsAreClOrdIdLength = ($rejects.Count -eq $OrderRows.Count -and $OrderRows.Count -gt 0 -and @($rejects | Where-Object { [string]$_.msg_type -ne "3" -or [string]$_.ref_tag_id -ne "11" -or [string]$_.text -notmatch "length less than or equal to 20" }).Count -eq 0)
+        $duplicateOrderRejects = @($rejects | Where-Object { [string]$_.msg_type -eq "8" -and [string]$_.execution_type -eq "8" -and [string]$_.order_status -eq "8" -and [string]$_.ord_rej_reason -eq "6" -and [string]$_.text -match "DUPLICATE_ORDER" })
+        $residualZero = ((@($finalResiduals | Where-Object { $_.residual_zero -ne $true }).Count -eq 0) -and $duplicateOrderRejects.Count -eq 0)
         return [ordered]@{
-            status = $(if ($allRejectsAreClOrdIdLength) { "LMAX_SANDBOX_EXECUTION_BLOCKED_CLORDID_TOO_LONG_R001" } elseif ($allRejectsAreTag21) { "LMAX_SANDBOX_EXECUTION_BLOCKED_ORDER_REJECTED_UNKNOWN_TAG_R001" } else { "LMAX_SANDBOX_GLOBAL_PROCESS_TEST_RUN_RECONCILED_R001" })
+            status = $(if ($allRejectsAreClOrdIdLength) { "LMAX_SANDBOX_EXECUTION_BLOCKED_CLORDID_TOO_LONG_R001" } elseif ($allRejectsAreTag21) { "LMAX_SANDBOX_EXECUTION_BLOCKED_ORDER_REJECTED_UNKNOWN_TAG_R001" } elseif ($duplicateOrderRejects.Count -gt 0) { "LMAX_SANDBOX_EXECUTION_BLOCKED_DUPLICATE_CLORDID_R001" } elseif ($residualZero) { $ReconciledStatus } else { "LMAX_SANDBOX_GLOBAL_PROCESS_TEST_RUN_BLOCKED_RESIDUAL_NONZERO_R001" })
             orders_submitted = $ordersSubmitted
             execution_reports = $executionReports
             fills = $fills
             rejects = $rejects
             cancels = $cancels
             final_residuals = $finalResiduals
-            residual_zero = (-not ($allRejectsAreTag21 -or $allRejectsAreClOrdIdLength))
+            residual_zero = $residualZero
             lmax_fix_api_call = $false
             production_lmax_call = $false
             mode_detail = "mock_fix_server"
-            blocked_reason = $(if ($allRejectsAreClOrdIdLength) { "CLORDID_TOO_LONG" } elseif ($allRejectsAreTag21) { "FORBIDDEN_TAG_21" } else { $null })
+            blocked_reason = $(if ($allRejectsAreClOrdIdLength) { "CLORDID_TOO_LONG" } elseif ($allRejectsAreTag21) { "FORBIDDEN_TAG_21" } elseif ($duplicateOrderRejects.Count -gt 0) { "DUPLICATE_CLORDID" } elseif ($residualZero) { $null } else { "RESIDUAL_NONZERO_FLATTEN_NOT_EXECUTED" })
         }
     }
 
@@ -563,6 +689,8 @@ function Invoke-ActualLmaxFixClient {
             $seq++
             $ordersSubmitted += [ordered]@{
                 run_id = $RunId
+                execution_attempt_id = $ExecutionAttemptId
+                attempt_sequence = $ExecutionAttemptSequence
                 client_order_id = $clientOrderId
                 external_cl_ord_id = $clientOrderId
                 internal_order_id = $internalOrderId
@@ -609,6 +737,8 @@ function Invoke-ActualLmaxFixClient {
             $residual = [decimal]$order.quantity - $latestCum
             $finalResiduals += [ordered]@{
                 run_id = $RunId
+                execution_attempt_id = $ExecutionAttemptId
+                attempt_sequence = $ExecutionAttemptSequence
                 symbol = $order.symbol
                 client_order_id = $clientOrderId
                 external_cl_ord_id = $clientOrderId
@@ -621,8 +751,9 @@ function Invoke-ActualLmaxFixClient {
         $residualZero = (@($finalResiduals | Where-Object { $_.residual_zero -ne $true }).Count -eq 0)
         $allRejectsAreTag21 = ($rejects.Count -eq $OrderRows.Count -and $OrderRows.Count -gt 0 -and @($rejects | Where-Object { [string]$_.msg_type -ne "3" -or [string]$_.ref_tag_id -ne "21" }).Count -eq 0)
         $allRejectsAreClOrdIdLength = ($rejects.Count -eq $OrderRows.Count -and $OrderRows.Count -gt 0 -and @($rejects | Where-Object { [string]$_.msg_type -ne "3" -or [string]$_.ref_tag_id -ne "11" -or [string]$_.text -notmatch "length less than or equal to 20" }).Count -eq 0)
+        $duplicateOrderRejects = @($rejects | Where-Object { [string]$_.msg_type -eq "8" -and [string]$_.execution_type -eq "8" -and [string]$_.order_status -eq "8" -and [string]$_.ord_rej_reason -eq "6" -and [string]$_.text -match "DUPLICATE_ORDER" })
         return [ordered]@{
-            status = if ($allRejectsAreClOrdIdLength) { "LMAX_SANDBOX_EXECUTION_BLOCKED_CLORDID_TOO_LONG_R001" } elseif ($allRejectsAreTag21) { "LMAX_SANDBOX_EXECUTION_BLOCKED_ORDER_REJECTED_UNKNOWN_TAG_R001" } elseif ($rejects.Count -eq $OrderRows.Count -and $OrderRows.Count -gt 0) { "LMAX_SANDBOX_EXECUTION_BLOCKED_ORDER_SESSION_REJECTS_R001" } elseif ($residualZero) { "LMAX_SANDBOX_GLOBAL_PROCESS_TEST_RUN_RECONCILED_R001" } else { "LMAX_SANDBOX_GLOBAL_PROCESS_TEST_RUN_BLOCKED_RESIDUAL_NONZERO_R001" }
+            status = if ($allRejectsAreClOrdIdLength) { "LMAX_SANDBOX_EXECUTION_BLOCKED_CLORDID_TOO_LONG_R001" } elseif ($allRejectsAreTag21) { "LMAX_SANDBOX_EXECUTION_BLOCKED_ORDER_REJECTED_UNKNOWN_TAG_R001" } elseif ($duplicateOrderRejects.Count -gt 0) { "LMAX_SANDBOX_EXECUTION_BLOCKED_DUPLICATE_CLORDID_R001" } elseif ($rejects.Count -eq $OrderRows.Count -and $OrderRows.Count -gt 0) { "LMAX_SANDBOX_EXECUTION_BLOCKED_ORDER_SESSION_REJECTS_R001" } elseif ($residualZero) { $ReconciledStatus } else { "LMAX_SANDBOX_GLOBAL_PROCESS_TEST_RUN_BLOCKED_RESIDUAL_NONZERO_R001" }
             orders_submitted = $ordersSubmitted
             execution_reports = $executionReports
             fills = $fills
@@ -633,7 +764,7 @@ function Invoke-ActualLmaxFixClient {
             lmax_fix_api_call = $true
             production_lmax_call = $false
             mode_detail = "actual_lmax_demo_fix"
-            blocked_reason = if ($allRejectsAreClOrdIdLength) { "CLORDID_TOO_LONG" } elseif ($allRejectsAreTag21) { "FORBIDDEN_TAG_21" } elseif ($rejects.Count -eq $OrderRows.Count -and $OrderRows.Count -gt 0) { "ORDER_SESSION_REJECTS" } elseif ($residualZero) { $null } else { "RESIDUAL_NONZERO_FLATTEN_NOT_EXECUTED" }
+            blocked_reason = if ($allRejectsAreClOrdIdLength) { "CLORDID_TOO_LONG" } elseif ($allRejectsAreTag21) { "FORBIDDEN_TAG_21" } elseif ($duplicateOrderRejects.Count -gt 0) { "DUPLICATE_CLORDID" } elseif ($rejects.Count -eq $OrderRows.Count -and $OrderRows.Count -gt 0) { "ORDER_SESSION_REJECTS" } elseif ($residualZero) { $null } else { "RESIDUAL_NONZERO_FLATTEN_NOT_EXECUTED" }
         }
     } finally {
         if ($ssl) { $ssl.Dispose() }
@@ -646,27 +777,110 @@ function Write-FixClientExecutionArtifacts {
         [Parameter(Mandatory=$true)] $Result
     )
 
-    $ordersSubmitted = @($Result.orders_submitted)
-    $executionReports = @($Result.execution_reports)
-    $fills = @($Result.fills)
-    $rejects = @($Result.rejects)
-    $cancels = @($Result.cancels)
-    $finalResiduals = @($Result.final_residuals)
+    $currentOrdersSubmitted = @($Result.orders_submitted)
+    $currentExecutionReports = @($Result.execution_reports)
+    $currentFills = @($Result.fills)
+    $currentRejects = @($Result.rejects)
+    $currentCancels = @($Result.cancels)
+    $currentFinalResiduals = @($Result.final_residuals)
+
+    $previousAttempts = @()
+    $previousOrdersSubmitted = @()
+    $previousExecutionReports = @()
+    $previousFills = @()
+    $previousRejects = @()
+    $previousCancels = @()
+    if (($ExecutionAttemptSequence -gt 1 -or $NewExecutionAttempt.IsPresent -or $ResidualOnlyRetry.IsPresent) -and (Test-Path -LiteralPath $ExecutionResultPath)) {
+        try {
+            $previousExecution = Read-JsonFile $ExecutionResultPath
+            $previousAttempts = @(if ($null -ne $previousExecution.attempts) { $previousExecution.attempts } else { @() })
+            $previousOrdersCount = if ($null -ne $previousExecution.orders_submitted_count) { [int]$previousExecution.orders_submitted_count } else { 0 }
+            $previousFillsCount = if ($null -ne $previousExecution.fills_count) { [int]$previousExecution.fills_count } else { 0 }
+            if ($previousAttempts.Count -eq 0 -and ($previousOrdersCount -gt 0 -or $previousFillsCount -gt 0)) {
+                $previousAttempts = @([ordered]@{
+                    execution_attempt_id = [string](Get-OptionalPropertyValue -Object $previousExecution -Name "execution_attempt_id" -Default "A001")
+                    attempt_sequence = [int](Get-OptionalPropertyValue -Object $previousExecution -Name "attempt_sequence" -Default 1)
+                    status = [string]$previousExecution.status
+                    orders_submitted_count = [int](Get-OptionalPropertyValue -Object $previousExecution -Name "orders_submitted_count" -Default 0)
+                    execution_reports_count = [int](Get-OptionalPropertyValue -Object $previousExecution -Name "execution_reports_count" -Default 0)
+                    fills_count = [int](Get-OptionalPropertyValue -Object $previousExecution -Name "fills_count" -Default 0)
+                    rejected_count = [int](Get-OptionalPropertyValue -Object $previousExecution -Name "rejected_count" -Default 0)
+                    residual_zero = (Get-OptionalBooleanProperty -Object $previousExecution -Name "residual_zero" -Default $false)
+                    orders_log_path = [string](Get-OptionalPropertyValue -Object $previousExecution -Name "orders_log_path" -Default "")
+                    execution_reports_log_path = [string](Get-OptionalPropertyValue -Object $previousExecution -Name "execution_reports_log_path" -Default "")
+                })
+            }
+            $previousAttempts = @($previousAttempts | Where-Object { [string]$_.execution_attempt_id -ne $ExecutionAttemptId })
+            $previousOrdersSubmitted = @($previousExecution.orders_submitted)
+            $previousExecutionReports = @($previousExecution.execution_reports)
+            $previousFills = @($previousExecution.fills)
+            $previousRejects = @($previousExecution.rejects)
+            $previousCancels = @($previousExecution.cancels)
+        } catch {
+            $previousAttempts = @()
+        }
+    }
+
+    $ordersSubmitted = @($previousOrdersSubmitted + $currentOrdersSubmitted)
+    $executionReports = @($previousExecutionReports + $currentExecutionReports)
+    $fills = @($previousFills + $currentFills)
+    $rejects = @($previousRejects + $currentRejects)
+    $cancels = @($previousCancels + $currentCancels)
+    $targetRowsForResidual = @(if ($null -ne $allTargetOrderRows -and @($allTargetOrderRows).Count -gt 0) { $allTargetOrderRows } else { $orderRows })
+    $finalResiduals = @()
+    foreach ($targetOrder in $targetRowsForResidual) {
+        $targetInternalOrderId = "$RunId-$($targetOrder.symbol)-$($targetOrder.side)-$($targetOrder.quantity)"
+        $filledQuantity = [decimal]0
+        foreach ($fill in @($fills | Where-Object { [string]$_.internal_order_id -eq $targetInternalOrderId })) {
+            if ($null -ne $fill.last_qty) { $filledQuantity += [decimal]$fill.last_qty }
+            elseif ($null -ne $fill.filled_quantity) { $filledQuantity += [decimal]$fill.filled_quantity }
+        }
+        $residual = [decimal]$targetOrder.quantity - $filledQuantity
+        $finalResiduals += [ordered]@{
+            run_id = $RunId
+            symbol = $targetOrder.symbol
+            internal_order_id = $targetInternalOrderId
+            target_quantity = [decimal]$targetOrder.quantity
+            filled_quantity_across_attempts = $filledQuantity
+            final_residual_quantity = $residual
+            residual_zero = ([Math]::Abs($residual) -le [decimal]0.000001)
+        }
+    }
     $isActualFix = ([string]$Result.mode_detail -eq "actual_lmax_demo_fix")
     $status = [string]$Result.status
-    $residualZero = ($Result.residual_zero -eq $true)
+    $residualZero = (@($finalResiduals | Where-Object { $_.residual_zero -ne $true }).Count -eq 0)
     $sessionRejects = @($rejects | Where-Object { [string]$_.msg_type -eq "3" })
     $tag21SessionRejects = @($sessionRejects | Where-Object { [string]$_.ref_tag_id -eq "21" })
     $clOrdIdLengthRejects = @($sessionRejects | Where-Object { [string]$_.ref_tag_id -eq "11" -and [string]$_.text -match "length less than or equal to 20" })
-    $primaryFailure = if ($clOrdIdLengthRejects.Count -eq $ordersSubmitted.Count -and $ordersSubmitted.Count -gt 0) { "CLORDID_TOO_LONG" } elseif ($tag21SessionRejects.Count -eq $ordersSubmitted.Count -and $ordersSubmitted.Count -gt 0) { "FORBIDDEN_TAG_21" } elseif ($sessionRejects.Count -gt 0) { "ORDER_SESSION_REJECTS" } else { $Result.blocked_reason }
+    $duplicateOrderRejects = @($rejects | Where-Object { [string]$_.msg_type -eq "8" -and [string]$_.execution_type -eq "8" -and [string]$_.order_status -eq "8" -and [string]$_.ord_rej_reason -eq "6" -and [string]$_.text -match "DUPLICATE_ORDER" })
+    if ($residualZero -and $fills.Count -gt 0) { $status = $ReconciledStatus }
+    elseif ($duplicateOrderRejects.Count -gt 0) { $status = "LMAX_SANDBOX_EXECUTION_BLOCKED_DUPLICATE_CLORDID_R001" }
+    $primaryFailure = if ($residualZero) { $null } elseif ($duplicateOrderRejects.Count -gt 0) { "DUPLICATE_CLORDID" } elseif ($clOrdIdLengthRejects.Count -eq $ordersSubmitted.Count -and $ordersSubmitted.Count -gt 0) { "CLORDID_TOO_LONG" } elseif ($tag21SessionRejects.Count -eq $ordersSubmitted.Count -and $ordersSubmitted.Count -gt 0) { "FORBIDDEN_TAG_21" } elseif ($sessionRejects.Count -gt 0) { "ORDER_SESSION_REJECTS" } else { $Result.blocked_reason }
     $rejectedTag = if ($clOrdIdLengthRejects.Count -gt 0) { "11" } elseif ($tag21SessionRejects.Count -gt 0) { "21" } else { $null }
+    $attemptSummary = [ordered]@{
+        execution_attempt_id = $ExecutionAttemptId
+        attempt_sequence = $ExecutionAttemptSequence
+        status = [string]$Result.status
+        orders_submitted_count = $currentOrdersSubmitted.Count
+        execution_reports_count = $currentExecutionReports.Count
+        fills_count = $currentFills.Count
+        rejected_count = $currentRejects.Count
+        residual_zero = ($currentFinalResiduals.Count -gt 0 -and @($currentFinalResiduals | Where-Object { $_.residual_zero -ne $true }).Count -eq 0)
+        residual_only_retry = $ResidualOnlyRetry.IsPresent
+        orders_log_path = $OrderLogPath
+        execution_reports_log_path = $ExecutionReportLogPath
+    }
+    $attempts = @($previousAttempts + $attemptSummary)
 
     $executionResult = [ordered]@{
         package = $Package
         run_id = $RunId
+        execution_attempt_id = $ExecutionAttemptId
+        attempt_sequence = $ExecutionAttemptSequence
+        attempts = $attempts
         artifact_type = "sandbox_execution_result_r001"
         status = $status
-        blocked_reason = $Result.blocked_reason
+        blocked_reason = $primaryFailure
         execution_mode = "LmaxSandbox"
         execution_mode_detail = $(if ($isActualFix) { "lmax_demo_sandbox_actual_fix" } else { [string]$Result.mode_detail })
         orders_submitted = $ordersSubmitted
@@ -677,6 +891,7 @@ function Write-FixClientExecutionArtifacts {
         fills_count = $fills.Count
         rejects = $rejects
         rejected_count = $rejects.Count
+        duplicate_clordid_reject_count = $duplicateOrderRejects.Count
         session_reject_count = $sessionRejects.Count
         rejected_tag = $rejectedTag
         primary_failure = $primaryFailure
@@ -687,6 +902,8 @@ function Write-FixClientExecutionArtifacts {
         flatten_orders_count = 0
         final_residuals = $finalResiduals
         residual_zero = $residualZero
+        multi_attempt_reconciliation = ($attempts.Count -gt 1)
+        residual_only_retry = $ResidualOnlyRetry.IsPresent
         lmax_fix_api_call = ($Result.lmax_fix_api_call -eq $true)
         production_lmax_call = $false
         broker_api_call = $false
@@ -698,7 +915,7 @@ function Write-FixClientExecutionArtifacts {
     }
     Write-JsonFile $ExecutionResultPath $executionResult
 
-    $tradeReconReady = ($residualZero -and $fills.Count -gt 0 -and $status -eq "LMAX_SANDBOX_GLOBAL_PROCESS_TEST_RUN_RECONCILED_R001")
+    $tradeReconReady = ($residualZero -and $fills.Count -gt 0 -and $status -eq $ReconciledStatus)
     $tradeRecon = [ordered]@{
         package = $Package
         run_id = $RunId
@@ -744,12 +961,16 @@ function Write-FixClientExecutionArtifacts {
     Write-JsonFile $PnlPath $pnl
 
     Set-JsonObjectProperty $mainArtifact "status" $status
+    Set-JsonObjectProperty $mainArtifact "execution_attempt_id" $ExecutionAttemptId
+    Set-JsonObjectProperty $mainArtifact "attempt_sequence" $ExecutionAttemptSequence
+    Set-JsonObjectProperty $mainArtifact "execution_attempts" $attempts
     Set-JsonObjectProperty $mainArtifact "execution_status" $(if ($isActualFix) { "LMAX_DEMO_SANDBOX_EXECUTED" } else { "LMAX_DEMO_SANDBOX_MOCK_FIX_EXECUTED" })
     Set-JsonObjectProperty $mainArtifact "fill_status" $(if ($fills.Count -gt 0) { "LMAX_DEMO_SANDBOX_FILLS_READY" } else { "NO_FILLS_CAPTURED" })
     Set-JsonObjectProperty $mainArtifact "fills_status" $(if ($fills.Count -gt 0) { "LMAX_DEMO_SANDBOX_FILLS_READY" } else { "NO_FILLS_CAPTURED" })
     Set-JsonObjectProperty $mainArtifact "fills_count" $fills.Count
     Set-JsonObjectProperty $mainArtifact "orders_submitted_count" $ordersSubmitted.Count
     Set-JsonObjectProperty $mainArtifact "session_reject_count" $sessionRejects.Count
+    Set-JsonObjectProperty $mainArtifact "duplicate_clordid_reject_count" $duplicateOrderRejects.Count
     Set-JsonObjectProperty $mainArtifact "rejected_tag" $rejectedTag
     Set-JsonObjectProperty $mainArtifact "primary_failure" $primaryFailure
     Set-JsonObjectProperty $mainArtifact "logon_success" $true
@@ -827,15 +1048,15 @@ function Write-BlockedState([string]$Status, [string]$Reason) {
 
     if (Test-Path -LiteralPath $MainPath) {
         $main = Read-JsonFile $MainPath
-        $main.status = $Status
-        $main.execution_status = $Status
-        $main.fill_status = "NO_FILLS_BLOCKED_OR_NOT_EXECUTED"
-        $main.fills_status = "NO_FILLS_BLOCKED_OR_NOT_EXECUTED"
-        $main.trade_level_reconciliation_status = "BLOCKED_AWAITING_SANDBOX_EXECUTION_OR_SIMULATION"
-        $main.strategy_pnl_status = "BLOCKED_AWAITING_SANDBOX_FILLS"
-        $main.same_run_broker_evidence_status = "BLOCKED_SAME_RUN_BROKER_EXPORT_MISSING"
-        $main.production_live = $false
-        $main.trading_readiness = $false
+        Set-JsonObjectProperty $main "status" $Status
+        Set-JsonObjectProperty $main "execution_status" $Status
+        Set-JsonObjectProperty $main "fill_status" "NO_FILLS_BLOCKED_OR_NOT_EXECUTED"
+        Set-JsonObjectProperty $main "fills_status" "NO_FILLS_BLOCKED_OR_NOT_EXECUTED"
+        Set-JsonObjectProperty $main "trade_level_reconciliation_status" "BLOCKED_AWAITING_SANDBOX_EXECUTION_OR_SIMULATION"
+        Set-JsonObjectProperty $main "strategy_pnl_status" "BLOCKED_AWAITING_SANDBOX_FILLS"
+        Set-JsonObjectProperty $main "same_run_broker_evidence_status" "BLOCKED_SAME_RUN_BROKER_EXPORT_MISSING"
+        Set-JsonObjectProperty $main "production_live" $false
+        Set-JsonObjectProperty $main "trading_readiness" $false
         Write-JsonFile $MainPath $main
     }
     Write-Host $Status
@@ -865,7 +1086,16 @@ $config = Read-JsonFile $ConfigValidationPath
 $orders = Read-JsonFile $OrderManifestPath
 $plan = Read-JsonFile $ExecutionAlgoPlanPath
 
-if ($mainArtifact.status -ne "LMAX_SANDBOX_GLOBAL_PROCESS_TEST_RUN_EXECUTION_APPROVED_READY_R001") {
+$allowedSourceStatuses = @($ApprovedReadyStatus)
+if ($NewExecutionAttempt.IsPresent -or $ResidualOnlyRetry.IsPresent -or $ExecutionAttemptExplicit) {
+    $allowedSourceStatuses += @(
+        "LMAX_SANDBOX_EXECUTION_BLOCKED_DUPLICATE_CLORDID_R001",
+        "LMAX_SANDBOX_GLOBAL_PROCESS_TEST_RUN_BLOCKED_RESIDUAL_NONZERO_R001",
+        "LMAX_SANDBOX_REAL_QUBES_PROCESS_TEST_RUN_BLOCKED_RESIDUAL_NONZERO_R001",
+        $ExecutedStatus
+    )
+}
+if ($allowedSourceStatuses -notcontains [string]$mainArtifact.status) {
     Write-BlockedState "LMAX_SANDBOX_EXECUTION_BLOCKED_SOURCE_NOT_APPROVED_READY_R001" "Main package is not approved-ready."
     return
 }
@@ -892,12 +1122,36 @@ if ($configRawSecretValuesPersisted -eq $true -or $configRawSecretsPresent -eq $
     Write-BlockedState "LMAX_SANDBOX_EXECUTION_BLOCKED_RAW_SECRET_FLAG_DETECTED_R001" "Raw secret config flag detected."
     return
 }
-if (@($config.validation_issues).Count -gt 0) {
+$configValidationIssues = @(Get-OptionalPropertyValue -Object $config -Name "validation_issues" -Default @())
+if ($configValidationIssues.Count -gt 0) {
     Write-BlockedState "LMAX_SANDBOX_EXECUTION_BLOCKED_LMAX_SANDBOX_CONFIG_MISSING_R001" "Config validation issues are present."
     return
 }
 
-$orderRows = @($orders.orders)
+$allTargetOrderRows = @($orders.orders)
+$orderRows = @($allTargetOrderRows)
+if ($ResidualOnlyRetry.IsPresent) {
+    if (-not (Test-Path -LiteralPath $ExecutionResultPath)) {
+        Write-BlockedState "LMAX_SANDBOX_EXECUTION_BLOCKED_RESIDUAL_RETRY_SOURCE_MISSING_R001" "Residual-only retry requires a previous execution result."
+        return
+    }
+    $previousExecutionForRetry = Read-JsonFile $ExecutionResultPath
+    $residualRows = @()
+    foreach ($residual in @($previousExecutionForRetry.final_residuals | Where-Object { [Math]::Abs([decimal]$_.final_residual_quantity) -gt [decimal]0.000001 })) {
+        $internalId = [string]$residual.internal_order_id
+        $target = @($allTargetOrderRows | Where-Object { "$RunId-$($_.symbol)-$($_.side)-$($_.quantity)" -eq $internalId } | Select-Object -First 1)
+        if ($target.Count -eq 0) { continue }
+        $copy = [ordered]@{}
+        foreach ($property in $target[0].PSObject.Properties) { $copy[$property.Name] = $property.Value }
+        $copy["quantity"] = [Math]::Abs([decimal]$residual.final_residual_quantity)
+        $residualRows += [pscustomobject]$copy
+    }
+    $orderRows = @($residualRows)
+    if ($orderRows.Count -eq 0) {
+        Write-BlockedState "LMAX_SANDBOX_EXECUTION_BLOCKED_NO_RESIDUAL_ORDERS_TO_RETRY_R001" "Residual-only retry found no non-zero residual orders."
+        return
+    }
+}
 foreach ($order in $orderRows) {
     if (-not [string]::IsNullOrWhiteSpace([string]$order.security_id) -and [string]$order.security_id_source_tag22 -ne "8") {
         Write-BlockedState "LMAX_SANDBOX_EXECUTION_BLOCKED_ORDER_MANIFEST_INVALID_R001" "FIX tag 22 must equal 8 when tag 48 SecurityID is present."
@@ -1118,7 +1372,7 @@ $executionResult = [ordered]@{
     package = $Package
     run_id = $RunId
     artifact_type = "sandbox_execution_result_r001"
-    status = "LMAX_SANDBOX_GLOBAL_PROCESS_TEST_RUN_RECONCILED_R001"
+    status = $ReconciledStatus
     execution_mode = "LmaxSandbox"
     execution_mode_detail = "lmax_demo_sandbox_mock_adapter"
     orders_submitted = $submittedOrders
@@ -1188,7 +1442,7 @@ $pnl = [ordered]@{
 }
 Write-JsonFile $PnlPath $pnl
 
-Set-JsonObjectProperty $mainArtifact "status" "LMAX_SANDBOX_GLOBAL_PROCESS_TEST_RUN_RECONCILED_R001"
+Set-JsonObjectProperty $mainArtifact "status" $ReconciledStatus
 Set-JsonObjectProperty $mainArtifact "execution_status" "LMAX_DEMO_SANDBOX_EXECUTED"
 Set-JsonObjectProperty $mainArtifact "fill_status" "LMAX_DEMO_SANDBOX_FILLS_READY"
 Set-JsonObjectProperty $mainArtifact "fills_status" "LMAX_DEMO_SANDBOX_FILLS_READY"

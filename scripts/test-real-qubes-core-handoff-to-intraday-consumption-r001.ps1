@@ -101,6 +101,45 @@ function New-ValidRealQubesArtifact([string]$RunId, [string]$Symbol = "USDCAD", 
     }
 }
 
+function New-RealCoreExporterHandoffArtifact([string]$RunId) {
+    [ordered]@{
+        artifact_type = "real_qubes_core_to_intraday_handoff"
+        package = "REAL_QUBES_CORE_TO_INTRADAY_HANDOFF_R001"
+        status = "REAL_QUBES_CORE_TO_INTRADAY_HANDOFF_READY_R001"
+        source_system = "QQ.Production.Core / Anubis"
+        generated_by_qubes_core = $true
+        synthetic_fixture = $false
+        run_id = $RunId
+        strategy = "CoreAnubisNettedUsdWeights"
+        manager_scope = "INFX1"
+        generation_timestamp_utc = "2026-05-29T00:00:00Z"
+        target_notional_usd = 6000000
+        raw_aggregated_weights = @(
+            [ordered]@{ date_index = "202512162051"; security_id = "58"; weight = "0.00050000" },
+            [ordered]@{ date_index = "202512162051"; security_id = "59"; weight = "-0.00020000" }
+        )
+        final_manager_weights = @(
+            [ordered]@{ symbol = "CADUSD"; weight = "0.00050000" },
+            [ordered]@{ symbol = "NZDUSD"; weight = "-0.00020000" }
+        )
+        netted_usd_weights = @(
+            [ordered]@{ symbol = "CADUSD"; weight = "0.00050000"; target_notional_usd = 3000 },
+            [ordered]@{ symbol = "NZDUSD"; weight = "-0.00020000"; target_notional_usd = -1200 }
+        )
+        symbols = @("CADUSD", "NZDUSD")
+        input_hashes = [ordered]@{ aggregated_weights = "sha256:test-agg"; final_manager_weights = "sha256:test-final"; netted_usd_weights = "sha256:test-netted" }
+        output_hashes = [ordered]@{ handoff_artifact_file = "sha256:test-handoff" }
+        validation = [ordered]@{
+            passed = $true
+            no_nan_or_null = $true
+            symbols_normalized = $true
+            exposure_checks_passed = $true
+            weights_sum = "0.00030000"
+            gross_exposure = "0.00070000"
+        }
+    }
+}
+
 function Assert-GuardsFalse($Main) {
     foreach ($guard in @("trading_activity", "lmax_fix_api_call", "broker_api_call", "polygon_massive_call", "market_data_fetch", "broker_fetch", "account_data_fetch", "production_live_write", "production_live_ready", "trading_readiness_ready")) {
         Assert-Equal $false $Main.global_guards.$guard "Guard $guard must remain false."
@@ -157,6 +196,21 @@ foreach ($order in @($validScenario.orders.orders)) {
 }
 Assert-Equal $false $validScenario.bridge.existing_lmax_run_attributed_to_real_qubes_core "Different run/hash must not be attributed to existing LMAX run."
 Assert-GuardsFalse $validScenario.main
+
+$stagedCoreName = "staged-core-schema"
+$stagedCoreOutput = "real-qubes-core-handoff-to-intraday-consumption-r001-test\$stagedCoreName"
+$stagedCoreDir = Join-Path $RepoRoot "artifacts\readiness\$stagedCoreOutput\staging"
+New-Item -ItemType Directory -Force -Path $stagedCoreDir | Out-Null
+Write-JsonFile (Join-Path $stagedCoreDir "real-qubes-core-to-intraday-handoff-r001.json") (New-RealCoreExporterHandoffArtifact -RunId "REAL_CORE_EXPORTER_SCHEMA_TEST_R001")
+$stagedCoreScenario = Invoke-Scenario -Name $stagedCoreName -CandidateRoots @($emptyRoot) -DisablePreviousFallback
+Assert-Equal "REAL_QUBES_CORE_HANDOFF_CONSUMED_AND_ORDER_PREVIEW_READY_R001" $stagedCoreScenario.main.status "Staged Core exporter schema should be accepted and previewed."
+Assert-Equal $true $stagedCoreScenario.main.real_qubes_core_output_accepted "Staged Core exporter schema must be accepted as real."
+Assert-Equal $true $stagedCoreScenario.main.generated_by_qubes_core "generated_by_qubes_core should be preserved from staged Core handoff."
+Assert-Equal $false $stagedCoreScenario.main.synthetic_fixture "synthetic_fixture false should be preserved from staged Core handoff."
+Assert-True ($stagedCoreScenario.orders.order_count -gt 0) "Staged Core handoff should produce drift/order preview."
+Assert-True (@($stagedCoreScenario.discovery.candidate_files_found | Where-Object { $_.in_staging -eq $true -and $_.accepted_as_real -eq $true }).Count -eq 1) "Valid staged handoff should be preferred and accepted from staging."
+Assert-Equal $false $stagedCoreScenario.bridge.existing_lmax_run_attributed_to_real_qubes_core "New staged Core handoff should not be falsely attributed to existing LMAX run."
+Assert-GuardsFalse $stagedCoreScenario.main
 
 $previousHandoffPath = Join-Path $PreviousRunDir "qubes-core-weight-handoff-r001.json"
 $previousDriftPath = Join-Path $PreviousRunDir "drift-and-order-targets-r001.json"

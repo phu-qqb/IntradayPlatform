@@ -11,10 +11,12 @@ $ErrorActionPreference = "Stop"
 
 $Package = "NEXT_REAL_QUBES_CORE_HANDOFF_TO_INTRADAY_CONSUMPTION_R001"
 $OutputDir = Join-Path $RepoRoot "artifacts\readiness\$OutputSubdir"
+$StagingDir = Join-Path $OutputDir "staging"
 $PreviousRunId = "LMAX_SANDBOX_GLOBAL_TEST_R001_20260529T125324Z"
 $PreviousRunDir = Join-Path $RepoRoot "artifacts\readiness\lmax-sandbox-global-process-test-run-r001"
 
 New-Item -ItemType Directory -Force -Path $OutputDir | Out-Null
+New-Item -ItemType Directory -Force -Path $StagingDir | Out-Null
 
 function Write-JsonFile([string]$Path, [object]$Value) {
     New-Item -ItemType Directory -Force -Path (Split-Path -Parent $Path) | Out-Null
@@ -73,7 +75,11 @@ function Classify-Candidate([string]$Path, $Json, [string]$Text) {
         $generated = [bool](Get-Prop $Json @("generated_by_qubes_core", "generatedByQubesCore") $false)
         $synthetic = [bool](Get-Prop $Json @("synthetic_fixture", "syntheticFixture") $false)
         $artifactType = [string](Get-Prop $Json @("artifact_type", "artifactType") "")
+        $status = [string](Get-Prop $Json @("status") "")
         $candidatePackage = [string](Get-Prop $Json @("package") "")
+        if ($artifactType -eq "real_qubes_core_to_intraday_handoff" -and $status -eq "REAL_QUBES_CORE_TO_INTRADAY_HANDOFF_READY_R001" -and $generated -and -not $synthetic) {
+            return "REAL_QUBES_CORE_OUTPUT_CANDIDATE"
+        }
         if ($artifactType -eq "core_to_intraday_handoff_manifest" -or ($candidatePackage -eq $Package -and $artifactType -notmatch 'real_qubes_core_output_test_fixture')) {
             return "CONTRACT_ONLY"
         }
@@ -100,6 +106,8 @@ function Test-RealQubesCandidate($Json) {
     $issues = @()
     $generated = [bool](Get-Prop $Json @("generated_by_qubes_core", "generatedByQubesCore") $false)
     $synthetic = [bool](Get-Prop $Json @("synthetic_fixture", "syntheticFixture") $false)
+    $artifactType = [string](Get-Prop $Json @("artifact_type", "artifactType") "")
+    $status = [string](Get-Prop $Json @("status") "")
     $runId = [string](Get-Prop $Json @("run_id", "runId") "")
     $sourceSystem = [string](Get-Prop $Json @("source_system", "sourceSystem") "")
     $strategy = [string](Get-Prop $Json @("strategy", "manager_scope", "managerScope") "")
@@ -122,8 +130,25 @@ function Test-RealQubesCandidate($Json) {
     if ($final.Count -eq 0) { $issues += "final_manager_weights_missing" }
     if ($netted.Count -eq 0) { $issues += "netted_usd_weights_missing" }
     if ($null -eq $targetDecimal -or $targetDecimal -le 0) { $issues += "target_notional_missing_or_invalid" }
+    if ($artifactType -eq "real_qubes_core_to_intraday_handoff") {
+        if ($status -ne "REAL_QUBES_CORE_TO_INTRADAY_HANDOFF_READY_R001") { $issues += "core_handoff_status_not_ready" }
+        $validation = Get-Prop $Json @("validation") $null
+        $validationPassed = Get-Prop $validation @("passed") $true
+        if ($validationPassed -ne $true) { $issues += "core_handoff_validation_not_passed" }
+        $symbols = To-Array (Get-Prop $Json @("symbols") $null)
+        if ($symbols.Count -eq 0) { $issues += "symbols_missing" }
+        $inputHashes = Get-Prop $Json @("input_hashes", "source_hashes") $null
+        $outputHashes = Get-Prop $Json @("output_hashes") $null
+        if ($null -eq $inputHashes -and $null -eq $outputHashes) { $issues += "source_hashes_missing" }
+    }
 
-    foreach ($row in @($raw + $final + $netted)) {
+    foreach ($row in @($raw)) {
+        $securityId = [string](Get-Prop $row @("security_id", "SecurityId", "symbol", "Symbol") "")
+        $weight = Get-Prop $row @("weight", "Weight") $null
+        if ([string]::IsNullOrWhiteSpace($securityId)) { $issues += "missing_raw_security_or_symbol"; break }
+        if ($null -eq $weight -or $null -eq (Get-DecimalOrNull $weight)) { $issues += "nan_null_or_invalid_weight"; break }
+    }
+    foreach ($row in @($final + $netted)) {
         $symbol = [string](Get-Prop $row @("symbol", "Symbol", "execution_symbol", "ExecutionSymbol") "")
         $weight = Get-Prop $row @("weight", "Weight") $null
         if ([string]::IsNullOrWhiteSpace($symbol)) { $issues += "missing_symbol"; break }
@@ -141,6 +166,33 @@ function Test-RealQubesCandidate($Json) {
         final = $final
         netted = $netted
     }
+}
+
+function Convert-CoreSymbolToExecutionSymbol([string]$Symbol) {
+    $model = $Symbol.ToUpperInvariant()
+    $inverse = @{
+        "CADUSD" = "USDCAD"; "CHFUSD" = "USDCHF"; "CNHUSD" = "USDCNH"; "JPYUSD" = "USDJPY"; "MXNUSD" = "USDMXN";
+        "NOKUSD" = "USDNOK"; "SEKUSD" = "USDSEK"; "SGDUSD" = "USDSGD"; "ZARUSD" = "USDZAR"
+    }
+    if ($inverse.ContainsKey($model)) { return $inverse[$model] }
+    return $model
+}
+
+function Get-OrderSideFromTarget([string]$CoreSymbol, [decimal]$TargetNotional) {
+    $model = $CoreSymbol.ToUpperInvariant()
+    $isInverseUsd = $model -in @("CADUSD", "CHFUSD", "CNHUSD", "JPYUSD", "MXNUSD", "NOKUSD", "SEKUSD", "SGDUSD", "ZARUSD")
+    if ($isInverseUsd) {
+        if ($TargetNotional -ge 0) { return "SELL" }
+        return "BUY"
+    }
+    if ($TargetNotional -ge 0) { return "BUY" }
+    return "SELL"
+}
+
+function Get-PreviewQuantity([decimal]$TargetNotional) {
+    $quantity = [Math]::Round([Math]::Abs($TargetNotional) / [decimal]10000, 1)
+    if ($quantity -lt [decimal]0.1) { return [decimal]0 }
+    return [decimal]$quantity
 }
 
 function Convert-ToOrderPreview($Validated) {
@@ -161,6 +213,9 @@ function Convert-ToOrderPreview($Validated) {
         $quantity = Get-DecimalOrNull (Get-Prop $row @("refined_quantity", "quantity", "Quantity") $null)
         $side = [string](Get-Prop $row @("side", "Side") "")
         $targetNotional = Get-DecimalOrNull (Get-Prop $row @("target_notional_usd", "targetNotionalUsd", "rounded_notional_usd") 0)
+        if ($null -eq $targetNotional) { $targetNotional = [decimal]0 }
+        if ($symbol -eq $coreSymbol) { $symbol = Convert-CoreSymbolToExecutionSymbol $coreSymbol }
+        if ($null -eq $quantity) { $quantity = Get-PreviewQuantity $targetNotional }
         if ([string]::IsNullOrWhiteSpace($symbol)) {
             $skipped += [ordered]@{ source = $coreSymbol; reason = "missing_execution_symbol" }
             continue
@@ -170,7 +225,7 @@ function Convert-ToOrderPreview($Validated) {
             continue
         }
         if ([string]::IsNullOrWhiteSpace($side)) {
-            $side = if ($targetNotional -lt 0) { "SELL" } else { "BUY" }
+            $side = Get-OrderSideFromTarget -CoreSymbol $coreSymbol -TargetNotional $targetNotional
         }
         $securityId = [string](Get-Prop $row @("security_id", "SecurityId") "")
         if ([string]::IsNullOrWhiteSpace($securityId) -and $securityIds.ContainsKey($symbol)) { $securityId = $securityIds[$symbol] }
@@ -218,37 +273,48 @@ $roots = @($roots | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Sel
 $candidateFiles = New-Object System.Collections.Generic.List[object]
 $candidateDirectories = New-Object System.Collections.Generic.List[object]
 $keywords = 'Anubis|AggregatedWeights|raw aggregated weights|manager weights|final manager weights|NettedUsdWeights|netted USD weights|Core handoff|Qubes|QubesEngine|QQ\.Production\.Core|handoff manifest|weights hash|target notional|drift|order targets'
+function Add-CandidateFile([System.IO.FileInfo]$File, [string]$SourceRoot, [bool]$InStaging) {
+    $text = ""
+    try { $text = (Get-Content -LiteralPath $File.FullName -Raw -ErrorAction Stop) } catch { $text = "" }
+    if ($text.Length -gt 240000) { $text = $text.Substring(0, 240000) }
+    $json = $null
+    if ($File.Extension -eq ".json") {
+        try { $json = $text | ConvertFrom-Json -ErrorAction Stop } catch { $json = $null }
+    }
+    $classification = Classify-Candidate -Path $File.FullName -Json $json -Text $text
+    if ($classification -eq "UNKNOWN" -and $text -notmatch $keywords) { return }
+    $candidateFiles.Add([ordered]@{
+        path = $File.FullName
+        source_repo_path = $SourceRoot
+        in_staging = $InStaging
+        sha256 = Get-FileSha256 $File.FullName
+        last_write_time_for_diagnostics_only = $File.LastWriteTimeUtc.ToString("o")
+        artifact_type_classification = $classification
+        accepted_as_real = $false
+        reason = ""
+    })
+}
+if (Test-Path -LiteralPath $StagingDir) {
+    $candidateDirectories.Add([ordered]@{ path = $StagingDir; exists = $true; package_staging = $true })
+    foreach ($file in @(Get-ChildItem -LiteralPath $StagingDir -Recurse -File -ErrorAction SilentlyContinue | Where-Object { $_.Extension -in @(".json", ".csv", ".txt", ".md") })) {
+        Add-CandidateFile -File $file -SourceRoot $StagingDir -InStaging $true
+    }
+}
 foreach ($root in $roots) {
     if (-not (Test-Path -LiteralPath $root)) { continue }
+    if ((Resolve-Path -LiteralPath $root).Path -eq (Resolve-Path -LiteralPath $StagingDir).Path) { continue }
     $candidateDirectories.Add([ordered]@{ path = $root; exists = $true })
     $files = @(Get-ChildItem -LiteralPath $root -Recurse -File -ErrorAction SilentlyContinue |
         Where-Object { $_.Extension -in @(".json", ".csv", ".txt", ".md") -and ($_.FullName -match $keywords -or $_.Name -match $keywords) } |
         Select-Object -First $MaxCandidateFiles)
     foreach ($file in $files) {
-        $text = ""
-        try { $text = (Get-Content -LiteralPath $file.FullName -Raw -ErrorAction Stop) } catch { $text = "" }
-        if ($text.Length -gt 240000) { $text = $text.Substring(0, 240000) }
-        $json = $null
-        if ($file.Extension -eq ".json") {
-            try { $json = $text | ConvertFrom-Json -ErrorAction Stop } catch { $json = $null }
-        }
-        $classification = Classify-Candidate -Path $file.FullName -Json $json -Text $text
-        if ($classification -eq "UNKNOWN" -and $text -notmatch $keywords) { continue }
-        $candidateFiles.Add([ordered]@{
-            path = $file.FullName
-            source_repo_path = $root
-            sha256 = Get-FileSha256 $file.FullName
-            last_write_time_for_diagnostics_only = $file.LastWriteTimeUtc.ToString("o")
-            artifact_type_classification = $classification
-            accepted_as_real = $false
-            reason = ""
-        })
+        Add-CandidateFile -File $file -SourceRoot $root -InStaging $false
     }
 }
 
 $accepted = $null
 $invalidRealCandidates = @()
-foreach ($candidate in @($candidateFiles | Where-Object { $_.artifact_type_classification -eq "REAL_QUBES_CORE_OUTPUT_CANDIDATE" })) {
+foreach ($candidate in @($candidateFiles | Where-Object { $_.artifact_type_classification -eq "REAL_QUBES_CORE_OUTPUT_CANDIDATE" } | Sort-Object @{ Expression = { if ($_.in_staging) { 0 } else { 1 } } }, path)) {
     try {
         $json = Read-JsonFile $candidate.path
         $validation = Test-RealQubesCandidate $json

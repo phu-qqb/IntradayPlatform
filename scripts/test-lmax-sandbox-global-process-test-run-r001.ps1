@@ -459,8 +459,8 @@ Assert-Equal $false $runnerMockExecution.lmax_fix_api_call "Mocked runner must n
 Assert-Equal "LMAX_DEMO_SANDBOX_TRADE_LEVEL_RECONCILIATION_READY_R001" $runnerMockRecon.status "Mocked runner must update reconciliation."
 Assert-Equal "LMAX_DEMO_SANDBOX_STRATEGY_PNL_READY_R001" $runnerMockPnl.status "Mocked runner must update PnL."
 Assert-Equal $false $runnerMockPnl.broker_statement_pnl_comparison.applicable "Mocked runner must not use historical LMAX statement PnL."
-Assert-True (Test-Path -LiteralPath (Join-Path $lmaxReadyDir "logs\$lmaxReadyRunId\orders.log")) "Mocked runner must write orders.log."
-Assert-True (Test-Path -LiteralPath (Join-Path $lmaxReadyDir "logs\$lmaxReadyRunId\execution-reports.log")) "Mocked runner must write execution-reports.log."
+Assert-True (Test-Path -LiteralPath (Join-Path $lmaxReadyDir "logs\$lmaxReadyRunId\attempt-001\orders.log")) "Mocked runner must write attempt-scoped orders.log."
+Assert-True (Test-Path -LiteralPath (Join-Path $lmaxReadyDir "logs\$lmaxReadyRunId\attempt-001\execution-reports.log")) "Mocked runner must write attempt-scoped execution-reports.log."
 
 & $BuildScript -RepoRoot $RepoRoot -OutputSubdir "lmax-sandbox-global-process-test-run-r001-test\lmax-ready" -RunId $lmaxReadyRunId -ExecutionMode LmaxSandbox -LmaxDemoApprovalPath $lmaxReadyApproval -LmaxDemoExecutionSwitchPath $lmaxReadySwitch -LmaxDemoConfigPath $lmaxReadyConfig
 Set-TestLmaxCredentialEnvironment
@@ -471,8 +471,8 @@ $runnerMockFixRecon = Read-JsonFile (Join-Path $lmaxReadyDir "sandbox-trade-leve
 $runnerMockFixPnl = Read-JsonFile (Join-Path $lmaxReadyDir "sandbox-pnl-r001.json")
 $runnerMockFixStatus = Read-JsonFile (Join-Path $lmaxReadyDir "lmax-demo-actual-adapter-binding-status-r001.json")
 $runnerMockFixClOrdIdMap = Read-JsonFile (Join-Path $lmaxReadyDir "lmax-demo-clordid-map-r001.json")
-$mockFixOrdersLog = Get-Content -Raw -LiteralPath (Join-Path $lmaxReadyDir "logs\$lmaxReadyRunId\orders.log")
-$mockFixReportsLog = Get-Content -Raw -LiteralPath (Join-Path $lmaxReadyDir "logs\$lmaxReadyRunId\execution-reports.log")
+$mockFixOrdersLog = Get-Content -Raw -LiteralPath (Join-Path $lmaxReadyDir "logs\$lmaxReadyRunId\attempt-001\orders.log")
+$mockFixReportsLog = Get-Content -Raw -LiteralPath (Join-Path $lmaxReadyDir "logs\$lmaxReadyRunId\attempt-001\execution-reports.log")
 Assert-Equal "LMAX_SANDBOX_GLOBAL_PROCESS_TEST_RUN_RECONCILED_R001" $runnerMockFixMain.status "Mock FIX-server path must reconcile through FIX framing."
 Assert-Equal "mock_fix_server" $runnerMockFixExecution.execution_mode_detail "Mock FIX-server path must use FIX adapter path."
 Assert-Equal 9 $runnerMockFixExecution.orders_submitted_count "Mock FIX-server path must submit current 9 preview orders."
@@ -494,7 +494,7 @@ foreach ($externalId in $externalIds) {
 }
 $firstMapping = @($runnerMockFixClOrdIdMap.mappings)[0]
 Assert-True ([string]$firstMapping.internal_order_id -match [regex]::Escape($lmaxReadyRunId)) "ClOrdID mapping must preserve long internal order id."
-Assert-Equal "LXR0010001" $firstMapping.external_cl_ord_id "First external ClOrdID must be deterministic."
+Assert-Equal "LXR1A001O001" $firstMapping.external_cl_ord_id "First external ClOrdID must be deterministic and attempt-scoped."
 Assert-Equal $firstMapping.internal_order_id @($runnerMockFixExecution.orders_submitted)[0].internal_order_id "Execution submitted order must retain internal order id."
 Assert-Equal $firstMapping.external_cl_ord_id @($runnerMockFixExecution.orders_submitted)[0].external_cl_ord_id "Execution submitted order must retain external ClOrdID."
 Assert-Equal $firstMapping.internal_order_id @($runnerMockFixExecution.fills)[0].internal_order_id "Parsed fills must map external ClOrdID back to internal order id."
@@ -504,7 +504,7 @@ Assert-True ($mockFixReportsLog -match "35=A" -and $mockFixReportsLog -match "35
 Assert-True ($mockFixOrdersLog -notmatch "TEST_PASSWORD" -and $mockFixOrdersLog -notmatch "554=TEST_PASSWORD") "Mock FIX-server path must not log raw password."
 Assert-True ($mockFixOrdersLog -notmatch "(^|\|)21=") "LMAX NewOrderSingle must not include tag 21 HandlInst."
 Assert-True ($mockFixOrdersLog -match "(^|\|)48=" -and $mockFixOrdersLog -match "(^|\|)22=8(\||$)") "LMAX NewOrderSingle must preserve SecurityID tag 48 and tag 22=8."
-Assert-True ($mockFixOrdersLog -match "(^|\|)11=LXR0010001(\||$)") "Outbound FIX tag 11 must use short external ClOrdID."
+Assert-True ($mockFixOrdersLog -match "(^|\|)11=LXR1A001O001(\||$)") "Outbound FIX tag 11 must use short attempt-scoped external ClOrdID."
 Assert-True ($mockFixOrdersLog -notmatch [regex]::Escape([string]$firstMapping.internal_order_id)) "Outbound FIX tag 11 must not use long internal order id."
 Clear-TestLmaxCredentialEnvironment
 
@@ -529,7 +529,7 @@ Set-TestLmaxCredentialEnvironment
 & $RunnerScript -RepoRoot $RepoRoot -OutputSubdir "lmax-sandbox-global-process-test-run-r001-test\lmax-ready" -RunId $lmaxReadyRunId -ExecuteLmaxDemoSandboxOrders -UseActualLmaxFixClient -UseMockFixServer -MockFixServerRejectClOrdIdLength
 $runnerClOrdIdRejectMain = Read-JsonFile (Join-Path $lmaxReadyDir "lmax-sandbox-global-process-test-run-r001.json")
 $runnerClOrdIdRejectExecution = Read-JsonFile (Join-Path $lmaxReadyDir "sandbox-execution-result-r001.json")
-$clOrdIdRejectReportsLog = Get-Content -Raw -LiteralPath (Join-Path $lmaxReadyDir "logs\$lmaxReadyRunId\execution-reports.log")
+$clOrdIdRejectReportsLog = Get-Content -Raw -LiteralPath (Join-Path $lmaxReadyDir "logs\$lmaxReadyRunId\attempt-001\execution-reports.log")
 Assert-Equal "LMAX_SANDBOX_EXECUTION_BLOCKED_CLORDID_TOO_LONG_R001" $runnerClOrdIdRejectMain.status "Session rejects for tag 11 length must classify as ClOrdID too long."
 Assert-Equal "LMAX_SANDBOX_EXECUTION_BLOCKED_CLORDID_TOO_LONG_R001" $runnerClOrdIdRejectExecution.status "Execution result must classify tag 11 length rejects."
 Assert-Equal 9 $runnerClOrdIdRejectExecution.orders_submitted_count "ClOrdID reject scenario must preserve submitted order count."
@@ -547,8 +547,8 @@ Set-TestLmaxCredentialEnvironment
 & $RunnerScript -RepoRoot $RepoRoot -OutputSubdir "lmax-sandbox-global-process-test-run-r001-test\lmax-ready" -RunId $lmaxReadyRunId -ExecuteLmaxDemoSandboxOrders -UseActualLmaxFixClient -UseMockFixServer -MockFixServerRejectTag21
 $runnerTag21RejectMain = Read-JsonFile (Join-Path $lmaxReadyDir "lmax-sandbox-global-process-test-run-r001.json")
 $runnerTag21RejectExecution = Read-JsonFile (Join-Path $lmaxReadyDir "sandbox-execution-result-r001.json")
-$tag21RejectOrdersLog = Get-Content -Raw -LiteralPath (Join-Path $lmaxReadyDir "logs\$lmaxReadyRunId\orders.log")
-$tag21RejectReportsLog = Get-Content -Raw -LiteralPath (Join-Path $lmaxReadyDir "logs\$lmaxReadyRunId\execution-reports.log")
+$tag21RejectOrdersLog = Get-Content -Raw -LiteralPath (Join-Path $lmaxReadyDir "logs\$lmaxReadyRunId\attempt-001\orders.log")
+$tag21RejectReportsLog = Get-Content -Raw -LiteralPath (Join-Path $lmaxReadyDir "logs\$lmaxReadyRunId\attempt-001\execution-reports.log")
 Assert-Equal "LMAX_SANDBOX_EXECUTION_BLOCKED_ORDER_REJECTED_UNKNOWN_TAG_R001" $runnerTag21RejectMain.status "Session rejects for tag 21 must be classified as order-level unknown tag rejects."
 Assert-Equal "LMAX_SANDBOX_EXECUTION_BLOCKED_ORDER_REJECTED_UNKNOWN_TAG_R001" $runnerTag21RejectExecution.status "Execution result must classify tag 21 session rejects."
 Assert-Equal 9 $runnerTag21RejectExecution.orders_submitted_count "Tag 21 reject scenario must preserve submitted order count."
