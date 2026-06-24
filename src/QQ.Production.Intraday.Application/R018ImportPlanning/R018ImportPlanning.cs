@@ -1,4 +1,4 @@
-﻿using System.Globalization;
+using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -9,10 +9,10 @@ namespace QQ.Production.Intraday.Application.R018ImportPlanning;
 
 public static class R018ImportPlanningConstants
 {
-    public const string ToolVersion = "M1C_R018_INTRADAY_IMPORT_PLAN_R001";
-    public const string PlanSchemaVersion = "r018_intraday_import_plan_v1";
-    public const string BundleManifestSchemaVersion = "r018_artifact_bundle_manifest_v1";
-    public const string NormalizedEventSchemaVersion = "r018_normalized_event_v1";
+    public const string ToolVersion = "M1C_R018_INTRADAY_IMPORT_PLAN_R002";
+    public const string PlanSchemaVersion = "r018_intraday_import_plan_v2";
+    public const string BundleManifestSchemaVersion = "r018_artifact_bundle_manifest_v2";
+    public const string NormalizedEventSchemaVersion = "r018_normalized_event_v2";
 }
 
 public enum R018ImportBundleStatus
@@ -31,6 +31,18 @@ public enum R018ProvenanceType
     MANUAL_UI,
     Derived,
     Unknown
+}
+
+public enum R018ArtifactType
+{
+    RAW_FIX_LOG,
+    ORDER_LEDGER,
+    FILL_LEDGER,
+    EOD_LMAX_REPORT,
+    MANUAL_EXPORT,
+    MANUAL_UI,
+    BBO_JSONL,
+    UNKNOWN
 }
 
 public enum R018NormalizedEventKind
@@ -53,7 +65,8 @@ public enum R018LedgerApplicability
 public sealed record R018SourceArtifact(
     string Path,
     string Sha256,
-    string Kind);
+    string Kind,
+    R018ArtifactType ArtifactType = R018ArtifactType.UNKNOWN);
 
 public sealed record R018ArtifactBundleManifest(
     string SchemaVersion,
@@ -136,7 +149,20 @@ public sealed record R018NormalizedEvent(
     bool IsTerminal,
     bool IsManualTerminalObservation,
     R018SourceEvidence Evidence,
-    string RawJson)
+    string RawJson,
+    int? MsgSeqNum = null,
+    bool? PossDupFlag = null,
+    string? FixReceiveEventId = null,
+    string? SourceExecutionReportEventId = null,
+    string? TerminalState = null,
+    decimal? Bid = null,
+    decimal? Ask = null,
+    decimal? BidSize = null,
+    decimal? AskSize = null,
+    string? BenchmarkId = null,
+    string? BenchmarkType = null,
+    IReadOnlyList<R018SourceEvidence>? EvidenceRefs = null,
+    IReadOnlyList<string>? MissingFields = null)
 {
     public string StableKey => Kind switch
     {
@@ -175,6 +201,13 @@ public sealed record R018ValidationReport(
     int DuplicateConflictCount,
     bool FutureDbApplyAllowed);
 
+public sealed record R018CatalogResolution(
+    string Resolution,
+    string? CatalogPath,
+    string? CatalogSha256,
+    string? CatalogSchemaVersion,
+    string? MatchedEntryHash);
+
 public sealed record R018LineageReport(
     string SchemaVersion,
     string ToolVersion,
@@ -183,7 +216,8 @@ public sealed record R018LineageReport(
     string? ModelRunId,
     string LedgerApplicability,
     IReadOnlyList<string> UnmappedEvents,
-    IReadOnlyList<string> LineageWarnings);
+    IReadOnlyList<string> LineageWarnings,
+    R018CatalogResolution? CatalogResolution = null);
 
 public sealed record R018IdentityScopeReport(
     string SchemaVersion,
@@ -199,6 +233,27 @@ public sealed record R018IdentityScopeReport(
     bool FutureDbApplyAllowed,
     bool LocalIsolatedReplayAllowed,
     IReadOnlyList<string> Risks);
+
+public sealed record R018IdentityKeyAuditRow(
+    string KeyKind,
+    string SourceBusinessKey,
+    string CurrentDbCandidateKey,
+    string SafeStagingKey,
+    string Status,
+    string Detail);
+
+public sealed record R018PlannedStagingRow(
+    string PlannedRowId,
+    string TargetContract,
+    string OperationKind,
+    string SourceBusinessKey,
+    string? CanonicalModelRunId,
+    IReadOnlyDictionary<string, string> FieldMappings,
+    IReadOnlyList<string> Dependencies,
+    IReadOnlyList<string> MissingRequiredFields,
+    IReadOnlyList<R018SourceEvidence> EvidenceRefs,
+    bool ApplyEligible,
+    IReadOnlyList<string> RejectionReasons);
 
 public sealed record R018ImportPlan(
     string SchemaVersion,
@@ -221,7 +276,9 @@ public sealed record R018ImportPlan(
     IReadOnlyList<R018NormalizedEvent> NormalizedEvents,
     R018ValidationReport Validation,
     R018LineageReport Lineage,
-    R018IdentityScopeReport IdentityScope);
+    R018IdentityScopeReport IdentityScope,
+    IReadOnlyList<R018IdentityKeyAuditRow>? IdentityKeyAudit = null,
+    IReadOnlyList<R018PlannedStagingRow>? PlannedStagingRows = null);
 
 public sealed record R018ParityRow(
     string Check,
@@ -256,7 +313,12 @@ public sealed class R018ArtifactBundleReader
         }
 
         var issues = new List<string>();
-        var manifestPath = Path.Combine(fullBundlePath, "r018_bundle_manifest_v1.json");
+        var manifestPath = Path.Combine(fullBundlePath, "r018_bundle_manifest_v2.json");
+        if (!File.Exists(manifestPath))
+        {
+            manifestPath = Path.Combine(fullBundlePath, "r018_bundle_manifest_v1.json");
+        }
+
         var manifestFound = File.Exists(manifestPath);
         var manifest = manifestFound
             ? ReadManifest(manifestPath, issues)
@@ -264,24 +326,42 @@ public sealed class R018ArtifactBundleReader
 
         if (!manifestFound)
         {
-            issues.Add("MISSING_MANIFEST:r018_bundle_manifest_v1.json");
+            issues.Add("MISSING_MANIFEST:r018_bundle_manifest_v2.json");
         }
 
         var events = new List<R018NormalizedEvent>();
         if (manifestFound)
         {
+            var seenArtifacts = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             foreach (var artifact in manifest.Artifacts)
             {
-                var artifactPath = Path.GetFullPath(Path.Combine(fullBundlePath, artifact.Path));
-                if (!artifactPath.StartsWith(fullBundlePath, StringComparison.OrdinalIgnoreCase))
+                if (!seenArtifacts.Add(artifact.Path))
                 {
-                    issues.Add($"ARTIFACT_PATH_ESCAPES_BUNDLE:{artifact.Path}");
+                    issues.Add($"DUPLICATE_ARTIFACT_PATH:{artifact.Path}");
+                    continue;
+                }
+
+                if (artifact.ArtifactType is R018ArtifactType.UNKNOWN)
+                {
+                    issues.Add($"UNSUPPORTED_ARTIFACT_TYPE:{artifact.Path}:{artifact.ArtifactType}");
+                    continue;
+                }
+
+                if (!TryResolveArtifactPath(fullBundlePath, artifact.Path, out var artifactPath, out var pathIssue))
+                {
+                    issues.Add(pathIssue);
                     continue;
                 }
 
                 if (!File.Exists(artifactPath))
                 {
                     issues.Add($"MISSING_ARTIFACT:{artifact.Path}");
+                    continue;
+                }
+
+                if (IsReparsePoint(artifactPath))
+                {
+                    issues.Add($"ARTIFACT_REPARSE_POINT_REJECTED:{artifact.Path}");
                     continue;
                 }
 
@@ -298,6 +378,10 @@ public sealed class R018ArtifactBundleReader
                 else if (artifactPath.EndsWith(".csv", StringComparison.OrdinalIgnoreCase))
                 {
                     events.AddRange(ReadCsv(artifactPath, artifact, manifest, actualHash, issues));
+                }
+                else
+                {
+                    issues.Add($"UNSUPPORTED_ARTIFACT_EXTENSION:{artifact.Path}");
                 }
             }
         }
@@ -327,7 +411,8 @@ public sealed class R018ArtifactBundleReader
                     artifacts.Add(new R018SourceArtifact(
                         GetString(item, "path") ?? string.Empty,
                         GetString(item, "sha256") ?? string.Empty,
-                        GetString(item, "kind") ?? "unknown"));
+                        GetString(item, "kind") ?? "unknown",
+                        ParseArtifactType(GetString(item, "artifact_type") ?? GetString(item, "artifactType") ?? GetString(item, "type"))));
                 }
             }
 
@@ -356,6 +441,76 @@ public sealed class R018ArtifactBundleReader
         }
     }
 
+
+    private static bool TryResolveArtifactPath(string bundlePath, string artifactRelativePath, out string artifactPath, out string issue)
+    {
+        artifactPath = string.Empty;
+        issue = string.Empty;
+        if (string.IsNullOrWhiteSpace(artifactRelativePath))
+        {
+            issue = "EMPTY_ARTIFACT_PATH";
+            return false;
+        }
+
+        if (Path.IsPathRooted(artifactRelativePath))
+        {
+            issue = $"ARTIFACT_ROOTED_PATH_REJECTED:{artifactRelativePath}";
+            return false;
+        }
+
+        var separators = new[] { Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar };
+        if (artifactRelativePath.Split(separators, StringSplitOptions.RemoveEmptyEntries).Any(part => part == ".."))
+        {
+            issue = $"ARTIFACT_PARENT_TRAVERSAL_REJECTED:{artifactRelativePath}";
+            return false;
+        }
+
+        var bundleFull = Path.GetFullPath(bundlePath);
+        var candidate = Path.GetFullPath(Path.Combine(bundleFull, artifactRelativePath));
+        var relative = Path.GetRelativePath(bundleFull, candidate);
+        if (relative.StartsWith("..", StringComparison.Ordinal) || Path.IsPathRooted(relative))
+        {
+            issue = $"ARTIFACT_PATH_ESCAPES_BUNDLE:{artifactRelativePath}";
+            return false;
+        }
+
+        artifactPath = candidate;
+        return true;
+    }
+
+    private static bool IsReparsePoint(string path)
+        => (File.GetAttributes(path) & FileAttributes.ReparsePoint) != 0;
+
+    private static R018ArtifactType ParseArtifactType(string? value)
+    {
+        var normalized = value?.Replace("-", "_", StringComparison.Ordinal).Trim();
+        return Enum.TryParse<R018ArtifactType>(normalized, ignoreCase: true, out var parsed)
+            ? parsed
+            : R018ArtifactType.UNKNOWN;
+    }
+
+    private static IReadOnlySet<R018ProvenanceType> AllowedProvenances(R018ArtifactType artifactType)
+        => artifactType switch
+        {
+            R018ArtifactType.RAW_FIX_LOG => new HashSet<R018ProvenanceType> { R018ProvenanceType.RAW_FIX },
+            R018ArtifactType.ORDER_LEDGER or R018ArtifactType.FILL_LEDGER => new HashSet<R018ProvenanceType> { R018ProvenanceType.ARTIFACT_LEDGER, R018ProvenanceType.Derived },
+            R018ArtifactType.EOD_LMAX_REPORT => new HashSet<R018ProvenanceType> { R018ProvenanceType.EOD_LMAX_REPORT },
+            R018ArtifactType.MANUAL_EXPORT => new HashSet<R018ProvenanceType> { R018ProvenanceType.MANUAL_EXPORT },
+            R018ArtifactType.MANUAL_UI => new HashSet<R018ProvenanceType> { R018ProvenanceType.MANUAL_UI },
+            R018ArtifactType.BBO_JSONL => new HashSet<R018ProvenanceType> { R018ProvenanceType.ARTIFACT_LEDGER, R018ProvenanceType.Derived },
+            _ => new HashSet<R018ProvenanceType>()
+        };
+
+    private static R018ProvenanceType DefaultProvenanceForArtifact(R018ArtifactType artifactType)
+        => artifactType switch
+        {
+            R018ArtifactType.RAW_FIX_LOG => R018ProvenanceType.RAW_FIX,
+            R018ArtifactType.ORDER_LEDGER or R018ArtifactType.FILL_LEDGER or R018ArtifactType.BBO_JSONL => R018ProvenanceType.ARTIFACT_LEDGER,
+            R018ArtifactType.EOD_LMAX_REPORT => R018ProvenanceType.EOD_LMAX_REPORT,
+            R018ArtifactType.MANUAL_EXPORT => R018ProvenanceType.MANUAL_EXPORT,
+            R018ArtifactType.MANUAL_UI => R018ProvenanceType.MANUAL_UI,
+            _ => R018ProvenanceType.Unknown
+        };
     private static IEnumerable<R018NormalizedEvent> ReadJsonLines(
         string artifactPath,
         R018SourceArtifact artifact,
@@ -389,7 +544,10 @@ public sealed class R018ArtifactBundleReader
                 continue;
             }
 
-            yield return Normalize(obj, manifest, artifact, sourceFileHash, lineNumber.ToString(CultureInfo.InvariantCulture), line);
+            foreach (var ev in Normalize(obj, manifest, artifact, sourceFileHash, lineNumber.ToString(CultureInfo.InvariantCulture), line, issues))
+            {
+                yield return ev;
+            }
         }
     }
 
@@ -431,26 +589,38 @@ public sealed class R018ArtifactBundleReader
                 obj[headers[i]] = values[i];
             }
 
-            yield return Normalize(obj, manifest, artifact, sourceFileHash, lineNumber.ToString(CultureInfo.InvariantCulture), line);
+            foreach (var ev in Normalize(obj, manifest, artifact, sourceFileHash, lineNumber.ToString(CultureInfo.InvariantCulture), line, issues))
+            {
+                yield return ev;
+            }
         }
     }
 
-    private static R018NormalizedEvent Normalize(
+    private static IEnumerable<R018NormalizedEvent> Normalize(
         JsonObject obj,
         R018ArtifactBundleManifest manifest,
         R018SourceArtifact artifact,
         string sourceFileHash,
         string locator,
-        string rawPayload)
+        string rawPayload,
+        List<string> issues)
     {
-        var provenance = ParseProvenance(GetAnyString(obj, "provenance", "source_provenance", "source"));
-        var rawEventType = GetAnyString(obj, "event_type", "type", "msg_type", "kind") ?? artifact.Kind;
+        var declaredProvenance = GetAnyString(obj, "provenance", "source_provenance", "source");
+        var provenance = string.IsNullOrWhiteSpace(declaredProvenance)
+            ? DefaultProvenanceForArtifact(artifact.ArtifactType)
+            : ParseProvenance(declaredProvenance);
+        if (!AllowedProvenances(artifact.ArtifactType).Contains(provenance))
+        {
+            issues.Add($"PROVENANCE_NOT_ALLOWED_FOR_ARTIFACT:{artifact.Path}:{artifact.ArtifactType}:{provenance}");
+        }
+
+        var rawEventType = GetAnyString(obj, "event_type", "type", "msg_type", "kind", "35") ?? artifact.Kind;
         var execType = GetAnyString(obj, "exec_type", "tag150", "150");
         var ordStatus = GetAnyString(obj, "ord_status", "tag39", "39");
         var kind = DetermineKind(rawEventType, execType, provenance);
         var isManualTerminalObservation = provenance is R018ProvenanceType.MANUAL_UI or R018ProvenanceType.MANUAL_EXPORT
             && (kind is R018NormalizedEventKind.Fill or R018NormalizedEventKind.ExecutionReport);
-        if (isManualTerminalObservation && provenance is R018ProvenanceType.MANUAL_UI)
+        if (isManualTerminalObservation)
         {
             kind = R018NormalizedEventKind.ManualObservation;
         }
@@ -473,8 +643,13 @@ public sealed class R018ArtifactBundleReader
         var lastQuantity = GetAnyDecimal(obj, "last_qty", "last_quantity", "LastQty", "tag32", "32");
         var cumQuantity = GetAnyDecimal(obj, "cum_qty", "CumQty", "tag14", "14");
         var leavesQuantity = GetAnyDecimal(obj, "leaves_qty", "LeavesQty", "tag151", "151");
+        var missing = new List<string>();
+        if (kind is R018NormalizedEventKind.Order && string.IsNullOrWhiteSpace(clOrdId)) missing.Add("ClOrdID");
+        if (kind is R018NormalizedEventKind.Order && orderQuantity is null) missing.Add("OrderQty");
+        if (kind is R018NormalizedEventKind.Order && GetAnyDecimal(obj, "limit_price", "price", "tag44", "44") is null) missing.Add("tag44");
+        if (kind is R018NormalizedEventKind.Fill && string.IsNullOrWhiteSpace(execId)) missing.Add("ExecID");
 
-        return new R018NormalizedEvent(
+        var normalized = new R018NormalizedEvent(
             eventId,
             kind,
             provenance,
@@ -509,9 +684,43 @@ public sealed class R018ArtifactBundleReader
             IsTerminal(execType, ordStatus, kind, cumQuantity, leavesQuantity),
             isManualTerminalObservation,
             evidence,
-            rawPayload);
-    }
+            rawPayload,
+            GetAnyInt(obj, "msg_seq_num", "tag34", "34"),
+            GetAnyBool(obj, "poss_dup", "poss_dup_flag", "tag43", "43"),
+            GetAnyString(obj, "fix_receive_event_id"),
+            null,
+            ResolveTerminalState(execType, ordStatus, kind, cumQuantity, leavesQuantity),
+            GetAnyDecimal(obj, "bid"),
+            GetAnyDecimal(obj, "ask"),
+            GetAnyDecimal(obj, "bid_size"),
+            GetAnyDecimal(obj, "ask_size"),
+            GetAnyString(obj, "benchmark_id"),
+            GetAnyString(obj, "benchmark_type"),
+            new[] { evidence },
+            missing);
 
+        yield return normalized;
+
+        if (normalized.Kind is R018NormalizedEventKind.ExecutionReport && IsFillExecType(execType) && lastQuantity is > 0)
+        {
+            var derivedEvidence = evidence with
+            {
+                Provenance = R018ProvenanceType.Derived,
+                AuthorityClass = "DERIVED_FROM_EXECUTION_REPORT"
+            };
+            yield return normalized with
+            {
+                EventId = normalized.EventId + ":fill_fact",
+                Kind = R018NormalizedEventKind.Fill,
+                Provenance = R018ProvenanceType.Derived,
+                Evidence = derivedEvidence,
+                SourceExecutionReportEventId = normalized.EventId,
+                IsTerminal = IsTerminal(execType, ordStatus, R018NormalizedEventKind.Fill, cumQuantity, leavesQuantity),
+                TerminalState = ResolveTerminalState(execType, ordStatus, R018NormalizedEventKind.Fill, cumQuantity, leavesQuantity),
+                EvidenceRefs = new[] { evidence }
+            };
+        }
+    }
     private static R018NormalizedEventKind DetermineKind(string? rawEventType, string? execType, R018ProvenanceType provenance)
     {
         var value = rawEventType?.Replace("_", string.Empty, StringComparison.Ordinal).Replace("-", string.Empty, StringComparison.Ordinal);
@@ -525,21 +734,23 @@ public sealed class R018ArtifactBundleReader
             return R018NormalizedEventKind.Order;
         }
 
-        if (value is not null && value.Contains("BBO", StringComparison.OrdinalIgnoreCase))
+        if (value is not null && (value.Contains("BBO", StringComparison.OrdinalIgnoreCase) || value.Equals("W", StringComparison.OrdinalIgnoreCase)))
         {
             return R018NormalizedEventKind.Bbo;
         }
 
         if (value is not null && value.Contains("Fill", StringComparison.OrdinalIgnoreCase))
         {
-            return provenance is R018ProvenanceType.MANUAL_UI
+            return provenance is R018ProvenanceType.MANUAL_UI or R018ProvenanceType.MANUAL_EXPORT
                 ? R018NormalizedEventKind.ManualObservation
                 : R018NormalizedEventKind.Fill;
         }
 
         if (value is not null && (value.Equals("ExecutionReport", StringComparison.OrdinalIgnoreCase) || value.Equals("8", StringComparison.OrdinalIgnoreCase)))
         {
-            return IsFillExecType(execType) ? R018NormalizedEventKind.Fill : R018NormalizedEventKind.ExecutionReport;
+            return provenance is R018ProvenanceType.MANUAL_UI or R018ProvenanceType.MANUAL_EXPORT
+                ? R018NormalizedEventKind.ManualObservation
+                : R018NormalizedEventKind.ExecutionReport;
         }
 
         return R018NormalizedEventKind.Unknown;
@@ -549,15 +760,36 @@ public sealed class R018ArtifactBundleReader
         => execType is "1" or "2" or "F" or "f" or "PARTIAL_FILL" or "FILL";
 
     private static bool IsTerminal(string? execType, string? ordStatus, R018NormalizedEventKind kind, decimal? cumQuantity, decimal? leavesQuantity)
+        => ResolveTerminalState(execType, ordStatus, kind, cumQuantity, leavesQuantity) is "FILLED" or "CANCELED" or "REJECTED" or "EXPIRED";
+
+    private static string ResolveTerminalState(string? execType, string? ordStatus, R018NormalizedEventKind kind, decimal? cumQuantity, decimal? leavesQuantity)
     {
-        if (kind is R018NormalizedEventKind.Fill && leavesQuantity is 0)
+        if (ordStatus is "2" or "FILLED" || (cumQuantity.HasValue && leavesQuantity is 0 && (IsFillExecType(execType) || kind is R018NormalizedEventKind.Fill)))
         {
-            return true;
+            return "FILLED";
         }
 
-        return execType is "4" or "8" or "C" or "F" or "EXPIRED" or "CANCELED" or "CANCELLED" or "REJECTED"
-            || ordStatus is "2" or "4" or "8" or "C" or "FILLED" or "CANCELED" or "CANCELLED" or "REJECTED" or "EXPIRED"
-            || (cumQuantity.HasValue && leavesQuantity is 0);
+        if (ordStatus is "4" or "CANCELED" or "CANCELLED" || execType is "4" or "CANCELED" or "CANCELLED")
+        {
+            return "CANCELED";
+        }
+
+        if (ordStatus is "8" or "REJECTED" || execType is "8" or "REJECTED")
+        {
+            return "REJECTED";
+        }
+
+        if (ordStatus is "C" or "EXPIRED" || execType is "C" or "EXPIRED")
+        {
+            return "EXPIRED";
+        }
+
+        if ((kind is R018NormalizedEventKind.Fill or R018NormalizedEventKind.ExecutionReport) && IsFillExecType(execType) && leavesQuantity is > 0)
+        {
+            return "PARTIAL_FILL";
+        }
+
+        return "NON_TERMINAL";
     }
 
     private static R018ProvenanceType ParseProvenance(string? provenance)
@@ -606,18 +838,28 @@ public sealed class R018ArtifactBundleReader
     private static string ComputeBundleHash(string bundlePath, IReadOnlyList<R018SourceArtifact> artifacts)
     {
         var builder = new StringBuilder();
+        var manifestPathV2 = Path.Combine(bundlePath, "r018_bundle_manifest_v2.json");
+        var manifestPathV1 = Path.Combine(bundlePath, "r018_bundle_manifest_v1.json");
+        var manifestPath = File.Exists(manifestPathV2) ? manifestPathV2 : manifestPathV1;
+        if (File.Exists(manifestPath))
+        {
+            builder.Append("manifest|").Append(Path.GetFileName(manifestPath)).Append('|').Append(ComputeFileSha256(manifestPath)).AppendLine();
+        }
+
         foreach (var artifact in artifacts.OrderBy(a => a.Path, StringComparer.Ordinal))
         {
             var path = Path.GetFullPath(Path.Combine(bundlePath, artifact.Path));
+            builder.Append("artifact|").Append(artifact.Path).Append('|').Append(artifact.Kind).Append('|').Append(artifact.ArtifactType).Append('|').Append(artifact.Sha256).Append('|');
             if (File.Exists(path))
             {
-                builder.Append(artifact.Path).Append('|').Append(ComputeFileSha256(path)).AppendLine();
+                builder.Append(ComputeFileSha256(path));
             }
+
+            builder.AppendLine();
         }
 
         return ComputeSha256(builder.ToString());
     }
-
     public static string ComputeFileSha256(string path)
     {
         using var stream = File.OpenRead(path);
@@ -650,6 +892,37 @@ public sealed class R018ArtifactBundleReader
             {
                 return parsed;
             }
+        }
+
+        return null;
+    }
+
+    private static int? GetAnyInt(JsonObject obj, params string[] names)
+    {
+        foreach (var name in names)
+        {
+            var value = GetString(obj, name);
+            if (int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed))
+            {
+                return parsed;
+            }
+        }
+
+        return null;
+    }
+
+    private static bool? GetAnyBool(JsonObject obj, params string[] names)
+    {
+        foreach (var name in names)
+        {
+            var value = GetString(obj, name);
+            if (bool.TryParse(value, out var parsed))
+            {
+                return parsed;
+            }
+
+            if (value is "Y" or "1") return true;
+            if (value is "N" or "0") return false;
         }
 
         return null;
@@ -754,7 +1027,7 @@ public sealed class R018ArtifactBundleValidator
     {
         if (!bundle.ManifestFound)
         {
-            issues.Add(new R018ValidationIssue("ERROR", "MISSING_MANIFEST", "r018_bundle_manifest_v1.json is required."));
+            issues.Add(new R018ValidationIssue("ERROR", "MISSING_MANIFEST", "r018_bundle_manifest_v2.json is required."));
             return;
         }
 
@@ -791,12 +1064,35 @@ public sealed class R018ArtifactBundleValidator
 
     private static void ValidateEvents(R018ArtifactBundle bundle, List<R018ValidationIssue> issues)
     {
-        var orders = DeduplicateExact(bundle.Events.Where(e => e.Kind is R018NormalizedEventKind.Order)).ToDictionary(OrderLookupKey, StringComparer.Ordinal);
+        if (bundle.ManifestFound && bundle.Events.Count == 0)
+        {
+            issues.Add(new R018ValidationIssue("ERROR", "EMPTY_BUNDLE", "Bundle contains no normalized events."));
+        }
+
+        var orders = DeduplicateExact(bundle.Events.Where(e => e.Kind is R018NormalizedEventKind.Order))
+            .GroupBy(OrderLookupKey, StringComparer.Ordinal)
+            .ToDictionary(g => g.Key, g => g.First(), StringComparer.Ordinal);
+
         foreach (var ev in bundle.Events)
         {
             if (ev.Kind is R018NormalizedEventKind.Unknown)
             {
                 issues.Add(new R018ValidationIssue("ERROR", "UNKNOWN_EVENT_KIND", "Event kind could not be normalized.", ev.EventId, ev.Evidence.SourcePath));
+            }
+
+            if (!ScopeMatches(ev.Environment, bundle.Manifest.Environment))
+            {
+                issues.Add(new R018ValidationIssue("ERROR", "SCOPE_ENVIRONMENT_MISMATCH", $"event={ev.Environment} manifest={bundle.Manifest.Environment}", ev.EventId, ev.Evidence.SourcePath));
+            }
+
+            if (!ScopeMatches(ev.BrokerAccount, bundle.Manifest.BrokerAccount))
+            {
+                issues.Add(new R018ValidationIssue("ERROR", "SCOPE_ACCOUNT_MISMATCH", $"event={ev.BrokerAccount} manifest={bundle.Manifest.BrokerAccount}", ev.EventId, ev.Evidence.SourcePath));
+            }
+
+            if (!ScopeMatches(ev.Venue, bundle.Manifest.Venue))
+            {
+                issues.Add(new R018ValidationIssue("ERROR", "SCOPE_VENUE_MISMATCH", $"event={ev.Venue} manifest={bundle.Manifest.Venue}", ev.EventId, ev.Evidence.SourcePath));
             }
 
             if (ev.Symbol is null || !KnownSymbols.Contains(ev.Symbol))
@@ -809,23 +1105,60 @@ public sealed class R018ArtifactBundleValidator
                 issues.Add(new R018ValidationIssue("ERROR", "UNKNOWN_QUANTITY_UNIT", ev.QuantityUnit ?? "missing", ev.EventId, ev.Evidence.SourcePath));
             }
 
-            if (ev.Kind is R018NormalizedEventKind.Order && string.IsNullOrWhiteSpace(ev.ClOrdId))
+            if (ev.Side is not null && ev.Side is not ("BUY" or "SELL"))
             {
-                issues.Add(new R018ValidationIssue("ERROR", "MISSING_CLORDID", "Order is missing ClOrdID.", ev.EventId, ev.Evidence.SourcePath));
+                issues.Add(new R018ValidationIssue("ERROR", "INVALID_SIDE", ev.Side, ev.EventId, ev.Evidence.SourcePath));
             }
 
-            if (ev.Kind is R018NormalizedEventKind.Order && ev.OrderType is "MARKET")
+            if (ev.Kind is R018NormalizedEventKind.Order)
             {
-                issues.Add(new R018ValidationIssue("ERROR", "MARKET_ORDER_FORBIDDEN", "M1C accepts LIMIT-only R018/R216 evidence.", ev.EventId, ev.Evidence.SourcePath));
+                if (string.IsNullOrWhiteSpace(ev.ClOrdId))
+                {
+                    issues.Add(new R018ValidationIssue("ERROR", "MISSING_CLORDID", "Order is missing ClOrdID.", ev.EventId, ev.Evidence.SourcePath));
+                }
+
+                if (ev.OrderQuantity is null or <= 0)
+                {
+                    issues.Add(new R018ValidationIssue("ERROR", "INVALID_ORDER_QTY", ev.OrderQuantity?.ToString(CultureInfo.InvariantCulture) ?? "missing", ev.EventId, ev.Evidence.SourcePath));
+                }
+
+                if (ev.OrderType is not "LIMIT")
+                {
+                    issues.Add(new R018ValidationIssue("ERROR", ev.OrderType is "MARKET" ? "MARKET_ORDER_FORBIDDEN" : "LIMIT_ORDER_REQUIRED", ev.OrderType ?? "missing", ev.EventId, ev.Evidence.SourcePath));
+                }
+
+                if (ev.LimitPrice is null or <= 0)
+                {
+                    issues.Add(new R018ValidationIssue("ERROR", "LIMIT_PRICE_TAG44_REQUIRED", ev.LimitPrice?.ToString(CultureInfo.InvariantCulture) ?? "missing", ev.EventId, ev.Evidence.SourcePath));
+                }
+
+                if (ev.TimeInForce is not null && ev.TimeInForce is not ("0" or "DAY" or "GTC"))
+                {
+                    issues.Add(new R018ValidationIssue("ERROR", "UNSUPPORTED_TIME_IN_FORCE", ev.TimeInForce, ev.EventId, ev.Evidence.SourcePath));
+                }
+
+                if (ev.SourceTimestampUtc is null)
+                {
+                    issues.Add(new R018ValidationIssue("ERROR", "MISSING_SOURCE_TIMESTAMP", "Order requires source timestamp.", ev.EventId, ev.Evidence.SourcePath));
+                }
+            }
+
+            if (ev.Kind is R018NormalizedEventKind.ExecutionReport or R018NormalizedEventKind.Fill)
+            {
+                if (string.IsNullOrWhiteSpace(ev.ClOrdId) || !orders.TryGetValue(OrderLookupKey(ev), out var order))
+                {
+                    issues.Add(new R018ValidationIssue("ERROR", ev.Kind is R018NormalizedEventKind.Fill ? "FILL_WITHOUT_CHILD_ORDER" : "REPORT_WITHOUT_CHILD_ORDER", ev.ClOrdId ?? "missing", ev.EventId, ev.Evidence.SourcePath));
+                }
+                else
+                {
+                    ValidateSame(order.Symbol, ev.Symbol, "SYMBOL_MISMATCH_WITH_ORDER", ev, issues);
+                    ValidateSame(order.Side, ev.Side, "SIDE_MISMATCH_WITH_ORDER", ev, issues);
+                    ValidateSame(order.QuantityUnit, ev.QuantityUnit, "UNIT_MISMATCH_WITH_ORDER", ev, issues);
+                }
             }
 
             if (ev.Kind is R018NormalizedEventKind.Fill)
             {
-                if (string.IsNullOrWhiteSpace(ev.ClOrdId) || !orders.ContainsKey(OrderLookupKey(ev)))
-                {
-                    issues.Add(new R018ValidationIssue("ERROR", "FILL_WITHOUT_CHILD_ORDER", ev.ClOrdId ?? "missing", ev.EventId, ev.Evidence.SourcePath));
-                }
-
                 if (string.IsNullOrWhiteSpace(ev.ExecId))
                 {
                     issues.Add(new R018ValidationIssue("ERROR", "FILL_WITHOUT_EXECID", "Fill must have ExecID.", ev.EventId, ev.Evidence.SourcePath));
@@ -836,39 +1169,146 @@ public sealed class R018ArtifactBundleValidator
                     issues.Add(new R018ValidationIssue("ERROR", "FILL_MISSING_QTY_OR_PRICE", "Fill must have positive quantity and price.", ev.EventId, ev.Evidence.SourcePath));
                 }
 
-                if (ev.Provenance is R018ProvenanceType.MANUAL_UI)
+                if (ev.Provenance is R018ProvenanceType.MANUAL_UI or R018ProvenanceType.MANUAL_EXPORT)
                 {
-                    issues.Add(new R018ValidationIssue("ERROR", "MANUAL_UI_CANNOT_CREATE_FILL", "Manual UI evidence is observation-only.", ev.EventId, ev.Evidence.SourcePath));
+                    issues.Add(new R018ValidationIssue("ERROR", "MANUAL_EVIDENCE_CANNOT_CREATE_FILL", "Manual evidence is observation-only.", ev.EventId, ev.Evidence.SourcePath));
                 }
             }
 
-            if (ev.Kind is R018NormalizedEventKind.ExecutionReport && ev.CumQuantity.HasValue && ev.LeavesQuantity.HasValue && ev.ClOrdId is not null && orders.TryGetValue(OrderLookupKey(ev), out var order) && order.OrderQuantity.HasValue)
+            if ((ev.CumQuantity ?? 0) < 0 || (ev.LeavesQuantity ?? 0) < 0 || (ev.LastQuantity ?? 0) < 0)
+            {
+                issues.Add(new R018ValidationIssue("ERROR", "NEGATIVE_QUANTITY", "FIX quantities must be non-negative.", ev.EventId, ev.Evidence.SourcePath));
+            }
+
+            if (ev.Kind is R018NormalizedEventKind.ExecutionReport or R018NormalizedEventKind.Fill && ev.CumQuantity.HasValue && ev.LeavesQuantity.HasValue && ev.ClOrdId is not null && orders.TryGetValue(OrderLookupKey(ev), out var orderForQty) && orderForQty.OrderQuantity.HasValue)
             {
                 var sum = ev.CumQuantity.Value + ev.LeavesQuantity.Value;
-                if (Math.Abs(sum - order.OrderQuantity.Value) > 0.0000001m)
+                if (Math.Abs(sum - orderForQty.OrderQuantity.Value) > 0.0000001m)
                 {
-                    issues.Add(new R018ValidationIssue("ERROR", "CUM_LEAVES_INCONSISTENT", $"cum+leaves={sum} order_qty={order.OrderQuantity}", ev.EventId, ev.Evidence.SourcePath));
+                    issues.Add(new R018ValidationIssue("ERROR", "CUM_LEAVES_INCONSISTENT", $"cum+leaves={sum} order_qty={orderForQty.OrderQuantity}", ev.EventId, ev.Evidence.SourcePath));
                 }
-            }
-        }
 
-        foreach (var group in bundle.Events.Where(e => e.ClOrdId is not null).GroupBy(e => e.StableKey, StringComparer.Ordinal))
-        {
-            if (group.Select(e => e.Evidence.RawPayloadHash).Distinct(StringComparer.Ordinal).Count() > 1)
-            {
-                issues.Add(new R018ValidationIssue("ERROR", "DUPLICATE_CONFLICT", group.Key));
+                if (ev.CumQuantity.Value - orderForQty.OrderQuantity.Value > 0.0000001m)
+                {
+                    issues.Add(new R018ValidationIssue("ERROR", "OVERFILL", $"cum={ev.CumQuantity} order_qty={orderForQty.OrderQuantity}", ev.EventId, ev.Evidence.SourcePath));
+                }
             }
         }
 
         foreach (var order in orders.Values)
         {
-            var terminal = bundle.Events.Any(e => OrderLookupKey(e) == OrderLookupKey(order) && e.IsTerminal);
-            if (!terminal)
+            var related = bundle.Events
+                .Where(e => OrderLookupKey(e) == OrderLookupKey(order) && e.Kind is R018NormalizedEventKind.ExecutionReport or R018NormalizedEventKind.Fill)
+                .OrderBy(e => e.LocalEventOrder ?? long.MaxValue)
+                .ToArray();
+            decimal? previousCum = null;
+            foreach (var ev in related.Where(e => e.CumQuantity.HasValue))
+            {
+                if (previousCum.HasValue && ev.CumQuantity!.Value < previousCum.Value)
+                {
+                    issues.Add(new R018ValidationIssue("ERROR", "CUM_DECREASING", $"previous={previousCum} current={ev.CumQuantity}", ev.EventId, ev.Evidence.SourcePath));
+                }
+
+                previousCum = ev.CumQuantity;
+            }
+
+            var lastQtySum = related.Where(e => e.Kind is R018NormalizedEventKind.Fill && e.LastQuantity.HasValue).GroupBy(SemanticFingerprint, StringComparer.Ordinal).Select(g => g.First()).Sum(e => e.LastQuantity!.Value);
+            var maxCum = related.Where(e => e.CumQuantity.HasValue).Select(e => e.CumQuantity!.Value).DefaultIfEmpty(0).Max();
+            if (lastQtySum > 0 && maxCum > 0 && Math.Abs(lastQtySum - maxCum) > 0.0000001m)
+            {
+                issues.Add(new R018ValidationIssue("ERROR", "LASTQTY_CUM_INCONSISTENT", $"last_qty_sum={lastQtySum} max_cum={maxCum}", order.EventId, order.Evidence.SourcePath));
+            }
+
+            if (!related.Any(e => e.IsTerminal))
             {
                 issues.Add(new R018ValidationIssue("ERROR", "NON_TERMINAL_ORDER", order.ClOrdId ?? "missing", order.EventId, order.Evidence.SourcePath));
             }
         }
+
+        foreach (var execGroup in bundle.Events.Where(e => !string.IsNullOrWhiteSpace(e.ExecId)).GroupBy(e => $"{e.Environment}|{e.BrokerAccount}|{e.Venue}|{e.ExecId}", StringComparer.Ordinal))
+        {
+            if (execGroup.Select(e => e.ClOrdId).Where(id => !string.IsNullOrWhiteSpace(id)).Distinct(StringComparer.Ordinal).Count() > 1)
+            {
+                issues.Add(new R018ValidationIssue("ERROR", "SAME_EXECID_MULTIPLE_CLORDID", execGroup.Key));
+            }
+
+            if (execGroup.Select(ExecSemanticFingerprint).Distinct(StringComparer.Ordinal).Count() > 1)
+            {
+                issues.Add(new R018ValidationIssue("ERROR", "EXECID_FACT_CONFLICT", execGroup.Key));
+            }
+        }
+
+        foreach (var group in bundle.Events.Where(e => e.ClOrdId is not null).GroupBy(BusinessKey, StringComparer.Ordinal))
+        {
+            if (group.Select(SemanticFingerprint).Distinct(StringComparer.Ordinal).Count() > 1)
+            {
+                issues.Add(new R018ValidationIssue("ERROR", "DUPLICATE_CONFLICT", group.Key));
+            }
+        }
     }
+
+    private static bool ScopeMatches(string? actual, string expected)
+        => !IsUnknown(expected) && !IsUnknown(actual ?? string.Empty) && string.Equals(actual, expected, StringComparison.OrdinalIgnoreCase);
+
+    private static void ValidateSame(string? expected, string? actual, string code, R018NormalizedEvent ev, List<R018ValidationIssue> issues)
+    {
+        if (!string.IsNullOrWhiteSpace(expected) && !string.IsNullOrWhiteSpace(actual) && !string.Equals(expected, actual, StringComparison.OrdinalIgnoreCase))
+        {
+            issues.Add(new R018ValidationIssue("ERROR", code, $"expected={expected} actual={actual}", ev.EventId, ev.Evidence.SourcePath));
+        }
+    }
+
+    private static string BusinessKey(R018NormalizedEvent ev)
+        => ev.Kind switch
+        {
+            R018NormalizedEventKind.Order => $"ORDER|{ev.Environment}|{ev.BrokerAccount}|{ev.Venue}|{ev.ClOrdId}",
+            R018NormalizedEventKind.ExecutionReport => $"ER|{ev.Environment}|{ev.BrokerAccount}|{ev.Venue}|{ev.ClOrdId}|{ev.BrokerOrderId}|{ev.ExecId}|{ev.ExecType}|{ev.OrdStatus}",
+            R018NormalizedEventKind.Fill => $"FILL|{ev.Environment}|{ev.BrokerAccount}|{ev.Venue}|{ev.ClOrdId}|{ev.BrokerOrderId}|{ev.ExecId}",
+            R018NormalizedEventKind.Bbo => $"BBO|{ev.Environment}|{ev.BrokerAccount}|{ev.Venue}|{ev.Symbol}|{ev.BboEventId}|{ev.LocalEventOrder}",
+            _ => ev.StableKey
+        };
+
+    private static string ExecSemanticFingerprint(R018NormalizedEvent ev)
+        => string.Join('|',
+            ev.Environment,
+            ev.BrokerAccount,
+            ev.Venue,
+            ev.Symbol,
+            ev.SecurityId,
+            ev.Side,
+            ev.QuantityUnit,
+            ev.ClOrdId,
+            ev.BrokerOrderId,
+            ev.ExecId,
+            ev.LastQuantity?.ToString(CultureInfo.InvariantCulture),
+            ev.CumQuantity?.ToString(CultureInfo.InvariantCulture),
+            ev.LeavesQuantity?.ToString(CultureInfo.InvariantCulture),
+            ev.FillPrice?.ToString(CultureInfo.InvariantCulture),
+            ev.TerminalState);
+    private static string SemanticFingerprint(R018NormalizedEvent ev)
+        => string.Join('|',
+            ev.Kind,
+            ev.Environment,
+            ev.BrokerAccount,
+            ev.Venue,
+            ev.Symbol,
+            ev.SecurityId,
+            ev.Side,
+            ev.QuantityUnit,
+            ev.ClOrdId,
+            ev.BrokerOrderId,
+            ev.ExecId,
+            ev.OrderType,
+            ev.TimeInForce,
+            ev.OrderQuantity?.ToString(CultureInfo.InvariantCulture),
+            ev.LastQuantity?.ToString(CultureInfo.InvariantCulture),
+            ev.CumQuantity?.ToString(CultureInfo.InvariantCulture),
+            ev.LeavesQuantity?.ToString(CultureInfo.InvariantCulture),
+            ev.LimitPrice?.ToString(CultureInfo.InvariantCulture),
+            ev.FillPrice?.ToString(CultureInfo.InvariantCulture),
+            ev.Kind is R018NormalizedEventKind.Fill ? null : ev.ExecType,
+            ev.Kind is R018NormalizedEventKind.Fill ? null : ev.OrdStatus,
+            ev.TerminalState);
 
     private static string OrderLookupKey(R018NormalizedEvent ev)
         => $"{ev.Environment}|{ev.BrokerAccount}|{ev.Venue}|{ev.ClOrdId}";
@@ -880,28 +1320,33 @@ public sealed class R018ArtifactBundleValidator
             return R018ImportBundleStatus.REJECTED;
         }
 
-        if (!string.IsNullOrWhiteSpace(bundle.Manifest.ModelRunId))
+        var explicitModelRun = bundle.Manifest.ModelRunId;
+        if (string.IsNullOrWhiteSpace(modelRunCatalogPath) || !File.Exists(modelRunCatalogPath))
         {
-            return R018ImportBundleStatus.CANONICAL_LINKED;
+            return R018ImportBundleStatus.EVIDENCE_ONLY;
         }
 
-        if (!string.IsNullOrWhiteSpace(modelRunCatalogPath) && File.Exists(modelRunCatalogPath))
-        {
-            var matches = LoadCatalog(modelRunCatalogPath)
-                .Where(e => e.SourceRunId == bundle.Manifest.SourceRunId && e.ApprovedCandidateHash == bundle.Manifest.ApprovedCandidateHash)
-                .ToArray();
+        var catalog = LoadCatalog(modelRunCatalogPath);
+        var exactMatches = catalog
+            .Where(e => e.SourceRunId == bundle.Manifest.SourceRunId && e.ApprovedCandidateHash == bundle.Manifest.ApprovedCandidateHash)
+            .ToArray();
 
-            if (matches.Length == 1)
+        if (!string.IsNullOrWhiteSpace(explicitModelRun))
+        {
+            var explicitMatches = exactMatches.Where(e => e.ModelRunId == explicitModelRun).ToArray();
+            if (explicitMatches.Length == 1)
             {
                 return R018ImportBundleStatus.CANONICAL_LINKED;
             }
 
-            return R018ImportBundleStatus.EVIDENCE_ONLY;
+            issues.Add(new R018ValidationIssue("ERROR", "MODEL_RUN_CATALOG_CONTRADICTION", $"Explicit model_run_id {explicitModelRun} is not an exact unique match for source_run_id/candidate hash."));
+            return R018ImportBundleStatus.REJECTED;
         }
 
-        return R018ImportBundleStatus.EVIDENCE_ONLY;
+        return exactMatches.Length == 1
+            ? R018ImportBundleStatus.CANONICAL_LINKED
+            : R018ImportBundleStatus.EVIDENCE_ONLY;
     }
-
     public static IReadOnlyList<R018ModelRunCatalogEntry> LoadCatalog(string path)
     {
         var json = JsonNode.Parse(File.ReadAllText(path));
@@ -935,31 +1380,53 @@ public sealed class R018LineageResolver
         string resolution;
         string? modelRunId = null;
         var warnings = new List<string>();
+        R018CatalogResolution? catalogResolution = null;
 
-        if (!string.IsNullOrWhiteSpace(bundle.Manifest.ModelRunId))
+        if (!string.IsNullOrWhiteSpace(modelRunCatalogPath) && File.Exists(modelRunCatalogPath))
         {
-            resolution = "EXPLICIT_MODEL_RUN_ID";
-            modelRunId = bundle.Manifest.ModelRunId;
-        }
-        else if (!string.IsNullOrWhiteSpace(modelRunCatalogPath) && File.Exists(modelRunCatalogPath))
-        {
-            var matches = R018ArtifactBundleValidator.LoadCatalog(modelRunCatalogPath)
+            var catalogHash = R018ArtifactBundleReader.ComputeFileSha256(modelRunCatalogPath);
+            var catalogSchema = ReadCatalogSchema(modelRunCatalogPath);
+            var entries = R018ArtifactBundleValidator.LoadCatalog(modelRunCatalogPath);
+            var exactMatches = entries
                 .Where(e => e.SourceRunId == bundle.Manifest.SourceRunId && e.ApprovedCandidateHash == bundle.Manifest.ApprovedCandidateHash)
                 .ToArray();
-            if (matches.Length == 1)
+            if (!string.IsNullOrWhiteSpace(bundle.Manifest.ModelRunId))
+            {
+                var explicitMatches = exactMatches.Where(e => e.ModelRunId == bundle.Manifest.ModelRunId).ToArray();
+                if (explicitMatches.Length == 1 && validation.Status is R018ImportBundleStatus.CANONICAL_LINKED)
+                {
+                    resolution = "OFFLINE_CATALOG_EXPLICIT_EXACT_MATCH";
+                    modelRunId = explicitMatches[0].ModelRunId;
+                    catalogResolution = new R018CatalogResolution(resolution, Path.GetFileName(modelRunCatalogPath), catalogHash, catalogSchema, R018ArtifactBundleReader.ComputeSha256(JsonSerializer.Serialize(explicitMatches[0])));
+                }
+                else
+                {
+                    resolution = validation.Status is R018ImportBundleStatus.REJECTED ? "OFFLINE_CATALOG_EXPLICIT_CONTRADICTION" : "NO_CATALOG_EXPLICIT_ID_UNVERIFIED";
+                    catalogResolution = new R018CatalogResolution(resolution, Path.GetFileName(modelRunCatalogPath), catalogHash, catalogSchema, null);
+                }
+            }
+            else if (exactMatches.Length == 1 && validation.Status is R018ImportBundleStatus.CANONICAL_LINKED)
             {
                 resolution = "OFFLINE_CATALOG_UNIQUE_MATCH";
-                modelRunId = matches[0].ModelRunId;
+                modelRunId = exactMatches[0].ModelRunId;
+                catalogResolution = new R018CatalogResolution(resolution, Path.GetFileName(modelRunCatalogPath), catalogHash, catalogSchema, R018ArtifactBundleReader.ComputeSha256(JsonSerializer.Serialize(exactMatches[0])));
             }
-            else if (matches.Length > 1)
+            else if (exactMatches.Length > 1)
             {
                 resolution = "OFFLINE_CATALOG_AMBIGUOUS";
                 warnings.Add("Multiple catalog matches; no arbitrary ModelRun selection performed.");
+                catalogResolution = new R018CatalogResolution(resolution, Path.GetFileName(modelRunCatalogPath), catalogHash, catalogSchema, null);
             }
             else
             {
                 resolution = "NO_CANONICAL_MODEL_RUN_LINK";
+                catalogResolution = new R018CatalogResolution(resolution, Path.GetFileName(modelRunCatalogPath), catalogHash, catalogSchema, null);
             }
+        }
+        else if (!string.IsNullOrWhiteSpace(bundle.Manifest.ModelRunId))
+        {
+            resolution = "NO_CATALOG_EXPLICIT_ID_UNVERIFIED";
+            warnings.Add("Explicit model_run_id is evidence only until an offline catalog exact match is supplied.");
         }
         else
         {
@@ -980,9 +1447,22 @@ public sealed class R018LineageResolver
             modelRunId,
             ledgerApplicability,
             unmapped,
-            warnings);
+            warnings,
+            catalogResolution);
     }
 
+    private static string? ReadCatalogSchema(string path)
+    {
+        try
+        {
+            var root = JsonNode.Parse(File.ReadAllText(path));
+            return root?["catalog_schema_version"]?.ToString() ?? root?["schema_version"]?.ToString();
+        }
+        catch
+        {
+            return null;
+        }
+    }
     public static R018LedgerApplicability ResolveLedgerApplicability(R018ArtifactBundle bundle, R018ValidationReport validation)
     {
         if (!bundle.Events.Any(e => e.Kind is R018NormalizedEventKind.Fill))
@@ -990,17 +1470,9 @@ public sealed class R018LineageResolver
             return R018LedgerApplicability.NOT_APPLICABLE;
         }
 
-        if (!string.IsNullOrWhiteSpace(bundle.Manifest.StartingPositionSource)
-            && validation.Status is not R018ImportBundleStatus.REJECTED
-            && validation.Issues.All(i => i.Code is not ("NON_TERMINAL_ORDER" or "FILL_WITHOUT_CHILD_ORDER" or "FILL_WITHOUT_EXECID")))
-        {
-            return R018LedgerApplicability.COMPLETE_ISOLATED_REPLAY_CANDIDATE;
-        }
-
         return R018LedgerApplicability.INCOMPLETE_HISTORY;
     }
 }
-
 public static class R018IdentityScopeBuilder
 {
     public static R018IdentityScopeReport Build(R018ArtifactBundle bundle)
@@ -1064,6 +1536,8 @@ public sealed class R018ImportPlanBuilder
             .OrderBy(e => e.LocalEventOrder ?? long.MaxValue)
             .ThenBy(e => e.EventId, StringComparer.Ordinal)
             .ToArray();
+        var identityAudit = BuildIdentityKeyAudit(normalizedEvents).ToArray();
+        var stagingRows = BuildStagingRows(normalizedEvents, validation.Status, lineage.ModelRunId).ToArray();
 
         var modeReason = validation.Status switch
         {
@@ -1075,26 +1549,77 @@ public sealed class R018ImportPlanBuilder
         var seed = JsonSerializer.Serialize(new
         {
             validation.Status,
+            bundle.Manifest.SchemaVersion,
+            bundle.Manifest.Environment,
+            bundle.Manifest.BrokerAccount,
+            bundle.Manifest.Venue,
             bundle.Manifest.SourceRunId,
             bundle.Manifest.ApprovedCandidateHash,
+            bundle.Manifest.QuantityUnit,
+            bundle.Manifest.DecisionUtc,
+            bundle.Manifest.EffectiveFromUtc,
+            bundle.Manifest.DeadlineUtc,
+            bundle.Manifest.TargetCloseUtc,
+            manifestModelRunId = bundle.Manifest.ModelRunId,
+            bundle.Manifest.CoreCommit,
+            bundle.Manifest.ConfigHash,
             bundle.InputBundleHash,
+            lineage.ModelRunResolution,
+            lineageModelRunId = lineage.ModelRunId,
+            lineageCatalogResolution = lineage.CatalogResolution,
+            ledgerApplicability = ledgerApplicability.ToString(),
             proposedTargets,
+            identityAudit = identityAudit,
+            plannedStagingRows = stagingRows.Select(r => new
+            {
+                r.PlannedRowId,
+                r.TargetContract,
+                r.OperationKind,
+                r.SourceBusinessKey,
+                r.CanonicalModelRunId,
+                r.FieldMappings,
+                r.Dependencies,
+                r.MissingRequiredFields,
+                r.ApplyEligible,
+                r.RejectionReasons,
+                evidence = r.EvidenceRefs.Select(e => new { e.Provenance, e.SourcePath, e.SourceFileHash, e.SourceLocator, e.RawPayloadHash })
+            }),
             events = normalizedEvents.Select(e => new
             {
                 e.StableKey,
                 e.Kind,
                 e.Provenance,
+                e.Environment,
+                e.BrokerAccount,
+                e.Venue,
                 e.ClOrdId,
+                e.BrokerOrderId,
                 e.ExecId,
                 e.Symbol,
+                e.SecurityId,
                 e.Side,
+                e.QuantityUnit,
+                e.PhaseId,
+                e.WaveId,
+                e.ClipId,
+                e.OrderType,
+                e.TimeInForce,
                 e.OrderQuantity,
                 e.LastQuantity,
                 e.CumQuantity,
                 e.LeavesQuantity,
                 e.LimitPrice,
                 e.FillPrice,
-                e.LocalEventOrder
+                e.ExecType,
+                e.OrdStatus,
+                e.TerminalState,
+                e.SourceTimestampUtc,
+                e.LocalReceiveUtc,
+                e.LocalEventOrder,
+                e.FixReceiveEventId,
+                e.BboEventId,
+                e.SourceExecutionReportEventId,
+                evidence = e.EvidenceRefs?.Select(er => new { er.Provenance, er.SourcePath, er.SourceFileHash, er.SourceLocator, er.RawPayloadHash })
             })
         });
         var deterministicHash = R018ArtifactBundleReader.ComputeSha256(seed);
@@ -1120,9 +1645,97 @@ public sealed class R018ImportPlanBuilder
             normalizedEvents,
             validation,
             lineage,
-            identity);
+            identity,
+            identityAudit,
+            stagingRows);
     }
 
+
+    private static IEnumerable<R018IdentityKeyAuditRow> BuildIdentityKeyAudit(IEnumerable<R018NormalizedEvent> events)
+    {
+        foreach (var ev in events)
+        {
+            var kind = ev.Kind.ToString();
+            var businessKey = ev.Kind switch
+            {
+                R018NormalizedEventKind.Order => $"{ev.Environment}|{ev.BrokerAccount}|{ev.Venue}|ORDER|{ev.ClOrdId}",
+                R018NormalizedEventKind.ExecutionReport => $"{ev.Environment}|{ev.BrokerAccount}|{ev.Venue}|ER|{ev.ClOrdId}|{ev.BrokerOrderId}|{ev.ExecId}",
+                R018NormalizedEventKind.Fill => $"{ev.Environment}|{ev.BrokerAccount}|{ev.Venue}|FILL|{ev.ClOrdId}|{ev.BrokerOrderId}|{ev.ExecId}",
+                _ => $"{ev.Environment}|{ev.BrokerAccount}|{ev.Venue}|{kind}|{ev.EventId}"
+            };
+            yield return new R018IdentityKeyAuditRow(
+                kind,
+                businessKey,
+                ev.Kind is R018NormalizedEventKind.Fill ? $"venue_exec_id:{ev.Venue}|{ev.ExecId}" : $"client_order_id:{ev.ClOrdId}",
+                $"{ev.Environment}|{ev.BrokerAccount}|{ev.Venue}|{businessKey}",
+                "STAGING_SAFE_DB_APPLY_FALSE",
+                "Safe staging key includes environment/account/venue; current DB candidate key is reported but not used for apply.");
+        }
+    }
+
+    private static IEnumerable<R018PlannedStagingRow> BuildStagingRows(IEnumerable<R018NormalizedEvent> events, R018ImportBundleStatus status, string? modelRunId)
+    {
+        if (status is R018ImportBundleStatus.REJECTED)
+        {
+            yield break;
+        }
+
+        foreach (var ev in events)
+        {
+            var target = status is R018ImportBundleStatus.CANONICAL_LINKED
+                ? CanonicalTarget(ev.Kind)
+                : EvidenceOnlyTarget(ev.Kind);
+            var missing = new List<string>();
+            if (target is "ChildOrder" && string.IsNullOrWhiteSpace(ev.ClOrdId)) missing.Add("ClOrdID");
+            if (target is "Fill" && string.IsNullOrWhiteSpace(ev.ExecId)) missing.Add("ExecID");
+            if (target is "Fill" && string.IsNullOrWhiteSpace(modelRunId)) missing.Add("canonical_model_run_id");
+            var mappings = new SortedDictionary<string, string>(StringComparer.Ordinal)
+            {
+                ["environment"] = ev.Environment,
+                ["broker_account"] = ev.BrokerAccount,
+                ["venue"] = ev.Venue,
+                ["symbol"] = ev.Symbol ?? "",
+                ["security_id"] = ev.SecurityId ?? "",
+                ["clordid"] = ev.ClOrdId ?? "",
+                ["broker_order_id"] = ev.BrokerOrderId ?? "",
+                ["exec_id"] = ev.ExecId ?? "",
+                ["phase_id"] = ev.PhaseId ?? "",
+                ["wave_id"] = ev.WaveId ?? "",
+                ["clip_id"] = ev.ClipId ?? ""
+            };
+            yield return new R018PlannedStagingRow(
+                $"PLAN-{R018ArtifactBundleReader.ComputeSha256(ev.EventId)[..16]}",
+                target,
+                status is R018ImportBundleStatus.CANONICAL_LINKED ? "CANDIDATE_INSERT_DESCRIBED_ONLY" : "EVIDENCE_STAGING_ONLY",
+                ev.StableKey,
+                status is R018ImportBundleStatus.CANONICAL_LINKED ? modelRunId : null,
+                mappings,
+                ev.Kind is R018NormalizedEventKind.Fill && ev.SourceExecutionReportEventId is not null ? new[] { ev.SourceExecutionReportEventId } : Array.Empty<string>(),
+                missing,
+                ev.EvidenceRefs ?? new[] { ev.Evidence },
+                false,
+                new[] { "DB_APPLY_FALSE_M1C1" });
+        }
+    }
+
+    private static string CanonicalTarget(R018NormalizedEventKind kind)
+        => kind switch
+        {
+            R018NormalizedEventKind.Order => "ChildOrder",
+            R018NormalizedEventKind.ExecutionReport => "ExecutionReport",
+            R018NormalizedEventKind.Fill => "Fill",
+            R018NormalizedEventKind.Bbo => "TCAResearchEvidence",
+            _ => "ExceptionCaseEvidence"
+        };
+
+    private static string EvidenceOnlyTarget(R018NormalizedEventKind kind)
+        => kind switch
+        {
+            R018NormalizedEventKind.Bbo => "TCAResearchEvidence",
+            R018NormalizedEventKind.Unknown => "ExceptionCaseEvidence",
+            R018NormalizedEventKind.ManualObservation => "ExceptionCaseEvidence",
+            _ => "R018_NORMALIZED_EVENT_STAGING"
+        };
     private static IEnumerable<string> ProposedTargets(R018ImportBundleStatus status)
     {
         if (status is R018ImportBundleStatus.REJECTED)
@@ -1184,36 +1797,69 @@ public sealed class R018ImportPlanSerializer
     {
         WriteIndented = true
     };
+
+    private static readonly JsonSerializerOptions JsonLineOptions = new(JsonSerializerDefaults.Web)
+    {
+        WriteIndented = false
+    };
     static R018ImportPlanSerializer()
     {
         JsonOptions.Converters.Add(new JsonStringEnumConverter());
+        JsonLineOptions.Converters.Add(new JsonStringEnumConverter());
     }
 
 
     public void WriteAll(R018ArtifactBundle bundle, R018ImportPlan plan, string outputPath)
     {
         var fullOutputPath = Path.GetFullPath(outputPath);
-        Directory.CreateDirectory(fullOutputPath);
+        if (Directory.Exists(fullOutputPath) && Directory.EnumerateFileSystemEntries(fullOutputPath).Any())
+        {
+            throw new InvalidOperationException("OUTPUT_DIRECTORY_NOT_EMPTY");
+        }
 
-        WriteJson(Path.Combine(fullOutputPath, "bundle_manifest.json"), bundle.Manifest);
-        WriteJson(Path.Combine(fullOutputPath, "validation_report.json"), plan.Validation);
-        WriteJsonLines(Path.Combine(fullOutputPath, "normalized_events.jsonl"), plan.NormalizedEvents);
-        WriteJson(Path.Combine(fullOutputPath, "lineage_report.json"), plan.Lineage);
-        WriteJson(Path.Combine(fullOutputPath, "identity_scope_report.json"), plan.IdentityScope);
-        WriteJson(Path.Combine(fullOutputPath, "import_plan_v1.json"), plan);
-        WriteParity(Path.Combine(fullOutputPath, "parity_report.csv"), new R018ParityReportBuilder().Build(bundle, plan));
-        WriteSummary(Path.Combine(fullOutputPath, "human_summary.md"), plan);
-        WriteJson(Path.Combine(fullOutputPath, "output_hashes.json"), BuildHashes(fullOutputPath));
+        var parent = Directory.GetParent(fullOutputPath)?.FullName ?? throw new InvalidOperationException("OUTPUT_PARENT_NOT_FOUND");
+        Directory.CreateDirectory(parent);
+        var tempPath = Path.Combine(parent, $".{Path.GetFileName(fullOutputPath)}.tmp-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(tempPath);
+        try
+        {
+            WriteJson(Path.Combine(tempPath, "bundle_manifest.json"), bundle.Manifest);
+            WriteJson(Path.Combine(tempPath, "validation_report.json"), plan.Validation);
+            WriteJsonLines(Path.Combine(tempPath, "normalized_events.jsonl"), plan.NormalizedEvents);
+            WriteJson(Path.Combine(tempPath, "lineage_report.json"), plan.Lineage);
+            WriteJson(Path.Combine(tempPath, "identity_scope_report.json"), plan.IdentityScope);
+            WriteJson(Path.Combine(tempPath, "identity_key_audit.json"), plan.IdentityKeyAudit ?? Array.Empty<R018IdentityKeyAuditRow>());
+            WriteJson(Path.Combine(tempPath, "typed_staging_plan.json"), plan.PlannedStagingRows ?? Array.Empty<R018PlannedStagingRow>());
+            WriteJson(Path.Combine(tempPath, "import_plan_v2.json"), plan);
+            WriteParity(Path.Combine(tempPath, "parity_report.csv"), new R018ParityReportBuilder().Build(bundle, plan));
+            WriteSummary(Path.Combine(tempPath, "human_summary.md"), plan);
+            WriteJson(Path.Combine(tempPath, "output_hashes.json"), BuildHashes(tempPath));
+
+            if (Directory.Exists(fullOutputPath))
+            {
+                Directory.Delete(fullOutputPath);
+            }
+
+            Directory.Move(tempPath, fullOutputPath);
+        }
+        catch
+        {
+            if (Directory.Exists(tempPath))
+            {
+                Directory.Delete(tempPath, recursive: true);
+            }
+
+            throw;
+        }
     }
-
     private static void WriteJson<T>(string path, T value)
     {
-        File.WriteAllText(path, JsonSerializer.Serialize(value, JsonOptions));
+        File.WriteAllText(path, JsonSerializer.Serialize(value, JsonOptions), new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
     }
 
     private static void WriteJsonLines<T>(string path, IEnumerable<T> values)
     {
-        File.WriteAllLines(path, values.Select(value => JsonSerializer.Serialize(value, JsonOptions)));
+        File.WriteAllLines(path, values.Select(value => JsonSerializer.Serialize(value, JsonLineOptions)), new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
     }
 
     private static void WriteParity(string path, IReadOnlyList<R018ParityRow> rows)
@@ -1292,6 +1938,12 @@ public sealed class R018OfflineImportPlanCli
             return 2;
         }
 
+        if (Directory.Exists(outputPath) && Directory.EnumerateFileSystemEntries(outputPath).Any())
+        {
+            error.WriteLine("OUTPUT_DIRECTORY_NOT_EMPTY");
+            return 2;
+        }
+
         var secretIssue = DetectSecrets(bundlePath);
         if (secretIssue is not null)
         {
@@ -1313,6 +1965,14 @@ public sealed class R018OfflineImportPlanCli
             error.WriteLine($"M1C_CLI_ERROR:{ex.GetType().Name}:{ex.Message}");
             return 1;
         }
+    }
+
+    private static bool IsSameOrChildPath(string parentPath, string candidatePath)
+    {
+        var parent = Path.GetFullPath(parentPath);
+        var candidate = Path.GetFullPath(candidatePath);
+        var relative = Path.GetRelativePath(parent, candidate);
+        return relative == "." || (!relative.StartsWith("..", StringComparison.Ordinal) && !Path.IsPathRooted(relative));
     }
 
     private static string? DetectSecrets(string bundlePath)
@@ -1400,7 +2060,11 @@ This CLI is strictly offline. There is no --apply mode.
                     catalog = RequireValue(args, ref i, reasons, arg);
                     break;
                 case "--code-commit":
+                case "--tool-commit":
                     codeCommit = RequireValue(args, ref i, reasons, arg);
+                    break;
+                case "--source-baseline-commit":
+                    _ = RequireValue(args, ref i, reasons, arg);
                     break;
                 case "--no-db":
                     noDb = true;
