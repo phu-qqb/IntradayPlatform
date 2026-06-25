@@ -343,7 +343,7 @@ public static class LmaxMarketDataOnlyPreflight
 {
     private static readonly HashSet<string> AllowedEndpointAliases = new(StringComparer.OrdinalIgnoreCase) { "LMAX_DEMO_MARKET_DATA_ONLY" };
     private static readonly HashSet<string> AllowedSessionAliases = new(StringComparer.OrdinalIgnoreCase) { "LMAX_DEMO_MD_READ_ONLY" };
-    private static readonly HashSet<string> AllowedInstruments = new(StringComparer.OrdinalIgnoreCase) { "EURUSD", "AUDUSD", "GBPUSD", "USDJPY" };
+    private static readonly HashSet<string> AllowedInstruments = new(StringComparer.OrdinalIgnoreCase) { "EURUSD" };
 
     public static LmaxMarketDataOnlyPreflightReport Validate(LmaxMarketDataOnlyPreflightConfig config, bool networkDisabled, bool noOrderEntry, bool noAccountApi, bool noDb, bool outputRootMustBeEmpty = true)
     {

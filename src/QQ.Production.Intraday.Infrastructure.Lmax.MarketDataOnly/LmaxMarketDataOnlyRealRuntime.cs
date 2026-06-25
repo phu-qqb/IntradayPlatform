@@ -17,82 +17,52 @@ public sealed class LmaxMarketDataOnlyGuardedWriteStream : Stream
 {
     private readonly Stream inner;
     private readonly List<LmaxMarketDataOnlyGuardedWriteEvent> events = [];
-
-    public LmaxMarketDataOnlyGuardedWriteStream(Stream inner)
-    {
-        this.inner = inner ?? throw new ArgumentNullException(nameof(inner));
-    }
-
+    private readonly LmaxMarketDataOnlyFixFrameBuffer outboundFrames = new();
+    public LmaxMarketDataOnlyGuardedWriteStream(Stream inner) => this.inner = inner ?? throw new ArgumentNullException(nameof(inner));
     public int ForbiddenOutboundCount { get; private set; }
-
     public IReadOnlyList<LmaxMarketDataOnlyGuardedWriteEvent> Events => events;
-
     public override bool CanRead => inner.CanRead;
-
     public override bool CanSeek => false;
-
     public override bool CanWrite => inner.CanWrite;
-
     public override long Length => inner.CanSeek ? inner.Length : 0;
-
-    public override long Position
-    {
-        get => inner.CanSeek ? inner.Position : 0;
-        set => throw new NotSupportedException();
-    }
-
+    public override long Position { get => inner.CanSeek ? inner.Position : 0; set => throw new NotSupportedException(); }
     public override void Flush() => inner.Flush();
-
+    public override Task FlushAsync(CancellationToken cancellationToken) => inner.FlushAsync(cancellationToken);
     public override int Read(byte[] buffer, int offset, int count) => inner.Read(buffer, offset, count);
-
     public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
-
     public override void SetLength(long value) => inner.SetLength(value);
-
-    public override void Write(byte[] buffer, int offset, int count)
-    {
-        Guard(buffer.AsSpan(offset, count));
-        inner.Write(buffer, offset, count);
-    }
-
+    public override void Write(byte[] buffer, int offset, int count) => WriteGuarded(buffer.AsSpan(offset, count));
     public override async ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken = default)
     {
-        Guard(buffer.Span);
-        await inner.WriteAsync(buffer, cancellationToken).ConfigureAwait(false);
+        foreach (var frame in Inspect(buffer.Span)) await inner.WriteAsync(frame, cancellationToken).ConfigureAwait(false);
     }
-
     public override Task WriteAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken)
+        => WriteAsync(buffer.AsMemory(offset, count), cancellationToken).AsTask();
+    protected override void Dispose(bool disposing){if(disposing)inner.Dispose();base.Dispose(disposing);}
+    private void WriteGuarded(ReadOnlySpan<byte> bytes){foreach(var frame in Inspect(bytes))inner.Write(frame);}
+    private IReadOnlyList<byte[]> Inspect(ReadOnlySpan<byte> bytes)
     {
-        Guard(buffer.AsSpan(offset, count));
-        return inner.WriteAsync(buffer, offset, count, cancellationToken);
-    }
-
-    protected override void Dispose(bool disposing)
-    {
-        if (disposing)
+        var extracted=outboundFrames.Append(bytes, DateTimeOffset.UtcNow, 0);
+        if(extracted.Malformed) Fail("(malformed)", extracted.MalformedReason ?? "malformed_fix_frame", bytes.Length);
+        var allowedFrames=new List<byte[]>();
+        foreach(var frame in extracted.Frames)
         {
-            inner.Dispose();
+            var result=LmaxMarketDataOnlyOutboundFixMessageGuard.InspectOutboundMessage(frame.RawFixMessage);
+            events.Add(new LmaxMarketDataOnlyGuardedWriteEvent(result.MsgType,result.Allowed,result.Reason,frame.FrameBytes.Length,DateTimeOffset.UtcNow));
+            if(!result.Allowed)
+            {
+                ForbiddenOutboundCount++;
+                throw new InvalidOperationException($"market_data_only_forbidden_outbound_fix_msg_type:{result.MsgType}:{result.Reason}");
+            }
+            allowedFrames.Add(frame.FrameBytes);
         }
-
-        base.Dispose(disposing);
+        return allowedFrames;
     }
-
-    private void Guard(ReadOnlySpan<byte> bytes)
+    private void Fail(string msgType,string reason,int byteCount)
     {
-        var raw = Encoding.ASCII.GetString(bytes);
-        var result = LmaxMarketDataOnlyOutboundFixMessageGuard.InspectOutboundMessage(raw);
-        events.Add(new LmaxMarketDataOnlyGuardedWriteEvent(
-            result.MsgType,
-            result.Allowed,
-            result.Reason,
-            bytes.Length,
-            DateTimeOffset.UtcNow));
-
-        if (!result.Allowed)
-        {
-            ForbiddenOutboundCount++;
-            throw new InvalidOperationException($"market_data_only_forbidden_outbound_fix_msg_type:{result.MsgType}:{result.Reason}");
-        }
+        events.Add(new LmaxMarketDataOnlyGuardedWriteEvent(msgType,false,reason,byteCount,DateTimeOffset.UtcNow));
+        ForbiddenOutboundCount++;
+        throw new InvalidOperationException($"market_data_only_forbidden_outbound_fix_msg_type:{msgType}:{reason}");
     }
 }
 
@@ -416,7 +386,7 @@ public static class LmaxMarketDataOnlyRealRuntimeFactory
                     "Demo/read-only",
                     DemoReadOnly: true,
                     "ReadOnlyMarketDataRequest",
-                    LmaxReadOnlyActivationManualMarketDataRequestShapeProfile.UltraMinimalSnapshotPlusUpdatesWithMDUpdateTypeSecurityIdOnlyGbpusdSingleInstrument,
+                    "M2C1B_PARAMETERIZED_EURUSD_REQUEST_BUILT_BY_CAPTURE_RUNNER",
                     TimeSpan.FromSeconds(15),
                     LmaxReadOnlyMarketDataRequestOptions.DefaultAllowedReadOnlyMessageTypes,
                     ExternalMarketDataRequestExecutionApproved: true),
@@ -438,6 +408,3 @@ public static class LmaxMarketDataOnlyRealRuntimeFactory
                 Environment: "Demo/read-only")));
     }
 }
-
-
-
