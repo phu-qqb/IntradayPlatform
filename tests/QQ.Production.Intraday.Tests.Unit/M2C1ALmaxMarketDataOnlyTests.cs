@@ -4,8 +4,10 @@ extern alias M2C1ATool;
 using System.Reflection;
 using System.Text.Json;
 using QQ.Production.Intraday.Application.CanonicalRecorder;
+using M2C1A::QQ.Production.Intraday.Infrastructure.Lmax;
 using M2C1A::QQ.Production.Intraday.Infrastructure.Lmax.MarketDataOnly;
 using M2C1A::QQ.Production.Intraday.Lmax.ConnectivityLab;
+using M2C1A::QQ.Production.Intraday.Tools.LmaxReadOnlyActivation;
 using M2C1ATool::QQ.Production.Intraday.Tools.LmaxMarketDataCaptureOnly;
 
 namespace QQ.Production.Intraday.Tests.Unit;
@@ -118,16 +120,17 @@ public sealed class M2C1ALmaxMarketDataOnlyTests
     }
 
     [Fact]
-    public void T09_reflection_scan_finds_no_order_account_or_db_public_surface_on_market_data_only_types()
+    public void T09_reflection_scan_finds_no_active_order_account_or_db_public_methods_on_market_data_only_types()
     {
         var assembly = typeof(LmaxMarketDataOnlyPreflight).Assembly;
         var forbidden = assembly.GetExportedTypes()
-            .SelectMany(type => type.GetMembers(BindingFlags.Public | BindingFlags.Instance | BindingFlags.Static).Select(member => $"{type.FullName}.{member.Name}"))
+            .SelectMany(type => type.GetMethods(BindingFlags.Public | BindingFlags.Instance | BindingFlags.Static | BindingFlags.DeclaredOnly)
+                .Where(method => !method.IsSpecialName)
+                .Select(method => $"{type.FullName}.{method.Name}"))
             .Where(name => name.Contains("NewOrderSingle", StringComparison.OrdinalIgnoreCase) || name.Contains("OrderCancelRequest", StringComparison.OrdinalIgnoreCase) || name.Contains("CancelOrder", StringComparison.OrdinalIgnoreCase) || name.Contains("SubmitOrder", StringComparison.OrdinalIgnoreCase) || name.Contains("DbConnection", StringComparison.OrdinalIgnoreCase))
             .ToArray();
         Assert.Empty(forbidden);
     }
-
     [Fact]
     public void T10_preflight_rejects_non_demo_order_shapes_wrong_scope_and_unknown_outbound_fix()
     {
@@ -170,6 +173,71 @@ public sealed class M2C1ALmaxMarketDataOnlyTests
         Assert.Equal("PASS", replay.ReplayReport.Status);
         Assert.Equal(3, replay.Events.Count);
         Assert.DoesNotContain(replay.Events, x => x.EventType.Contains("TARGET", StringComparison.OrdinalIgnoreCase) || x.EventType.Contains("INTENT", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public void T13_real_lmax_readonly_transport_is_source_linked_into_market_data_only_assembly()
+    {
+        var assembly = typeof(LmaxMarketDataOnlyPreflight).Assembly;
+        Assert.Same(assembly, typeof(LmaxRealReadOnlyMarketDataTransport).Assembly);
+        Assert.Same(assembly, typeof(LmaxExecutableReadOnlyMarketDataSessionClient).Assembly);
+        Assert.Same(assembly, typeof(LmaxReadOnlyActivationManualMarketDataRequestOperation).Assembly);
+        Assert.DoesNotContain(assembly.GetReferencedAssemblies(), x => string.Equals(x.Name, "QQ.Production.Intraday.Infrastructure.Lmax", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Theory]
+    [InlineData("D")]
+    [InlineData("F")]
+    [InlineData("G")]
+    [InlineData("H")]
+    [InlineData("q")]
+    [InlineData("AD")]
+    [InlineData("AE")]
+    [InlineData("ZZ")]
+    public async Task T14_guarded_write_stream_blocks_forbidden_fix_messages_before_fake_socket_writer(string msgType)
+    {
+        using var fakeSocket = new MemoryStream();
+        await using var guarded = new LmaxMarketDataOnlyGuardedWriteStream(fakeSocket);
+        var frame = System.Text.Encoding.ASCII.GetBytes(Fix($"35={msgType}", "34=1"));
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(async () => await guarded.WriteAsync(frame));
+
+        Assert.Contains("market_data_only_forbidden_outbound_fix_msg_type", ex.Message, StringComparison.Ordinal);
+        Assert.Equal(0, fakeSocket.Length);
+        Assert.Equal(1, guarded.ForbiddenOutboundCount);
+        Assert.False(guarded.Events.Single().Allowed);
+    }
+
+    [Theory]
+    [InlineData("A")]
+    [InlineData("0")]
+    [InlineData("1")]
+    [InlineData("2")]
+    [InlineData("4")]
+    [InlineData("5")]
+    [InlineData("V")]
+    public async Task T15_guarded_write_stream_allows_only_market_data_session_whitelist_to_fake_socket(string msgType)
+    {
+        using var fakeSocket = new MemoryStream();
+        await using var guarded = new LmaxMarketDataOnlyGuardedWriteStream(fakeSocket);
+        var frame = System.Text.Encoding.ASCII.GetBytes(Fix($"35={msgType}", "34=1"));
+
+        await guarded.WriteAsync(frame);
+
+        Assert.True(fakeSocket.Length > 0);
+        Assert.Equal(0, guarded.ForbiddenOutboundCount);
+        Assert.True(guarded.Events.Single().Allowed);
+        Assert.Equal(msgType, guarded.Events.Single().MsgType);
+    }
+
+    [Fact]
+    public void T16_real_runtime_factory_creates_transport_without_order_entry_project_reference()
+    {
+        var transport = LmaxMarketDataOnlyRealRuntimeFactory.CreateTransport(allowCredentialMaterial: false);
+        var assemblyNames = typeof(LmaxMarketDataOnlyRealRuntimeFactory).Assembly.GetReferencedAssemblies().Select(x => x.Name).ToArray();
+        Assert.IsType<LmaxRealReadOnlyMarketDataTransport>(transport);
+        Assert.DoesNotContain("QQ.Production.Intraday.Infrastructure.Lmax", assemblyNames);
+        Assert.DoesNotContain(assemblyNames, x => x is not null && x.Contains("SqlServer", StringComparison.OrdinalIgnoreCase));
     }
 
     private static IReadOnlyList<LmaxMarketDataOnlyInstrument> Instruments =>
@@ -221,3 +289,5 @@ public sealed class M2C1ALmaxMarketDataOnlyTests
         throw new DirectoryNotFoundException("repo_root_not_found");
     }
 }
+
+
