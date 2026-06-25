@@ -1,0 +1,27 @@
+﻿{
+    "targeted_m3a_tests":  {
+                               "command":  "dotnet test tests\\QQ.Production.Intraday.Tests.Unit\\QQ.Production.Intraday.Tests.Unit.csproj --filter BrokerAuthorityReconciliationTests --no-restore",
+                               "passed":  17,
+                               "failed":  0,
+                               "skipped":  0
+                           },
+    "full_unit_suite":  {
+                            "command":  "dotnet test tests\\QQ.Production.Intraday.Tests.Unit\\QQ.Production.Intraday.Tests.Unit.csproj --no-restore",
+                            "passed":  3716,
+                            "failed":  181,
+                            "reason":  "pre-existing historical readiness artifacts/tools absent from isolated worktree; unrelated to M3A targeted code path"
+                        },
+    "git_diff_check":  "passed",
+    "forbidden_source_scan":  "passed_no_matches_in_new_source_or_tests",
+    "safety":  {
+                   "live_run":  false,
+                   "fix_logon":  false,
+                   "broker_traffic":  false,
+                   "order_generated":  false,
+                   "account_api":  false,
+                   "databento":  false,
+                   "r009":  false,
+                   "db_apply":  false,
+                   "push":  false
+               }
+}

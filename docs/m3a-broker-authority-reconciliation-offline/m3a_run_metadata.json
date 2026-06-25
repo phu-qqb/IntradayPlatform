@@ -1,0 +1,15 @@
+﻿{
+    "generated_utc":  "2026-06-25T14:59:06.3425713Z",
+    "baseline_commit":  "7e87f3b17c84ac8a0aeb79422e4caa97b915fbb6",
+    "branch":  "codex/m3a-broker-authority-reconciliation",
+    "mode":  "NO_LIVE_OFFLINE_READ_ONLY",
+    "db_apply":  false,
+    "live_run":  false,
+    "fix_logon":  false,
+    "broker_traffic":  false,
+    "account_api":  false,
+    "databento":  false,
+    "r009":  false,
+    "order_entry":  false,
+    "unit_tests":  "dotnet test tests\\QQ.Production.Intraday.Tests.Unit\\QQ.Production.Intraday.Tests.Unit.csproj --filter BrokerAuthorityReconciliationTests --no-restore =\u003e Passed 17/17"
+}

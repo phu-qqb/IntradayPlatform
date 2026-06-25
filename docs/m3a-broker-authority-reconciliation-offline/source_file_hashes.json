@@ -1,0 +1,17 @@
+﻿[
+    {
+        "file":  "src\\QQ.Production.Intraday.Domain\\BrokerAuthorityModels.cs",
+        "sha256":  "0352BCCC0BB52F5FC1B3CB5F222E75F2F67B0A41B386881721924F101210EB6D",
+        "bytes":  7210
+    },
+    {
+        "file":  "src\\QQ.Production.Intraday.Application\\BrokerAuthorityReconciliation.cs",
+        "sha256":  "F0D1E46520ECD17A90EF101CD13657EB3E8F939895C9299F8F1EAFAE9D04533D",
+        "bytes":  20902
+    },
+    {
+        "file":  "tests\\QQ.Production.Intraday.Tests.Unit\\BrokerAuthorityReconciliationTests.cs",
+        "sha256":  "D1E6647F16070085AF4C57AE62A656C227FD0F252EF2F9FEEF9DE4137FED0A20",
+        "bytes":  14857
+    }
+]
