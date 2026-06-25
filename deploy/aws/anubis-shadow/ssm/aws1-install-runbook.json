@@ -1,0 +1,41 @@
+{
+  "schemaVersion": "2.2",
+  "description": "Install Anubis AWS1 M2 market-data-only capture host from a verified S3 artifact. No AWS apply and no credential values are embedded.",
+  "parameters": {
+    "ArtifactS3Uri": {
+      "type": "String",
+      "description": "s3:// URI for anubis_aws1_read_only_shadow_foundation_no_apply.zip"
+    },
+    "ArtifactSha256": {
+      "type": "String",
+      "description": "Expected artifact SHA-256"
+    },
+    "EnableAutoStart": {
+      "type": "String",
+      "default": "false",
+      "allowedValues": [
+        "true",
+        "false"
+      ]
+    }
+  },
+  "mainSteps": [
+    {
+      "action": "aws:runPowerShellScript",
+      "name": "Install",
+      "inputs": {
+        "runCommand": [
+          "New-Item -ItemType Directory -Force -Path C:\\Anubis\\Deploy | Out-Null",
+          "$dest = 'C:\\Anubis\\Deploy\\aws1_artifact.zip'",
+          "aws s3 cp '{{ ArtifactS3Uri }}' $dest --only-show-errors",
+          "$actual = (Get-FileHash -Algorithm SHA256 -LiteralPath $dest).Hash.ToUpperInvariant()",
+          "if ($actual -ne '{{ ArtifactSha256 }}'.ToUpperInvariant()) { throw \"artifact_sha256_mismatch:$actual\" }",
+          "$expand = 'C:\\Anubis\\Deploy\\aws1_artifact'",
+          "if (Test-Path -LiteralPath $expand) { Remove-Item -LiteralPath $expand -Recurse -Force }",
+          "Expand-Archive -LiteralPath $dest -DestinationPath $expand -Force",
+          "& \"$expand\\deploy\\aws\\anubis-shadow\\scripts\\Install-AnubisAws1Host.ps1\" -ArtifactZipPath $dest -ArtifactSha256 '{{ ArtifactSha256 }}' -EnableAutoStart:([System.String]::Equals('{{ EnableAutoStart }}','true',[System.StringComparison]::OrdinalIgnoreCase))"
+        ]
+      }
+    }
+  ]
+}

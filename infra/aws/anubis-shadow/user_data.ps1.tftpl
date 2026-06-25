@@ -1,0 +1,44 @@
+<powershell>
+$ErrorActionPreference = 'Stop'
+
+$installRoot = '${install_root}'
+$recorderRoot = '${recorder_root}'
+$logRoot = 'C:\Anubis\Logs'
+$deployRoot = 'C:\Anubis\Deploy'
+$stateRoot = 'C:\Anubis\State'
+
+New-Item -ItemType Directory -Force -Path $installRoot, $recorderRoot, $logRoot, $deployRoot, $stateRoot | Out-Null
+
+$rawDisk = Get-Disk | Where-Object { $_.PartitionStyle -eq 'RAW' } | Sort-Object Number | Select-Object -First 1
+if ($null -ne $rawDisk) {
+    Initialize-Disk -Number $rawDisk.Number -PartitionStyle GPT
+    $partition = New-Partition -DiskNumber $rawDisk.Number -UseMaximumSize -DriveLetter D
+    Format-Volume -Partition $partition -FileSystem NTFS -NewFileSystemLabel 'ANUBIS_SPOOL' -Confirm:$false
+    New-Item -ItemType Directory -Force -Path $recorderRoot | Out-Null
+}
+
+Set-Service -Name AmazonSSMAgent -StartupType Automatic
+Start-Service -Name AmazonSSMAgent
+
+w32tm /config /manualpeerlist:"169.254.169.123,0x9" /syncfromflags:manual /update | Out-Null
+w32tm /resync /force | Out-Null
+
+Set-NetFirewallProfile -Profile Domain,Private,Public -DefaultInboundAction Block
+New-NetFirewallRule -DisplayName 'Anubis AWS1 block inbound by policy' -Direction Inbound -Action Block -Enabled True | Out-Null
+New-NetFirewallRule -DisplayName 'Anubis AWS1 allow HTTPS outbound for AWS endpoints' -Direction Outbound -Action Allow -Protocol TCP -RemotePort 443 -Enabled True | Out-Null
+New-NetFirewallRule -DisplayName 'Anubis AWS1 allow LMAX market-data outbound by port' -Direction Outbound -Action Allow -Protocol TCP -RemotePort 443 -Enabled True | Out-Null
+
+$bootstrap = [ordered]@{
+    status = 'BOOTSTRAPPED'
+    environment = '${environment}'
+    install_root = $installRoot
+    recorder_root = $recorderRoot
+    cloudwatch_namespace = '${cloudwatch_namespace}'
+    local_retention_days = ${local_retention_days}
+    no_ingress = $true
+    no_secret_values = $true
+    order_entry = 'disabled'
+    timestamp_utc = (Get-Date).ToUniversalTime().ToString('o')
+}
+$bootstrap | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $stateRoot 'aws1_bootstrap.json') -Encoding UTF8
+</powershell>

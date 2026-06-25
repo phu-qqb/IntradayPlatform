@@ -1,0 +1,31 @@
+{
+  "mode": "CAPTURE_ONLY",
+  "environment": "DEMO",
+  "venue": "LMAX_DEMO_READ_ONLY",
+  "market_data_endpoint_alias": "__MARKET_DATA_ENDPOINT_ALIAS__",
+  "market_data_session_alias": "LMAX_DEMO_MD_READ_ONLY",
+  "market_data_credential_reference": "__MARKET_DATA_CREDENTIAL_REFERENCE__",
+  "credential_scope": "MARKET_DATA_ONLY",
+  "instruments": [
+    "EURUSD"
+  ],
+  "output_root": "__RECORDER_ROOT__",
+  "max_duration_seconds": 300,
+  "max_events": 100000,
+  "max_total_bytes": 1073741824,
+  "minimum_free_disk_bytes": 10737418240,
+  "quote_age_threshold_ms": 1000,
+  "rotate_after_bytes": 16777216,
+  "flush_interval_ms": 1000,
+  "allowed_outbound_fix_msg_types": [
+    "A",
+    "0",
+    "1",
+    "2",
+    "4",
+    "5",
+    "V"
+  ],
+  "tool_commit": "7e87f3b17c84ac8a0aeb79422e4caa97b915fbb6",
+  "config_hash": "__CONFIG_HASH__"
+}
