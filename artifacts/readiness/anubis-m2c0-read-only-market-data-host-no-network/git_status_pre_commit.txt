@@ -1,0 +1,5 @@
+﻿ M src/QQ.Production.Intraday.Application/CanonicalRecorder/CanonicalRecorderV2.cs
+ M src/QQ.Production.Intraday.Application/CanonicalRecorder/CanonicalShadowOffline.cs
+ M tests/QQ.Production.Intraday.Tests.Unit/CanonicalShadowOfflineM2BTests.cs
+?? src/QQ.Production.Intraday.Application/CanonicalRecorder/CanonicalReadOnlyMarketDataHost.cs
+?? tests/QQ.Production.Intraday.Tests.Unit/CanonicalRecorderM2C0Tests.cs

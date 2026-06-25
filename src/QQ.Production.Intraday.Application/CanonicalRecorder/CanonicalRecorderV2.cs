@@ -1,4 +1,4 @@
-﻿using System.Collections.Concurrent;
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text;
@@ -24,6 +24,8 @@ public static class CanonicalRecorderV2Constants
         "MARKET_DATA_RECEIVED",
         "BBO_UPDATED",
         "MARKET_DATA_GAP",
+        "SIZING_MARKET_SNAPSHOT_OBSERVED",
+        "EXECUTION_BBO_OBSERVED",
         "MODEL_WEIGHT_BATCH_OBSERVED",
         "MODEL_RUN_OBSERVED",
         "TARGET_WEIGHT_OBSERVED",
@@ -31,11 +33,13 @@ public static class CanonicalRecorderV2Constants
         "TARGET_OBSERVED",
         "TARGET_ACTIVATED",
         "TARGET_REVISED",
+        "TARGET_EXPIRED",
         "DRIFT_SNAPSHOT_OBSERVED",
         "SHADOW_DECISION",
         "SHADOW_PARENT_INTENT",
         "SHADOW_CHILD_INTENT",
         "RISK_DECISION_OBSERVED",
+        "SHADOW_RISK_EVALUATION_OBSERVED",
         "POSITION_SNAPSHOT_OBSERVED",
         "HEALTH_EVENT",
         "CLOCK_EVENT",
@@ -116,7 +120,14 @@ public sealed record CanonicalRecorderV2Event(
     int? DepthLevel = null,
     bool? BookValid = null,
     long? SourceReceiveSequence = null,
-    string? EventId = null);
+    string? EventId = null,
+    string? DerivedEventId = null,
+    string? DerivedFromSourceEventId = null,
+    long? DerivedEventSequence = null,
+    int? TargetVersion = null,
+    int? SupersedesTargetVersion = null,
+    string? SizingMarketSnapshotId = null,
+    string? ExecutionBboEventId = null);
 
 public sealed record CanonicalRecorderEnvelopeV2
 {
@@ -141,6 +152,9 @@ public sealed record CanonicalRecorderEnvelopeV2
     public string? ExecutionPolicyId { get; init; }
     public string? SourceEventId { get; init; }
     public long? SourceEventSequence { get; init; }
+    public string? DerivedEventId { get; init; }
+    public string? DerivedFromSourceEventId { get; init; }
+    public long? DerivedEventSequence { get; init; }
     public string? SourceEntityId { get; init; }
     public string? SourceRunId { get; init; }
     public string? ModelRunId { get; init; }
@@ -177,6 +191,10 @@ public sealed record CanonicalRecorderEnvelopeV2
     public int? DepthLevel { get; init; }
     public bool? BookValid { get; init; }
     public long? SourceReceiveSequence { get; init; }
+    public int? TargetVersion { get; init; }
+    public int? SupersedesTargetVersion { get; init; }
+    public string? SizingMarketSnapshotId { get; init; }
+    public string? ExecutionBboEventId { get; init; }
 }
 
 public sealed record CanonicalRecorderV2ChunkManifest(
@@ -262,6 +280,9 @@ public sealed record CanonicalRecorderV2DataQualityReport(
     long EnqueuedWrittenMismatch,
     long PayloadHashFailureCount,
     string ManifestValidationStatus,
+    string RunIntegrityStatus,
+    string RecorderHealthStatus,
+    string ShadowReadinessStatus,
     DateTimeOffset? LastFlushUtc,
     long LastFlushSequence,
     bool ShadowReady,
@@ -287,6 +308,11 @@ public sealed record CanonicalRecorderV2ReplayReport(
     string DeterministicReplayHash,
     IReadOnlyDictionary<string, long> EventCounts,
     string? FailureReason);
+
+public sealed record CanonicalRecorderV2ReplaySnapshot(
+    CanonicalRecorderV2ReplayReport ReplayReport,
+    IReadOnlyList<CanonicalRecorderEnvelopeV2> Events,
+    IReadOnlyDictionary<string, string> InputFileHashes);
 
 public sealed record CanonicalRecorderV2HealthSnapshot(
     int QueueCapacity,
@@ -622,11 +648,13 @@ public sealed class CanonicalRecorderV2 : IAsyncDisposable
             "TARGET_OBSERVED" or
             "TARGET_ACTIVATED" or
             "TARGET_REVISED" or
+            "TARGET_EXPIRED" or
             "DRIFT_SNAPSHOT_OBSERVED" or
             "SHADOW_DECISION" or
             "SHADOW_PARENT_INTENT" or
             "SHADOW_CHILD_INTENT" or
             "RISK_DECISION_OBSERVED" or
+            "SHADOW_RISK_EVALUATION_OBSERVED" or
             "POSITION_SNAPSHOT_OBSERVED";
         return !requires || (!string.IsNullOrWhiteSpace(e.FundId) && !string.IsNullOrWhiteSpace(e.StrategyId) && !string.IsNullOrWhiteSpace(e.BookId));
     }
@@ -680,6 +708,9 @@ public sealed class CanonicalRecorderV2 : IAsyncDisposable
             ExecutionPolicyId = e.ExecutionPolicyId,
             SourceEventId = e.SourceEventId,
             SourceEventSequence = e.SourceEventSequence,
+            DerivedEventId = e.DerivedEventId,
+            DerivedFromSourceEventId = e.DerivedFromSourceEventId,
+            DerivedEventSequence = e.DerivedEventSequence,
             SourceEntityId = e.SourceEntityId,
             SourceRunId = e.SourceRunId,
             ModelRunId = e.ModelRunId,
@@ -715,7 +746,11 @@ public sealed class CanonicalRecorderV2 : IAsyncDisposable
             AskQuantity = e.AskQuantity,
             DepthLevel = e.DepthLevel,
             BookValid = e.BookValid,
-            SourceReceiveSequence = e.SourceReceiveSequence
+            SourceReceiveSequence = e.SourceReceiveSequence,
+            TargetVersion = e.TargetVersion,
+            SupersedesTargetVersion = e.SupersedesTargetVersion,
+            SizingMarketSnapshotId = e.SizingMarketSnapshotId,
+            ExecutionBboEventId = e.ExecutionBboEventId
         };
     }
 
@@ -1085,7 +1120,10 @@ public sealed class CanonicalRecorderV2 : IAsyncDisposable
             unfinalizedChunkCount,
             mismatch,
             payloadFailures,
-            "VALID",
+            shadowReady ? "VALID" : "INVALID",
+            shadowReady ? "PASS" : "FAIL",
+            writerFailed ? "FAILED" : "READY",
+            shadowReady ? "READY" : "NO_GO",
             lastFlushUtc,
             lastFlushSequence,
             shadowReady,
@@ -1146,6 +1184,9 @@ public sealed class CanonicalRecorderV2 : IAsyncDisposable
 public sealed class CanonicalRecorderV2Replayer
 {
     public async Task<CanonicalRecorderV2ReplayReport> ReplayAsync(string runRoot, CancellationToken cancellationToken = default)
+        => (await ReplaySnapshotAsync(runRoot, cancellationToken).ConfigureAwait(false)).ReplayReport;
+
+    public async Task<CanonicalRecorderV2ReplaySnapshot> ReplaySnapshotAsync(string runRoot, CancellationToken cancellationToken = default)
     {
         try
         {
@@ -1153,55 +1194,63 @@ public sealed class CanonicalRecorderV2Replayer
             var finalPath = Path.Combine(root, "final_manifest.json");
             if (!File.Exists(finalPath))
             {
-                return Failed("UNKNOWN", "final_manifest_missing");
+                return FailedSnapshot("UNKNOWN", "final_manifest_missing");
             }
 
+            var inputFileHashes = new Dictionary<string, string>(StringComparer.Ordinal);
+            inputFileHashes["final_manifest.json"] = CanonicalRecorderV2.Sha256File(finalPath);
             var finalText = await File.ReadAllTextAsync(finalPath, Encoding.UTF8, cancellationToken).ConfigureAwait(false);
             var final = JsonSerializer.Deserialize<CanonicalRecorderV2FinalManifest>(finalText, CanonicalRecorderV2Constants.JsonOptions)!;
             if (!final.Finalized || final.RecorderManifestVersion != CanonicalRecorderV2Constants.ManifestSchemaVersion || final.Mode != CanonicalRecorderV2Constants.Mode)
             {
-                return Failed(final.RecorderRunId, "invalid_final_manifest_header");
+                return FailedSnapshot(final.RecorderRunId, "invalid_final_manifest_header", inputFileHashes);
             }
 
-            if (CanonicalRecorderV2.Sha256File(Path.Combine(root, "run_manifest.json")) != final.RunManifestSha256)
+            var runManifestPath = Path.Combine(root, "run_manifest.json");
+            var dqPath = Path.Combine(root, "health", "data_quality_report.json");
+            inputFileHashes["run_manifest.json"] = File.Exists(runManifestPath) ? CanonicalRecorderV2.Sha256File(runManifestPath) : "MISSING";
+            inputFileHashes["health/data_quality_report.json"] = File.Exists(dqPath) ? CanonicalRecorderV2.Sha256File(dqPath) : "MISSING";
+            if (inputFileHashes["run_manifest.json"] != final.RunManifestSha256)
             {
-                return Failed(final.RecorderRunId, "run_manifest_hash_mismatch");
+                return FailedSnapshot(final.RecorderRunId, "run_manifest_hash_mismatch", inputFileHashes);
             }
 
-            if (CanonicalRecorderV2.Sha256File(Path.Combine(root, "health", "data_quality_report.json")) != final.DataQualityReportSha256)
+            if (inputFileHashes["health/data_quality_report.json"] != final.DataQualityReportSha256)
             {
-                return Failed(final.RecorderRunId, "data_quality_hash_mismatch");
+                return FailedSnapshot(final.RecorderRunId, "data_quality_hash_mismatch", inputFileHashes);
             }
 
             var allEvents = new List<CanonicalRecorderEnvelopeV2>();
             var eventIds = new HashSet<string>(StringComparer.Ordinal);
+            var sourceSequenceKeys = new HashSet<string>(StringComparer.Ordinal);
             long expectedSequence = 1;
             foreach (var chunk in final.Chunks)
             {
                 if (!IsSafeRelativePath(chunk.File))
                 {
-                    return Failed(final.RecorderRunId, $"unsafe_chunk_path:{chunk.File}");
+                    return FailedSnapshot(final.RecorderRunId, $"unsafe_chunk_path:{chunk.File}", inputFileHashes);
                 }
 
                 var path = Path.GetFullPath(Path.Combine(root, chunk.File.Replace('/', Path.DirectorySeparatorChar)));
                 if (!path.StartsWith(root.TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
                 {
-                    return Failed(final.RecorderRunId, $"chunk_path_escape:{chunk.File}");
-                }
-
-                if (File.GetAttributes(path).HasFlag(FileAttributes.ReparsePoint))
-                {
-                    return Failed(final.RecorderRunId, $"chunk_reparse_point:{chunk.File}");
+                    return FailedSnapshot(final.RecorderRunId, $"chunk_path_escape:{chunk.File}", inputFileHashes);
                 }
 
                 if (!File.Exists(path))
                 {
-                    return Failed(final.RecorderRunId, $"missing_chunk:{chunk.File}");
+                    return FailedSnapshot(final.RecorderRunId, $"missing_chunk:{chunk.File}", inputFileHashes);
                 }
 
-                if (new FileInfo(path).Length != chunk.SizeBytes || CanonicalRecorderV2.Sha256File(path) != chunk.Sha256)
+                if (File.GetAttributes(path).HasFlag(FileAttributes.ReparsePoint))
                 {
-                    return Failed(final.RecorderRunId, $"chunk_metadata_mismatch:{chunk.File}");
+                    return FailedSnapshot(final.RecorderRunId, $"chunk_reparse_point:{chunk.File}", inputFileHashes);
+                }
+
+                inputFileHashes[chunk.File] = CanonicalRecorderV2.Sha256File(path);
+                if (new FileInfo(path).Length != chunk.SizeBytes || inputFileHashes[chunk.File] != chunk.Sha256)
+                {
+                    return FailedSnapshot(final.RecorderRunId, $"chunk_metadata_mismatch:{chunk.File}", inputFileHashes);
                 }
 
                 var lines = await File.ReadAllLinesAsync(path, Encoding.UTF8, cancellationToken).ConfigureAwait(false);
@@ -1211,38 +1260,47 @@ public sealed class CanonicalRecorderV2Replayer
                     var envelope = JsonSerializer.Deserialize<CanonicalRecorderEnvelopeV2>(line, CanonicalRecorderV2Constants.JsonOptions)!;
                     if (envelope.SchemaVersion != CanonicalRecorderV2Constants.EnvelopeSchemaVersion)
                     {
-                        return Failed(final.RecorderRunId, $"unknown_schema:{envelope.SchemaVersion}");
+                        return FailedSnapshot(final.RecorderRunId, $"unknown_schema:{envelope.SchemaVersion}", inputFileHashes);
                     }
 
                     if (!CanonicalRecorderV2Constants.SupportedEventTypes.Contains(envelope.EventType))
                     {
-                        return Failed(final.RecorderRunId, $"unknown_event_type:{envelope.EventType}");
+                        return FailedSnapshot(final.RecorderRunId, $"unknown_event_type:{envelope.EventType}", inputFileHashes);
                     }
 
                     if (envelope.RecorderRunId != final.RecorderRunId || envelope.Environment != final.Environment)
                     {
-                        return Failed(final.RecorderRunId, "envelope_run_or_environment_mismatch");
+                        return FailedSnapshot(final.RecorderRunId, "envelope_run_or_environment_mismatch", inputFileHashes);
                     }
 
                     if (!eventIds.Add(envelope.EventId))
                     {
-                        return Failed(final.RecorderRunId, $"duplicate_event_id:{envelope.EventId}");
+                        return FailedSnapshot(final.RecorderRunId, $"duplicate_event_id:{envelope.EventId}", inputFileHashes);
                     }
 
                     if (envelope.ProcessEventSequence != expectedSequence)
                     {
-                        return Failed(final.RecorderRunId, $"sequence_gap_or_out_of_order:{envelope.ProcessEventSequence}:expected:{expectedSequence}");
+                        return FailedSnapshot(final.RecorderRunId, $"sequence_gap_or_out_of_order:{envelope.ProcessEventSequence}:expected:{expectedSequence}", inputFileHashes);
+                    }
+
+                    if (envelope.SourceEventSequence.HasValue && string.IsNullOrWhiteSpace(envelope.DerivedEventId))
+                    {
+                        var sourceScope = string.Join('|', envelope.Environment, envelope.SourceComponent, envelope.SourceContract, envelope.SourceRunId, envelope.SourceEventSequence.Value.ToString(System.Globalization.CultureInfo.InvariantCulture));
+                        if (!sourceSequenceKeys.Add(sourceScope))
+                        {
+                            return FailedSnapshot(final.RecorderRunId, $"duplicate_source_event_sequence:{sourceScope}", inputFileHashes);
+                        }
                     }
 
                     if (RequiresDimensions(envelope) && (string.IsNullOrWhiteSpace(envelope.FundId) || string.IsNullOrWhiteSpace(envelope.StrategyId) || string.IsNullOrWhiteSpace(envelope.BookId)))
                     {
-                        return Failed(final.RecorderRunId, $"missing_source_dimensions:{envelope.EventType}");
+                        return FailedSnapshot(final.RecorderRunId, $"missing_source_dimensions:{envelope.EventType}", inputFileHashes);
                     }
 
                     var payload = JsonSerializer.Serialize(envelope.PayloadJson, CanonicalRecorderV2Constants.JsonOptions);
                     if (CanonicalRecorderV2.Sha256Text(payload) != envelope.PayloadSha256)
                     {
-                        return Failed(final.RecorderRunId, $"payload_hash_mismatch:{envelope.EventId}");
+                        return FailedSnapshot(final.RecorderRunId, $"payload_hash_mismatch:{envelope.EventId}", inputFileHashes);
                     }
 
                     expectedSequence++;
@@ -1250,15 +1308,15 @@ public sealed class CanonicalRecorderV2Replayer
                     allEvents.Add(envelope);
                 }
 
-                if (chunkEvents.Count != chunk.EventCount || chunkEvents.First().ProcessEventSequence != chunk.FirstSequence || chunkEvents.Last().ProcessEventSequence != chunk.LastSequence)
+                if (chunkEvents.Count != chunk.EventCount || chunkEvents.Count == 0 || chunkEvents.First().ProcessEventSequence != chunk.FirstSequence || chunkEvents.Last().ProcessEventSequence != chunk.LastSequence)
                 {
-                    return Failed(final.RecorderRunId, $"chunk_sequence_or_count_mismatch:{chunk.File}");
+                    return FailedSnapshot(final.RecorderRunId, $"chunk_sequence_or_count_mismatch:{chunk.File}", inputFileHashes);
                 }
             }
 
             if (allEvents.Count != final.EventsWritten)
             {
-                return Failed(final.RecorderRunId, "events_written_mismatch");
+                return FailedSnapshot(final.RecorderRunId, "events_written_mismatch", inputFileHashes);
             }
 
             var eventCounts = allEvents.GroupBy(x => x.EventType, StringComparer.Ordinal).ToDictionary(x => x.Key, x => (long)x.Count(), StringComparer.Ordinal);
@@ -1266,38 +1324,36 @@ public sealed class CanonicalRecorderV2Replayer
             {
                 if (!eventCounts.TryGetValue(key, out var actual) || actual != value)
                 {
-                    return Failed(final.RecorderRunId, $"event_count_mismatch:{key}");
+                    return FailedSnapshot(final.RecorderRunId, $"event_count_mismatch:{key}", inputFileHashes);
                 }
             }
 
-            return new CanonicalRecorderV2ReplayReport("PASS", CanonicalRecorderV2Constants.ReplayHashVersion, final.RecorderRunId, final.Chunks.Count, allEvents.Count, ComputeDeterministicReplayHash(allEvents), eventCounts, null);
+            var report = new CanonicalRecorderV2ReplayReport("PASS", CanonicalRecorderV2Constants.ReplayHashVersion, final.RecorderRunId, final.Chunks.Count, allEvents.Count, ComputeDeterministicReplayHash(allEvents), eventCounts, null);
+            return new CanonicalRecorderV2ReplaySnapshot(report, allEvents, inputFileHashes);
         }
         catch (Exception ex)
         {
-            return Failed("UNKNOWN", ex.GetType().Name + ":" + ex.Message);
+            return FailedSnapshot("UNKNOWN", ex.GetType().Name + ":" + ex.Message);
         }
     }
 
     public async Task<IReadOnlyList<CanonicalRecorderEnvelopeV2>> ReadEventsAsync(string runRoot, CancellationToken cancellationToken = default)
     {
-        var report = await ReplayAsync(runRoot, cancellationToken).ConfigureAwait(false);
-        if (report.Status != "PASS")
+        var snapshot = await ReplaySnapshotAsync(runRoot, cancellationToken).ConfigureAwait(false);
+        if (snapshot.ReplayReport.Status != "PASS")
         {
-            throw new InvalidOperationException(report.FailureReason);
+            throw new InvalidOperationException(snapshot.ReplayReport.FailureReason);
         }
 
-        var final = JsonSerializer.Deserialize<CanonicalRecorderV2FinalManifest>(await File.ReadAllTextAsync(Path.Combine(runRoot, "final_manifest.json"), Encoding.UTF8, cancellationToken).ConfigureAwait(false), CanonicalRecorderV2Constants.JsonOptions)!;
-        return final.Chunks
-            .SelectMany(chunk => File.ReadAllLines(Path.Combine(runRoot, chunk.File.Replace('/', Path.DirectorySeparatorChar)), Encoding.UTF8))
-            .Where(line => !string.IsNullOrWhiteSpace(line))
-            .Select(line => JsonSerializer.Deserialize<CanonicalRecorderEnvelopeV2>(line, CanonicalRecorderV2Constants.JsonOptions)!)
-            .ToArray();
+        return snapshot.Events;
     }
 
     public static string ComputeDeterministicReplayHash(IEnumerable<CanonicalRecorderEnvelopeV2> events)
     {
         var semantic = events.Select(x => new
         {
+            x.Environment,
+            x.EventId,
             x.ProcessEventSequence,
             x.EventType,
             x.FundId,
@@ -1312,6 +1368,9 @@ public sealed class CanonicalRecorderV2Replayer
             x.ExecutionPolicyId,
             x.SourceEventId,
             x.SourceEventSequence,
+            x.DerivedEventId,
+            x.DerivedFromSourceEventId,
+            x.DerivedEventSequence,
             x.SourceComponent,
             x.SourceContract,
             x.SourceContractVersion,
@@ -1342,6 +1401,10 @@ public sealed class CanonicalRecorderV2Replayer
             x.DepthLevel,
             x.BookValid,
             x.SourceReceiveSequence,
+            x.TargetVersion,
+            x.SupersedesTargetVersion,
+            x.SizingMarketSnapshotId,
+            x.ExecutionBboEventId,
             x.PayloadSha256,
             x.CodeCommit,
             x.ConfigHash
@@ -1364,15 +1427,18 @@ public sealed class CanonicalRecorderV2Replayer
             "TARGET_OBSERVED" or
             "TARGET_ACTIVATED" or
             "TARGET_REVISED" or
+            "TARGET_EXPIRED" or
             "DRIFT_SNAPSHOT_OBSERVED" or
             "SHADOW_DECISION" or
             "SHADOW_PARENT_INTENT" or
             "SHADOW_CHILD_INTENT" or
             "RISK_DECISION_OBSERVED" or
+            "SHADOW_RISK_EVALUATION_OBSERVED" or
             "POSITION_SNAPSHOT_OBSERVED";
 
-    private static CanonicalRecorderV2ReplayReport Failed(string runId, string reason)
-        => new("FAIL", CanonicalRecorderV2Constants.ReplayHashVersion, runId, 0, 0, string.Empty, new Dictionary<string, long>(), reason);
+    private static CanonicalRecorderV2ReplaySnapshot FailedSnapshot(string runId, string reason, IReadOnlyDictionary<string, string>? inputFileHashes = null)
+    {
+        var report = new CanonicalRecorderV2ReplayReport("FAIL", CanonicalRecorderV2Constants.ReplayHashVersion, runId, 0, 0, string.Empty, new Dictionary<string, long>(), reason);
+        return new CanonicalRecorderV2ReplaySnapshot(report, Array.Empty<CanonicalRecorderEnvelopeV2>(), inputFileHashes ?? new Dictionary<string, string>());
+    }
 }
-
-

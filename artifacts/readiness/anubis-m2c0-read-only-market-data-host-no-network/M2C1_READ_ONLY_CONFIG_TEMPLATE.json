@@ -1,0 +1,18 @@
+﻿{
+    "schema":  "m2c1_read_only_market_data_capture_config_v1",
+    "market_data_endpoint_alias":  "LMAX_DEMO_MD_READ_ONLY_ALIAS_TO_BE_APPROVED",
+    "market_data_session_alias":  "LMAX_DEMO_MARKET_DATA_SESSION_ALIAS_TO_BE_APPROVED",
+    "instruments":  [
+                        "EURUSD",
+                        "AUDUSD"
+                    ],
+    "output_root":  "artifacts/readiness/m2c1-read-only-market-data-capture",
+    "quote_age_threshold_ms":  1000,
+    "rotate_after_bytes":  10485760,
+    "flush_interval_ms":  1000,
+    "order_entry_session_alias":  null,
+    "credentials_inline":  false,
+    "account_api_enabled":  false,
+    "databento_api_enabled":  false,
+    "db_apply":  false
+}

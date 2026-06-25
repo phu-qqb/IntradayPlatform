@@ -1,0 +1,6 @@
+﻿ .../CanonicalReadOnlyMarketDataHost.cs             | 186 ++++++++++++
+ .../CanonicalRecorder/CanonicalRecorderV2.cs       | 154 +++++++---
+ .../CanonicalRecorder/CanonicalShadowOffline.cs    | 305 ++++++++++++++++---
+ .../CanonicalRecorderM2C0Tests.cs                  | 322 +++++++++++++++++++++
+ .../CanonicalShadowOfflineM2BTests.cs              |   8 +-
+ 5 files changed, 896 insertions(+), 79 deletions(-)

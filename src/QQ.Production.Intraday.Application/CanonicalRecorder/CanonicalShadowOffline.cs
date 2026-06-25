@@ -15,7 +15,7 @@ public sealed record CanonicalManagerWeightFixture(
     decimal ContractSize,
     decimal MinOrderQuantity,
     decimal QuantityStep,
-    decimal PriceTickSize);
+    decimal PriceTickSize, decimal CurrentVenueQuantity = 0m);
 
 public sealed record CanonicalManagerOutputFixture(
     string ExternalBatchId,
@@ -101,6 +101,54 @@ public sealed record ShadowChildIntentSnapshot(
     string TimeInForce,
     bool IsShadowOnly);
 
+public sealed record ReadOnlyPositionSnapshot(
+    string Instrument,
+    decimal Quantity,
+    string Unit,
+    DateTimeOffset AsOfUtc,
+    string Source,
+    string Quality,
+    bool Authoritative);
+
+public sealed record ShadowRiskEvaluationSnapshot(
+    string RiskEvaluationId,
+    string TradeIntentId,
+    string ModelRunId,
+    string InstrumentId,
+    string Symbol,
+    bool Authoritative,
+    string PolicyId,
+    string Result,
+    IReadOnlyList<string> Reasons,
+    DateTimeOffset EvaluatedUtc);
+
+public sealed record ShadowTargetActivationDecision(string Status, bool MayActivate, bool IsExpired, string Reason);
+
+public interface IShadowTargetActivationPolicy
+{
+    ShadowTargetActivationDecision Evaluate(DateTimeOffset nowUtc, DateTimeOffset effectiveFromUtc, DateTimeOffset deadlineUtc);
+}
+
+public sealed class ShadowTargetActivationPolicy : IShadowTargetActivationPolicy
+{
+    public static ShadowTargetActivationPolicy Default { get; } = new();
+
+    public ShadowTargetActivationDecision Evaluate(DateTimeOffset nowUtc, DateTimeOffset effectiveFromUtc, DateTimeOffset deadlineUtc)
+    {
+        if (nowUtc < effectiveFromUtc)
+        {
+            return new ShadowTargetActivationDecision("OBSERVED_ONLY", false, false, "before_effective_from");
+        }
+
+        if (nowUtc > deadlineUtc)
+        {
+            return new ShadowTargetActivationDecision("EXPIRED", false, true, "after_deadline");
+        }
+
+        return new ShadowTargetActivationDecision("ACTIVE", true, false, "within_effective_window");
+    }
+}
+
 public sealed record ShadowPositionSnapshot(
     string ModelRunId,
     string InstrumentId,
@@ -108,7 +156,8 @@ public sealed record ShadowPositionSnapshot(
     decimal TargetVenueQuantity,
     decimal CurrentVenueQuantity,
     decimal DriftVenueQuantity,
-    DateTimeOffset AsOfUtc);
+    DateTimeOffset AsOfUtc,
+    ReadOnlyPositionSnapshot CurrentPosition);
 
 public sealed record CanonicalRecorderParityRow(
     string SourceEntity,
@@ -162,8 +211,8 @@ public static class CanonicalShadowOfflineFixtures
             "fixture-content-hash-intraday-m2b",
             new[]
             {
-                new CanonicalManagerWeightFixture("EURUSD", "4001", 0.0100m, 1.1000m, 1.1002m, 1m, 0.1m, 0.1m, 0.00001m),
-                new CanonicalManagerWeightFixture("AUDUSD", "4007", -0.0060m, 0.6600m, 0.6602m, 1m, 0.1m, 0.1m, 0.00001m)
+                new CanonicalManagerWeightFixture("EURUSD", "4001", 0.0100m, 1.1000m, 1.1002m, 1m, 0.1m, 0.1m, 0.00001m, 1_000m),
+                new CanonicalManagerWeightFixture("AUDUSD", "4007", -0.0060m, 0.6600m, 0.6602m, 1m, 0.1m, 0.1m, 0.00001m, -500m)
             });
     }
 
@@ -288,11 +337,11 @@ public static class CanonicalIntradayManagerOutputMapper
                 modelRun.Id,
                 instrumentId,
                 targetPosition.TargetBaseQuantity,
-                0m,
-                targetPosition.TargetBaseQuantity,
+                weight.CurrentVenueQuantity,
+                targetPosition.TargetBaseQuantity - weight.CurrentVenueQuantity,
                 targetPosition.TargetVenueQuantity,
-                0m,
-                targetPosition.TargetVenueQuantity);
+                weight.CurrentVenueQuantity,
+                targetPosition.TargetVenueQuantity - weight.CurrentVenueQuantity);
             var side = drift.DriftVenueQuantity >= 0 ? TradeSide.Buy : TradeSide.Sell;
             var tradeIntent = new TradeIntent(
                 new TradeIntentId(StableGuid(modelRun.Id.Value + "|" + weight.Symbol + "|trade-intent")),
@@ -303,14 +352,14 @@ public static class CanonicalIntradayManagerOutputMapper
                 Math.Abs(drift.DriftBaseQuantity),
                 Math.Abs(drift.DriftVenueQuantity),
                 "M2B_OFFLINE_SHADOW_DELTA",
-                TradeIntentStatus.RiskApproved,
+                TradeIntentStatus.Created,
                 fixture.DecisionTimeUtc);
             var riskDecision = new RiskDecision(
                 StableGuid(tradeIntent.Id.Value + "|risk"),
                 tradeIntent.Id,
-                RiskDecisionStatus.Approved,
-                RiskRejectReason.None,
-                "offline shadow approved; no gateway invoked",
+                RiskDecisionStatus.Blocked,
+                RiskRejectReason.RiskConfigMissing,
+                "offline shadow pre-risk; no authoritative risk policy invoked",
                 fixture.DecisionTimeUtc,
                 null,
                 modelRun.Id,
@@ -435,9 +484,11 @@ public sealed class CanonicalRecorderSink(CanonicalRecorderV2 recorder) : ICanon
 
 public static class CanonicalDomainEventMapper
 {
-    public static IEnumerable<CanonicalRecorderV2Event> MapIntraday(CanonicalShadowOfflineContracts contracts)
+    public static IEnumerable<CanonicalRecorderV2Event> MapIntraday(CanonicalShadowOfflineContracts contracts, IShadowTargetActivationPolicy? activationPolicy = null, DateTimeOffset? nowUtc = null)
     {
         var f = contracts.SourceFixture;
+        var policy = activationPolicy ?? ShadowTargetActivationPolicy.Default;
+        var activationNow = nowUtc ?? f.EffectiveFromUtc;
         yield return Intraday("MODEL_WEIGHT_BATCH_OBSERVED", "ModelWeightBatch", "batch", contracts.Batch, sourceEntityId: contracts.Batch.Id.Value.ToString(), modelRunId: contracts.ModelRun.Id.Value.ToString());
         yield return Intraday("MODEL_RUN_OBSERVED", "ModelRun", "model-run", contracts.ModelRun, sourceEntityId: contracts.ModelRun.Id.Value.ToString(), modelRunId: contracts.ModelRun.Id.Value.ToString());
 
@@ -488,20 +539,48 @@ public static class CanonicalDomainEventMapper
                 instrumentId,
                 symbol,
                 targetPosition.TargetVenueQuantity,
-                0m,
+                f.Weights[i].CurrentVenueQuantity,
                 drift.DriftVenueQuantity,
+                f.DecisionTimeUtc,
+                new ReadOnlyPositionSnapshot(symbol, f.Weights[i].CurrentVenueQuantity, "venue_quantity", f.DecisionTimeUtc, "fixture_read_only_position_snapshot", "FIXTURE", false));
+            var riskEvaluation = new ShadowRiskEvaluationSnapshot(
+                "shadow-risk-eval-" + symbol,
+                intent.Id.Value.ToString(),
+                contracts.ModelRun.Id.Value.ToString(),
+                instrumentId,
+                symbol,
+                false,
+                "SHADOW_PRE_RISK_NO_AUTHORITY_V1",
+                "BLOCKED_PRE_AUTHORITATIVE_RISK",
+                ["authoritative_risk_policy_not_bound"],
                 f.DecisionTimeUtc);
+            var activation = policy.Evaluate(activationNow, f.EffectiveFromUtc, f.DeadlineUtc);
+            var targetSourceEventId = contracts.SourceEventIds["target-position:" + symbol];
+            var sizingSnapshotId = contracts.MarketData[i].Id.Value.ToString();
+            var executionBboEventId = "execution-bbo-" + symbol;
 
-            yield return Intraday("TARGET_WEIGHT_OBSERVED", "TargetWeight", "target-weight:" + symbol, targetWeight, sourceEntityId: positionId, modelRunId: contracts.ModelRun.Id.Value.ToString(), instrumentId: instrumentId, symbol: symbol);
-            yield return Intraday("TARGET_POSITION_OBSERVED", "TargetPosition", "target-position:" + symbol, targetPosition, sourceEntityId: positionId, modelRunId: contracts.ModelRun.Id.Value.ToString(), targetPositionId: positionId, instrumentId: instrumentId, symbol: symbol);
-            yield return Intraday("TARGET_ACTIVATED", "TargetPosition", "target-position:" + symbol, targetPosition, sourceEntityId: positionId, modelRunId: contracts.ModelRun.Id.Value.ToString(), targetPositionId: positionId, instrumentId: instrumentId, symbol: symbol);
-            yield return Intraday("TARGET_REVISED", "TargetPosition", "target-position:" + symbol, targetPosition with { TargetVenueQuantity = targetPosition.TargetVenueQuantity }, sourceEntityId: positionId, modelRunId: contracts.ModelRun.Id.Value.ToString(), targetPositionId: positionId, instrumentId: instrumentId, symbol: symbol);
-            yield return Intraday("DRIFT_SNAPSHOT_OBSERVED", "DriftSnapshot", "drift:" + symbol, drift, sourceEntityId: positionId, modelRunId: contracts.ModelRun.Id.Value.ToString(), targetPositionId: positionId, instrumentId: instrumentId, symbol: symbol);
-            yield return Intraday("SHADOW_DECISION", "ShadowDecisionSnapshot", "drift:" + symbol, decision, sourceEntityId: decision.DecisionId, modelRunId: contracts.ModelRun.Id.Value.ToString(), targetPositionId: positionId, instrumentId: instrumentId, symbol: symbol);
-            yield return Intraday("SHADOW_PARENT_INTENT", "ShadowParentIntentSnapshot", "trade-intent:" + symbol, parent, sourceEntityId: parent.ParentIntentId, modelRunId: contracts.ModelRun.Id.Value.ToString(), parentIntentId: parent.ParentIntentId, instrumentId: instrumentId, symbol: symbol);
-            yield return Intraday("SHADOW_CHILD_INTENT", "ShadowChildIntentSnapshot", "trade-intent:" + symbol, child, sourceEntityId: child.ChildIntentId, modelRunId: contracts.ModelRun.Id.Value.ToString(), parentIntentId: parent.ParentIntentId, childIntentId: child.ChildIntentId, instrumentId: instrumentId, symbol: symbol);
-            yield return Intraday("RISK_DECISION_OBSERVED", "RiskDecision", "risk:" + symbol, risk, sourceEntityId: risk.Id.ToString(), modelRunId: contracts.ModelRun.Id.Value.ToString(), parentIntentId: parent.ParentIntentId, childIntentId: child.ChildIntentId, instrumentId: instrumentId, symbol: symbol);
-            yield return Intraday("POSITION_SNAPSHOT_OBSERVED", "ShadowPositionSnapshot", "target-position:" + symbol, position, sourceEntityId: positionId, modelRunId: contracts.ModelRun.Id.Value.ToString(), targetPositionId: positionId, instrumentId: instrumentId, symbol: symbol);
+            yield return Intraday("TARGET_WEIGHT_OBSERVED", "TargetWeight", "target-weight:" + symbol, targetWeight, sourceEntityId: positionId, modelRunId: contracts.ModelRun.Id.Value.ToString(), instrumentId: instrumentId, symbol: symbol, targetVersion: 1);
+            yield return Intraday("TARGET_POSITION_OBSERVED", "TargetPosition", "target-position:" + symbol, targetPosition, sourceEntityId: positionId, modelRunId: contracts.ModelRun.Id.Value.ToString(), targetPositionId: positionId, instrumentId: instrumentId, symbol: symbol, targetVersion: 1, sizingMarketSnapshotId: sizingSnapshotId);
+            yield return Intraday("TARGET_OBSERVED", "TargetPosition", "target-position:" + symbol, targetPosition, sourceEntityId: positionId, modelRunId: contracts.ModelRun.Id.Value.ToString(), targetPositionId: positionId, instrumentId: instrumentId, symbol: symbol, targetVersion: 1, derivedEventId: "target-observed-" + symbol + "-v1", derivedFromSourceEventId: targetSourceEventId, derivedEventSequence: 1, sizingMarketSnapshotId: sizingSnapshotId);
+            if (activation.Status == "OBSERVED_ONLY")
+            {
+                continue;
+            }
+
+            if (activation.IsExpired)
+            {
+                yield return Intraday("TARGET_EXPIRED", "TargetPosition", "target-position:" + symbol, new { targetPosition, activation }, sourceEntityId: positionId, modelRunId: contracts.ModelRun.Id.Value.ToString(), targetPositionId: positionId, instrumentId: instrumentId, symbol: symbol, targetVersion: 1, derivedEventId: "target-expired-" + symbol + "-v1", derivedFromSourceEventId: targetSourceEventId, derivedEventSequence: 2, sizingMarketSnapshotId: sizingSnapshotId);
+                continue;
+            }
+
+            yield return Intraday("TARGET_ACTIVATED", "TargetPosition", "target-position:" + symbol, targetPosition, sourceEntityId: positionId, modelRunId: contracts.ModelRun.Id.Value.ToString(), targetPositionId: positionId, instrumentId: instrumentId, symbol: symbol, targetVersion: 1, derivedEventId: "target-activated-" + symbol + "-v1", derivedFromSourceEventId: targetSourceEventId, derivedEventSequence: 2, sizingMarketSnapshotId: sizingSnapshotId);
+            yield return Intraday("DRIFT_SNAPSHOT_OBSERVED", "DriftSnapshot", "drift:" + symbol, drift, sourceEntityId: positionId, modelRunId: contracts.ModelRun.Id.Value.ToString(), targetPositionId: positionId, instrumentId: instrumentId, symbol: symbol, targetVersion: 1, sizingMarketSnapshotId: sizingSnapshotId);
+            yield return Intraday("SHADOW_DECISION", "ShadowDecisionSnapshot", "drift:" + symbol, decision, sourceEntityId: decision.DecisionId, modelRunId: contracts.ModelRun.Id.Value.ToString(), targetPositionId: positionId, instrumentId: instrumentId, symbol: symbol, targetVersion: 1, derivedEventId: decision.DecisionId, derivedFromSourceEventId: contracts.SourceEventIds["drift:" + symbol], derivedEventSequence: 3, sizingMarketSnapshotId: sizingSnapshotId, executionBboEventId: executionBboEventId);
+            yield return Intraday("SHADOW_PARENT_INTENT", "ShadowParentIntentSnapshot", "trade-intent:" + symbol, parent, sourceEntityId: parent.ParentIntentId, modelRunId: contracts.ModelRun.Id.Value.ToString(), parentIntentId: parent.ParentIntentId, instrumentId: instrumentId, symbol: symbol, targetVersion: 1, derivedEventId: parent.ParentIntentId, derivedFromSourceEventId: contracts.SourceEventIds["trade-intent:" + symbol], derivedEventSequence: 4, sizingMarketSnapshotId: sizingSnapshotId, executionBboEventId: executionBboEventId);
+            yield return Intraday("SHADOW_CHILD_INTENT", "ShadowChildIntentSnapshot", "trade-intent:" + symbol, child, sourceEntityId: child.ChildIntentId, modelRunId: contracts.ModelRun.Id.Value.ToString(), parentIntentId: parent.ParentIntentId, childIntentId: child.ChildIntentId, instrumentId: instrumentId, symbol: symbol, targetVersion: 1, derivedEventId: child.ChildIntentId, derivedFromSourceEventId: contracts.SourceEventIds["trade-intent:" + symbol], derivedEventSequence: 5, sizingMarketSnapshotId: sizingSnapshotId, executionBboEventId: executionBboEventId);
+            yield return Intraday("RISK_DECISION_OBSERVED", "RiskDecision", "risk:" + symbol, risk, sourceEntityId: risk.Id.ToString(), modelRunId: contracts.ModelRun.Id.Value.ToString(), parentIntentId: parent.ParentIntentId, childIntentId: child.ChildIntentId, instrumentId: instrumentId, symbol: symbol, targetVersion: 1, derivedEventId: "risk-decision-" + symbol, derivedFromSourceEventId: contracts.SourceEventIds["risk:" + symbol], derivedEventSequence: 6);
+            yield return Intraday("SHADOW_RISK_EVALUATION_OBSERVED", "ShadowRiskEvaluationSnapshot", "risk:" + symbol, riskEvaluation, sourceEntityId: riskEvaluation.RiskEvaluationId, modelRunId: contracts.ModelRun.Id.Value.ToString(), parentIntentId: parent.ParentIntentId, childIntentId: child.ChildIntentId, instrumentId: instrumentId, symbol: symbol, targetVersion: 1, derivedEventId: riskEvaluation.RiskEvaluationId, derivedFromSourceEventId: contracts.SourceEventIds["risk:" + symbol], derivedEventSequence: 7);
+            yield return Intraday("POSITION_SNAPSHOT_OBSERVED", "ShadowPositionSnapshot", "target-position:" + symbol, position, sourceEntityId: positionId, modelRunId: contracts.ModelRun.Id.Value.ToString(), targetPositionId: positionId, instrumentId: instrumentId, symbol: symbol, targetVersion: 1, derivedEventId: "position-snapshot-" + symbol, derivedFromSourceEventId: targetSourceEventId, derivedEventSequence: 8, sizingMarketSnapshotId: sizingSnapshotId);
         }
 
         CanonicalRecorderV2Event Intraday(
@@ -515,7 +594,14 @@ public static class CanonicalDomainEventMapper
             string? parentIntentId = null,
             string? childIntentId = null,
             string? instrumentId = null,
-            string? symbol = null)
+            string? symbol = null,
+            int? targetVersion = null,
+            int? supersedesTargetVersion = null,
+            string? derivedEventId = null,
+            string? derivedFromSourceEventId = null,
+            long? derivedEventSequence = null,
+            string? sizingMarketSnapshotId = null,
+            string? executionBboEventId = null)
             => new(
                 type,
                 "CanonicalShadowOffline",
@@ -547,7 +633,65 @@ public static class CanonicalDomainEventMapper
                 f.DecisionTimeUtc,
                 f.EffectiveFromUtc,
                 f.DeadlineUtc,
-                f.TargetCloseUtc);
+                f.TargetCloseUtc,
+                EventId: derivedEventId,
+                DerivedEventId: derivedEventId,
+                DerivedFromSourceEventId: derivedFromSourceEventId,
+                DerivedEventSequence: derivedEventSequence,
+                TargetVersion: targetVersion,
+                SupersedesTargetVersion: supersedesTargetVersion,
+                SizingMarketSnapshotId: sizingMarketSnapshotId,
+                ExecutionBboEventId: executionBboEventId);
+    }
+
+    public static IEnumerable<CanonicalRecorderV2Event> MapRevision(CanonicalShadowOfflineContracts contracts, string symbol)
+    {
+        var f = contracts.SourceFixture;
+        var index = f.Weights.ToList().FindIndex(x => x.Symbol == symbol);
+        if (index < 0)
+        {
+            yield break;
+        }
+
+        var original = contracts.TargetPositions[index];
+        var instrumentId = original.InstrumentId.Value.ToString();
+        var positionId = contracts.ModelRun.Id.Value + "|" + instrumentId;
+        yield return new CanonicalRecorderV2Event(
+            "TARGET_REVISED",
+            "CanonicalShadowOffline",
+            "TargetPositionRevision",
+            "existing-intraday-domain-v1",
+            new { original, revision_reason = "fixture_reversal", target_version = 2, supersedes_target_version = 1 },
+            f.FundId,
+            f.PortfolioId,
+            f.StrategyId,
+            f.StrategyRunId,
+            f.StrategyVersion,
+            f.BookId,
+            f.CapitalAllocationId,
+            f.BrokerAccountKey,
+            f.NavRunId,
+            f.ExecutionPolicyId,
+            "source-target-revision-" + symbol + "-v2",
+            20_000 + index,
+            positionId,
+            f.ExternalBatchId,
+            contracts.ModelRun.Id.Value.ToString(),
+            positionId,
+            InstrumentId: instrumentId,
+            Symbol: symbol,
+            Venue: "LMAX_DEMO_SHADOW",
+            SourceTimestampUtc: f.DecisionTimeUtc,
+            DecisionTime: f.DecisionTimeUtc,
+            EffectiveFrom: f.EffectiveFromUtc,
+            Deadline: f.DeadlineUtc,
+            TargetClose: f.TargetCloseUtc,
+            EventId: "target-revised-" + symbol + "-v2",
+            DerivedEventId: "target-revised-" + symbol + "-v2",
+            DerivedFromSourceEventId: contracts.SourceEventIds["target-position:" + symbol],
+            DerivedEventSequence: 9,
+            TargetVersion: 2,
+            SupersedesTargetVersion: 1);
     }
 
     public static CanonicalRecorderV2Event MapMarketData(CanonicalShadowOfflineContracts contracts, int index)
@@ -568,9 +712,67 @@ public static class CanonicalDomainEventMapper
             Venue: "LMAX_DEMO_SHADOW",
             SourceTimestampUtc: snapshot.SourceTimestampUtc,
             BidPrice: snapshot.Bid,
+            QuoteEventId: "bbo-" + symbol + "-" + index,
+            BidQuantity: 1_000_000m,
             AskPrice: snapshot.Ask,
+            AskQuantity: 1_000_000m,
             BookValid: true,
             SourceReceiveSequence: index + 1);
+    }
+
+    public static CanonicalRecorderV2Event MapSizingMarketData(CanonicalShadowOfflineContracts contracts, int index)
+    {
+        var snapshot = contracts.MarketData[index];
+        var symbol = contracts.SourceFixture.Weights[index].Symbol;
+        return new CanonicalRecorderV2Event(
+            "SIZING_MARKET_SNAPSHOT_OBSERVED",
+            "CanonicalShadowOffline",
+            "SizingMarketDataSnapshot",
+            "existing-intraday-domain-v1",
+            snapshot,
+            SourceEventId: contracts.SourceEventIds["market-data:" + symbol],
+            SourceEventSequence: contracts.SourceEventSequences["market-data:" + symbol],
+            SourceEntityId: snapshot.Id.Value.ToString(),
+            InstrumentId: snapshot.InstrumentId.Value.ToString(),
+            Symbol: symbol,
+            Venue: "LMAX_DEMO_SHADOW",
+            SourceTimestampUtc: snapshot.SourceTimestampUtc,
+            BidPrice: snapshot.Bid,
+            BidQuantity: 1_000_000m,
+            AskPrice: snapshot.Ask,
+            AskQuantity: 1_000_000m,
+            BookValid: true,
+            SourceReceiveSequence: index + 1,
+            SizingMarketSnapshotId: snapshot.Id.Value.ToString());
+    }
+
+    public static CanonicalRecorderV2Event MapExecutionBbo(CanonicalShadowOfflineContracts contracts, int index)
+    {
+        var snapshot = contracts.MarketData[index];
+        var symbol = contracts.SourceFixture.Weights[index].Symbol;
+        var quoteEventId = "execution-bbo-" + symbol;
+        return new CanonicalRecorderV2Event(
+            "EXECUTION_BBO_OBSERVED",
+            "CanonicalShadowOffline",
+            "ExecutionBboSnapshot",
+            "existing-intraday-domain-v1",
+            new { quote_event_id = quoteEventId, symbol, bid_price = snapshot.Bid, bid_quantity = 1_000_000m, ask_price = snapshot.Ask, ask_quantity = 1_000_000m, source_timestamp_utc = snapshot.SourceTimestampUtc, local_receive_utc = snapshot.ReceivedAtUtc, quote_age_ms = 1000, book_valid = true },
+            SourceEventId: "source-execution-bbo-" + symbol,
+            SourceEventSequence: 10_000 + index,
+            SourceEntityId: quoteEventId,
+            InstrumentId: snapshot.InstrumentId.Value.ToString(),
+            Symbol: symbol,
+            Venue: "LMAX_DEMO_SHADOW",
+            SourceTimestampUtc: snapshot.SourceTimestampUtc,
+            SessionId: "fixture-session-m2c0",
+            QuoteEventId: quoteEventId,
+            BidPrice: snapshot.Bid,
+            BidQuantity: 1_000_000m,
+            AskPrice: snapshot.Ask,
+            AskQuantity: 1_000_000m,
+            BookValid: true,
+            SourceReceiveSequence: 10_000 + index,
+            ExecutionBboEventId: quoteEventId);
     }
 
     public static CanonicalRecorderV2Event MapDaily(CanonicalDailyBookObservationFixture daily)
@@ -677,7 +879,13 @@ public sealed class CanonicalShadowOfflineHost
             new { recorder_run_id = recorderRunId, side_effect_boundary = "offline_only" },
             SourceEventId: "recorder-start",
             SourceEventSequence: 1), cancellationToken).ConfigureAwait(false);
-        await RecordWithClockAsync(CanonicalDomainEventMapper.MapMarketData(intraday, 0), cancellationToken).ConfigureAwait(false);
+        for (var i = 0; i < intraday.MarketData.Count; i++)
+        {
+            await RecordWithClockAsync(CanonicalDomainEventMapper.MapMarketData(intraday, i), cancellationToken).ConfigureAwait(false);
+            await RecordWithClockAsync(CanonicalDomainEventMapper.MapSizingMarketData(intraday, i), cancellationToken).ConfigureAwait(false);
+            await RecordWithClockAsync(CanonicalDomainEventMapper.MapExecutionBbo(intraday, i), cancellationToken).ConfigureAwait(false);
+        }
+
         await RecordWithClockAsync(CanonicalDomainEventMapper.MapDaily(daily), cancellationToken).ConfigureAwait(false);
         foreach (var recorderEvent in CanonicalDomainEventMapper.MapIntraday(intraday))
         {
@@ -694,8 +902,9 @@ public sealed class CanonicalShadowOfflineHost
             SourceEventSequence: 999), cancellationToken).ConfigureAwait(false);
         await recorder.FlushCheckpointAsync(cancellationToken).ConfigureAwait(false);
         var manifest = await recorder.CompleteAsync(cancellationToken).ConfigureAwait(false);
-        var replay = await new CanonicalRecorderV2Replayer().ReplayAsync(recorder.RunRoot, cancellationToken).ConfigureAwait(false);
-        var events = await new CanonicalRecorderV2Replayer().ReadEventsAsync(recorder.RunRoot, cancellationToken).ConfigureAwait(false);
+        var snapshot = await new CanonicalRecorderV2Replayer().ReplaySnapshotAsync(recorder.RunRoot, cancellationToken).ConfigureAwait(false);
+        var replay = snapshot.ReplayReport;
+        var events = snapshot.Events;
         var dataQuality = JsonSerializer.Deserialize<CanonicalRecorderV2DataQualityReport>(
             await File.ReadAllTextAsync(Path.Combine(recorder.RunRoot, "health", "data_quality_report.json"), Encoding.UTF8, cancellationToken).ConfigureAwait(false),
             CanonicalRecorderV2Constants.JsonOptions)!;
@@ -718,11 +927,14 @@ public sealed class CanonicalShadowOfflineHost
         CanonicalDailyBookObservationFixture daily,
         IReadOnlyList<CanonicalRecorderEnvelopeV2> events)
     {
+        var sourceHashes = BuildPreRecordSourcePayloadHashes(intraday, daily);
         var rows = new List<CanonicalRecorderParityRow>();
         foreach (var e in events.Where(x => x.SourceContract is not "RecorderLifecycle"))
         {
-            var key = SourceKeyFor(e, daily);
-            var sourceHash = e.PayloadSha256;
+            var key = PreRecordKey(e.SourceContract, e.EventType, e.SourceEventId, e.SourceEntityId, e.Symbol);
+            sourceHashes.TryGetValue(key, out var sourceHash);
+            sourceHash ??= "MISSING_SOURCE_HASH";
+            var replayedHash = CanonicalRecorderV2.Sha256Text(JsonSerializer.Serialize(e.PayloadJson, CanonicalRecorderV2Constants.JsonOptions));
             rows.Add(new CanonicalRecorderParityRow(
                 e.SourceContract,
                 e.SourceEntityId ?? e.SourceEventId ?? e.EventId,
@@ -730,13 +942,40 @@ public sealed class CanonicalShadowOfflineHost
                 e.EventId,
                 sourceHash,
                 e.PayloadSha256,
-                e.PayloadSha256,
-                sourceHash == e.PayloadSha256));
+                replayedHash,
+                sourceHash == e.PayloadSha256 && e.PayloadSha256 == replayedHash));
         }
 
         var mismatches = rows.Count(x => !x.Match);
         return new CanonicalRecorderParityReport(mismatches == 0 ? "PASS" : "FAIL", rows.Count, mismatches, rows);
     }
+
+    private static IReadOnlyDictionary<string, string> BuildPreRecordSourcePayloadHashes(CanonicalShadowOfflineContracts intraday, CanonicalDailyBookObservationFixture daily)
+    {
+        var sourceEvents = new List<CanonicalRecorderV2Event>();
+        for (var i = 0; i < intraday.MarketData.Count; i++)
+        {
+            sourceEvents.Add(CanonicalDomainEventMapper.MapMarketData(intraday, i));
+            sourceEvents.Add(CanonicalDomainEventMapper.MapSizingMarketData(intraday, i));
+            sourceEvents.Add(CanonicalDomainEventMapper.MapExecutionBbo(intraday, i));
+        }
+
+        sourceEvents.Add(CanonicalDomainEventMapper.MapDaily(daily));
+        sourceEvents.AddRange(CanonicalDomainEventMapper.MapIntraday(intraday));
+        return sourceEvents.ToDictionary(
+            e => PreRecordKey(e.SourceContract, e.EventType, e.SourceEventId, e.SourceEntityId, e.Symbol),
+            e => PreRecordPayloadHash(e.Payload),
+            StringComparer.Ordinal);
+    }
+
+    private static string PreRecordPayloadHash(object payload)
+    {
+        var payloadJson = JsonSerializer.SerializeToElement(payload, CanonicalRecorderV2Constants.JsonOptions);
+        return CanonicalRecorderV2.Sha256Text(JsonSerializer.Serialize(payloadJson, CanonicalRecorderV2Constants.JsonOptions));
+    }
+
+    private static string PreRecordKey(string sourceContract, string eventType, string? sourceEventId, string? sourceEntityId, string? symbol)
+        => string.Join('|', sourceContract, eventType, sourceEventId ?? string.Empty, sourceEntityId ?? string.Empty, symbol ?? string.Empty);
 
     private static string SourceKeyFor(CanonicalRecorderEnvelopeV2 e, CanonicalDailyBookObservationFixture daily)
     {

@@ -1,0 +1,8 @@
+﻿source,classification,producer,consumer,input,output,notes
+CanonicalReadOnlyMarketDataHost.cs,REUSE_READ_ONLY,PlaybackReadOnlyMarketDataSource,Canonical recorder,fixture observations,ReadOnlyMarketDataObservationV1,No socket and no order capability
+CanonicalShadowOffline.cs,REUSE_READ_ONLY,Existing intraday fixture mapper,Canonical recorder,manager/model/market fixtures,canonical events,M2B semantics closed
+CanonicalRecorderV2.cs,REUSE_READ_ONLY,Canonical recorder,Replay/parity,DQ/chunks/final manifest,replay snapshot,Recorder closeout hardened
+LmaxReadOnlyActivation tool,LEGACY_REFERENCE,manual tool,operator only,bounded activation flags,console evidence,Not referenced by M2C0
+Lmax ConnectivityLab,LEGACY_REFERENCE,lab runner,operator only,fixture/raw FIX,lab evidence,Contains AccountApi/session surfaces
+Infrastructure.Lmax real read-only transport,SPLIT_REQUIRED,LMAX infra,M2C1 candidate,read-only session boundaries,market-data statuses,Needs lead approval before connection
+R009/R018/R216 scripts,MISSING_FROM_M2C0_PATH,none,none,none,none,Explicitly not run or referenced

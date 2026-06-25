@@ -1,0 +1,166 @@
+﻿[
+    {
+        "entry":  "command_logs\\dotnet_build_application.log",
+        "Length":  8828
+    },
+    {
+        "entry":  "command_logs\\dotnet_test_m2a_existing.log",
+        "Length":  4202
+    },
+    {
+        "entry":  "command_logs\\dotnet_test_m2b_closeout.log",
+        "Length":  7418
+    },
+    {
+        "entry":  "command_logs\\dotnet_test_m2b_shadow.log",
+        "Length":  4202
+    },
+    {
+        "entry":  "git\\git_diff_stat_from_m2a.txt",
+        "Length":  450
+    },
+    {
+        "entry":  "git\\git_log_oneline.txt",
+        "Length":  253
+    },
+    {
+        "entry":  "git\\git_show_stat_head.txt",
+        "Length":  367
+    },
+    {
+        "entry":  "sample_run\\final_manifest.json",
+        "Length":  1462
+    },
+    {
+        "entry":  "sample_run\\parity_report.json",
+        "Length":  11657
+    },
+    {
+        "entry":  "sample_run\\recorder.lock",
+        "Length":  0
+    },
+    {
+        "entry":  "sample_run\\replay_events_hash.json",
+        "Length":  154
+    },
+    {
+        "entry":  "sample_run\\replay_report.json",
+        "Length":  653
+    },
+    {
+        "entry":  "sample_run\\run_manifest.json",
+        "Length":  1137
+    },
+    {
+        "entry":  "sample_run\\chunks\\events-000001.jsonl",
+        "Length":  60474
+    },
+    {
+        "entry":  "sample_run\\health\\data_quality_report.json",
+        "Length":  1174
+    },
+    {
+        "entry":  "sample_run\\health\\recovery_report.json",
+        "Length":  252
+    },
+    {
+        "entry":  "sources\\CanonicalRecorderM2BCloseoutTests.cs",
+        "Length":  18332
+    },
+    {
+        "entry":  "sources\\CanonicalRecorderV2.cs",
+        "Length":  55809
+    },
+    {
+        "entry":  "sources\\CanonicalShadowOffline.cs",
+        "Length":  31998
+    },
+    {
+        "entry":  "sources\\CanonicalShadowOfflineM2BTests.cs",
+        "Length":  13660
+    },
+    {
+        "entry":  "sources\\CanonicalShadowOfflineToolProgram.cs",
+        "Length":  1749
+    },
+    {
+        "entry":  "sources\\QQ.Production.Intraday.Tools.CanonicalShadowOffline.csproj",
+        "Length":  392
+    },
+    {
+        "entry":  "artifact_manifest_sha256.json",
+        "Length":  7395
+    },
+    {
+        "entry":  "command_results.md",
+        "Length":  288
+    },
+    {
+        "entry":  "gate_report.md",
+        "Length":  406
+    },
+    {
+        "entry":  "M2B_ADAPTER_ARCHITECTURE.md",
+        "Length":  526
+    },
+    {
+        "entry":  "M2B_CANONICAL_PRODUCER_AUDIT.md",
+        "Length":  1426
+    },
+    {
+        "entry":  "m2b_canonical_shadow_wiring_offline.json",
+        "Length":  2703
+    },
+    {
+        "entry":  "M2B_IMPLEMENTATION_REPORT.md",
+        "Length":  261
+    },
+    {
+        "entry":  "M2B_INTENT_SEAM_MAPPING.md",
+        "Length":  324
+    },
+    {
+        "entry":  "M2B_MULTI_STRATEGY_BOUNDARY.md",
+        "Length":  301
+    },
+    {
+        "entry":  "M2B_OFFLINE_SHADOW_HOST.md",
+        "Length":  372
+    },
+    {
+        "entry":  "M2B_OPEN_GAPS.md",
+        "Length":  361
+    },
+    {
+        "entry":  "M2B_PARITY_SPEC.md",
+        "Length":  298
+    },
+    {
+        "entry":  "M2B_RECORDER_CLOSEOUT.md",
+        "Length":  442
+    },
+    {
+        "entry":  "M2B_REUSE_AND_BOUNDARY_DECISION.md",
+        "Length":  450
+    },
+    {
+        "entry":  "M2B_SCHEMA_V2.md",
+        "Length":  382
+    },
+    {
+        "entry":  "M2B_TEST_MATRIX.md",
+        "Length":  241
+    },
+    {
+        "entry":  "M2B_WIRING_SOURCE_MAP.csv",
+        "Length":  2293
+    },
+    {
+        "entry":  "MINIMAL_INTEGRATION_RECOMMENDATION.md",
+        "Length":  252
+    },
+    {
+        "entry":  "static_safety_scan_report.md",
+        "Length":  346
+    }
+]

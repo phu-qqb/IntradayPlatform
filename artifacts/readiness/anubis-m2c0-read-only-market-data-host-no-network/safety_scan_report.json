@@ -1,0 +1,42 @@
+﻿{
+    "scanned_files":  [
+                          "CanonicalReadOnlyMarketDataHost.cs",
+                          "CanonicalShadowOffline.cs",
+                          "CanonicalRecorderV2.cs",
+                          "CanonicalRecorderM2C0Tests.cs",
+                          "CanonicalShadowOfflineM2BTests.cs"
+                      ],
+    "canonical_read_only_host_forbidden_token_hits":  0,
+    "host_forbidden_tokens":  [
+                                  "IVenueExecutionGateway",
+                                  "SendOrder",
+                                  "CancelOrder",
+                                  "ReplaceOrder",
+                                  "QueryAccount",
+                                  "QueryPositions",
+                                  "AccountAPI",
+                                  "Databento",
+                                  "R009",
+                                  "R018",
+                                  "R216",
+                                  "MarketOrder",
+                                  "OrderType.Market",
+                                  "HttpClient",
+                                  "TcpClient",
+                                  "Socket",
+                                  "FIX logon",
+                                  "Logon"
+                              ],
+    "broader_hits":  [
+                         "CanonicalShadowOffline.cs has forbidden-token guardlist constants only",
+                         "CanonicalRecorderM2C0Tests.cs asserts the new host does not contain forbidden tokens"
+                     ],
+    "no_live_run_executed":  true,
+    "no_fix_logon":  true,
+    "no_broker_traffic":  true,
+    "no_order_generated":  true,
+    "no_accountapi":  true,
+    "no_databento_api":  true,
+    "no_db_apply":  true,
+    "no_r009_r018_r216_run":  true
+}

@@ -151,8 +151,11 @@ public sealed class CanonicalShadowOfflineM2BTests
         Assert.Contains("MODEL_RUN_OBSERVED", eventTypes);
         Assert.Contains("TARGET_WEIGHT_OBSERVED", eventTypes);
         Assert.Contains("TARGET_POSITION_OBSERVED", eventTypes);
+        Assert.Contains("TARGET_OBSERVED", eventTypes);
         Assert.Contains("TARGET_ACTIVATED", eventTypes);
-        Assert.Contains("TARGET_REVISED", eventTypes);
+        Assert.DoesNotContain("TARGET_REVISED", eventTypes);
+        Assert.Contains("SIZING_MARKET_SNAPSHOT_OBSERVED", eventTypes);
+        Assert.Contains("EXECUTION_BBO_OBSERVED", eventTypes);
         Assert.Contains("DRIFT_SNAPSHOT_OBSERVED", eventTypes);
         Assert.Contains("SHADOW_DECISION", eventTypes);
         Assert.Contains("SHADOW_PARENT_INTENT", eventTypes);
@@ -242,8 +245,9 @@ public sealed class CanonicalShadowOfflineM2BTests
         var position = result.Events.First(x => x.EventType == "POSITION_SNAPSHOT_OBSERVED");
         using var doc = JsonDocument.Parse(position.PayloadJson.GetRawText());
         Assert.NotEqual(0m, doc.RootElement.GetProperty("target_venue_quantity").GetDecimal());
-        Assert.Equal(0m, doc.RootElement.GetProperty("current_venue_quantity").GetDecimal());
+        Assert.NotEqual(0m, doc.RootElement.GetProperty("current_venue_quantity").GetDecimal());
         Assert.NotEqual(0m, doc.RootElement.GetProperty("drift_venue_quantity").GetDecimal());
+        Assert.False(doc.RootElement.GetProperty("current_position").GetProperty("authoritative").GetBoolean());
     }
 
     [Fact]

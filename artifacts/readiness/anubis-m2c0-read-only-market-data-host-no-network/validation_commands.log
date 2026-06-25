@@ -1,0 +1,24 @@
+﻿# Validation commands
+
+## Baseline
+- git rev-parse HEAD => 551dd0bae4ff1133f51eb8580ed9062797791c03
+- M2B zip SHA-256 => 5c25de6dfec5b58c89d75ff52ea4b5a7279c73ad196ff2c99dfb690aa9291dbf
+
+## Build
+Command: dotnet build QQ.Production.Intraday.sln --no-restore /p:UseSharedCompilation=false
+Result: PASS, 5 warnings, 0 errors.
+Warnings are pre-existing nullable warnings in src/QQ.Production.Intraday.Application/MarketDataDbPersistencePreflight.cs lines 211-214 and 406.
+
+## Targeted M2A/M2B/M2C0 tests
+Command: dotnet test tests\\QQ.Production.Intraday.Tests.Unit\\QQ.Production.Intraday.Tests.Unit.csproj --no-restore --filter "FullyQualifiedName~CanonicalRecorderM2A|FullyQualifiedName~CanonicalShadowOfflineM2B|FullyQualifiedName~CanonicalRecorderM2B|FullyQualifiedName~CanonicalRecorderM2C0" /p:UseSharedCompilation=false
+Result: PASS, Failed 0, Passed 103, Skipped 0, Total 103.
+
+## Full unit suite exploratory run
+Command: dotnet test tests\\QQ.Production.Intraday.Tests.Unit\\QQ.Production.Intraday.Tests.Unit.csproj --no-restore /p:UseSharedCompilation=false
+Result: NON-GATE FAIL, Failed 179, Passed 3647, Total 3826. Failure cause: historical artifact fixture files under artifacts/readiness/execution-sim, artifacts/readiness/execution-algo, artifacts/readiness/execution-live are absent from the isolated worktree. No M2C0/M2B/M2A targeted failure observed.
+
+## Parallel command note
+One concurrent build+test attempt produced a transient csc file lock. The targeted tests were rerun sequentially and passed.
+
+## Offline restore note
+When project.assets.json was missing, restore was performed with artifacts/readiness/anubis-m2c0-read-only-market-data-host-no-network/nuget.offline.clear-sources.config containing packageSources clear only. No external package source was configured.
