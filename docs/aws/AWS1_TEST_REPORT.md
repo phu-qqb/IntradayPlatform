@@ -3,44 +3,47 @@
 Generated local JSON report:
 
 ```text
-artifacts/readiness/anubis-aws1-read-only-shadow-foundation-no-apply/AWS1_TEST_REPORT.generated.json
+artifacts/readiness/anubis-aws1-read-only-shadow-foundation-plan-ready/AWS1_TEST_REPORT.generated.json
 ```
+
+The plan-ready package includes a copy at:
+
+```text
+artifacts/readiness/AWS1_TEST_REPORT.generated.json
+```
+
+## Toolchain
+
+- Terraform: `1.10.5` official Windows amd64 zip, SHA-256 verified against HashiCorp `SHA256SUMS`.
+- AWS provider lock: `hashicorp/aws` `5.100.0` in `.terraform.lock.hcl`.
 
 ## Results Run In This Worktree
 
-- M2 package SHA-256 verified: `F1F024563F29544124049A1CF7A980A93C7ED25842F71752F9F6A04E862163C8`.
-- Config hash stamping verified against the original M2 sample: `95888e5c18d8dd373fc4c02433ae603461fe23eca81dfe4d4171b5a5f9ac757e`.
-- `dotnet publish` for `QQ.Production.Intraday.Tools.LmaxMarketDataCaptureOnly` completed.
-- Deterministic packaging is produced by `Package-M2CaptureHost.ps1`; the final ZIP hash is written to the adjacent `.sha256` sidecar after packaging.
+- Reviewed no-apply reference artifact SHA-256 verified: `1B71CB16966AF525456A270C8AD2020931EF1829FF13C699180741C62FE89B84`.
+- App source commit recorded: `7e87f3b17c84ac8a0aeb79422e4caa97b915fbb6`.
+- `terraform fmt -check -recursive`: PASS.
+- `terraform init -backend=false`: PASS.
+- `terraform validate`: PASS.
+- PowerShell parse: PASS.
+- `ssm/aws1-install-runbook.json` parse: PASS.
+- Status fixture using real `final_manifest.json`, `m2c1b_capture_manifest.json`, DQ report, and manifest-listed chunk: PASS.
+- No EC2 recorder ingress: PASS.
+- No AWS apply commands: PASS.
+- No RDS initial path: PASS.
+- No order mutation surface: PASS.
+- No forbidden data vendor paths: PASS.
+- No secret values: PASS.
+- No `Start-Job`: PASS.
+- Self-contained package controls: PASS.
+- Verified self-contained launcher/PID ownership checks: PASS.
+- Manifest-only S3 upload with checksum verification: PASS.
+- Watchdog observer-only smoke-mode contract: PASS.
+- Backend, S3 protection, AMI fail-closed, alarm-action, broker-CIDR, and EBS bootstrap checks: PASS.
 
-- Focused unit tests passed:
-
-```text
-dotnet test tests\QQ.Production.Intraday.Tests.Unit\QQ.Production.Intraday.Tests.Unit.csproj --filter FullyQualifiedName~M2C1ALmaxMarketDataOnlyTests
-Passed: 54, Failed: 0, Skipped: 0
-```
-
-- Local AWS1 static gate passed all executable/IaC checks it could run:
-  - PowerShell parse: PASS
-  - no EC2 recorder ingress: PASS
-  - no AWS apply commands: PASS
-  - no RDS initial path: PASS
-  - no order mutation surface: PASS
-  - no forbidden data vendor paths: PASS
-  - no secret values: PASS
-  - deliverable docs present: PASS
-
-## Skipped Checks
-
-Terraform is not installed in this environment, so these mandatory checks were skipped:
+## Gate
 
 ```text
-terraform_fmt
-terraform_validate
+GO_AWS1_PLAN_READ_ONLY
 ```
 
-Because mandatory IaC format/validate did not run, the gate remains:
-
-```text
-NO_GO_AWS1
-```
+No AWS apply, push, or merge was performed.

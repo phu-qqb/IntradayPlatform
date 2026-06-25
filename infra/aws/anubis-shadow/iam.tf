@@ -82,9 +82,9 @@ resource "aws_iam_policy" "recorder" {
         ]
       },
       {
-        Sid    = "WriteRecorderMetrics"
-        Effect = "Allow"
-        Action = "cloudwatch:PutMetricData"
+        Sid      = "WriteRecorderMetrics"
+        Effect   = "Allow"
+        Action   = "cloudwatch:PutMetricData"
         Resource = "*"
         Condition = {
           StringEquals = {

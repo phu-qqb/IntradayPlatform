@@ -4,32 +4,57 @@ data "aws_availability_zones" "available" {
   state = "available"
 }
 
+data "aws_ami" "recorder" {
+  owners = var.allowed_ami_owner_ids
+
+  filter {
+    name   = "image-id"
+    values = [var.ami_id]
+  }
+
+  filter {
+    name   = "state"
+    values = ["available"]
+  }
+
+  filter {
+    name   = "architecture"
+    values = ["x86_64"]
+  }
+
+  filter {
+    name   = "platform"
+    values = ["windows"]
+  }
+}
+
 locals {
   account_id          = data.aws_caller_identity.current.account_id
   selected_az         = coalesce(var.availability_zone, data.aws_availability_zones.available.names[0])
   safe_environment    = lower(var.environment)
   name_prefix         = "${var.project_name}-${local.safe_environment}-aws1"
   archive_bucket_name = coalesce(var.archive_bucket_name, "${local.name_prefix}-archive-${local.account_id}-${var.region}")
-  artifact_bucket     = coalesce(var.artifact_bucket_name, local.archive_bucket_name)
+  artifact_bucket     = local.archive_bucket_name
   credential_secret_arn = coalesce(
     var.credential_secret_arn,
     try(aws_secretsmanager_secret.market_data_only[0].arn, null)
   )
 
   tags = {
-    Project          = "Anubis"
-    Workstream       = "AWS_READ_ONLY"
-    Environment      = local.safe_environment
-    Boundary         = "market-data-read-only"
-    OrderEntry       = "disabled"
-    ManagedBy        = "terraform"
-    BaselineCommit   = "7e87f3b17c84ac8a0aeb79422e4caa97b915fbb6"
-    ApplyGate        = "manual-review-required"
+    Project         = "Anubis"
+    Workstream      = "AWS_READ_ONLY"
+    Environment     = local.safe_environment
+    Boundary        = "market-data-read-only"
+    OperationMode   = var.operation_mode
+    OrderEntry      = "disabled"
+    ManagedBy       = "terraform"
+    AppSourceCommit = "7e87f3b17c84ac8a0aeb79422e4caa97b915fbb6"
+    ApplyGate       = "manual-review-required"
   }
 }
 
 resource "aws_instance" "recorder" {
-  ami                         = var.ami_id
+  ami                         = data.aws_ami.recorder.id
   instance_type               = var.instance_type
   subnet_id                   = aws_subnet.private.id
   vpc_security_group_ids      = [aws_security_group.recorder.id]
@@ -43,6 +68,8 @@ resource "aws_instance" "recorder" {
     environment          = local.safe_environment
     cloudwatch_namespace = var.cloudwatch_namespace
     local_retention_days = var.local_retention_days
+    ebs_size_gb          = var.ebs_size_gb
+    spool_volume_label   = var.spool_volume_label
   })
 
   metadata_options {
@@ -60,7 +87,11 @@ resource "aws_instance" "recorder" {
   lifecycle {
     precondition {
       condition     = length(var.lmax_market_data_egress_cidrs) > 0
-      error_message = "lmax_market_data_egress_cidrs must be set before apply so broker egress is explicit."
+      error_message = "lmax_market_data_egress_cidrs must be set before plan/apply so broker egress is explicit."
+    }
+    precondition {
+      condition     = !var.enable_cloudwatch_alarms || length(var.alarm_action_arns) > 0
+      error_message = "alarm_action_arns must be provided when enable_cloudwatch_alarms is true."
     }
   }
 
@@ -74,6 +105,10 @@ resource "aws_ebs_volume" "spool" {
   size              = var.ebs_size_gb
   type              = "gp3"
   encrypted         = true
+
+  lifecycle {
+    prevent_destroy = true
+  }
 
   tags = {
     Name    = "${local.name_prefix}-spool"

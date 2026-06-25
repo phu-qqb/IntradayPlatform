@@ -1,6 +1,6 @@
-# AWS1 Deployment Runbook
+﻿# AWS1 Deployment Runbook
 
-This runbook is ready for review but AWS1 does not perform `terraform apply`.
+This runbook is plan-ready for review. AWS1 still does not perform `terraform apply`.
 
 ## 1. Build Artifact
 
@@ -13,63 +13,70 @@ From the AWS1 worktree:
 Output:
 
 ```text
-artifacts\readiness\anubis-aws1-read-only-shadow-foundation-no-apply\package\anubis_aws1_read_only_shadow_foundation_no_apply.zip
+artifacts\readiness\anubis-aws1-read-only-shadow-foundation-plan-ready\package\anubis_aws1_read_only_shadow_foundation_plan_ready.zip
 ```
 
-The script publishes the M2 capture-only host, embeds deploy/infra/docs, writes `deployment_manifest.json`, and emits the artifact SHA-256.
+The script publishes the M2 capture-only host as `win-x64 --self-contained true`, verifies the app executable SHA-256, embeds deploy/infra/docs/test evidence, writes `deployment_manifest.json`, and emits the artifact SHA-256 sidecar.
 
 ## 2. Local Gates
 
 ```powershell
-.\deploy\aws\anubis-shadow\scripts\Test-AnubisAws1Local.ps1
+.\deploy\aws\anubis-shadow\scripts\Test-AnubisAws1Local.ps1 -TerraformPath artifacts\tools\terraform\1.10.5\terraform.exe
 ```
 
-Expected before apply approval:
+Required PASS checks:
 
-- Terraform installed;
 - `terraform fmt -check -recursive`;
 - `terraform init -backend=false`;
 - `terraform validate`;
+- `.terraform.lock.hcl` present;
 - PowerShell parse checks;
+- status metrics fixture from real recorder artifacts;
 - no EC2 ingress;
 - no AWS apply command;
 - no RDS initial path;
 - no order mutation surface;
 - no forbidden data vendor path;
-- no secret values.
+- no secret values;
+- self-contained package controls;
+- manifest-only S3 upload with checksum verification.
 
-## 3. Operator Inputs
+## 3. Backend Prerequisites
 
-Required apply-time values:
+Before any future plan/apply ceremony, create or identify the remote S3 state bucket out of band and supply backend config for:
 
-- Windows AMI ID;
-- explicit LMAX market-data egress CIDRs;
-- alarm action ARNs;
-- artifact S3 URI and SHA-256;
-- market-data-only secret value populated out of band.
-
-## 4. Terraform Review
-
-```powershell
-terraform init -backend=false infra\aws\anubis-shadow
-terraform validate infra\aws\anubis-shadow
+```text
+bucket
+key
+region
 ```
 
-Remote plan/apply is outside AWS1 until the lead approves `GO_AWS1_APPLY_READ_ONLY`.
+The stack declares an encrypted S3 backend with Terraform lockfile support. Do not apply AWS1 with local state.
+
+## 4. Operator Inputs
+
+Required future plan/apply values:
+
+- approved Windows AMI ID and owner allow-list;
+- explicit LMAX market-data egress CIDRs;
+- artifact S3 URI and SHA-256;
+- AWS CLI MSI S3 URI and SHA-256;
+- market-data-only secret value populated out of band;
+- alarm action ARNs only if `enable_cloudwatch_alarms=true`.
 
 ## 5. Install Through SSM
 
-After an approved apply in a later step, use the generated SSM document:
+After a separately approved AWS apply in a later step, use the generated SSM document:
 
 ```text
 anubis-demo-aws1-install-runbook
 ```
 
-The runbook downloads the artifact, verifies SHA-256, expands it, and invokes `Install-AnubisAws1Host.ps1`.
+The runbook downloads the AWS CLI MSI and app artifact using `aws:downloadContent`, verifies SHA-256 for both, installs AWS CLI v2, expands the app artifact, and invokes `Install-AnubisAws1Host.ps1`.
 
-Autostart defaults to disabled. Enable only after operator review.
+Autostart defaults to disabled for `SMOKE_CAPTURE_BOUNDED`.
 
-## 6. Start
+## 6. Start Bounded Capture
 
 ```powershell
 .\Start-AnubisAws1Recorder.ps1 -CredentialSecretId <secret-arn> -ArchiveBucketName <bucket>
@@ -81,10 +88,13 @@ The recorder starts with:
 --operator-approved-market-data-fix-logon --no-order-entry --no-account-api --no-db
 ```
 
-## 7. Upload Finalized Runs
+## 7. Publish Metrics And Upload
+
+After the bounded capture exits cleanly:
 
 ```powershell
-.\Invoke-AnubisAws1ChunkUpload.ps1 -BucketName <bucket>
+.\Publish-AnubisAws1Metrics.ps1 -RecorderRoot D:\Anubis\Recorder
+.\Invoke-AnubisAws1ChunkUpload.ps1 -BucketName <bucket> -RecorderRoot D:\Anubis\Recorder
 ```
 
-The script verifies remote SHA-256 metadata before marking local runs uploaded and performs no deletion.
+Metrics with missing evidence are reported as `NOT_EVALUATED` and are not published to CloudWatch. Upload verifies local chunk size/SHA from `final_manifest.json` and remote S3 `ChecksumSHA256`; it performs no deletion.

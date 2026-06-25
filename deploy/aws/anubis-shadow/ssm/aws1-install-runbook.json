@@ -1,14 +1,60 @@
-{
+﻿{
   "schemaVersion": "2.2",
-  "description": "Install Anubis AWS1 M2 market-data-only capture host from a verified S3 artifact. No AWS apply and no credential values are embedded.",
+  "description": "Install Anubis AWS1 M2 market-data-only smoke capture host from verified S3 artifacts. No AWS apply and no credential values are embedded.",
   "parameters": {
     "ArtifactS3Uri": {
       "type": "String",
-      "description": "s3:// URI for anubis_aws1_read_only_shadow_foundation_no_apply.zip"
+      "description": "s3:// URI for anubis_aws1_read_only_shadow_foundation_plan_ready.zip"
+    },
+    "ArtifactFileName": {
+      "type": "String",
+      "default": "anubis_aws1_read_only_shadow_foundation_plan_ready.zip",
+      "description": "Downloaded application artifact filename."
     },
     "ArtifactSha256": {
       "type": "String",
       "description": "Expected artifact SHA-256"
+    },
+    "AwsCliMsiS3Uri": {
+      "type": "String",
+      "description": "s3:// URI for a pre-staged AWS CLI v2 MSI artifact"
+    },
+    "AwsCliMsiFileName": {
+      "type": "String",
+      "default": "AWSCLIV2.msi",
+      "description": "Downloaded AWS CLI MSI filename"
+    },
+    "AwsCliMsiSha256": {
+      "type": "String",
+      "description": "Expected AWS CLI v2 MSI SHA-256"
+    },
+    "InstallRoot": {
+      "type": "String",
+      "default": "C:\\Anubis\\M2Capture\\current"
+    },
+    "RecorderRoot": {
+      "type": "String",
+      "default": "D:\\Anubis\\Recorder"
+    },
+    "CredentialSecretId": {
+      "type": "String",
+      "description": "Market-data-only credential secret ARN or name"
+    },
+    "MarketDataEndpointAlias": {
+      "type": "String",
+      "default": "LMAX_DEMO_MARKET_DATA_ONLY"
+    },
+    "ArchiveBucketName": {
+      "type": "String",
+      "description": "Single AWS1 artifact/archive bucket name"
+    },
+    "Environment": {
+      "type": "String",
+      "default": "demo"
+    },
+    "CloudWatchNamespace": {
+      "type": "String",
+      "default": "Anubis/AWS1"
     },
     "EnableAutoStart": {
       "type": "String",
@@ -16,24 +62,68 @@
       "allowedValues": [
         "true",
         "false"
-      ]
+      ],
+      "description": "Must remain false for AWS1 SMOKE_CAPTURE_BOUNDED unless explicitly approved."
     }
   },
   "mainSteps": [
     {
       "action": "aws:runPowerShellScript",
-      "name": "Install",
+      "name": "PrepareDeployDirectory",
       "inputs": {
         "runCommand": [
-          "New-Item -ItemType Directory -Force -Path C:\\Anubis\\Deploy | Out-Null",
-          "$dest = 'C:\\Anubis\\Deploy\\aws1_artifact.zip'",
-          "aws s3 cp '{{ ArtifactS3Uri }}' $dest --only-show-errors",
+          "New-Item -ItemType Directory -Force -Path C:\\Anubis\\Deploy | Out-Null"
+        ]
+      }
+    },
+    {
+      "action": "aws:downloadContent",
+      "name": "DownloadAwsCliMsi",
+      "inputs": {
+        "sourceType": "S3",
+        "sourceInfo": "{\"path\":\"{{ AwsCliMsiS3Uri }}\"}",
+        "destinationPath": "C:\\Anubis\\Deploy"
+      }
+    },
+    {
+      "action": "aws:runPowerShellScript",
+      "name": "InstallAwsCli",
+      "inputs": {
+        "runCommand": [
+          "$msi = Join-Path 'C:\\Anubis\\Deploy' '{{ AwsCliMsiFileName }}'",
+          "if (-not (Test-Path -LiteralPath $msi)) { throw 'aws_cli_msi_missing' }",
+          "$actual = (Get-FileHash -Algorithm SHA256 -LiteralPath $msi).Hash.ToUpperInvariant()",
+          "if ($actual -ne '{{ AwsCliMsiSha256 }}'.ToUpperInvariant()) { throw \"aws_cli_msi_sha256_mismatch:$actual\" }",
+          "Start-Process -FilePath msiexec.exe -ArgumentList @('/i', $msi, '/qn', '/norestart') -Wait -WindowStyle Hidden",
+          "$aws = 'C:\\Program Files\\Amazon\\AWSCLIV2\\aws.exe'",
+          "if (-not (Test-Path -LiteralPath $aws)) { throw 'aws_cli_install_failed' }",
+          "& $aws --version"
+        ]
+      }
+    },
+    {
+      "action": "aws:downloadContent",
+      "name": "DownloadAppArtifact",
+      "inputs": {
+        "sourceType": "S3",
+        "sourceInfo": "{\"path\":\"{{ ArtifactS3Uri }}\"}",
+        "destinationPath": "C:\\Anubis\\Deploy"
+      }
+    },
+    {
+      "action": "aws:runPowerShellScript",
+      "name": "InstallCaptureHost",
+      "inputs": {
+        "runCommand": [
+          "$dest = Join-Path 'C:\\Anubis\\Deploy' '{{ ArtifactFileName }}'",
+          "if (-not (Test-Path -LiteralPath $dest)) { throw 'app_artifact_missing' }",
           "$actual = (Get-FileHash -Algorithm SHA256 -LiteralPath $dest).Hash.ToUpperInvariant()",
           "if ($actual -ne '{{ ArtifactSha256 }}'.ToUpperInvariant()) { throw \"artifact_sha256_mismatch:$actual\" }",
           "$expand = 'C:\\Anubis\\Deploy\\aws1_artifact'",
           "if (Test-Path -LiteralPath $expand) { Remove-Item -LiteralPath $expand -Recurse -Force }",
           "Expand-Archive -LiteralPath $dest -DestinationPath $expand -Force",
-          "& \"$expand\\deploy\\aws\\anubis-shadow\\scripts\\Install-AnubisAws1Host.ps1\" -ArtifactZipPath $dest -ArtifactSha256 '{{ ArtifactSha256 }}' -EnableAutoStart:([System.String]::Equals('{{ EnableAutoStart }}','true',[System.StringComparison]::OrdinalIgnoreCase))"
+          "$enable = [System.String]::Equals('{{ EnableAutoStart }}','true',[System.StringComparison]::OrdinalIgnoreCase)",
+          "& \"$expand\\deploy\\aws\\anubis-shadow\\scripts\\Install-AnubisAws1Host.ps1\" -ArtifactZipPath $dest -ArtifactSha256 '{{ ArtifactSha256 }}' -InstallRoot '{{ InstallRoot }}' -RecorderRoot '{{ RecorderRoot }}' -CredentialSecretId '{{ CredentialSecretId }}' -MarketDataEndpointAlias '{{ MarketDataEndpointAlias }}' -ArchiveBucketName '{{ ArchiveBucketName }}' -Environment '{{ Environment }}' -CloudWatchNamespace '{{ CloudWatchNamespace }}' -EnableAutoStart:$enable"
         ]
       }
     }

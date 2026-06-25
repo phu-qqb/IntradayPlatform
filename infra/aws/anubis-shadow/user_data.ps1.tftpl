@@ -1,4 +1,4 @@
-<powershell>
+﻿<powershell>
 $ErrorActionPreference = 'Stop'
 
 $installRoot = '${install_root}'
@@ -6,39 +6,147 @@ $recorderRoot = '${recorder_root}'
 $logRoot = 'C:\Anubis\Logs'
 $deployRoot = 'C:\Anubis\Deploy'
 $stateRoot = 'C:\Anubis\State'
+$expectedSpoolSizeGb = [int]${ebs_size_gb}
+$expectedLabel = '${spool_volume_label}'
+$targetDriveLetter = ([System.IO.Path]::GetPathRoot($recorderRoot)).TrimEnd(':\')
+$bootstrapReportPath = Join-Path $stateRoot 'aws1_bootstrap.json'
 
-New-Item -ItemType Directory -Force -Path $installRoot, $recorderRoot, $logRoot, $deployRoot, $stateRoot | Out-Null
+New-Item -ItemType Directory -Force -Path $installRoot, $logRoot, $deployRoot, $stateRoot | Out-Null
 
-$rawDisk = Get-Disk | Where-Object { $_.PartitionStyle -eq 'RAW' } | Sort-Object Number | Select-Object -First 1
-if ($null -ne $rawDisk) {
-    Initialize-Disk -Number $rawDisk.Number -PartitionStyle GPT
-    $partition = New-Partition -DiskNumber $rawDisk.Number -UseMaximumSize -DriveLetter D
-    Format-Volume -Partition $partition -FileSystem NTFS -NewFileSystemLabel 'ANUBIS_SPOOL' -Confirm:$false
+function Write-BootstrapReport {
+    param(
+        [Parameter(Mandatory = $true)] [string]$Status,
+        [string]$Reason = '',
+        [object]$Disk = $null,
+        [object]$Volume = $null
+    )
+
+    $report = [ordered]@{
+        status = $Status
+        reason = $Reason
+        environment = '${environment}'
+        install_root = $installRoot
+        recorder_root = $recorderRoot
+        target_drive_letter = $targetDriveLetter
+        expected_spool_size_gb = $expectedSpoolSizeGb
+        expected_spool_label = $expectedLabel
+        cloudwatch_namespace = '${cloudwatch_namespace}'
+        local_retention_days = ${local_retention_days}
+        no_ingress = $true
+        no_secret_values = $true
+        order_entry = 'disabled'
+        operation_mode = 'SMOKE_CAPTURE_BOUNDED'
+        disk_number = if ($Disk) { $Disk.Number } else { $null }
+        disk_size_bytes = if ($Disk) { $Disk.Size } else { $null }
+        volume_drive_letter = if ($Volume) { $Volume.DriveLetter } else { $null }
+        volume_label = if ($Volume) { $Volume.FileSystemLabel } else { $null }
+        timestamp_utc = (Get-Date).ToUniversalTime().ToString('o')
+    }
+    $report | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $bootstrapReportPath -Encoding UTF8
+}
+
+function Assert-DriveAvailableOrOwned {
+    $existingVolume = Get-Volume -DriveLetter $targetDriveLetter -ErrorAction SilentlyContinue
+    if ($null -eq $existingVolume) {
+        return
+    }
+    if ($existingVolume.FileSystemLabel -ne $expectedLabel) {
+        throw "target_drive_conflict:$${targetDriveLetter}:$($existingVolume.FileSystemLabel)"
+    }
+}
+
+function Get-ExpectedSpoolDisk {
+    $expectedBytes = [int64]$expectedSpoolSizeGb * 1GB
+    $toleranceBytes = 2GB
+    $candidates = @(Get-Disk | Where-Object {
+        $_.BusType -ne 'File Backed Virtual' -and
+        $_.IsBoot -ne $true -and
+        [math]::Abs([int64]$_.Size - $expectedBytes) -le $toleranceBytes
+    })
+    if ($candidates.Count -eq 1) {
+        return $candidates[0]
+    }
+    if ($candidates.Count -gt 1) {
+        throw "ambiguous_spool_disk_candidates:$($candidates.Count)"
+    }
+    return $null
+}
+
+function Mount-ExistingSpoolVolume {
+    $volume = Get-Volume | Where-Object { $_.FileSystemLabel -eq $expectedLabel } | Select-Object -First 1
+    if ($null -eq $volume) {
+        return $null
+    }
+    if ([string]::IsNullOrWhiteSpace($volume.DriveLetter)) {
+        Assert-DriveAvailableOrOwned
+        $partition = Get-Partition | Where-Object { $_.AccessPaths -contains $volume.Path } | Select-Object -First 1
+        if ($null -eq $partition) { throw 'spool_partition_not_found' }
+        Set-Partition -DiskNumber $partition.DiskNumber -PartitionNumber $partition.PartitionNumber -NewDriveLetter $targetDriveLetter
+        $volume = Get-Volume -DriveLetter $targetDriveLetter -ErrorAction Stop
+    }
+    elseif ($volume.DriveLetter -ne $targetDriveLetter) {
+        Assert-DriveAvailableOrOwned
+        $partition = Get-Partition -DriveLetter $volume.DriveLetter -ErrorAction Stop
+        Set-Partition -DiskNumber $partition.DiskNumber -PartitionNumber $partition.PartitionNumber -NewDriveLetter $targetDriveLetter
+        $volume = Get-Volume -DriveLetter $targetDriveLetter -ErrorAction Stop
+    }
+    return $volume
+}
+
+try {
+    Set-Service -Name AmazonSSMAgent -StartupType Automatic
+    Start-Service -Name AmazonSSMAgent
+
+    w32tm /config /manualpeerlist:'169.254.169.123,0x9' /syncfromflags:manual /update | Out-Null
+    w32tm /resync /force | Out-Null
+
+    Set-NetFirewallProfile -Profile Domain,Private,Public -DefaultInboundAction Block
+    New-NetFirewallRule -DisplayName 'Anubis AWS1 block inbound by policy' -Direction Inbound -Action Block -Enabled True | Out-Null
+    New-NetFirewallRule -DisplayName 'Anubis AWS1 allow HTTPS outbound for AWS endpoints' -Direction Outbound -Action Allow -Protocol TCP -RemotePort 443 -Enabled True | Out-Null
+    New-NetFirewallRule -DisplayName 'Anubis AWS1 allow LMAX market-data outbound by port' -Direction Outbound -Action Allow -Protocol TCP -RemotePort 443 -Enabled True | Out-Null
+
+    Assert-DriveAvailableOrOwned
+    $volume = Mount-ExistingSpoolVolume
+    if ($null -eq $volume) {
+        $deadline = (Get-Date).AddSeconds(180)
+        $disk = $null
+        while ((Get-Date) -lt $deadline -and $null -eq $disk) {
+            Update-HostStorageCache | Out-Null
+            $disk = Get-ExpectedSpoolDisk
+            if ($null -eq $disk) { Start-Sleep -Seconds 5 }
+        }
+        if ($null -eq $disk) {
+            throw 'spool_disk_not_ready_before_timeout'
+        }
+
+        if ($disk.PartitionStyle -eq 'RAW') {
+            Initialize-Disk -Number $disk.Number -PartitionStyle GPT
+            Assert-DriveAvailableOrOwned
+            $partition = New-Partition -DiskNumber $disk.Number -UseMaximumSize -DriveLetter $targetDriveLetter
+            Format-Volume -Partition $partition -FileSystem NTFS -NewFileSystemLabel $expectedLabel -Confirm:$false
+        }
+        else {
+            $parts = @(Get-Partition -DiskNumber $disk.Number | Where-Object { $_.Type -ne 'Reserved' })
+            if ($parts.Count -ne 1) { throw "unexpected_spool_partition_count:$($parts.Count)" }
+            $volume = $parts[0] | Get-Volume
+            if ($volume.FileSystemLabel -ne $expectedLabel) { throw "unexpected_spool_label:$($volume.FileSystemLabel)" }
+            if ([string]::IsNullOrWhiteSpace($volume.DriveLetter) -or $volume.DriveLetter -ne $targetDriveLetter) {
+                Assert-DriveAvailableOrOwned
+                Set-Partition -DiskNumber $disk.Number -PartitionNumber $parts[0].PartitionNumber -NewDriveLetter $targetDriveLetter
+            }
+        }
+        $volume = Get-Volume -DriveLetter $targetDriveLetter -ErrorAction Stop
+    }
+
+    if ($volume.FileSystemLabel -ne $expectedLabel) {
+        throw "spool_label_verification_failed:$($volume.FileSystemLabel)"
+    }
+
     New-Item -ItemType Directory -Force -Path $recorderRoot | Out-Null
+    Write-BootstrapReport -Status 'BOOTSTRAPPED' -Disk (Get-Disk | Where-Object { $_.Number -eq (Get-Partition -DriveLetter $targetDriveLetter).DiskNumber } | Select-Object -First 1) -Volume $volume
 }
-
-Set-Service -Name AmazonSSMAgent -StartupType Automatic
-Start-Service -Name AmazonSSMAgent
-
-w32tm /config /manualpeerlist:"169.254.169.123,0x9" /syncfromflags:manual /update | Out-Null
-w32tm /resync /force | Out-Null
-
-Set-NetFirewallProfile -Profile Domain,Private,Public -DefaultInboundAction Block
-New-NetFirewallRule -DisplayName 'Anubis AWS1 block inbound by policy' -Direction Inbound -Action Block -Enabled True | Out-Null
-New-NetFirewallRule -DisplayName 'Anubis AWS1 allow HTTPS outbound for AWS endpoints' -Direction Outbound -Action Allow -Protocol TCP -RemotePort 443 -Enabled True | Out-Null
-New-NetFirewallRule -DisplayName 'Anubis AWS1 allow LMAX market-data outbound by port' -Direction Outbound -Action Allow -Protocol TCP -RemotePort 443 -Enabled True | Out-Null
-
-$bootstrap = [ordered]@{
-    status = 'BOOTSTRAPPED'
-    environment = '${environment}'
-    install_root = $installRoot
-    recorder_root = $recorderRoot
-    cloudwatch_namespace = '${cloudwatch_namespace}'
-    local_retention_days = ${local_retention_days}
-    no_ingress = $true
-    no_secret_values = $true
-    order_entry = 'disabled'
-    timestamp_utc = (Get-Date).ToUniversalTime().ToString('o')
+catch {
+    Write-BootstrapReport -Status 'FAILED_CLOSED' -Reason $_.Exception.Message
+    throw
 }
-$bootstrap | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $stateRoot 'aws1_bootstrap.json') -Encoding UTF8
 </powershell>

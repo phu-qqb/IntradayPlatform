@@ -2,9 +2,13 @@ resource "aws_s3_bucket" "archive" {
   bucket        = local.archive_bucket_name
   force_destroy = false
 
+  lifecycle {
+    prevent_destroy = true
+  }
+
   tags = {
     Name    = local.archive_bucket_name
-    Purpose = "m2-capture-archives-and-manifests"
+    Purpose = "m2-capture-artifacts-archives-and-manifests"
   }
 }
 
@@ -45,11 +49,44 @@ resource "aws_s3_bucket_lifecycle_configuration" "archive" {
       prefix = ""
     }
 
+    abort_incomplete_multipart_upload {
+      days_after_initiation = 7
+    }
+
     noncurrent_version_transition {
       noncurrent_days = 30
       storage_class   = "STANDARD_IA"
     }
   }
+}
+
+data "aws_iam_policy_document" "archive_bucket" {
+  statement {
+    sid    = "DenyInsecureTransport"
+    effect = "Deny"
+
+    principals {
+      type        = "*"
+      identifiers = ["*"]
+    }
+
+    actions = ["s3:*"]
+    resources = [
+      aws_s3_bucket.archive.arn,
+      "${aws_s3_bucket.archive.arn}/*"
+    ]
+
+    condition {
+      test     = "Bool"
+      variable = "aws:SecureTransport"
+      values   = ["false"]
+    }
+  }
+}
+
+resource "aws_s3_bucket_policy" "archive" {
+  bucket = aws_s3_bucket.archive.id
+  policy = data.aws_iam_policy_document.archive_bucket.json
 }
 
 resource "aws_secretsmanager_secret" "market_data_only" {

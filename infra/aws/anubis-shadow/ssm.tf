@@ -5,21 +5,41 @@ resource "aws_ssm_document" "install_runbook" {
 
   content = jsonencode({
     schemaVersion = "2.2"
-    description   = "Install or update Anubis AWS1 M2 market-data-only capture host. No apply or credential value is embedded."
+    description   = "Install Anubis AWS1 M2 market-data-only smoke capture host from verified artifacts. No apply or credential value is embedded."
     parameters = {
       ArtifactS3Uri = {
         type        = "String"
-        description = "s3:// URI for the signed AWS1 deployment artifact zip."
+        description = "s3:// URI for the signed AWS1 deployment artifact zip in the archive bucket."
+      }
+      ArtifactFileName = {
+        type        = "String"
+        default     = "anubis_aws1_read_only_shadow_foundation_plan_ready.zip"
+        description = "Downloaded application artifact filename."
       }
       ArtifactSha256 = {
         type        = "String"
         description = "Expected SHA-256 of the deployment artifact zip."
       }
+      AwsCliMsiS3Uri = {
+        type        = "String"
+        default     = var.aws_cli_msi_s3_uri
+        description = "s3:// URI for a pre-staged AWS CLI v2 MSI artifact."
+      }
+      AwsCliMsiFileName = {
+        type        = "String"
+        default     = "AWSCLIV2.msi"
+        description = "Downloaded AWS CLI MSI filename."
+      }
+      AwsCliMsiSha256 = {
+        type        = "String"
+        default     = var.aws_cli_msi_sha256
+        description = "Expected SHA-256 of the AWS CLI v2 MSI."
+      }
       EnableAutoStart = {
         type          = "String"
         allowedValues = ["true", "false"]
         default       = "false"
-        description   = "Whether to enable the recorder scheduled task after install."
+        description   = "Must remain false for AWS1 SMOKE_CAPTURE_BOUNDED unless the lead approves otherwise."
       }
     }
     mainSteps = [
@@ -33,17 +53,37 @@ resource "aws_ssm_document" "install_runbook" {
         }
       },
       {
+        action = "aws:downloadContent"
+        name   = "DownloadAwsCliMsi"
+        inputs = {
+          sourceType      = "S3"
+          sourceInfo      = "{\"path\":\"{{ AwsCliMsiS3Uri }}\"}"
+          destinationPath = "C:\\Anubis\\Deploy"
+        }
+      },
+      {
         action = "aws:runPowerShellScript"
-        name   = "DownloadArtifact"
+        name   = "InstallAwsCli"
         inputs = {
           runCommand = [
-            "$artifact = '{{ ArtifactS3Uri }}'",
-            "$dest = 'C:\\Anubis\\Deploy\\aws1_artifact.zip'",
-            "if (-not (Get-Command aws -ErrorAction SilentlyContinue)) { throw 'aws_cli_required_for_artifact_download' }",
-            "aws s3 cp $artifact $dest --only-show-errors",
-            "$actual = (Get-FileHash -Algorithm SHA256 -LiteralPath $dest).Hash.ToUpperInvariant()",
-            "if ($actual -ne '{{ ArtifactSha256 }}'.ToUpperInvariant()) { throw \"artifact_sha256_mismatch:$actual\" }"
+            "$msi = Join-Path 'C:\\Anubis\\Deploy' '{{ AwsCliMsiFileName }}'",
+            "if (-not (Test-Path -LiteralPath $msi)) { throw 'aws_cli_msi_missing' }",
+            "$actual = (Get-FileHash -Algorithm SHA256 -LiteralPath $msi).Hash.ToUpperInvariant()",
+            "if ($actual -ne '{{ AwsCliMsiSha256 }}'.ToUpperInvariant()) { throw \"aws_cli_msi_sha256_mismatch:$actual\" }",
+            "Start-Process -FilePath msiexec.exe -ArgumentList @('/i', $msi, '/qn', '/norestart') -Wait -WindowStyle Hidden",
+            "$aws = 'C:\\Program Files\\Amazon\\AWSCLIV2\\aws.exe'",
+            "if (-not (Test-Path -LiteralPath $aws)) { throw 'aws_cli_install_failed' }",
+            "& $aws --version"
           ]
+        }
+      },
+      {
+        action = "aws:downloadContent"
+        name   = "DownloadAppArtifact"
+        inputs = {
+          sourceType      = "S3"
+          sourceInfo      = "{\"path\":\"{{ ArtifactS3Uri }}\"}"
+          destinationPath = "C:\\Anubis\\Deploy"
         }
       },
       {
@@ -51,7 +91,10 @@ resource "aws_ssm_document" "install_runbook" {
         name   = "InstallCaptureHost"
         inputs = {
           runCommand = [
-            "$dest = 'C:\\Anubis\\Deploy\\aws1_artifact.zip'",
+            "$dest = Join-Path 'C:\\Anubis\\Deploy' '{{ ArtifactFileName }}'",
+            "if (-not (Test-Path -LiteralPath $dest)) { throw 'app_artifact_missing' }",
+            "$actual = (Get-FileHash -Algorithm SHA256 -LiteralPath $dest).Hash.ToUpperInvariant()",
+            "if ($actual -ne '{{ ArtifactSha256 }}'.ToUpperInvariant()) { throw \"artifact_sha256_mismatch:$actual\" }",
             "$expand = 'C:\\Anubis\\Deploy\\aws1_artifact'",
             "if (Test-Path -LiteralPath $expand) { Remove-Item -LiteralPath $expand -Recurse -Force }",
             "Expand-Archive -LiteralPath $dest -DestinationPath $expand -Force",

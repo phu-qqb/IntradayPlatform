@@ -113,7 +113,7 @@ locals {
 }
 
 resource "aws_cloudwatch_metric_alarm" "recorder" {
-  for_each            = local.metric_alarms
+  for_each            = var.enable_cloudwatch_alarms ? local.metric_alarms : {}
   alarm_name          = "${local.name_prefix}-${each.key}"
   alarm_description   = each.value.description
   namespace           = var.cloudwatch_namespace
