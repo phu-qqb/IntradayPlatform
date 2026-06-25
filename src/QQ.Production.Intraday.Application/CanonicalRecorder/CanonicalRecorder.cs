@@ -48,12 +48,18 @@ public interface IRecorderClock
 {
     DateTimeOffset UtcNow { get; }
     long MonotonicTicks { get; }
+    long MonotonicFrequency => TimeSpan.TicksPerSecond;
+    TimeSpan MonotonicElapsedSince(long startTicks)
+        => TimeSpan.FromSeconds((double)(MonotonicTicks - startTicks) / MonotonicFrequency);
 }
 
 public sealed class SystemRecorderClock : IRecorderClock
 {
     public DateTimeOffset UtcNow => DateTimeOffset.UtcNow;
     public long MonotonicTicks => Stopwatch.GetTimestamp();
+    public long MonotonicFrequency => Stopwatch.Frequency;
+    public TimeSpan MonotonicElapsedSince(long startTicks)
+        => Stopwatch.GetElapsedTime(startTicks, Stopwatch.GetTimestamp());
 }
 
 public sealed class ManualRecorderClock(DateTimeOffset utcNow, long monotonicTicks = 0) : IRecorderClock
@@ -1201,7 +1207,3 @@ public static class CanonicalRecorderSyntheticScenario
             BookValid: bookValid,
             SourceReceiveSequence: quoteEventId is null ? null : long.Parse(quoteEventId.Split('-').Last()));
 }
-
-
-
-

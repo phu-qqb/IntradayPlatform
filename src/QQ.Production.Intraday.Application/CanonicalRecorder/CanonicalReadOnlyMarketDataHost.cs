@@ -39,6 +39,30 @@ public sealed record ReadOnlyMarketDataObservationV1(
     string SubscriptionState,
     string RawPayloadHash);
 
+public sealed record ReadOnlyMarketDataObservationV2(
+    string Environment,
+    string Venue,
+    string SessionAlias,
+    string SessionInstanceId,
+    string InstrumentId,
+    string Symbol,
+    string SourceMessageType,
+    DateTimeOffset SourceTimestampUtc,
+    DateTimeOffset SocketReceiveUtc,
+    long LocalMonotonicTimestamp,
+    long FixMsgSeqNum,
+    bool PossDup,
+    string QuoteEventId,
+    decimal BidPrice,
+    decimal BidQuantity,
+    decimal AskPrice,
+    decimal AskQuantity,
+    bool BookValid,
+    string GapStatus,
+    string SubscriptionState,
+    string RawPayloadSha256,
+    string ParserVersion);
+
 public sealed record ReadOnlyMarketDataHealth(ReadOnlyMarketDataFeedState State, bool Ready, string Reason);
 public sealed record ReadOnlyMarketDataSubscription(string InstrumentId, string Symbol);
 public sealed record M2C1ReadOnlyCaptureConfig(string MarketDataEndpointAlias, string MarketDataSessionAlias, IReadOnlyList<string> Instruments, string OutputRoot, TimeSpan QuoteAgeThreshold, long RotateAfterBytes, TimeSpan FlushInterval);
@@ -54,26 +78,100 @@ public interface IReadOnlyMarketDataSource
 
 public sealed class ReadOnlyMarketDataFeedStateMachine
 {
+    private readonly HashSet<string> expectedSymbols = new(StringComparer.OrdinalIgnoreCase);
+    private bool explicitRecoveryRequired;
+
     public ReadOnlyMarketDataFeedState State { get; private set; } = ReadOnlyMarketDataFeedState.Created;
     public string Reason { get; private set; } = "created";
 
     public bool CanProduceShadowIntent(ReadOnlyMarketDataObservationV1 observation, DateTimeOffset nowUtc, TimeSpan quoteAgeThreshold, bool recorderReady)
     {
-        if (!recorderReady || State != ReadOnlyMarketDataFeedState.Synchronized || !observation.BookValid)
+        if (!recorderReady || State != ReadOnlyMarketDataFeedState.Synchronized || explicitRecoveryRequired || !observation.BookValid)
         {
             return false;
         }
 
-        return nowUtc - observation.SourceTimestampUtc <= quoteAgeThreshold;
+        if (nowUtc < observation.SourceTimestampUtc || nowUtc - observation.SourceTimestampUtc > quoteAgeThreshold)
+        {
+            return false;
+        }
+
+        if (observation.BidPrice <= 0 || observation.AskPrice <= 0 || observation.BidPrice >= observation.AskPrice)
+        {
+            return false;
+        }
+
+        if (observation.BidQuantity < 0 || observation.AskQuantity < 0)
+        {
+            return false;
+        }
+
+        if (observation.SubscriptionState is not ("SUBSCRIBED" or "ACTIVE"))
+        {
+            return false;
+        }
+
+        if (observation.GapStatus is not ("OK" or "SYNCHRONIZED" or "RECOVERED"))
+        {
+            return false;
+        }
+
+        return expectedSymbols.Count == 0 || expectedSymbols.Contains(observation.Symbol);
     }
 
     public void OnStart() => Transition(ReadOnlyMarketDataFeedState.Starting, "start_requested");
     public void OnConnected() => Transition(ReadOnlyMarketDataFeedState.Connected, "connected_read_only_market_data");
-    public void OnSubscribing() => Transition(ReadOnlyMarketDataFeedState.Subscribing, "subscriptions_pending");
-    public void OnSynchronized() => Transition(ReadOnlyMarketDataFeedState.Synchronized, "feed_synchronized");
-    public void OnGap() => Transition(ReadOnlyMarketDataFeedState.GapDetected, "source_sequence_gap_detected");
+    public void OnSubscribing(IReadOnlyList<ReadOnlyMarketDataSubscription>? subscriptions = null)
+    {
+        expectedSymbols.Clear();
+        if (subscriptions is not null)
+        {
+            foreach (var subscription in subscriptions)
+            {
+                expectedSymbols.Add(subscription.Symbol);
+            }
+        }
+
+        Transition(ReadOnlyMarketDataFeedState.Subscribing, "subscriptions_pending");
+    }
+
+    public void OnSynchronized()
+    {
+        if (explicitRecoveryRequired)
+        {
+            Transition(ReadOnlyMarketDataFeedState.Recovering, "explicit_full_refresh_required_after_gap");
+            return;
+        }
+
+        Transition(ReadOnlyMarketDataFeedState.Synchronized, "feed_synchronized");
+    }
+
+    public void OnFullRefreshSynchronized(IReadOnlySet<string> refreshedSymbols)
+    {
+        if (expectedSymbols.Count > 0 && !expectedSymbols.IsSubsetOf(refreshedSymbols))
+        {
+            explicitRecoveryRequired = true;
+            Transition(ReadOnlyMarketDataFeedState.Recovering, "full_refresh_missing_expected_instruments");
+            return;
+        }
+
+        explicitRecoveryRequired = false;
+        Transition(ReadOnlyMarketDataFeedState.Synchronized, "explicit_full_refresh_synchronized");
+    }
+
+    public void OnGap()
+    {
+        explicitRecoveryRequired = true;
+        Transition(ReadOnlyMarketDataFeedState.GapDetected, "source_sequence_gap_detected");
+    }
+
     public void OnStale() => Transition(ReadOnlyMarketDataFeedState.Stale, "quote_age_exceeded_threshold");
-    public void OnRecovering() => Transition(ReadOnlyMarketDataFeedState.Recovering, "recovering_read_only_feed");
+    public void OnRecovering()
+    {
+        explicitRecoveryRequired = true;
+        Transition(ReadOnlyMarketDataFeedState.Recovering, "recovering_read_only_feed");
+    }
+
     public void OnFailed(string reason) => Transition(ReadOnlyMarketDataFeedState.Failed, reason);
     public void OnStopping() => Transition(ReadOnlyMarketDataFeedState.Stopping, "stop_requested");
     public void OnStopped() => Transition(ReadOnlyMarketDataFeedState.Stopped, "stopped");
@@ -114,7 +212,7 @@ public sealed class PlaybackReadOnlyMarketDataSource(IReadOnlyList<ReadOnlyMarke
             return Task.CompletedTask;
         }
 
-        machine.OnSubscribing();
+        machine.OnSubscribing(requestedSubscriptions);
         subscriptions = requestedSubscriptions.ToArray();
         machine.OnSynchronized();
         return Task.CompletedTask;

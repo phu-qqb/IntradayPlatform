@@ -1,0 +1,17 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\QQ.Production.Intraday.Application\QQ.Production.Intraday.Application.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Include="..\..\tools\QQ.Production.Intraday.Lmax.ConnectivityLab\LabMarketData.cs" Link="Reused\LabMarketData.cs" />
+  </ItemGroup>
+
+</Project>

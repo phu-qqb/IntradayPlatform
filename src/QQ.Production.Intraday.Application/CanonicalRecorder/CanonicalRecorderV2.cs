@@ -1,4 +1,4 @@
-using System.Collections.Concurrent;
+﻿using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text;
@@ -21,6 +21,8 @@ public static class CanonicalRecorderV2Constants
     {
         "RECORDER_RUN_STARTED",
         "RECORDER_RUN_STOPPED",
+        "MARKET_DATA_SESSION_STATE",
+        "MARKET_DATA_SUBSCRIPTION_STATE",
         "MARKET_DATA_RECEIVED",
         "BBO_UPDATED",
         "MARKET_DATA_GAP",
@@ -762,7 +764,10 @@ public sealed class CanonicalRecorderV2 : IAsyncDisposable
             {
                 try
                 {
-                    Interlocked.Decrement(ref queuedApproximation);
+                    if (Interlocked.Decrement(ref queuedApproximation) < 0)
+                    {
+                        Interlocked.Exchange(ref queuedApproximation, 0);
+                    }
                     if (options.SimulatedWriterFailureAfterEventsForTestsOnly.HasValue &&
                         Interlocked.Read(ref eventsWritten) >= options.SimulatedWriterFailureAfterEventsForTestsOnly.Value)
                     {
@@ -817,7 +822,7 @@ public sealed class CanonicalRecorderV2 : IAsyncDisposable
         }
 
         Interlocked.Increment(ref eventsWritten);
-        if (clock.MonotonicTicks - lastFlushMonotonicTicks >= flushInterval.Ticks)
+        if (clock.MonotonicElapsedSince(lastFlushMonotonicTicks) >= flushInterval)
         {
             await FlushCurrentWriterAsync(cancellationToken).ConfigureAwait(false);
         }
