@@ -5,7 +5,8 @@
     [string]$AppSourceCommit = "7e87f3b17c84ac8a0aeb79422e4caa97b915fbb6",
     [string]$InfrastructureCommit = "",
     [string]$PackagingCommit = "",
-    [string]$SourcePackageSha256 = "1B71CB16966AF525456A270C8AD2020931EF1829FF13C699180741C62FE89B84",
+    [string]$M2FinalPackageSha256 = "F1F024563F29544124049A1CF7A980A93C7ED25842F71752F9F6A04E862163C8",
+    [string]$ReviewedAws1ReferencePackageSha256 = "1B71CB16966AF525456A270C8AD2020931EF1829FF13C699180741C62FE89B84",
     [string]$DeterministicTimestampUtc = "2026-06-25T00:00:00Z",
     [switch]$SkipPublish
 )
@@ -163,7 +164,8 @@ $manifest = [ordered]@{
     app_source_commit = $AppSourceCommit
     infrastructure_commit = $InfrastructureCommit
     packaging_commit = $PackagingCommit
-    source_m2_package_sha256 = $SourcePackageSha256
+    m2_final_package_sha256 = $M2FinalPackageSha256
+    reviewed_aws1_reference_package_sha256 = $ReviewedAws1ReferencePackageSha256
     host_project = "tools/QQ.Production.Intraday.Tools.LmaxMarketDataCaptureOnly"
     runtime_identifier = "win-x64"
     self_contained = -not [bool]$SkipPublish
