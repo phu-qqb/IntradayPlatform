@@ -9,10 +9,11 @@ namespace QQ.Production.Intraday.Application.R018ImportPlanning;
 
 public static class R018ImportPlanningConstants
 {
-    public const string ToolVersion = "M1C_R018_INTRADAY_IMPORT_PLAN_R002";
-    public const string PlanSchemaVersion = "r018_intraday_import_plan_v2";
+    public const string ToolVersion = "M1C_R018_INTRADAY_IMPORT_PLAN_R003";
+    public const string PlanSchemaVersion = "r018_intraday_import_plan_v3";
     public const string BundleManifestSchemaVersion = "r018_artifact_bundle_manifest_v2";
-    public const string NormalizedEventSchemaVersion = "r018_normalized_event_v2";
+    public const string NormalizedEventSchemaVersion = "r018_normalized_event_v3";
+    public const string InstrumentCatalogVersion = "embedded_lmax_fx_13_v1";
 }
 
 public enum R018ImportBundleStatus
@@ -112,7 +113,12 @@ public sealed record R018SourceEvidence(
     string SourceLocator,
     string ParserVersion,
     string AuthorityClass,
-    string RawPayloadHash);
+    string RawPayloadHash,
+    R018ArtifactType ArtifactType = R018ArtifactType.UNKNOWN,
+    DateTimeOffset? LocalReceiveUtc = null,
+    long? LocalEventOrder = null,
+    int? MsgSeqNum = null,
+    bool? PossDupFlag = null);
 
 public sealed record R018NormalizedEvent(
     string EventId,
@@ -168,10 +174,34 @@ public sealed record R018NormalizedEvent(
     {
         R018NormalizedEventKind.Order => $"ORDER|{Environment}|{BrokerAccount}|{Venue}|{ClOrdId}",
         R018NormalizedEventKind.Fill => $"FILL|{Environment}|{BrokerAccount}|{Venue}|{ClOrdId}|{ExecId}",
-        R018NormalizedEventKind.ExecutionReport => $"ER|{Environment}|{BrokerAccount}|{Venue}|{ClOrdId}|{ExecId}|{ExecType}|{OrdStatus}|{LocalEventOrder}",
+        R018NormalizedEventKind.ExecutionReport => $"ER|{Environment}|{BrokerAccount}|{Venue}|{ClOrdId}|{BrokerOrderId}|{ExecId}|{ExecType}|{OrdStatus}",
         _ => $"{Kind}|{Environment}|{BrokerAccount}|{Venue}|{EventId}"
     };
 }
+
+public sealed record R018EvidenceOccurrence(
+    string OccurrenceId,
+    string BusinessIdentity,
+    R018NormalizedEventKind NormalizedKind,
+    R018ProvenanceType Provenance,
+    R018ArtifactType ArtifactType,
+    string SourcePath,
+    string SourceFileHash,
+    string SourceLocator,
+    string RawPayloadHash,
+    DateTimeOffset? SourceTimestampUtc,
+    DateTimeOffset? LocalReceiveUtc,
+    long? LocalEventOrder,
+    int? MsgSeqNum,
+    bool? PossDupFlag);
+
+public sealed record R018BusinessEvent(
+    string BusinessEventId,
+    string BusinessIdentity,
+    R018NormalizedEventKind BusinessEventType,
+    string SemanticFingerprint,
+    IReadOnlyDictionary<string, string> Facts,
+    IReadOnlyList<R018SourceEvidence> EvidenceRefs);
 
 public sealed record R018ArtifactBundle(
     string BundlePath,
@@ -200,6 +230,15 @@ public sealed record R018ValidationReport(
     int DuplicateExactCount,
     int DuplicateConflictCount,
     bool FutureDbApplyAllowed);
+
+public sealed record R018ReplayEligibility(
+    bool ValidationPassed,
+    bool CriticalParityPassed,
+    bool ScopeHomogeneous,
+    int IdentityConflictCount,
+    bool InputSnapshotConsistent,
+    bool LocalIsolatedReplayAllowed,
+    IReadOnlyList<string> Reasons);
 
 public sealed record R018CatalogResolution(
     string Resolution,
@@ -244,6 +283,7 @@ public sealed record R018IdentityKeyAuditRow(
 
 public sealed record R018PlannedStagingRow(
     string PlannedRowId,
+    string SafeStagingKey,
     string TargetContract,
     string OperationKind,
     string SourceBusinessKey,
@@ -252,6 +292,7 @@ public sealed record R018PlannedStagingRow(
     IReadOnlyList<string> Dependencies,
     IReadOnlyList<string> MissingRequiredFields,
     IReadOnlyList<R018SourceEvidence> EvidenceRefs,
+    string CanonicalEligibility,
     bool ApplyEligible,
     IReadOnlyList<string> RejectionReasons);
 
@@ -263,7 +304,13 @@ public sealed record R018ImportPlan(
     string ApprovedCandidateHash,
     string InputBundleHash,
     string DeterministicContentHash,
-    string CodeCommit,
+    string ToolCommit,
+    string ToolCommitSource,
+    string SourceBaselineCommit,
+    string? CoreCommit,
+    string? ConfigHash,
+    string InstrumentCatalogVersion,
+    string InstrumentCatalogHash,
     DateTimeOffset GenerationUtc,
     string ModeReason,
     R018LedgerApplicability LedgerApplicability,
@@ -274,17 +321,22 @@ public sealed record R018ImportPlan(
     bool CreatesPositionLedgerEvents,
     IReadOnlyList<string> ProposedMutationTargets,
     IReadOnlyList<R018NormalizedEvent> NormalizedEvents,
+    IReadOnlyList<R018EvidenceOccurrence> EvidenceOccurrences,
+    IReadOnlyList<R018BusinessEvent> BusinessEvents,
     R018ValidationReport Validation,
     R018LineageReport Lineage,
     R018IdentityScopeReport IdentityScope,
+    R018ReplayEligibility ReplayEligibility,
     IReadOnlyList<R018IdentityKeyAuditRow>? IdentityKeyAudit = null,
     IReadOnlyList<R018PlannedStagingRow>? PlannedStagingRows = null);
 
 public sealed record R018ParityRow(
     string Check,
+    string Source,
     string Expected,
     string Actual,
     string Status,
+    string Severity,
     string Detail);
 
 public sealed record R018ModelRunCatalogEntry(
@@ -417,7 +469,7 @@ public sealed class R018ArtifactBundleReader
             }
 
             return new R018ArtifactBundleManifest(
-                GetString(json, "schema_version") ?? R018ImportPlanningConstants.BundleManifestSchemaVersion,
+                GetString(json, "schema_version") ?? string.Empty,
                 GetString(json, "environment") ?? "unknown",
                 GetString(json, "broker_account") ?? "unknown",
                 GetString(json, "venue") ?? "unknown",
@@ -441,6 +493,14 @@ public sealed class R018ArtifactBundleReader
         }
     }
 
+
+    private static void RequireManifestField(JsonObject json, List<string> issues, string fieldName, string issueCode)
+    {
+        if (string.IsNullOrWhiteSpace(GetString(json, fieldName)))
+        {
+            issues.Add(issueCode);
+        }
+    }
 
     private static bool TryResolveArtifactPath(string bundlePath, string artifactRelativePath, out string artifactPath, out string issue)
     {
@@ -618,7 +678,7 @@ public sealed class R018ArtifactBundleReader
         var execType = GetAnyString(obj, "exec_type", "tag150", "150");
         var ordStatus = GetAnyString(obj, "ord_status", "tag39", "39");
         var kind = DetermineKind(rawEventType, execType, provenance);
-        var isManualTerminalObservation = provenance is R018ProvenanceType.MANUAL_UI or R018ProvenanceType.MANUAL_EXPORT
+        var isManualTerminalObservation = provenance is R018ProvenanceType.MANUAL_UI or R018ProvenanceType.MANUAL_EXPORT or R018ProvenanceType.EOD_LMAX_REPORT
             && (kind is R018NormalizedEventKind.Fill or R018NormalizedEventKind.ExecutionReport);
         if (isManualTerminalObservation)
         {
@@ -637,7 +697,12 @@ public sealed class R018ArtifactBundleReader
             locator,
             R018ImportPlanningConstants.ToolVersion,
             AuthorityClass(provenance),
-            ComputeSha256(rawPayload));
+            ComputeSha256(rawPayload),
+            artifact.ArtifactType,
+            GetAnyDate(obj, "local_receive_utc", "received_utc"),
+            GetAnyLong(obj, "local_event_order", "event_order"),
+            GetAnyInt(obj, "msg_seq_num", "tag34", "34"),
+            GetAnyBool(obj, "poss_dup", "poss_dup_flag", "tag43", "43"));
 
         var orderQuantity = GetAnyDecimal(obj, "order_qty", "quantity", "qty", "OrderQty", "tag38", "38");
         var lastQuantity = GetAnyDecimal(obj, "last_qty", "last_quantity", "LastQty", "tag32", "32");
@@ -741,14 +806,14 @@ public sealed class R018ArtifactBundleReader
 
         if (value is not null && value.Contains("Fill", StringComparison.OrdinalIgnoreCase))
         {
-            return provenance is R018ProvenanceType.MANUAL_UI or R018ProvenanceType.MANUAL_EXPORT
+            return provenance is R018ProvenanceType.MANUAL_UI or R018ProvenanceType.MANUAL_EXPORT or R018ProvenanceType.EOD_LMAX_REPORT or R018ProvenanceType.EOD_LMAX_REPORT
                 ? R018NormalizedEventKind.ManualObservation
                 : R018NormalizedEventKind.Fill;
         }
 
         if (value is not null && (value.Equals("ExecutionReport", StringComparison.OrdinalIgnoreCase) || value.Equals("8", StringComparison.OrdinalIgnoreCase)))
         {
-            return provenance is R018ProvenanceType.MANUAL_UI or R018ProvenanceType.MANUAL_EXPORT
+            return provenance is R018ProvenanceType.MANUAL_UI or R018ProvenanceType.MANUAL_EXPORT or R018ProvenanceType.EOD_LMAX_REPORT or R018ProvenanceType.EOD_LMAX_REPORT
                 ? R018NormalizedEventKind.ManualObservation
                 : R018NormalizedEventKind.ExecutionReport;
         }
@@ -848,11 +913,14 @@ public sealed class R018ArtifactBundleReader
 
         foreach (var artifact in artifacts.OrderBy(a => a.Path, StringComparer.Ordinal))
         {
-            var path = Path.GetFullPath(Path.Combine(bundlePath, artifact.Path));
             builder.Append("artifact|").Append(artifact.Path).Append('|').Append(artifact.Kind).Append('|').Append(artifact.ArtifactType).Append('|').Append(artifact.Sha256).Append('|');
-            if (File.Exists(path))
+            if (TryResolveArtifactPath(bundlePath, artifact.Path, out var safePath, out _) && File.Exists(safePath) && !IsReparsePoint(safePath))
             {
-                builder.Append(ComputeFileSha256(path));
+                builder.Append(ComputeFileSha256(safePath));
+            }
+            else
+            {
+                builder.Append("UNSAFE_OR_MISSING_NOT_OPENED");
             }
 
             builder.AppendLine();
@@ -983,10 +1051,24 @@ public sealed class R018ArtifactBundleReader
 
 public sealed class R018ArtifactBundleValidator
 {
-    private static readonly HashSet<string> KnownSymbols = new(StringComparer.OrdinalIgnoreCase)
+    public static readonly IReadOnlyDictionary<string, string> InstrumentCatalog = new SortedDictionary<string, string>(StringComparer.OrdinalIgnoreCase)
     {
-        "AUDUSD", "EURUSD", "GBPUSD", "NZDUSD", "USDCAD", "USDCNH", "USDJPY", "USDMXN", "USDNOK", "USDSEK", "USDSGD", "USDZAR", "USDCHF"
+        ["AUDUSD"] = "4007",
+        ["EURUSD"] = "4001",
+        ["GBPUSD"] = "4002",
+        ["NZDUSD"] = "100613",
+        ["USDCAD"] = "4013",
+        ["USDCNH"] = "100892",
+        ["USDJPY"] = "4004",
+        ["USDMXN"] = "100507",
+        ["USDNOK"] = "100513",
+        ["USDSEK"] = "100529",
+        ["USDSGD"] = "100535",
+        ["USDZAR"] = "100547",
+        ["USDCHF"] = "4010"
     };
+
+    private static readonly HashSet<string> KnownSymbols = new(InstrumentCatalog.Keys, StringComparer.OrdinalIgnoreCase);
 
     private static readonly HashSet<string> KnownQuantityUnits = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -1002,6 +1084,7 @@ public sealed class R018ArtifactBundleValidator
         }
 
         ValidateManifest(bundle, issues);
+        ValidateModelRunCatalog(modelRunCatalogPath, issues);
         ValidateEvents(bundle, issues);
 
         var duplicateExactCount = CountExactDuplicates(bundle.Events);
@@ -1023,6 +1106,28 @@ public sealed class R018ArtifactBundleValidator
             identity.FutureDbApplyAllowed);
     }
 
+    private static void ValidateModelRunCatalog(string? modelRunCatalogPath, List<R018ValidationIssue> issues)
+    {
+        if (string.IsNullOrWhiteSpace(modelRunCatalogPath) || !File.Exists(modelRunCatalogPath))
+        {
+            return;
+        }
+
+        try
+        {
+            var root = JsonNode.Parse(File.ReadAllText(modelRunCatalogPath));
+            var schema = root?["catalog_schema_version"]?.ToString() ?? root?["schema_version"]?.ToString();
+            if (!string.Equals(schema, "model_run_catalog_v1", StringComparison.Ordinal))
+            {
+                issues.Add(new R018ValidationIssue("ERROR", "MODEL_RUN_CATALOG_SCHEMA_INVALID", schema ?? "missing"));
+            }
+        }
+        catch (Exception ex)
+        {
+            issues.Add(new R018ValidationIssue("ERROR", "MODEL_RUN_CATALOG_PARSE_ERROR", ex.Message));
+        }
+    }
+
     private static void ValidateManifest(R018ArtifactBundle bundle, List<R018ValidationIssue> issues)
     {
         if (!bundle.ManifestFound)
@@ -1034,6 +1139,35 @@ public sealed class R018ArtifactBundleValidator
         if (!string.Equals(bundle.Manifest.SchemaVersion, R018ImportPlanningConstants.BundleManifestSchemaVersion, StringComparison.Ordinal))
         {
             issues.Add(new R018ValidationIssue("ERROR", "UNKNOWN_MANIFEST_SCHEMA", bundle.Manifest.SchemaVersion));
+        }
+        if (string.IsNullOrWhiteSpace(bundle.Manifest.SchemaVersion))
+        {
+            issues.Add(new R018ValidationIssue("ERROR", "MISSING_SCHEMA_VERSION", "Manifest schema_version is required."));
+        }
+
+        if (IsUnknown(bundle.Manifest.SourceRunId))
+        {
+            issues.Add(new R018ValidationIssue("ERROR", "MISSING_SOURCE_RUN_ID", "source_run_id is required."));
+        }
+
+        if (IsUnknown(bundle.Manifest.ApprovedCandidateHash))
+        {
+            issues.Add(new R018ValidationIssue("ERROR", "MISSING_APPROVED_CANDIDATE_HASH", "approved_candidate_hash is required."));
+        }
+
+        if (bundle.Manifest.Artifacts.Count == 0)
+        {
+            issues.Add(new R018ValidationIssue("ERROR", "MISSING_ARTIFACTS", "At least one artifact is required."));
+        }
+
+        if (bundle.Manifest.DecisionUtc.HasValue && bundle.Manifest.EffectiveFromUtc.HasValue && bundle.Manifest.DecisionUtc.Value > bundle.Manifest.EffectiveFromUtc.Value)
+        {
+            issues.Add(new R018ValidationIssue("ERROR", "TIMESTAMP_COHERENCE_DECISION_AFTER_EFFECTIVE", "decision_utc must not be after effective_from_utc."));
+        }
+
+        if (bundle.Manifest.EffectiveFromUtc.HasValue && bundle.Manifest.DeadlineUtc.HasValue && bundle.Manifest.EffectiveFromUtc.Value > bundle.Manifest.DeadlineUtc.Value)
+        {
+            issues.Add(new R018ValidationIssue("ERROR", "TIMESTAMP_COHERENCE_EFFECTIVE_AFTER_DEADLINE", "effective_from_utc must not be after deadline_utc."));
         }
 
         if (IsUnknown(bundle.Manifest.Environment))
@@ -1105,11 +1239,21 @@ public sealed class R018ArtifactBundleValidator
                 issues.Add(new R018ValidationIssue("ERROR", "UNKNOWN_QUANTITY_UNIT", ev.QuantityUnit ?? "missing", ev.EventId, ev.Evidence.SourcePath));
             }
 
+            if (ev.Kind is R018NormalizedEventKind.Order or R018NormalizedEventKind.ExecutionReport or R018NormalizedEventKind.Fill && string.IsNullOrWhiteSpace(ev.Side))
+            {
+                issues.Add(new R018ValidationIssue("ERROR", "MISSING_SIDE", "Side is required for order/execution/fill facts.", ev.EventId, ev.Evidence.SourcePath));
+            }
+
             if (ev.Side is not null && ev.Side is not ("BUY" or "SELL"))
             {
                 issues.Add(new R018ValidationIssue("ERROR", "INVALID_SIDE", ev.Side, ev.EventId, ev.Evidence.SourcePath));
             }
 
+
+            if (ev.SecurityId is not null && ev.Symbol is not null && InstrumentCatalog.TryGetValue(ev.Symbol, out var expectedSecurityId) && !string.Equals(expectedSecurityId, ev.SecurityId, StringComparison.OrdinalIgnoreCase))
+            {
+                issues.Add(new R018ValidationIssue("ERROR", "SECURITY_ID_MISMATCH", $"symbol={ev.Symbol} expected={expectedSecurityId} actual={ev.SecurityId}", ev.EventId, ev.Evidence.SourcePath));
+            }
             if (ev.Kind is R018NormalizedEventKind.Order)
             {
                 if (string.IsNullOrWhiteSpace(ev.ClOrdId))
@@ -1132,6 +1276,11 @@ public sealed class R018ArtifactBundleValidator
                     issues.Add(new R018ValidationIssue("ERROR", "LIMIT_PRICE_TAG44_REQUIRED", ev.LimitPrice?.ToString(CultureInfo.InvariantCulture) ?? "missing", ev.EventId, ev.Evidence.SourcePath));
                 }
 
+                if (string.IsNullOrWhiteSpace(ev.TimeInForce))
+                {
+                    issues.Add(new R018ValidationIssue("ERROR", "MISSING_TIME_IN_FORCE", "Order requires explicit TIF/tag59.", ev.EventId, ev.Evidence.SourcePath));
+                }
+
                 if (ev.TimeInForce is not null && ev.TimeInForce is not ("0" or "DAY" or "GTC"))
                 {
                     issues.Add(new R018ValidationIssue("ERROR", "UNSUPPORTED_TIME_IN_FORCE", ev.TimeInForce, ev.EventId, ev.Evidence.SourcePath));
@@ -1143,6 +1292,16 @@ public sealed class R018ArtifactBundleValidator
                 }
             }
 
+
+            if (ev.Kind is R018NormalizedEventKind.ExecutionReport)
+            {
+                if (string.IsNullOrWhiteSpace(ev.ExecId)) issues.Add(new R018ValidationIssue("ERROR", "REPORT_WITHOUT_EXECID", "ExecutionReport requires ExecID/tag17.", ev.EventId, ev.Evidence.SourcePath));
+                if (string.IsNullOrWhiteSpace(ev.ExecType)) issues.Add(new R018ValidationIssue("ERROR", "REPORT_WITHOUT_EXEC_TYPE", "ExecutionReport requires ExecType/tag150.", ev.EventId, ev.Evidence.SourcePath));
+                if (string.IsNullOrWhiteSpace(ev.OrdStatus)) issues.Add(new R018ValidationIssue("ERROR", "REPORT_WITHOUT_ORD_STATUS", "ExecutionReport requires OrdStatus/tag39.", ev.EventId, ev.Evidence.SourcePath));
+                if (ev.CumQuantity is null) issues.Add(new R018ValidationIssue("ERROR", "REPORT_WITHOUT_CUM_QTY", "ExecutionReport requires CumQty/tag14.", ev.EventId, ev.Evidence.SourcePath));
+                if (ev.LeavesQuantity is null) issues.Add(new R018ValidationIssue("ERROR", "REPORT_WITHOUT_LEAVES_QTY", "ExecutionReport requires LeavesQty/tag151.", ev.EventId, ev.Evidence.SourcePath));
+                if (ev.SourceTimestampUtc is null) issues.Add(new R018ValidationIssue("ERROR", "REPORT_WITHOUT_SOURCE_TIMESTAMP", "ExecutionReport requires SendingTime/source timestamp.", ev.EventId, ev.Evidence.SourcePath));
+            }
             if (ev.Kind is R018NormalizedEventKind.ExecutionReport or R018NormalizedEventKind.Fill)
             {
                 if (string.IsNullOrWhiteSpace(ev.ClOrdId) || !orders.TryGetValue(OrderLookupKey(ev), out var order))
@@ -1225,7 +1384,21 @@ public sealed class R018ArtifactBundleValidator
             }
         }
 
-        foreach (var execGroup in bundle.Events.Where(e => !string.IsNullOrWhiteSpace(e.ExecId)).GroupBy(e => $"{e.Environment}|{e.BrokerAccount}|{e.Venue}|{e.ExecId}", StringComparer.Ordinal))
+        foreach (var observationGroup in bundle.Events.Where(e => e.Kind is R018NormalizedEventKind.ManualObservation && !string.IsNullOrWhiteSpace(e.ExecId)).GroupBy(e => $"{e.Environment}|{e.BrokerAccount}|{e.Venue}|{e.ClOrdId}|{e.ExecId}", StringComparer.Ordinal))
+        {
+            var canonicalFacts = bundle.Events.Where(e => e.Kind is R018NormalizedEventKind.ExecutionReport or R018NormalizedEventKind.Fill && $"{e.Environment}|{e.BrokerAccount}|{e.Venue}|{e.ClOrdId}|{e.ExecId}" == observationGroup.Key).ToArray();
+            if (canonicalFacts.Length > 0)
+            {
+                var observationFingerprints = observationGroup.Select(ObservationComparableFingerprint).Distinct(StringComparer.Ordinal).ToArray();
+                var canonicalFingerprints = canonicalFacts.Select(ObservationComparableFingerprint).Distinct(StringComparer.Ordinal).ToArray();
+                if (observationFingerprints.Except(canonicalFingerprints, StringComparer.Ordinal).Any())
+                {
+                    issues.Add(new R018ValidationIssue("ERROR", "OBSERVATION_FACT_CONFLICT", observationGroup.Key));
+                }
+            }
+        }
+
+        foreach (var execGroup in bundle.Events.Where(e => e.Kind is not R018NormalizedEventKind.ManualObservation && !string.IsNullOrWhiteSpace(e.ExecId)).GroupBy(e => $"{e.Environment}|{e.BrokerAccount}|{e.Venue}|{e.ExecId}", StringComparer.Ordinal))
         {
             if (execGroup.Select(e => e.ClOrdId).Where(id => !string.IsNullOrWhiteSpace(id)).Distinct(StringComparer.Ordinal).Count() > 1)
             {
@@ -1267,6 +1440,20 @@ public sealed class R018ArtifactBundleValidator
             R018NormalizedEventKind.Bbo => $"BBO|{ev.Environment}|{ev.BrokerAccount}|{ev.Venue}|{ev.Symbol}|{ev.BboEventId}|{ev.LocalEventOrder}",
             _ => ev.StableKey
         };
+
+    private static string ObservationComparableFingerprint(R018NormalizedEvent ev)
+        => string.Join('|',
+            ev.Symbol,
+            ev.SecurityId,
+            ev.Side,
+            ev.QuantityUnit,
+            ev.ClOrdId,
+            ev.BrokerOrderId,
+            ev.ExecId,
+            ev.LastQuantity?.ToString(CultureInfo.InvariantCulture),
+            ev.CumQuantity?.ToString(CultureInfo.InvariantCulture),
+            ev.LeavesQuantity?.ToString(CultureInfo.InvariantCulture),
+            (ev.FillPrice ?? ev.LimitPrice)?.ToString(CultureInfo.InvariantCulture));
 
     private static string ExecSemanticFingerprint(R018NormalizedEvent ev)
         => string.Join('|',
@@ -1522,7 +1709,7 @@ public static class R018IdentityScopeBuilder
 
 public sealed class R018ImportPlanBuilder
 {
-    public R018ImportPlan Build(R018ArtifactBundle bundle, string? modelRunCatalogPath = null, string codeCommit = "unknown")
+    public R018ImportPlan Build(R018ArtifactBundle bundle, string? modelRunCatalogPath = null, string toolCommit = "unknown", string? sourceBaselineCommit = null, string? toolCommitSource = null)
     {
         var validator = new R018ArtifactBundleValidator();
         var validation = validator.Validate(bundle, modelRunCatalogPath);
@@ -1532,12 +1719,15 @@ public sealed class R018ImportPlanBuilder
         var proposedTargets = ProposedTargets(validation.Status).ToArray();
         var normalizedEvents = bundle.Events
             .GroupBy(e => e.StableKey, StringComparer.Ordinal)
-            .Select(g => g.First())
+            .Select(MergeNormalizedFact)
             .OrderBy(e => e.LocalEventOrder ?? long.MaxValue)
             .ThenBy(e => e.EventId, StringComparer.Ordinal)
             .ToArray();
         var identityAudit = BuildIdentityKeyAudit(normalizedEvents).ToArray();
-        var stagingRows = BuildStagingRows(normalizedEvents, validation.Status, lineage.ModelRunId).ToArray();
+        var evidenceOccurrences = BuildEvidenceOccurrences(normalizedEvents).ToArray();
+        var businessEvents = BuildBusinessEvents(normalizedEvents).ToArray();
+        var replayEligibility = BuildReplayEligibility(validation, identity, bundle);
+        var stagingRows = BuildStagingRows(normalizedEvents, validation.Status, lineage.ModelRunId, bundle.Manifest.SourceRunId, replayEligibility).ToArray();
 
         var modeReason = validation.Status switch
         {
@@ -1573,6 +1763,7 @@ public sealed class R018ImportPlanBuilder
             plannedStagingRows = stagingRows.Select(r => new
             {
                 r.PlannedRowId,
+                r.SafeStagingKey,
                 r.TargetContract,
                 r.OperationKind,
                 r.SourceBusinessKey,
@@ -1580,6 +1771,7 @@ public sealed class R018ImportPlanBuilder
                 r.FieldMappings,
                 r.Dependencies,
                 r.MissingRequiredFields,
+                r.CanonicalEligibility,
                 r.ApplyEligible,
                 r.RejectionReasons,
                 evidence = r.EvidenceRefs.Select(e => new { e.Provenance, e.SourcePath, e.SourceFileHash, e.SourceLocator, e.RawPayloadHash })
@@ -1632,24 +1824,51 @@ public sealed class R018ImportPlanBuilder
             bundle.Manifest.ApprovedCandidateHash,
             bundle.InputBundleHash,
             deterministicHash,
-            codeCommit,
+            toolCommit,
+            toolCommitSource ?? (string.IsNullOrWhiteSpace(toolCommit) || toolCommit.Equals("unknown", StringComparison.OrdinalIgnoreCase) ? "operator_argument_or_unknown" : "operator_argument"),
+            sourceBaselineCommit ?? toolCommit,
+            bundle.Manifest.CoreCommit,
+            bundle.Manifest.ConfigHash,
+            R018ImportPlanningConstants.InstrumentCatalogVersion,
+            ComputeInstrumentCatalogHash(),
             DateTimeOffset.UtcNow,
             modeReason,
             ledgerApplicability,
-            DbApply: false,
-            NetworkAllowed: false,
-            CreatesModelRun: false,
-            CreatesTargetWeights: false,
-            CreatesPositionLedgerEvents: false,
+            false,
+            false,
+            false,
+            false,
+            false,
             proposedTargets,
             normalizedEvents,
+            evidenceOccurrences,
+            businessEvents,
             validation,
             lineage,
             identity,
+            replayEligibility,
             identityAudit,
             stagingRows);
     }
 
+
+    private static R018NormalizedEvent MergeNormalizedFact(IGrouping<string, R018NormalizedEvent> group)
+    {
+        var ordered = group.OrderBy(e => e.LocalEventOrder ?? long.MaxValue).ThenBy(e => e.EventId, StringComparer.Ordinal).ToArray();
+        var first = ordered[0];
+        var evidenceRefs = ordered
+            .SelectMany(e => e.EvidenceRefs ?? new[] { e.Evidence })
+            .GroupBy(e => $"{e.SourcePath}|{e.SourceLocator}|{e.RawPayloadHash}", StringComparer.Ordinal)
+            .Select(g => g.First())
+            .ToArray();
+        var missingFields = ordered.SelectMany(e => e.MissingFields ?? Array.Empty<string>()).Distinct(StringComparer.Ordinal).ToArray();
+        return first with
+        {
+            EvidenceRefs = evidenceRefs,
+            MissingFields = missingFields,
+            PossDupFlag = ordered.Any(e => e.PossDupFlag is true) ? true : first.PossDupFlag
+        };
+    }
 
     private static IEnumerable<R018IdentityKeyAuditRow> BuildIdentityKeyAudit(IEnumerable<R018NormalizedEvent> events)
     {
@@ -1673,7 +1892,7 @@ public sealed class R018ImportPlanBuilder
         }
     }
 
-    private static IEnumerable<R018PlannedStagingRow> BuildStagingRows(IEnumerable<R018NormalizedEvent> events, R018ImportBundleStatus status, string? modelRunId)
+    private static IEnumerable<R018PlannedStagingRow> BuildStagingRows(IEnumerable<R018NormalizedEvent> events, R018ImportBundleStatus status, string? modelRunId, string sourceRunId, R018ReplayEligibility replayEligibility)
     {
         if (status is R018ImportBundleStatus.REJECTED)
         {
@@ -1703,8 +1922,14 @@ public sealed class R018ImportPlanBuilder
                 ["wave_id"] = ev.WaveId ?? "",
                 ["clip_id"] = ev.ClipId ?? ""
             };
+            var safeStagingKey = SafeStagingKey(ev, target, sourceRunId);
+            var plannedRowId = $"PLAN-{R018ArtifactBundleReader.ComputeSha256(safeStagingKey)[..16]}";
+            var canonicalEligibility = replayEligibility.LocalIsolatedReplayAllowed && status is R018ImportBundleStatus.CANONICAL_LINKED && missing.Count == 0
+                ? "CANONICAL_REPLAY_ELIGIBLE_OFFLINE_ONLY"
+                : "NOT_CANONICAL_REPLAY_ELIGIBLE";
             yield return new R018PlannedStagingRow(
-                $"PLAN-{R018ArtifactBundleReader.ComputeSha256(ev.EventId)[..16]}",
+                plannedRowId,
+                safeStagingKey,
                 target,
                 status is R018ImportBundleStatus.CANONICAL_LINKED ? "CANDIDATE_INSERT_DESCRIBED_ONLY" : "EVIDENCE_STAGING_ONLY",
                 ev.StableKey,
@@ -1713,11 +1938,119 @@ public sealed class R018ImportPlanBuilder
                 ev.Kind is R018NormalizedEventKind.Fill && ev.SourceExecutionReportEventId is not null ? new[] { ev.SourceExecutionReportEventId } : Array.Empty<string>(),
                 missing,
                 ev.EvidenceRefs ?? new[] { ev.Evidence },
+                canonicalEligibility,
                 false,
-                new[] { "DB_APPLY_FALSE_M1C1" });
+                replayEligibility.Reasons.Concat(new[] { "DB_APPLY_FALSE_M1C2" }).Distinct(StringComparer.Ordinal).ToArray());
         }
     }
 
+
+    private static IEnumerable<R018EvidenceOccurrence> BuildEvidenceOccurrences(IEnumerable<R018NormalizedEvent> events)
+    {
+        foreach (var ev in events)
+        {
+            foreach (var evidence in ev.EvidenceRefs ?? new[] { ev.Evidence })
+            {
+                yield return new R018EvidenceOccurrence(
+                    $"OCC-{R018ArtifactBundleReader.ComputeSha256(ev.StableKey + "|" + evidence.SourcePath + "|" + evidence.SourceLocator + "|" + evidence.RawPayloadHash)[..16]}",
+                    ev.StableKey,
+                    ev.Kind,
+                    evidence.Provenance,
+                    evidence.ArtifactType,
+                    evidence.SourcePath,
+                    evidence.SourceFileHash,
+                    evidence.SourceLocator,
+                    evidence.RawPayloadHash,
+                    ev.SourceTimestampUtc,
+                    evidence.LocalReceiveUtc ?? ev.LocalReceiveUtc,
+                    evidence.LocalEventOrder ?? ev.LocalEventOrder,
+                    evidence.MsgSeqNum ?? ev.MsgSeqNum,
+                    evidence.PossDupFlag ?? ev.PossDupFlag);
+            }
+        }
+    }
+
+    private static IEnumerable<R018BusinessEvent> BuildBusinessEvents(IEnumerable<R018NormalizedEvent> events)
+    {
+        var materialized = events.ToArray();
+        var observationsByIdentity = materialized
+            .Where(e => e.Kind is R018NormalizedEventKind.ManualObservation && !string.IsNullOrWhiteSpace(e.ExecId))
+            .GroupBy(ObservationMergeKey, StringComparer.Ordinal)
+            .ToDictionary(g => g.Key, g => g.ToArray(), StringComparer.Ordinal);
+
+        foreach (var ev in materialized)
+        {
+            if (ev.Kind is R018NormalizedEventKind.ManualObservation && observationsByIdentity.ContainsKey(ObservationMergeKey(ev)))
+            {
+                var canonicalExists = materialized.Any(candidate => candidate.Kind is R018NormalizedEventKind.ExecutionReport or R018NormalizedEventKind.Fill && ObservationMergeKey(candidate) == ObservationMergeKey(ev));
+                if (canonicalExists)
+                {
+                    continue;
+                }
+            }
+
+            var evidenceRefs = (ev.EvidenceRefs ?? new[] { ev.Evidence }).ToList();
+            if (ev.Kind is R018NormalizedEventKind.ExecutionReport or R018NormalizedEventKind.Fill && observationsByIdentity.TryGetValue(ObservationMergeKey(ev), out var corroborating))
+            {
+                evidenceRefs.AddRange(corroborating.SelectMany(obs => obs.EvidenceRefs ?? new[] { obs.Evidence }));
+            }
+
+            evidenceRefs = evidenceRefs
+                .GroupBy(e => $"{e.SourcePath}|{e.SourceLocator}|{e.RawPayloadHash}", StringComparer.Ordinal)
+                .Select(g => g.First())
+                .ToList();
+
+            var facts = new SortedDictionary<string, string>(StringComparer.Ordinal)
+            {
+                ["clordid"] = ev.ClOrdId ?? "",
+                ["broker_order_id"] = ev.BrokerOrderId ?? "",
+                ["exec_id"] = ev.ExecId ?? "",
+                ["symbol"] = ev.Symbol ?? "",
+                ["security_id"] = ev.SecurityId ?? "",
+                ["side"] = ev.Side ?? "",
+                ["quantity_unit"] = ev.QuantityUnit ?? "",
+                ["order_qty"] = ev.OrderQuantity?.ToString(CultureInfo.InvariantCulture) ?? "",
+                ["last_qty"] = ev.LastQuantity?.ToString(CultureInfo.InvariantCulture) ?? "",
+                ["cum_qty"] = ev.CumQuantity?.ToString(CultureInfo.InvariantCulture) ?? "",
+                ["leaves_qty"] = ev.LeavesQuantity?.ToString(CultureInfo.InvariantCulture) ?? "",
+                ["limit_price"] = ev.LimitPrice?.ToString(CultureInfo.InvariantCulture) ?? "",
+                ["fill_price"] = ev.FillPrice?.ToString(CultureInfo.InvariantCulture) ?? "",
+                ["terminal_state"] = ev.TerminalState ?? ""
+            };
+            var fingerprint = R018ArtifactBundleReader.ComputeSha256(string.Join('|', facts.Select(kv => kv.Key + "=" + kv.Value)));
+            yield return new R018BusinessEvent($"BE-{R018ArtifactBundleReader.ComputeSha256(ev.StableKey + "|" + fingerprint)[..16]}", ev.StableKey, ev.Kind, fingerprint, facts, evidenceRefs);
+        }
+    }
+
+    private static string ObservationMergeKey(R018NormalizedEvent ev)
+        => $"{ev.Environment}|{ev.BrokerAccount}|{ev.Venue}|{ev.ClOrdId}|{ev.ExecId}";
+
+    private static R018ReplayEligibility BuildReplayEligibility(R018ValidationReport validation, R018IdentityScopeReport identity, R018ArtifactBundle bundle)
+    {
+        var reasons = new List<string>();
+        var validationPassed = validation.Status is not R018ImportBundleStatus.REJECTED && !validation.Issues.Any(i => i.Severity.Equals("ERROR", StringComparison.OrdinalIgnoreCase));
+        var criticalParityPassed = validation.DuplicateConflictCount == 0 && !validation.Issues.Any(i => i.Code is "EMPTY_BUNDLE" or "UNKNOWN_EVENT_KIND" or "MISSING_MANIFEST" or "UNKNOWN_MANIFEST_SCHEMA");
+        var scopeHomogeneous = identity.EnvironmentPresent && identity.BrokerAccountPresent && identity.VenuePresent && !validation.Issues.Any(i => i.Code.StartsWith("SCOPE_", StringComparison.Ordinal));
+        var identityConflictCount = validation.Issues.Count(i => i.Code.Contains("CONFLICT", StringComparison.OrdinalIgnoreCase) || i.Code.Contains("MULTIPLE_CLORDID", StringComparison.OrdinalIgnoreCase));
+        var snapshotConsistent = !bundle.ReadIssues.Any(i => i.StartsWith("HASH_MISMATCH", StringComparison.Ordinal) || i.StartsWith("SNAPSHOT_", StringComparison.Ordinal));
+        if (!validationPassed) reasons.Add("VALIDATION_FAILED");
+        if (!criticalParityPassed) reasons.Add("CRITICAL_PARITY_FAILED");
+        if (!scopeHomogeneous) reasons.Add("SCOPE_NOT_HOMOGENEOUS");
+        if (identityConflictCount > 0) reasons.Add("IDENTITY_CONFLICTS_PRESENT");
+        if (!snapshotConsistent) reasons.Add("INPUT_SNAPSHOT_INCONSISTENT");
+        if (validation.Status is R018ImportBundleStatus.REJECTED) reasons.Add("STATUS_REJECTED");
+        var allowed = validation.Status is not R018ImportBundleStatus.REJECTED && validationPassed && criticalParityPassed && scopeHomogeneous && identityConflictCount == 0 && snapshotConsistent;
+        return new R018ReplayEligibility(validationPassed, criticalParityPassed, scopeHomogeneous, identityConflictCount, snapshotConsistent, allowed, reasons);
+    }
+
+    private static string SafeStagingKey(R018NormalizedEvent ev, string targetContract, string sourceRunId)
+        => string.Join('|', R018ImportPlanningConstants.PlanSchemaVersion, R018ImportPlanningConstants.NormalizedEventSchemaVersion, sourceRunId, ev.Environment, ev.BrokerAccount, ev.Venue, targetContract, ev.StableKey, SemanticFingerprintForStaging(ev));
+
+    private static string SemanticFingerprintForStaging(R018NormalizedEvent ev)
+        => string.Join('|', ev.Kind, ev.Symbol, ev.SecurityId, ev.Side, ev.QuantityUnit, ev.OrderQuantity, ev.LastQuantity, ev.CumQuantity, ev.LeavesQuantity, ev.LimitPrice, ev.FillPrice, ev.ExecType, ev.OrdStatus, ev.TerminalState);
+
+    private static string ComputeInstrumentCatalogHash()
+        => R018ArtifactBundleReader.ComputeSha256(R018ImportPlanningConstants.InstrumentCatalogVersion + "|" + string.Join('|', R018ArtifactBundleValidator.InstrumentCatalog.Select(kv => kv.Key + ":" + kv.Value).OrderBy(x => x, StringComparer.Ordinal)));
     private static string CanonicalTarget(R018NormalizedEventKind kind)
         => kind switch
         {
@@ -1788,7 +2121,11 @@ public sealed class R018ParityReportBuilder
     }
 
     private static R018ParityRow Row(string check, int expected, int actual)
-        => new(check, expected.ToString(CultureInfo.InvariantCulture), actual.ToString(CultureInfo.InvariantCulture), expected == actual ? "PASS" : "FAIL", string.Empty);
+    {
+        var status = expected == actual ? "PASS" : "FAIL";
+        var severity = status == "PASS" ? "INFO" : "ERROR";
+        return new R018ParityRow(check, "offline_import_plan", expected.ToString(CultureInfo.InvariantCulture), actual.ToString(CultureInfo.InvariantCulture), status, severity, string.Empty);
+    }
 }
 
 public sealed class R018ImportPlanSerializer
@@ -1830,7 +2167,10 @@ public sealed class R018ImportPlanSerializer
             WriteJson(Path.Combine(tempPath, "identity_scope_report.json"), plan.IdentityScope);
             WriteJson(Path.Combine(tempPath, "identity_key_audit.json"), plan.IdentityKeyAudit ?? Array.Empty<R018IdentityKeyAuditRow>());
             WriteJson(Path.Combine(tempPath, "typed_staging_plan.json"), plan.PlannedStagingRows ?? Array.Empty<R018PlannedStagingRow>());
-            WriteJson(Path.Combine(tempPath, "import_plan_v2.json"), plan);
+            WriteJsonLines(Path.Combine(tempPath, "evidence_occurrences.jsonl"), plan.EvidenceOccurrences);
+            WriteJson(Path.Combine(tempPath, "business_events.json"), plan.BusinessEvents);
+            WriteJson(Path.Combine(tempPath, "replay_eligibility.json"), plan.ReplayEligibility);
+            WriteJson(Path.Combine(tempPath, "import_plan_v3.json"), plan);
             WriteParity(Path.Combine(tempPath, "parity_report.csv"), new R018ParityReportBuilder().Build(bundle, plan));
             WriteSummary(Path.Combine(tempPath, "human_summary.md"), plan);
             WriteJson(Path.Combine(tempPath, "output_hashes.json"), BuildHashes(tempPath));
@@ -1864,8 +2204,8 @@ public sealed class R018ImportPlanSerializer
 
     private static void WriteParity(string path, IReadOnlyList<R018ParityRow> rows)
     {
-        var lines = new List<string> { "check,expected,actual,status,detail" };
-        lines.AddRange(rows.Select(r => string.Join(',', Escape(r.Check), Escape(r.Expected), Escape(r.Actual), Escape(r.Status), Escape(r.Detail))));
+        var lines = new List<string> { "check,source,expected,actual,status,severity,detail" };
+        lines.AddRange(rows.Select(r => string.Join(',', Escape(r.Check), Escape(r.Source), Escape(r.Expected), Escape(r.Actual), Escape(r.Status), Escape(r.Severity), Escape(r.Detail))));
         File.WriteAllLines(path, lines);
     }
 
@@ -1954,7 +2294,7 @@ public sealed class R018OfflineImportPlanCli
         try
         {
             var bundle = new R018ArtifactBundleReader().Read(bundlePath);
-            var plan = new R018ImportPlanBuilder().Build(bundle, parsed.ModelRunCatalogPath, parsed.CodeCommit ?? "unknown");
+            var plan = new R018ImportPlanBuilder().Build(bundle, parsed.ModelRunCatalogPath, parsed.ToolCommit ?? "unknown", parsed.SourceBaselineCommit, parsed.ToolCommitSource);
             new R018ImportPlanSerializer().WriteAll(bundle, plan, outputPath);
             output.WriteLine(plan.Status);
             output.WriteLine(plan.DeterministicContentHash);
@@ -2012,7 +2352,9 @@ public sealed record R018OfflineImportPlanCliOptions(
     string? BundlePath,
     string? OutputPath,
     string? ModelRunCatalogPath,
-    string? CodeCommit,
+    string? ToolCommit,
+    string? ToolCommitSource,
+    string? SourceBaselineCommit,
     bool NoDb,
     bool NoNetwork,
     bool ShowHelp,
@@ -2030,7 +2372,7 @@ This CLI is strictly offline. There is no --apply mode.
         var reasons = new List<string>();
         if (args.Length == 0 || args.Contains("--help", StringComparer.OrdinalIgnoreCase) || args.Contains("-h", StringComparer.OrdinalIgnoreCase))
         {
-            return new R018OfflineImportPlanCliOptions(null, null, null, null, false, false, true, reasons);
+            return new R018OfflineImportPlanCliOptions(null, null, null, null, null, null, false, false, true, reasons);
         }
 
         if (!args[0].Equals("build-r018-import-plan", StringComparison.OrdinalIgnoreCase))
@@ -2041,7 +2383,9 @@ This CLI is strictly offline. There is no --apply mode.
         string? bundle = null;
         string? output = null;
         string? catalog = null;
-        string? codeCommit = null;
+        string? toolCommit = null;
+        string? toolCommitSource = null;
+        string? sourceBaselineCommit = null;
         var noDb = false;
         var noNetwork = false;
 
@@ -2061,10 +2405,11 @@ This CLI is strictly offline. There is no --apply mode.
                     break;
                 case "--code-commit":
                 case "--tool-commit":
-                    codeCommit = RequireValue(args, ref i, reasons, arg);
+                    toolCommit = RequireValue(args, ref i, reasons, arg);
+                    toolCommitSource = arg == "--tool-commit" ? "operator_argument" : "legacy_code_commit_argument";
                     break;
                 case "--source-baseline-commit":
-                    _ = RequireValue(args, ref i, reasons, arg);
+                    sourceBaselineCommit = RequireValue(args, ref i, reasons, arg);
                     break;
                 case "--no-db":
                     noDb = true;
@@ -2100,7 +2445,7 @@ This CLI is strictly offline. There is no --apply mode.
             reasons.Add("MISSING_NO_NETWORK_FLAG");
         }
 
-        return new R018OfflineImportPlanCliOptions(bundle, output, catalog, codeCommit, noDb, noNetwork, false, reasons);
+        return new R018OfflineImportPlanCliOptions(bundle, output, catalog, toolCommit, toolCommitSource, sourceBaselineCommit, noDb, noNetwork, false, reasons);
     }
 
     private static string? RequireValue(string[] args, ref int index, List<string> reasons, string flag)

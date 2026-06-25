@@ -14,7 +14,7 @@ public sealed class R018ImportPlanningTests
 
         Assert.Equal(0, exit);
         var lines = File.ReadAllLines(Path.Combine(output, "normalized_events.jsonl")).Where(l => !string.IsNullOrWhiteSpace(l)).ToArray();
-        using var planDoc = JsonDocument.Parse(File.ReadAllText(Path.Combine(output, "import_plan_v2.json")));
+        using var planDoc = JsonDocument.Parse(File.ReadAllText(Path.Combine(output, "import_plan_v3.json")));
         Assert.Equal(planDoc.RootElement.GetProperty("normalizedEvents").GetArrayLength(), lines.Length);
         Assert.All(lines, line =>
         {
@@ -129,7 +129,7 @@ public sealed class R018ImportPlanningTests
             Artifact("raw.jsonl", "RAW_FIX_LOG", ValidEvents()),
             Artifact("eod.jsonl", "EOD_LMAX_REPORT", new[] { DirectFill("C1", "E1", 9, 0.7001m, 9, 1, 4, "EOD_LMAX_REPORT") })));
 
-        AssertRejected(plan, "DUPLICATE_CONFLICT");
+        AssertRejected(plan, "OBSERVATION_FACT_CONFLICT");
     }
 
     [Fact]
@@ -413,6 +413,127 @@ public sealed class R018ImportPlanningTests
         Assert.All(plan.PlannedStagingRows!, r => Assert.False(r.ApplyEligible));
     }
 
+    [Fact]
+    public void Rejected_bundle_has_replay_eligibility_false_with_reasons()
+    {
+        var plan = BuildPlan(CreateBundle(Artifact("raw.jsonl", "RAW_FIX_LOG", new[] { Order("C1", 1, 1, side: "BAD") })));
+
+        Assert.Equal(R018ImportBundleStatus.REJECTED, plan.Status);
+        Assert.False(plan.ReplayEligibility.ValidationPassed);
+        Assert.False(plan.ReplayEligibility.LocalIsolatedReplayAllowed);
+        Assert.Contains("VALIDATION_FAILED", plan.ReplayEligibility.Reasons);
+        Assert.Contains("STATUS_REJECTED", plan.ReplayEligibility.Reasons);
+    }
+
+    [Fact]
+    public void Eod_report_alone_is_observation_only_and_cannot_create_fill()
+    {
+        var plan = BuildPlan(CreateBundle(Artifact("eod.jsonl", "EOD_LMAX_REPORT", new[] { DirectFill("C1", "E1", 10, 0.7001m, 10, 0, 1, "EOD_LMAX_REPORT") })));
+
+        Assert.Equal(0, plan.NormalizedEvents.Count(e => e.Kind == R018NormalizedEventKind.Fill));
+        Assert.Contains(plan.NormalizedEvents, e => e.Kind == R018NormalizedEventKind.ManualObservation && e.Provenance == R018ProvenanceType.EOD_LMAX_REPORT);
+        Assert.DoesNotContain(plan.PlannedStagingRows ?? Array.Empty<R018PlannedStagingRow>(), r => r.TargetContract == "Fill");
+    }
+
+    [Fact]
+    public void Possdup_execution_report_merges_physical_occurrences_into_one_business_event()
+    {
+        var er = ExecutionReport("C1", "E1", "F", "2", 10, 0, 10, 0.7001m, 2);
+        var possDup = er[..^1] + ",\"poss_dup\":true}";
+        var plan = BuildPlan(CreateBundle(Artifact("raw.jsonl", "RAW_FIX_LOG", new[] { Order("C1", 10, 1), er, possDup })));
+
+        var executionReports = plan.NormalizedEvents.Where(e => e.Kind == R018NormalizedEventKind.ExecutionReport && e.ExecId == "E1").ToArray();
+        Assert.Single(executionReports);
+        Assert.True(executionReports[0].PossDupFlag);
+        Assert.True(executionReports[0].EvidenceRefs!.Count >= 2);
+        Assert.Single(plan.BusinessEvents.Where(e => e.BusinessEventType == R018NormalizedEventKind.ExecutionReport && e.Facts["exec_id"] == "E1"));
+        Assert.True(plan.EvidenceOccurrences.Count(e => e.BusinessIdentity == executionReports[0].StableKey) >= 2);
+    }
+
+    [Fact]
+    public void Missing_manifest_schema_fails_closed_without_silent_substitution()
+    {
+        var bundlePath = CreateBundle(Artifact("raw.jsonl", "RAW_FIX_LOG", ValidEvents()));
+        RemoveManifestField(bundlePath, "schema_version");
+        var plan = BuildPlan(bundlePath);
+
+        AssertRejected(plan, "MISSING_SCHEMA_VERSION", "UNKNOWN_MANIFEST_SCHEMA");
+    }
+
+    [Fact]
+    public void Invalid_model_run_catalog_schema_rejects_canonical_linking()
+    {
+        var bundle = CreateBundle(Artifact("raw.jsonl", "RAW_FIX_LOG", ValidEvents()));
+        var catalog = Path.Combine(CreateTempDirectory(), "catalog.json");
+        File.WriteAllText(catalog, JsonSerializer.Serialize(new
+        {
+            catalog_schema_version = "wrong_schema",
+            model_runs = new[] { new { model_run_id = "MR-1", source_run_id = "RTEST", approved_candidate_hash = "HASH123" } }
+        }, JsonOptions()));
+
+        var plan = BuildPlan(bundle, catalog);
+
+        AssertRejected(plan, "MODEL_RUN_CATALOG_SCHEMA_INVALID");
+        Assert.False(plan.ReplayEligibility.LocalIsolatedReplayAllowed);
+    }
+
+    [Fact]
+    public void Missing_side_and_time_in_force_fail_closed()
+    {
+        var plan = BuildPlan(CreateBundle(Artifact("raw.jsonl", "RAW_FIX_LOG", new[] { Order("C1", 1, 1, side: null!, tif: null!) })));
+
+        AssertRejected(plan, "MISSING_SIDE", "MISSING_TIME_IN_FORCE");
+    }
+
+    [Fact]
+    public void Execution_report_missing_required_fields_fails_closed()
+    {
+        var raw = JsonSerializer.Serialize(new Dictionary<string, object?>
+        {
+            ["event_type"] = "ExecutionReport", ["provenance"] = "RAW_FIX", ["clordid"] = "C1",
+            ["symbol"] = "AUDUSD", ["security_id"] = "4007", ["side"] = "BUY", ["quantity_unit"] = "LMAX_CONTRACTS"
+        }, JsonOptions());
+        var plan = BuildPlan(CreateBundle(Artifact("raw.jsonl", "RAW_FIX_LOG", new[] { Order("C1", 1, 1), raw })));
+
+        AssertRejected(plan, "REPORT_WITHOUT_EXECID", "REPORT_WITHOUT_EXEC_TYPE", "REPORT_WITHOUT_ORD_STATUS", "REPORT_WITHOUT_CUM_QTY", "REPORT_WITHOUT_LEAVES_QTY", "REPORT_WITHOUT_SOURCE_TIMESTAMP");
+    }
+
+    [Fact]
+    public void Safe_staging_key_and_planned_row_id_include_source_run_scope()
+    {
+        var catalogA = CreateCatalog(("MR-A", "RUN-A", "HASH123"));
+        var catalogB = CreateCatalog(("MR-B", "RUN-B", "HASH123"));
+        var planA = BuildPlan(CreateBundle(new[] { Artifact("raw.jsonl", "RAW_FIX_LOG", ValidEvents()) }, sourceRunId: "RUN-A"), catalogA);
+        var planB = BuildPlan(CreateBundle(new[] { Artifact("raw.jsonl", "RAW_FIX_LOG", ValidEvents()) }, sourceRunId: "RUN-B"), catalogB);
+
+        var fillA = Assert.Single(planA.PlannedStagingRows!.Where(r => r.TargetContract == "Fill"));
+        var fillB = Assert.Single(planB.PlannedStagingRows!.Where(r => r.TargetContract == "Fill"));
+        Assert.NotEqual(fillA.SafeStagingKey, fillB.SafeStagingKey);
+        Assert.NotEqual(fillA.PlannedRowId, fillB.PlannedRowId);
+        Assert.False(fillA.ApplyEligible);
+        Assert.Equal("CANONICAL_REPLAY_ELIGIBLE_OFFLINE_ONLY", fillA.CanonicalEligibility);
+    }
+
+    [Fact]
+    public void Cli_outputs_v3_replay_evidence_business_and_wide_parity_report()
+    {
+        var bundle = CreateBundle(Artifact("raw.jsonl", "RAW_FIX_LOG", ValidEvents()));
+        var output = Path.Combine(CreateTempDirectory(), "out");
+        var exit = RunCli(bundle, output);
+
+        Assert.Equal(0, exit);
+        var planJson = Path.Combine(output, "import_plan_v3.json");
+        Assert.True(File.Exists(planJson));
+        using (var doc = JsonDocument.Parse(File.ReadAllText(planJson)))
+        {
+            Assert.Equal("TESTCOMMIT", doc.RootElement.GetProperty("toolCommit").GetString());
+            Assert.Equal("25db482d043198fd2f332984b3cc02b681367c55", doc.RootElement.GetProperty("sourceBaselineCommit").GetString());
+        }
+        Assert.True(File.Exists(Path.Combine(output, "replay_eligibility.json")));
+        Assert.True(File.Exists(Path.Combine(output, "evidence_occurrences.jsonl")));
+        Assert.True(File.Exists(Path.Combine(output, "business_events.json")));
+        Assert.StartsWith("check,source,expected,actual,status,severity,detail", File.ReadLines(Path.Combine(output, "parity_report.csv")).First());
+    }
     private static void AssertRejected(R018ImportPlan plan, params string[] expectedCodes)
     {
         Assert.Equal(R018ImportBundleStatus.REJECTED, plan.Status);
@@ -456,7 +577,7 @@ public sealed class R018ImportPlanningTests
     private static string CreateBundle(TestArtifact artifact, string? modelRunId = null, string? startingPositionSource = null, string? deadline = "2026-06-24T12:15:30Z")
         => CreateBundle(new[] { artifact }, modelRunId, startingPositionSource, deadline);
 
-    private static string CreateBundle(IReadOnlyList<TestArtifact> artifacts, string? modelRunId = null, string? startingPositionSource = null, string? deadline = "2026-06-24T12:15:30Z")
+    private static string CreateBundle(IReadOnlyList<TestArtifact> artifacts, string? modelRunId = null, string? startingPositionSource = null, string? deadline = "2026-06-24T12:15:30Z", string sourceRunId = "RTEST")
     {
         var path = CreateTempDirectory();
         var manifestArtifacts = new List<object>();
@@ -479,7 +600,7 @@ public sealed class R018ImportPlanningTests
             ["environment"] = "demo",
             ["broker_account"] = "LMAX-DEMO-ACCOUNT",
             ["venue"] = "LMAX",
-            ["source_run_id"] = "RTEST",
+            ["source_run_id"] = sourceRunId,
             ["approved_candidate_hash"] = "HASH123",
             ["quantity_unit"] = "LMAX_CONTRACTS",
             ["target_close_utc"] = "2026-06-24T12:15:00Z",
@@ -564,6 +685,13 @@ public sealed class R018ImportPlanningTests
         File.WriteAllText(manifestPath, JsonSerializer.Serialize(manifest, JsonOptions()));
     }
 
+    private static void RemoveManifestField(string bundlePath, string field)
+    {
+        var manifestPath = Path.Combine(bundlePath, "r018_bundle_manifest_v2.json");
+        var manifest = JsonSerializer.Deserialize<Dictionary<string, object?>>(File.ReadAllText(manifestPath), JsonOptions())!;
+        manifest.Remove(field);
+        File.WriteAllText(manifestPath, JsonSerializer.Serialize(manifest, JsonOptions()));
+    }
     private static JsonSerializerOptions JsonOptions() => new(JsonSerializerDefaults.Web) { WriteIndented = false };
 
     private static string CreateTempDirectory()
