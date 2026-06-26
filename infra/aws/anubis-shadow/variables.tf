@@ -34,7 +34,7 @@ variable "operation_mode" {
 variable "project_name" {
   description = "Project name prefix."
   type        = string
-  default     = "anubis"
+  default     = "qq-fund-platform"
 }
 
 variable "vpc_cidr" {
@@ -182,7 +182,7 @@ variable "lmax_market_data_egress_cidrs" {
 variable "credential_secret_name" {
   description = "Secrets Manager secret name created when credential_secret_arn is not supplied. No secret value is created by Terraform."
   type        = string
-  default     = "/anubis/aws1/lmax-market-data-only"
+  default     = "qq/fund-platform/demo/lmax/market-data"
 }
 
 variable "credential_secret_arn" {
@@ -222,7 +222,7 @@ variable "recorder_root" {
 variable "cloudwatch_namespace" {
   description = "CloudWatch namespace used by the host metric script."
   type        = string
-  default     = "Anubis/AWS1"
+  default     = "QQFundPlatform/AWS1"
 }
 
 variable "aws_cli_msi_s3_uri" {

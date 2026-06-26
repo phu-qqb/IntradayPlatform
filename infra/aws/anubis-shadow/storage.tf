@@ -92,7 +92,7 @@ resource "aws_s3_bucket_policy" "archive" {
 resource "aws_secretsmanager_secret" "market_data_only" {
   count                   = var.credential_secret_arn == null ? 1 : 0
   name                    = var.credential_secret_name
-  description             = "Anubis AWS1 LMAX market-data-only credential envelope. Terraform creates metadata only; value is populated out of band."
+  description             = "qq-fund-platform AWS1 LMAX market-data-only credential envelope. Terraform creates metadata only; value is populated out of band."
   recovery_window_in_days = 7
 
   tags = {
@@ -102,7 +102,7 @@ resource "aws_secretsmanager_secret" "market_data_only" {
 }
 
 resource "aws_ssm_parameter" "endpoint_alias" {
-  name        = "/anubis/${local.safe_environment}/aws1/lmax/market-data-endpoint-alias"
+  name        = "/qq-fund-platform/${local.safe_environment}/aws1/lmax/market-data-endpoint-alias"
   description = "LMAX market-data endpoint alias only; no host, account, or secret value."
   type        = "String"
   value       = var.lmax_market_data_endpoint_alias

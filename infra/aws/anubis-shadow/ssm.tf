@@ -5,7 +5,7 @@ resource "aws_ssm_document" "install_runbook" {
 
   content = jsonencode({
     schemaVersion = "2.2"
-    description   = "Install Anubis AWS1 M2 market-data-only smoke capture host from verified artifacts. No apply or credential value is embedded."
+    description   = "Install qq-fund-platform AWS1 M2 market-data-only smoke capture host from verified artifacts. No apply or credential value is embedded."
     parameters = {
       ArtifactS3Uri = {
         type        = "String"

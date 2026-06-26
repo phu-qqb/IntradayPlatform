@@ -16,7 +16,7 @@ Before any future `terraform plan`, the lead/operator must provide backend confi
 ```powershell
 terraform init `
   -backend-config="bucket=<state-bucket>" `
-  -backend-config="key=anubis/aws1/read-only-shadow/terraform.tfstate" `
+  -backend-config="key=fund-platform/shadow-readonly/eu-west-2/terraform.tfstate" `
   -backend-config="region=eu-west-2" `
   -backend-config="encrypt=true" `
   -backend-config="use_lockfile=true"

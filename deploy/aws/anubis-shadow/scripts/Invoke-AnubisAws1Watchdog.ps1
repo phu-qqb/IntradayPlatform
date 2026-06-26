@@ -4,7 +4,7 @@
     [string]$CredentialSecretId = "",
     [string]$ArchiveBucketName = "",
     [string]$Environment = "demo",
-    [string]$CloudWatchNamespace = "Anubis/AWS1",
+    [string]$CloudWatchNamespace = "QQFundPlatform/AWS1",
     [string]$ExpectedAwsCliSha256 = "",
     [switch]$RestartWhenStopped,
     [switch]$PublishMetrics

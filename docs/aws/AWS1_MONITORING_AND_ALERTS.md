@@ -5,7 +5,7 @@
 Namespace:
 
 ```text
-Anubis/AWS1
+QQFundPlatform/AWS1
 ```
 
 `Get-AnubisAws1Status.ps1` computes status from real artifacts only:

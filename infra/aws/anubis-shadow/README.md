@@ -1,4 +1,4 @@
-﻿# Anubis AWS1 Read-Only Shadow Foundation
+﻿# qq-fund-platform AWS1 Read-Only Shadow Foundation
 
 This Terraform stack prepares the AWS London foundation for the M2C1B LMAX Demo market-data-only smoke capture host.
 

@@ -41,7 +41,7 @@ locals {
   )
 
   tags = {
-    Project         = "Anubis"
+    Project         = "qq-fund-platform"
     Workstream      = "AWS_READ_ONLY"
     Environment     = local.safe_environment
     Boundary        = "market-data-read-only"

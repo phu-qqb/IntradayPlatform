@@ -1,6 +1,6 @@
 ﻿{
   "schemaVersion": "2.2",
-  "description": "Install Anubis AWS1 M2 market-data-only smoke capture host from verified S3 artifacts. No AWS apply and no credential values are embedded.",
+  "description": "Install qq-fund-platform AWS1 M2 market-data-only smoke capture host from verified S3 artifacts. No AWS apply and no credential values are embedded.",
   "parameters": {
     "ArtifactS3Uri": {
       "type": "String",
@@ -54,7 +54,7 @@
     },
     "CloudWatchNamespace": {
       "type": "String",
-      "default": "Anubis/AWS1"
+      "default": "QQFundPlatform/AWS1"
     },
     "EnableAutoStart": {
       "type": "String",

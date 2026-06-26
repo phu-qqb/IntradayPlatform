@@ -1,7 +1,7 @@
 ﻿param(
     [string]$RecorderRoot = "D:\Anubis\Recorder",
     [string]$Environment = "demo",
-    [string]$Namespace = "Anubis/AWS1",
+    [string]$Namespace = "QQFundPlatform/AWS1",
     [string]$ExpectedAwsCliSha256 = "",
     [switch]$DryRun
 )

@@ -69,7 +69,7 @@ Required future plan/apply values:
 After a separately approved AWS apply in a later step, use the generated SSM document:
 
 ```text
-anubis-demo-aws1-install-runbook
+qq-fund-platform-demo-aws1-install-runbook
 ```
 
 The runbook downloads the AWS CLI MSI and app artifact using `aws:downloadContent`, verifies SHA-256 for both, installs AWS CLI v2, expands the app artifact, and invokes `Install-AnubisAws1Host.ps1`.

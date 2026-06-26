@@ -7,7 +7,7 @@
     [string]$MarketDataEndpointAlias = "LMAX_DEMO_MARKET_DATA_ONLY",
     [string]$ArchiveBucketName = "",
     [string]$Environment = "demo",
-    [string]$CloudWatchNamespace = "Anubis/AWS1",
+    [string]$CloudWatchNamespace = "QQFundPlatform/AWS1",
     [string]$ExpectedAwsCliSha256 = "",
     [switch]$EnableAutoStart
 )

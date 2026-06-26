@@ -1,10 +1,10 @@
 resource "aws_cloudwatch_log_group" "recorder" {
-  name              = "/anubis/${local.safe_environment}/aws1/recorder"
+  name              = "/qq-fund-platform/${local.safe_environment}/aws1/recorder"
   retention_in_days = 30
 }
 
 resource "aws_cloudwatch_log_group" "install" {
-  name              = "/anubis/${local.safe_environment}/aws1/install"
+  name              = "/qq-fund-platform/${local.safe_environment}/aws1/install"
   retention_in_days = 30
 }
 
