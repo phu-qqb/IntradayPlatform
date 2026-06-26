@@ -27,3 +27,32 @@ output "recorder_security_group_id" {
   description = "Recorder security group with no ingress rules."
   value       = aws_security_group.recorder.id
 }
+output "lmax_market_data_endpoint_host" {
+  description = "Approved LMAX Demo market-data endpoint host used for DNS-resolved egress."
+  value       = var.lmax_market_data_endpoint_host
+}
+
+output "lmax_market_data_planned_egress_cidrs" {
+  description = "Planned explicit /32 egress CIDRs for the LMAX Demo market-data endpoint."
+  value       = local.lmax_market_data_planned_cidrs
+}
+
+output "lmax_market_data_dns_resolved_cidrs" {
+  description = "Current DNS A-record /32 CIDRs resolved by Terraform for the approved endpoint."
+  value       = local.lmax_market_data_dns_resolved_cidrs
+}
+
+output "lmax_market_data_egress_cidr_source" {
+  description = "CIDR source annotation."
+  value       = var.lmax_market_data_egress_cidr_source
+}
+
+output "lmax_market_data_egress_cidr_stability" {
+  description = "CIDR stability annotation."
+  value       = var.lmax_market_data_egress_cidr_stability
+}
+
+output "lmax_market_data_apply_requires_revalidation" {
+  description = "Whether apply requires DNS revalidation."
+  value       = var.lmax_market_data_egress_apply_requires_revalidation
+}

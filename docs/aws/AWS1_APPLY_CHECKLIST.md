@@ -12,7 +12,8 @@ AWS1 closeout does not apply infrastructure. This checklist is for a later, sepa
 - [ ] `.terraform.lock.hcl` is present and committed.
 - [ ] Static gate script passes with no skips.
 - [ ] Windows AMI ID selected, owner allow-listed, available, Windows, and x86_64.
-- [ ] LMAX market-data egress CIDRs supplied and no `/0` allowed.
+- [ ] LMAX market-data egress CIDRs supplied as DNS-resolved `/32` values for `fix-marketdata.london-demo.lmax.com:443`; no `/0` allowed.
+- [ ] `deploy/aws/anubis-shadow/scripts/Test-LmaxMarketDataDnsCidrs.ps1` re-resolves the endpoint immediately before apply and matches the planned CIDRs exactly.
 - [ ] AWS CLI MSI S3 URI and SHA-256 supplied.
 - [ ] Plan-ready app artifact S3 URI and SHA-256 supplied.
 - [ ] Market-data-only secret metadata exists.

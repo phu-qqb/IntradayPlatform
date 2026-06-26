@@ -90,6 +90,14 @@ resource "aws_instance" "recorder" {
       error_message = "lmax_market_data_egress_cidrs must be set before plan/apply so broker egress is explicit."
     }
     precondition {
+      condition     = local.lmax_market_data_planned_cidrs == local.lmax_market_data_dns_resolved_cidrs
+      error_message = "lmax_market_data_egress_cidrs must exactly match current DNS A-record /32 CIDRs for the approved LMAX Demo market-data endpoint. Re-resolve before apply."
+    }
+    precondition {
+      condition     = var.lmax_market_data_egress_cidr_source == "DNS_RESOLVED_CURRENT_LMAX_DEMO_MARKETDATA_ENDPOINT" && var.lmax_market_data_egress_cidr_stability == "NOT_CONTRACTUALLY_GUARANTEED" && var.lmax_market_data_egress_apply_requires_revalidation
+      error_message = "DNS-resolved LMAX Demo market-data CIDRs must be documented as non-contractual and apply-revalidated."
+    }
+    precondition {
       condition     = !var.enable_cloudwatch_alarms || length(var.alarm_action_arns) > 0
       error_message = "alarm_action_arns must be provided when enable_cloudwatch_alarms is true."
     }

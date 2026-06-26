@@ -115,7 +115,7 @@ resource "aws_vpc_security_group_egress_rule" "broker_market_data" {
   from_port         = var.lmax_market_data_port
   to_port           = var.lmax_market_data_port
   cidr_ipv4         = each.value
-  description       = "Explicit LMAX market-data-only egress"
+  description       = "Explicit LMAX market-data-only egress; DNS-resolved non-contractual /32"
 }
 
 resource "aws_vpc_security_group_egress_rule" "aws_private_endpoints" {

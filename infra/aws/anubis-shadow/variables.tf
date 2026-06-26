@@ -166,16 +166,65 @@ variable "lmax_market_data_port" {
   description = "Outbound TCP port used for the market-data FIX session."
   type        = number
   default     = 443
+
+  validation {
+    condition     = var.lmax_market_data_port == 443
+    error_message = "AWS1 only allows TCP 443 for the approved LMAX Demo market-data endpoint."
+  }
+}
+
+variable "lmax_market_data_endpoint_host" {
+  description = "Approved LMAX Demo market-data endpoint host used by the successful M2C1B capture path. No Order Entry endpoint is allowed."
+  type        = string
+  default     = "fix-marketdata.london-demo.lmax.com"
+
+  validation {
+    condition     = lower(var.lmax_market_data_endpoint_host) == "fix-marketdata.london-demo.lmax.com" && !can(regex("(?i)fix-order", var.lmax_market_data_endpoint_host))
+    error_message = "lmax_market_data_endpoint_host must be the approved LMAX Demo market-data host, not an Order Entry endpoint."
+  }
 }
 
 variable "lmax_market_data_egress_cidrs" {
-  description = "Explicit broker market-data egress IPv4 CIDRs. Empty means fail-closed: no external broker egress rule. /0 is rejected."
+  description = "Explicit broker market-data egress IPv4 /32 CIDRs resolved from the approved LMAX Demo market-data endpoint. Empty means fail-closed; /0 is rejected."
   type        = list(string)
   default     = []
 
   validation {
-    condition     = alltrue([for cidr in var.lmax_market_data_egress_cidrs : can(cidrhost(cidr, 0)) && cidr != "0.0.0.0/0" && !endswith(cidr, "/0")])
-    error_message = "lmax_market_data_egress_cidrs must be valid IPv4 CIDRs and must not include /0."
+    condition     = alltrue([for cidr in var.lmax_market_data_egress_cidrs : can(cidrhost(cidr, 0)) && can(regex("^([0-9]{1,3}\\.){3}[0-9]{1,3}/32$", cidr)) && cidr != "0.0.0.0/0"])
+    error_message = "lmax_market_data_egress_cidrs must be valid IPv4 /32 CIDRs and must not include /0."
+  }
+}
+
+variable "lmax_market_data_egress_cidr_source" {
+  description = "Source used for the planned LMAX Demo market-data egress CIDRs."
+  type        = string
+  default     = "DNS_RESOLVED_CURRENT_LMAX_DEMO_MARKETDATA_ENDPOINT"
+
+  validation {
+    condition     = var.lmax_market_data_egress_cidr_source == "DNS_RESOLVED_CURRENT_LMAX_DEMO_MARKETDATA_ENDPOINT"
+    error_message = "AWS1 requires DNS-resolved current LMAX Demo market-data endpoint CIDRs."
+  }
+}
+
+variable "lmax_market_data_egress_cidr_stability" {
+  description = "Stability classification for the DNS-resolved LMAX Demo market-data egress CIDRs."
+  type        = string
+  default     = "NOT_CONTRACTUALLY_GUARANTEED"
+
+  validation {
+    condition     = var.lmax_market_data_egress_cidr_stability == "NOT_CONTRACTUALLY_GUARANTEED"
+    error_message = "DNS-resolved LMAX Demo market-data CIDRs must remain classified as not contractually guaranteed."
+  }
+}
+
+variable "lmax_market_data_egress_apply_requires_revalidation" {
+  description = "True when apply must re-resolve the LMAX Demo market-data endpoint and compare against planned CIDRs."
+  type        = bool
+  default     = true
+
+  validation {
+    condition     = var.lmax_market_data_egress_apply_requires_revalidation
+    error_message = "AWS1 apply requires LMAX Demo market-data DNS revalidation."
   }
 }
 
