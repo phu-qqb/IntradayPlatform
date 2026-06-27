@@ -1,0 +1,15 @@
+{
+  "schema_version": "lmax-market-data-only-approved-instrument-catalog.v1",
+  "source": "tools/QQ.Production.Intraday.Lmax.ConnectivityLab/appsettings.json",
+  "permission_scope": "M2C1B_EXPLICIT_DEMO_MARKET_DATA_ONLY_SCOPE",
+  "instruments": [
+    {
+      "symbol": "EURUSD",
+      "security_id": "4001",
+      "security_id_source": "8",
+      "lmax_slash_symbol": "EUR/USD",
+      "evidence_source": "tools/QQ.Production.Intraday.Lmax.ConnectivityLab/appsettings.json:LmaxConnectivityLab",
+      "permission_scope": "M2C1B_EXPLICIT_DEMO_MARKET_DATA_ONLY_SCOPE"
+    }
+  ]
+}
