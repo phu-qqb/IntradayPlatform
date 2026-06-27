@@ -1,4 +1,4 @@
-﻿using System.Diagnostics;
+using System.Diagnostics;
 using System.Globalization;
 using System.Text;
 using System.Text.Json;
@@ -15,9 +15,28 @@ public sealed record LmaxMarketDataOnlyCaptureSummary(string Status,string Recor
 public sealed class LmaxMarketDataOnlyApprovedInstrumentCatalog
 {
     private readonly Dictionary<string,LmaxMarketDataOnlyCatalogInstrument> bySymbol;
+    public const string PackagedCatalogFileName = "lmax_demo_market_data_instrument_catalog.json";
     public LmaxMarketDataOnlyApprovedInstrumentCatalog(IEnumerable<LmaxMarketDataOnlyCatalogInstrument> instruments)=>bySymbol=instruments.ToDictionary(x=>x.Symbol,StringComparer.OrdinalIgnoreCase);
     public IReadOnlyList<LmaxMarketDataOnlyCatalogInstrument> Instruments=>bySymbol.Values.OrderBy(x=>x.Symbol,StringComparer.Ordinal).ToArray();
     public LmaxMarketDataOnlyCatalogInstrument ResolveApproved(string symbol)=>bySymbol.TryGetValue(symbol,out var i)?i:throw new InvalidOperationException($"market_data_only_instrument_not_approved:{symbol}");
+    public static LmaxMarketDataOnlyApprovedInstrumentCatalog LoadFromConfigDirectory(string configDirectory)
+    {
+        var path=Path.Combine(configDirectory,PackagedCatalogFileName);
+        if(!File.Exists(path))throw new FileNotFoundException("market_data_only_packaged_instrument_catalog_not_found",path);
+        return LoadFromPackagedCatalog(path);
+    }
+    public static LmaxMarketDataOnlyApprovedInstrumentCatalog LoadFromPackagedCatalog(string path)
+    {
+        using var doc=JsonDocument.Parse(File.ReadAllText(path));
+        var instruments=doc.RootElement.GetProperty("instruments").EnumerateArray().Select(x=>new LmaxMarketDataOnlyCatalogInstrument(
+            x.GetProperty("symbol").GetString()??throw new InvalidOperationException("symbol_missing"),
+            x.GetProperty("security_id").GetString()??throw new InvalidOperationException("security_id_missing"),
+            x.GetProperty("security_id_source").GetString()??"8",
+            x.GetProperty("lmax_slash_symbol").GetString()??throw new InvalidOperationException("lmax_slash_symbol_missing"),
+            x.TryGetProperty("evidence_source",out var evidence)?evidence.GetString()??path.Replace('\\','/'):path.Replace('\\','/'),
+            x.GetProperty("permission_scope").GetString()??throw new InvalidOperationException("permission_scope_missing"))).ToArray();
+        return new LmaxMarketDataOnlyApprovedInstrumentCatalog(instruments);
+    }
     public static LmaxMarketDataOnlyApprovedInstrumentCatalog LoadFromConnectivityLab(string repoRoot)
     {
         var path=Path.Combine(repoRoot,"tools","QQ.Production.Intraday.Lmax.ConnectivityLab","appsettings.json");

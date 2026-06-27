@@ -1,6 +1,7 @@
-﻿using System.Collections.Immutable;
+using System.Collections.Immutable;
 using System.Globalization;
 using System.Runtime.CompilerServices;
+using System.Text.Json;
 using QQ.Production.Intraday.Application.CanonicalRecorder;
 using QQ.Production.Intraday.Lmax.ConnectivityLab;
 
@@ -345,7 +346,14 @@ public static class LmaxMarketDataOnlyPreflight
     private static readonly HashSet<string> AllowedSessionAliases = new(StringComparer.OrdinalIgnoreCase) { "LMAX_DEMO_MD_READ_ONLY" };
     private static readonly HashSet<string> AllowedInstruments = new(StringComparer.OrdinalIgnoreCase) { "EURUSD" };
 
-    public static LmaxMarketDataOnlyPreflightReport Validate(LmaxMarketDataOnlyPreflightConfig config, bool networkDisabled, bool noOrderEntry, bool noAccountApi, bool noDb, bool outputRootMustBeEmpty = true)
+    public static LmaxMarketDataOnlyPreflightReport Validate(
+        LmaxMarketDataOnlyPreflightConfig config,
+        bool networkDisabled,
+        bool noOrderEntry,
+        bool noAccountApi,
+        bool noDb,
+        bool outputRootMustBeEmpty = true,
+        JsonElement? configDocument = null)
     {
         var issues = new List<string>();
         if (config.Mode != "CAPTURE_ONLY") issues.Add("mode_must_be_CAPTURE_ONLY");
@@ -370,9 +378,26 @@ public static class LmaxMarketDataOnlyPreflight
         if (config.Instruments is null || config.Instruments.Count == 0 || config.Instruments.Any(x => !AllowedInstruments.Contains(x))) issues.Add("instrument_not_allowlisted");
         if (config.AllowedOutboundFixMsgTypes is null) issues.Add("allowed_outbound_fix_msg_types_required");
         else if (config.AllowedOutboundFixMsgTypes.Any(x => !LmaxMarketDataOnlyOutboundFixMessageGuard.AllowedOutboundMsgTypes.Contains(x))) issues.Add("outbound_fix_whitelist_contains_forbidden_or_unknown_type");
-        if (ContainsForbiddenConfigShape(config)) issues.Add("config_contains_order_account_or_db_shape");
+        if (FindForbiddenConfigShapeIssues(config, configDocument).Count > 0) issues.Add("config_contains_order_account_or_db_shape");
         if (Directory.Exists(config.OutputRoot) && outputRootMustBeEmpty && Directory.EnumerateFileSystemEntries(config.OutputRoot).Any()) issues.Add("output_root_not_empty");
         return new LmaxMarketDataOnlyPreflightReport(issues.Count == 0 ? "GO_M2C1B_PREFLIGHT_READY" : "NO_GO_M2C1B", issues, config.ConfigHash, networkDisabled, noOrderEntry, noAccountApi, noDb);
+    }
+
+    public static IReadOnlyList<string> FindForbiddenConfigShapeIssues(LmaxMarketDataOnlyPreflightConfig config, JsonElement? configDocument = null)
+    {
+        var issues = new List<string>();
+        if (!string.Equals(config.CredentialScope, "MARKET_DATA_ONLY", StringComparison.Ordinal) &&
+            !string.IsNullOrWhiteSpace(config.MarketDataCredentialReference))
+        {
+            issues.Add("market_data_credential_reference_requires_market_data_only_scope");
+        }
+
+        if (configDocument.HasValue)
+        {
+            InspectConfigElement(configDocument.Value, "$", issues);
+        }
+
+        return issues;
     }
 
     private static bool HasRequiredFreeDisk(string outputRoot, long minimumFreeDiskBytes)
@@ -394,10 +419,46 @@ public static class LmaxMarketDataOnlyPreflight
         }
     }
 
-    private static bool ContainsForbiddenConfigShape(LmaxMarketDataOnlyPreflightConfig config)
+    private static void InspectConfigElement(JsonElement element, string path, List<string> issues)
     {
-        var json = System.Text.Json.JsonSerializer.Serialize(config, CanonicalRecorderV2Constants.JsonOptions);
-        var forbidden = new[] { "order_entry", "account_api", "db_connection", "live_order", "send_order", "password", "secret" };
-        return forbidden.Any(x => json.Contains(x, StringComparison.OrdinalIgnoreCase));
+        switch (element.ValueKind)
+        {
+            case JsonValueKind.Object:
+                foreach (var property in element.EnumerateObject())
+                {
+                    var propertyPath = $"{path}.{property.Name}";
+                    if (IsForbiddenConfigPropertyName(property.Name))
+                    {
+                        issues.Add($"forbidden_config_field:{propertyPath}");
+                    }
+
+                    InspectConfigElement(property.Value, propertyPath, issues);
+                }
+
+                break;
+            case JsonValueKind.Array:
+                var index = 0;
+                foreach (var item in element.EnumerateArray())
+                {
+                    InspectConfigElement(item, $"{path}[{index++}]", issues);
+                }
+
+                break;
+        }
     }
+
+    private static bool IsForbiddenConfigPropertyName(string propertyName)
+    {
+        var normalized = NormalizeConfigPropertyName(propertyName);
+        return normalized is "orderentrysessionalias"
+            or "orderentrycredentials"
+            or "accountapi"
+            or "dbconnection"
+            or "liveorder"
+            or "sendorder"
+            || normalized.Contains("password", StringComparison.Ordinal);
+    }
+
+    private static string NormalizeConfigPropertyName(string propertyName)
+        => new(propertyName.Where(char.IsLetterOrDigit).Select(char.ToLowerInvariant).ToArray());
 }
