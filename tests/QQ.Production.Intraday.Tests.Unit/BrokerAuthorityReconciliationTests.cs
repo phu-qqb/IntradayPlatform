@@ -208,6 +208,67 @@ public sealed class BrokerAuthorityReconciliationTests
         Assert.Contains(result.Breaks, x => x.Type == BrokerReconciliationBreakType.UNKNOWN_ACCOUNT_SCOPE);
     }
 
+    [Fact]
+    public void Reconstructed_position_source_is_not_authority_and_blocks()
+    {
+        var source = Source("positions", BrokerSourceQuality.RECONSTRUCTED, Now, "pos-reconstructed");
+        var result = Reconcile(positionSource: source, internalPosition: 0m, brokerPosition: 0m);
+
+        Assert.Contains(result.Breaks, x => x.Type == BrokerReconciliationBreakType.UNACCEPTABLE_BROKER_AUTHORITY_SOURCE && x.Blocking);
+        Assert.Equal(BrokerAuthorityOperationalGate.NO_GO, result.Readiness.Gate);
+        Assert.False(result.Readiness.PositionAuthorityReady);
+    }
+
+    [Fact]
+    public void Manual_position_source_is_not_authority_and_blocks()
+    {
+        var source = Source("positions", BrokerSourceQuality.MANUAL_EVIDENCE, Now, "pos-manual");
+        var result = Reconcile(positionSource: source, internalPosition: 0m, brokerPosition: 0m);
+
+        Assert.Contains(result.Breaks, x => x.Type == BrokerReconciliationBreakType.UNACCEPTABLE_BROKER_AUTHORITY_SOURCE && x.Blocking);
+        Assert.Equal(BrokerAuthorityOperationalGate.NO_GO, result.Readiness.Gate);
+        Assert.False(result.Readiness.PositionAuthorityReady);
+    }
+
+    [Fact]
+    public void Reconstructed_position_evidence_row_is_not_authority_and_blocks()
+    {
+        var input = Input(internalPosition: 0m, brokerPosition: 0m) with
+        {
+            BrokerPositions =
+            [
+                new BrokerPositionSnapshotEvidence(Scope, new BrokerPositionSnapshot(Account, Instrument, 0m, Now), "EURUSD", BrokerSourceQuality.RECONSTRUCTED, "dropcopy.replay", "pos-reconstructed-row")
+            ]
+        };
+
+        var result = new BrokerAuthorityReconciler().Reconcile(input);
+
+        Assert.Contains(result.Breaks, x => x.Type == BrokerReconciliationBreakType.UNACCEPTABLE_BROKER_AUTHORITY_SOURCE && x.Description.Contains("Broker position evidence", StringComparison.Ordinal));
+        Assert.Equal(BrokerAuthorityReadinessDecision.EMERGENCY_STOP, result.Readiness.Decision);
+    }
+
+    [Fact]
+    public void Reconstructed_open_order_source_is_not_authority_and_blocks()
+    {
+        var source = Source("open-orders", BrokerSourceQuality.RECONSTRUCTED, Now, "oo-reconstructed");
+        var result = Reconcile(openOrderSource: source);
+
+        Assert.Contains(result.Breaks, x => x.Type == BrokerReconciliationBreakType.UNACCEPTABLE_BROKER_AUTHORITY_SOURCE && x.Blocking);
+        Assert.Equal(BrokerAuthorityOperationalGate.NO_GO, result.Readiness.Gate);
+        Assert.False(result.Readiness.OpenOrderAuthorityReady);
+    }
+
+    [Fact]
+    public void Reconstructed_open_order_evidence_row_is_not_authority_and_blocks()
+    {
+        var input = Input(brokerOpenOrders: [Open("C-RECON", 1m, BrokerOrderLifecycleStatus.Accepted, BrokerSourceQuality.RECONSTRUCTED)]);
+
+        var result = new BrokerAuthorityReconciler().Reconcile(input);
+
+        Assert.Contains(result.Breaks, x => x.Type == BrokerReconciliationBreakType.UNACCEPTABLE_BROKER_AUTHORITY_SOURCE && x.Description.Contains("Broker open-order evidence", StringComparison.Ordinal));
+        Assert.Equal(BrokerAuthorityReadinessDecision.EMERGENCY_STOP, result.Readiness.Decision);
+    }
+
     private static BrokerReconciliationResult Reconcile(
         IReadOnlyList<Fill>? internalFills = null,
         IReadOnlyList<BrokerExecutionEvent>? brokerExecutions = null,
@@ -247,7 +308,7 @@ public sealed class BrokerAuthorityReconciliationTests
             Now,
             executionSource ?? Source("execution", BrokerSourceQuality.AUTHORITATIVE, Now, "exec-src"),
             positionSource ?? Source("positions", BrokerSourceQuality.AUTHORITATIVE, Now, "pos-src"),
-            openOrderSource ?? Source("open-orders", BrokerSourceQuality.RECONSTRUCTED, Now, "oo-src"),
+            openOrderSource ?? Source("open-orders", BrokerSourceQuality.AUTHORITATIVE, Now, "oo-src"),
             internalFills ?? [],
             [new InternalPositionSnapshot(Fund, Instrument, internalPosition, Now)],
             internalWorkingOrders ?? [],
@@ -301,6 +362,7 @@ public sealed class BrokerAuthorityReconciliationTests
     private static BrokerInternalWorkingOrderSnapshot Working(string clientOrderId, TradeSide side, decimal leaves, BrokerOrderLifecycleStatus status)
         => new(Scope, ChildOrderId.New(), Instrument, "EURUSD", clientOrderId, "O-" + clientOrderId, side, leaves, 0m, status, Now);
 
-    private static BrokerOpenOrderSnapshot Open(string clientOrderId, decimal leaves, BrokerOrderLifecycleStatus status)
-        => new(Scope, Instrument, "EURUSD", clientOrderId, "O-" + clientOrderId, TradeSide.Buy, leaves, 0m, status, Now, BrokerSourceQuality.RECONSTRUCTED, "fixture.open-orders", "open-" + clientOrderId);
+    private static BrokerOpenOrderSnapshot Open(string clientOrderId, decimal leaves, BrokerOrderLifecycleStatus status, BrokerSourceQuality quality = BrokerSourceQuality.AUTHORITATIVE)
+        => new(Scope, Instrument, "EURUSD", clientOrderId, "O-" + clientOrderId, TradeSide.Buy, leaves, 0m, status, Now, quality, "fixture.open-orders", "open-" + clientOrderId);
 }
+
