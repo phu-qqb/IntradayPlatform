@@ -47,7 +47,24 @@ public sealed class InMemoryLmaxEodReportRepository(PlatformState state) : ILmax
 
     public Task AddTradeSummariesAsync(IReadOnlyList<LmaxTradeSummary> summaries, CancellationToken cancellationToken)
     {
-        lock (_sync) state.LmaxTradeSummaries.AddRange(summaries);
+        lock (_sync)
+        {
+            foreach (var summary in summaries.Where(summary => state.LmaxTradeSummaries.All(x =>
+                         x.ReportDate != summary.ReportDate ||
+                         x.VenueId != summary.VenueId ||
+                         x.BrokerAccountId != summary.BrokerAccountId ||
+                         !x.LmaxSymbol.Equals(summary.LmaxSymbol, StringComparison.OrdinalIgnoreCase) ||
+                         !x.Type.Equals(summary.Type, StringComparison.OrdinalIgnoreCase) ||
+                         x.DateTimeUtc != summary.DateTimeUtc ||
+                         x.Contracts != summary.Contracts ||
+                         x.AveragePrice != summary.AveragePrice ||
+                         x.NotionalValue != summary.NotionalValue ||
+                         x.CommissionFullPrecision != summary.CommissionFullPrecision)))
+            {
+                state.LmaxTradeSummaries.Add(summary);
+            }
+        }
+
         return Task.CompletedTask;
     }
 
@@ -164,6 +181,57 @@ public static class LmaxEodHeaders
     public static readonly string[] Wallet = ["CCY", "Balance + Net Deposits", "Adjustments", "Inter Account Transfers", "Profit & Loss", "Commission", "Dividends", "Financing", "Wallet Balance", "Rate to Base CCY", "Account Id"];
 }
 
+public static class LmaxEodImportClassifications
+{
+    public const string ImportedPartialNonAuthority = "IMPORTED_PARTIAL_NON_AUTHORITY";
+    public const string ImportedCompleteCandidateAuthority = "IMPORTED_COMPLETE_CANDIDATE_AUTHORITY";
+    public const string QuarantineUnknownAccount = "QUARANTINE_UNKNOWN_ACCOUNT";
+    public const string BlockedMissingReportDate = "BLOCKED_MISSING_REPORT_DATE";
+    public const string BlockedOutsideDataRoot = "BLOCKED_OUTSIDE_DATA_ROOT";
+    public const string BlockedUnsupportedTimestampFormat = "BLOCKED_UNSUPPORTED_TIMESTAMP_FORMAT";
+    public const string BlockedUnsupportedSymbol = "BLOCKED_UNSUPPORTED_SYMBOL";
+    public const string RejectedByValidation = "REJECTED_BY_VALIDATION";
+}
+
+public static class LmaxEodReportStagingContract
+{
+    public static string BuildInboxPath(string dataRoot, string brokerAccount, DateOnly reportDate, LmaxReportType reportType)
+        => Path.Combine(dataRoot, "inbox", brokerAccount, reportDate.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture), FileName(reportType));
+
+    public static bool TryResolveReportDateFromStagedPath(string filePath, string dataRoot, out DateOnly reportDate, out string? blockReason)
+    {
+        reportDate = default;
+        blockReason = null;
+        var fullPath = Path.GetFullPath(filePath);
+        var root = Path.GetFullPath(dataRoot);
+        if (!fullPath.StartsWith(root, StringComparison.OrdinalIgnoreCase))
+        {
+            blockReason = LmaxEodImportClassifications.BlockedOutsideDataRoot;
+            return false;
+        }
+
+        var relative = Path.GetRelativePath(root, fullPath);
+        foreach (var segment in relative.Split([Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar], StringSplitOptions.RemoveEmptyEntries))
+        {
+            if (DateOnly.TryParseExact(segment, "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out reportDate))
+            {
+                return true;
+            }
+        }
+
+        blockReason = LmaxEodImportClassifications.BlockedMissingReportDate;
+        return false;
+    }
+
+    private static string FileName(LmaxReportType reportType)
+        => reportType switch
+        {
+            LmaxReportType.IndividualTrades => "individual-trades.csv",
+            LmaxReportType.TradesSummary => "trades.csv",
+            LmaxReportType.CurrencyWallets => "currency-wallets.csv",
+            _ => "report-set.csv"
+        };
+}
 public sealed class LmaxEodReportImportService(
     IIntradayRepository intradayRepository,
     ILmaxEodReportRepository eodRepository,
@@ -199,8 +267,9 @@ public sealed class LmaxEodReportImportService(
         var status = issues.Any(x => x.Severity == LmaxReportValidationSeverity.Blocking) ? LmaxReportImportStatus.Rejected : LmaxReportImportStatus.Imported;
         var runIssues = issues.Select(x => x with { Id = Guid.NewGuid(), ImportRunId = run.Id }).ToList();
         await eodRepository.AddValidationIssuesAsync(runIssues, cancellationToken);
-        await eodRepository.UpdateImportRunAsync(run with { Status = status, RowCount = individual.RowCount + summary.RowCount + wallet.RowCount, CompletedAtUtc = clock.UtcNow, Message = status == LmaxReportImportStatus.Imported ? "Report set imported." : "Report set rejected by validation." }, cancellationToken);
-        return new LmaxReportImportResult(run.Id, status, individual.RowCount + summary.RowCount + wallet.RowCount, runIssues.Count(x => x.Severity == LmaxReportValidationSeverity.Blocking), runIssues, status.ToString());
+        var message = status == LmaxReportImportStatus.Imported ? LmaxEodImportClassifications.ImportedCompleteCandidateAuthority : ClassifyBlockedImport(runIssues);
+        await eodRepository.UpdateImportRunAsync(run with { Status = status, RowCount = individual.RowCount + summary.RowCount + wallet.RowCount, CompletedAtUtc = clock.UtcNow, Message = message }, cancellationToken);
+        return new LmaxReportImportResult(run.Id, status, individual.RowCount + summary.RowCount + wallet.RowCount, runIssues.Count(x => x.Severity == LmaxReportValidationSeverity.Blocking), runIssues, message);
     }
 
     private async Task<LmaxReportImportResult> ImportAsync(string filePath, DateOnly reportDate, string venueName, string brokerAccountCode, LmaxReportType type, IReadOnlyList<string> expectedHeaders, CancellationToken cancellationToken)
@@ -221,15 +290,30 @@ public sealed class LmaxEodReportImportService(
         var rows = lines.Skip(1).Where(x => !string.IsNullOrWhiteSpace(x)).Select(SplitCsv).ToList();
         if (!issues.Any(x => x.Severity == LmaxReportValidationSeverity.Blocking))
         {
-            if (type == LmaxReportType.IndividualTrades) await eodRepository.AddIndividualTradesAsync(ParseIndividual(rows, lines.Skip(1).ToArray(), run, venue, account, state, issues), cancellationToken);
-            if (type == LmaxReportType.TradesSummary) await eodRepository.AddTradeSummariesAsync(ParseSummary(rows, lines.Skip(1).ToArray(), run, venue, account, state, issues), cancellationToken);
-            if (type == LmaxReportType.CurrencyWallets) await eodRepository.AddCurrencyWalletsAsync(ParseWallets(rows, lines.Skip(1).ToArray(), run, venue, account, state, issues), cancellationToken);
+            if (type == LmaxReportType.IndividualTrades)
+            {
+                var parsed = ParseIndividual(rows, lines.Skip(1).ToArray(), run, venue, account, state, issues);
+                if (!issues.Any(x => x.Severity == LmaxReportValidationSeverity.Blocking)) await eodRepository.AddIndividualTradesAsync(parsed, cancellationToken);
+            }
+
+            if (type == LmaxReportType.TradesSummary)
+            {
+                var parsed = ParseSummary(rows, lines.Skip(1).ToArray(), run, venue, account, state, issues);
+                if (!issues.Any(x => x.Severity == LmaxReportValidationSeverity.Blocking)) await eodRepository.AddTradeSummariesAsync(parsed, cancellationToken);
+            }
+
+            if (type == LmaxReportType.CurrencyWallets)
+            {
+                var parsed = ParseWallets(rows, lines.Skip(1).ToArray(), run, venue, account, state, issues);
+                if (!issues.Any(x => x.Severity == LmaxReportValidationSeverity.Blocking)) await eodRepository.AddCurrencyWalletsAsync(parsed, cancellationToken);
+            }
         }
 
         var status = issues.Any(x => x.Severity == LmaxReportValidationSeverity.Blocking) ? LmaxReportImportStatus.Rejected : LmaxReportImportStatus.Imported;
         await eodRepository.AddValidationIssuesAsync(issues, cancellationToken);
-        await eodRepository.UpdateImportRunAsync(run with { Status = status, RowCount = rows.Count, CompletedAtUtc = clock.UtcNow, Message = status == LmaxReportImportStatus.Imported ? "Imported." : "Rejected by validation." }, cancellationToken);
-        return new LmaxReportImportResult(run.Id, status, rows.Count, issues.Count(x => x.Severity == LmaxReportValidationSeverity.Blocking), issues, status.ToString());
+        var message = status == LmaxReportImportStatus.Imported ? LmaxEodImportClassifications.ImportedPartialNonAuthority : ClassifyBlockedImport(issues);
+        await eodRepository.UpdateImportRunAsync(run with { Status = status, RowCount = rows.Count, CompletedAtUtc = clock.UtcNow, Message = message }, cancellationToken);
+        return new LmaxReportImportResult(run.Id, status, rows.Count, issues.Count(x => x.Severity == LmaxReportValidationSeverity.Blocking), issues, message);
     }
 
     private List<LmaxIndividualTrade> ParseIndividual(List<string[]> rows, string[] raw, LmaxReportImportRun run, Venue venue, BrokerAccount account, PlatformState state, List<LmaxReportValidationIssue> issues)
@@ -251,6 +335,7 @@ public sealed class LmaxEodReportImportService(
             var timestamp = ParseTimestamp(row[2], "dd-MM-yyyy HH:mm:ss.fff", LmaxReportValidationIssueType.InvalidTimestamp, run.Id, rowNumber, raw.ElementAtOrDefault(i), issues);
             var tradeDate = DateOnly.TryParseExact(row[5], "dd-MM-yyyy", CultureInfo.InvariantCulture, DateTimeStyles.None, out var parsedDate) ? parsedDate : default;
             if (tradeDate == default) issues.Add(Issue(run.Id, LmaxReportValidationIssueType.InvalidDate, LmaxReportValidationSeverity.Blocking, $"Invalid Trade Date '{row[5]}'.", rowNumber, raw.ElementAtOrDefault(i)));
+            if (tradeDate != default && tradeDate != run.ReportDate) issues.Add(Issue(run.Id, LmaxReportValidationIssueType.ReportDateMismatch, LmaxReportValidationSeverity.Blocking, $"Trade Date '{tradeDate:yyyy-MM-dd}' does not match import report date '{run.ReportDate:yyyy-MM-dd}'.", rowNumber, raw.ElementAtOrDefault(i)));
             var quantity = ParseDecimal(row[3], LmaxReportValidationIssueType.InvalidQuantity, run.Id, rowNumber, raw.ElementAtOrDefault(i), issues);
             var price = ParseDecimal(row[4], LmaxReportValidationIssueType.InvalidPrice, run.Id, rowNumber, raw.ElementAtOrDefault(i), issues);
             var commission = ParseDecimal(row[17], LmaxReportValidationIssueType.InvalidCommission, run.Id, rowNumber, raw.ElementAtOrDefault(i), issues);
@@ -271,7 +356,9 @@ public sealed class LmaxEodReportImportService(
             var rowNumber = i + 2;
             if (row.Length != LmaxEodHeaders.Summary.Length) { issues.Add(Issue(run.Id, LmaxReportValidationIssueType.InvalidRow, LmaxReportValidationSeverity.Blocking, "Invalid column count.", rowNumber, raw.ElementAtOrDefault(i))); continue; }
             ValidateAccount(account, row[11], run.Id, rowNumber, raw.ElementAtOrDefault(i), issues);
-            summaries.Add(new LmaxTradeSummary(LmaxTradeSummaryId.New(), run.Id, run.ReportDate, venue.Id, account.Id, ParseTimestamp(row[0], "M/d/yyyy HH:mm", LmaxReportValidationIssueType.InvalidTimestamp, run.Id, rowNumber, raw.ElementAtOrDefault(i), issues), row[1], ResolveInstrument(state, row[8], null, run.Id, rowNumber, raw.ElementAtOrDefault(i), issues), row[2], row[3], ParseDecimal(row[4], LmaxReportValidationIssueType.InvalidQuantity, run.Id, rowNumber, raw.ElementAtOrDefault(i), issues), ParseDecimal(row[5], LmaxReportValidationIssueType.InvalidPrice, run.Id, rowNumber, raw.ElementAtOrDefault(i), issues), ParseDecimal(row[6], LmaxReportValidationIssueType.InvalidCommission, run.Id, rowNumber, raw.ElementAtOrDefault(i), issues), ParseDecimal(row[7], LmaxReportValidationIssueType.InvalidNotional, run.Id, rowNumber, raw.ElementAtOrDefault(i), issues), row[8], Empty(row[9]), ParseDecimal(row[10], LmaxReportValidationIssueType.InvalidCommission, run.Id, rowNumber, raw.ElementAtOrDefault(i), issues), row[11].Trim(), raw.ElementAtOrDefault(i), clock.UtcNow));
+            var dateTimeUtc = ParseTimestamp(row[0], ["M/d/yyyy HH:mm", "yyyy-MM-dd HH:mm:ss"], LmaxReportValidationIssueType.InvalidTimestamp, run.Id, rowNumber, raw.ElementAtOrDefault(i), issues);
+            if (dateTimeUtc != DateTimeOffset.UnixEpoch && DateOnly.FromDateTime(dateTimeUtc.UtcDateTime) != run.ReportDate) issues.Add(Issue(run.Id, LmaxReportValidationIssueType.ReportDateMismatch, LmaxReportValidationSeverity.Blocking, $"Summary Date/Time '{dateTimeUtc:yyyy-MM-dd}' does not match import report date '{run.ReportDate:yyyy-MM-dd}'.", rowNumber, raw.ElementAtOrDefault(i)));
+            summaries.Add(new LmaxTradeSummary(LmaxTradeSummaryId.New(), run.Id, run.ReportDate, venue.Id, account.Id, dateTimeUtc, row[1], ResolveInstrument(state, row[8], null, run.Id, rowNumber, raw.ElementAtOrDefault(i), issues), row[2], row[3], ParseDecimal(row[4], LmaxReportValidationIssueType.InvalidQuantity, run.Id, rowNumber, raw.ElementAtOrDefault(i), issues), ParseDecimal(row[5], LmaxReportValidationIssueType.InvalidPrice, run.Id, rowNumber, raw.ElementAtOrDefault(i), issues), ParseDecimal(row[6], LmaxReportValidationIssueType.InvalidCommission, run.Id, rowNumber, raw.ElementAtOrDefault(i), issues), ParseDecimal(row[7], LmaxReportValidationIssueType.InvalidNotional, run.Id, rowNumber, raw.ElementAtOrDefault(i), issues), row[8], Empty(row[9]), ParseDecimal(row[10], LmaxReportValidationIssueType.InvalidCommission, run.Id, rowNumber, raw.ElementAtOrDefault(i), issues), row[11].Trim(), raw.ElementAtOrDefault(i), clock.UtcNow));
         }
 
         return summaries;
@@ -343,10 +430,25 @@ public sealed class LmaxEodReportImportService(
     }
 
     private DateTimeOffset ParseTimestamp(string text, string format, LmaxReportValidationIssueType type, LmaxReportImportRunId runId, int rowNumber, string? raw, List<LmaxReportValidationIssue> issues)
+        => ParseTimestamp(text, [format], type, runId, rowNumber, raw, issues);
+
+    private DateTimeOffset ParseTimestamp(string text, IReadOnlyList<string> formats, LmaxReportValidationIssueType type, LmaxReportImportRunId runId, int rowNumber, string? raw, List<LmaxReportValidationIssue> issues)
     {
-        if (DateTime.TryParseExact(text, format, CultureInfo.InvariantCulture, DateTimeStyles.None, out var parsed)) return new DateTimeOffset(DateTime.SpecifyKind(parsed, DateTimeKind.Unspecified), TimeSpan.Zero);
+        foreach (var format in formats)
+        {
+            if (DateTime.TryParseExact(text, format, CultureInfo.InvariantCulture, DateTimeStyles.None, out var parsed)) return new DateTimeOffset(DateTime.SpecifyKind(parsed, DateTimeKind.Unspecified), TimeSpan.Zero);
+        }
+
         issues.Add(Issue(runId, type, LmaxReportValidationSeverity.Blocking, $"Invalid timestamp '{text}'.", rowNumber, raw));
         return DateTimeOffset.UnixEpoch;
+    }
+
+    private static string ClassifyBlockedImport(IReadOnlyList<LmaxReportValidationIssue> issues)
+    {
+        if (issues.Any(x => x.IssueType == LmaxReportValidationIssueType.AccountIdMismatch)) return LmaxEodImportClassifications.QuarantineUnknownAccount;
+        if (issues.Any(x => x.IssueType == LmaxReportValidationIssueType.UnknownInstrument)) return LmaxEodImportClassifications.BlockedUnsupportedSymbol;
+        if (issues.Any(x => x.IssueType == LmaxReportValidationIssueType.InvalidTimestamp)) return LmaxEodImportClassifications.BlockedUnsupportedTimestampFormat;
+        return LmaxEodImportClassifications.RejectedByValidation;
     }
 
     private static decimal ParseDecimal(string text, LmaxReportValidationIssueType type, LmaxReportImportRunId runId, int rowNumber, string? raw, List<LmaxReportValidationIssue> issues)
@@ -566,3 +668,5 @@ public sealed class FakeLmaxEodReportGenerator(IIntradayRepository repository, I
     private static string S(decimal value) => value.ToString(CultureInfo.InvariantCulture);
     private static string Csv(string[] values) => string.Join(",", values.Select(x => x.Contains(',') || x.Contains('"') ? $"\"{x.Replace("\"", "\"\"")}\"" : x));
 }
+
+
