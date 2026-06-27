@@ -76,6 +76,8 @@ The runbook downloads the AWS CLI MSI and app artifact using `aws:downloadConten
 
 Autostart defaults to disabled for `SMOKE_CAPTURE_BOUNDED`.
 
+The SSM command timeout must cover recorder duration plus startup, wrapper finalization, and any explicitly requested archive-finalization budget. The installer records these budgets in `install_manifest.json`; a start request with an insufficient timeout budget fails before launching the child capture process.
+
 ## 6. Start Bounded Capture
 
 ```powershell
@@ -88,6 +90,8 @@ The recorder starts with:
 --operator-approved-market-data-fix-logon --no-order-entry --no-account-api --no-db
 ```
 
+The wrapper evaluates recorder artifacts after the child exits. It writes sanitized last-run state containing the raw child exit code, artifact verdict exit code, artifact verdict, wrapper exit code, artifact metrics, and artifact paths. The wrapper exits 0 only when the artifacts validate `GO_M2C2_CAPTURE_VALIDATED`, `replay_status=PASS`, finalized manifest, positive market-data/BBO counts, zero writer/drop/sequence-gap metrics, and true safety flags.
+
 ## 7. Publish Metrics And Upload
 
 After the bounded capture exits cleanly:
@@ -98,3 +102,6 @@ After the bounded capture exits cleanly:
 ```
 
 Metrics with missing evidence are reported as `NOT_EVALUATED` and are not published to CloudWatch. Upload verifies local chunk size/SHA from `final_manifest.json` and remote S3 `ChecksumSHA256`; it performs no deletion.
+
+Archive upload remains an explicit manual/runbook step. The upload marker is written only after every manifest-listed object is present in S3 with the expected checksum. CloudWatch publishing remains metrics-only and must not include raw ticks, raw FIX frames, chunk contents, or secret values.
+
