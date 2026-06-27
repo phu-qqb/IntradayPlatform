@@ -62,9 +62,11 @@ public sealed class BrokerAuthorityReconciler
 
     private static void AddSourceBreaks(BrokerAuthorityReconciliationInput input, Guid runId, List<BrokerReconciliationBreak> breaks)
     {
-        AddSourceBreak(input, runId, breaks, input.ExecutionSource, "execution feed");
-        AddSourceBreak(input, runId, breaks, input.PositionSource, "broker position snapshot");
-        AddSourceBreak(input, runId, breaks, input.OpenOrderSource, "broker open-order snapshot");
+        AddSourceBreak(input, runId, breaks, input.ExecutionSource, "execution feed", BrokerAuthoritySourceRole.ExecutionFeed);
+        AddSourceBreak(input, runId, breaks, input.PositionSource, "broker position snapshot", BrokerAuthoritySourceRole.BrokerPositionSnapshot);
+        AddSourceBreak(input, runId, breaks, input.OpenOrderSource, "broker open-order snapshot", BrokerAuthoritySourceRole.BrokerOpenOrderSnapshot);
+        AddNonAuthoritativePositionEvidenceBreaks(input, runId, breaks);
+        AddNonAuthoritativeOpenOrderEvidenceBreaks(input, runId, breaks);
 
         if (input.BrokerExecutions.Any(x => IsSameScope(x.Scope, input.Scope) && x.SourceQuality == BrokerSourceQuality.MANUAL_EVIDENCE))
         {
@@ -74,7 +76,7 @@ public sealed class BrokerAuthorityReconciler
         }
     }
 
-    private static void AddSourceBreak(BrokerAuthorityReconciliationInput input, Guid runId, List<BrokerReconciliationBreak> breaks, BrokerAuthoritySourceState source, string label)
+    private static void AddSourceBreak(BrokerAuthorityReconciliationInput input, Guid runId, List<BrokerReconciliationBreak> breaks, BrokerAuthoritySourceState source, string label, BrokerAuthoritySourceRole role)
     {
         if (source.Quality is BrokerSourceQuality.UNKNOWN or BrokerSourceQuality.INCOMPLETE)
         {
@@ -84,11 +86,40 @@ public sealed class BrokerAuthorityReconciler
             return;
         }
 
+        if (!BrokerAuthoritySourcePolicy.IsAcceptedQuality(role, source.Quality))
+        {
+            AddBreak(input, runId, breaks, BrokerReconciliationBreakType.UNACCEPTABLE_BROKER_AUTHORITY_SOURCE, BrokerReconciliationSeverity.Critical, true, null, null,
+                $"{source.Quality} cannot be used as {label}; required {BrokerAuthoritySourcePolicy.AcceptedQualityDescription(role)}.",
+                SourceHash(source));
+            return;
+        }
+
         if (source.IsStale(input.MaxSourceAge, input.AsOfUtc))
         {
             AddBreak(input, runId, breaks, BrokerReconciliationBreakType.STALE_BROKER_SNAPSHOT, BrokerReconciliationSeverity.Blocking, true, null, null,
                 $"Stale {label}: source as-of {source.AsOfUtc:O}, run as-of {input.AsOfUtc:O}.",
                 SourceHash(source));
+        }
+    }
+
+    private static void AddNonAuthoritativePositionEvidenceBreaks(BrokerAuthorityReconciliationInput input, Guid runId, List<BrokerReconciliationBreak> breaks)
+    {
+        foreach (var position in input.BrokerPositions.Where(x => IsSameScope(x.Scope, input.Scope) && x.SourceQuality != BrokerSourceQuality.AUTHORITATIVE))
+        {
+            AddBreak(input, runId, breaks, BrokerReconciliationBreakType.UNACCEPTABLE_BROKER_AUTHORITY_SOURCE, BrokerReconciliationSeverity.Critical, true, position.Snapshot.InstrumentId, position.Symbol,
+                $"Broker position evidence from {position.SourceName} has quality {position.SourceQuality}; broker position authority requires AUTHORITATIVE only.",
+                [position.SourceHash]);
+        }
+    }
+
+    private static void AddNonAuthoritativeOpenOrderEvidenceBreaks(BrokerAuthorityReconciliationInput input, Guid runId, List<BrokerReconciliationBreak> breaks)
+    {
+        foreach (var order in input.BrokerOpenOrders.Where(x => IsSameScope(x.Scope, input.Scope) && x.SourceQuality != BrokerSourceQuality.AUTHORITATIVE))
+        {
+            AddBreak(input, runId, breaks, BrokerReconciliationBreakType.UNACCEPTABLE_BROKER_AUTHORITY_SOURCE, BrokerReconciliationSeverity.Critical, true, order.InstrumentId, order.Symbol,
+                $"Broker open-order evidence from {order.SourceName} has quality {order.SourceQuality}; broker open-order authority requires AUTHORITATIVE only.",
+                [order.SourceHash],
+                [$"clordid:{order.ClientOrderId ?? "missing"}", $"broker-order:{order.BrokerOrderId ?? "missing"}"]);
         }
     }
 
@@ -182,7 +213,7 @@ public sealed class BrokerAuthorityReconciler
     {
         var brokerPositions = input.BrokerPositions
             .Where(x => IsSameScope(x.Scope, input.Scope))
-            .Where(x => x.SourceQuality is BrokerSourceQuality.AUTHORITATIVE or BrokerSourceQuality.RECONSTRUCTED)
+            .Where(x => x.SourceQuality == BrokerSourceQuality.AUTHORITATIVE)
             .ToDictionary(x => x.Snapshot.InstrumentId);
         var internalPositions = input.InternalPositions.ToDictionary(x => x.InstrumentId);
         var instruments = internalPositions.Keys.Concat(brokerPositions.Keys).Distinct().ToList();
@@ -212,7 +243,7 @@ public sealed class BrokerAuthorityReconciler
     {
         var brokerByClient = input.BrokerOpenOrders
             .Where(x => IsSameScope(x.Scope, input.Scope))
-            .Where(x => x.SourceQuality is BrokerSourceQuality.AUTHORITATIVE or BrokerSourceQuality.RECONSTRUCTED)
+            .Where(x => x.SourceQuality == BrokerSourceQuality.AUTHORITATIVE)
             .Where(x => !string.IsNullOrWhiteSpace(x.ClientOrderId))
             .ToDictionary(x => x.ClientOrderId!, StringComparer.OrdinalIgnoreCase);
         var internalByClient = input.InternalWorkingOrders.ToDictionary(x => x.ClientOrderId, StringComparer.OrdinalIgnoreCase);
@@ -250,7 +281,7 @@ public sealed class BrokerAuthorityReconciler
             }
         }
 
-        foreach (var brokerOrder in input.BrokerOpenOrders.Where(x => IsSameScope(x.Scope, input.Scope) && x.SourceQuality is BrokerSourceQuality.AUTHORITATIVE or BrokerSourceQuality.RECONSTRUCTED))
+        foreach (var brokerOrder in input.BrokerOpenOrders.Where(x => IsSameScope(x.Scope, input.Scope) && x.SourceQuality == BrokerSourceQuality.AUTHORITATIVE))
         {
             if (!string.IsNullOrWhiteSpace(brokerOrder.ClientOrderId) && internalByClient.ContainsKey(brokerOrder.ClientOrderId))
             {
@@ -285,9 +316,9 @@ public sealed class BrokerAuthorityReconciler
 
     private static BrokerAuthorityReadiness DetermineReadiness(BrokerAuthorityReconciliationInput input, IReadOnlyList<BrokerReconciliationBreak> breaks)
     {
-        var executionReady = input.ExecutionSource.IsUsable(input.MaxSourceAge, input.AsOfUtc);
-        var positionReady = input.PositionSource.IsUsable(input.MaxSourceAge, input.AsOfUtc);
-        var openOrderReady = input.OpenOrderSource.IsUsable(input.MaxSourceAge, input.AsOfUtc);
+        var executionReady = BrokerAuthoritySourcePolicy.IsUsableFor(BrokerAuthoritySourceRole.ExecutionFeed, input.ExecutionSource, input.MaxSourceAge, input.AsOfUtc);
+        var positionReady = BrokerAuthoritySourcePolicy.IsUsableFor(BrokerAuthoritySourceRole.BrokerPositionSnapshot, input.PositionSource, input.MaxSourceAge, input.AsOfUtc);
+        var openOrderReady = BrokerAuthoritySourcePolicy.IsUsableFor(BrokerAuthoritySourceRole.BrokerOpenOrderSnapshot, input.OpenOrderSource, input.MaxSourceAge, input.AsOfUtc);
         var sourceReady = executionReady && positionReady && openOrderReady;
 
         if (!sourceReady)
@@ -392,3 +423,4 @@ public sealed class BrokerAuthorityReconciler
         return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(canonical))).ToLowerInvariant();
     }
 }
+

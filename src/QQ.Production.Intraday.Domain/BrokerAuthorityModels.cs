@@ -51,7 +51,8 @@ public enum BrokerReconciliationBreakType
     STALE_BROKER_SNAPSHOT,
     SEQUENCE_GAP,
     UNRESOLVED_CANCEL_PENDING,
-    UNKNOWN_ACCOUNT_SCOPE
+    UNKNOWN_ACCOUNT_SCOPE,
+    UNACCEPTABLE_BROKER_AUTHORITY_SOURCE
 }
 
 public enum BrokerReconciliationSeverity
@@ -81,6 +82,37 @@ public enum BrokerAuthorityOperationalGate
 {
     GO,
     NO_GO
+}
+
+public enum BrokerAuthoritySourceRole
+{
+    ExecutionFeed,
+    BrokerPositionSnapshot,
+    BrokerOpenOrderSnapshot
+}
+
+public static class BrokerAuthoritySourcePolicy
+{
+    public static bool IsAcceptedQuality(BrokerAuthoritySourceRole role, BrokerSourceQuality quality)
+        => role switch
+        {
+            BrokerAuthoritySourceRole.ExecutionFeed => quality is BrokerSourceQuality.AUTHORITATIVE or BrokerSourceQuality.RECONSTRUCTED,
+            BrokerAuthoritySourceRole.BrokerPositionSnapshot => quality == BrokerSourceQuality.AUTHORITATIVE,
+            BrokerAuthoritySourceRole.BrokerOpenOrderSnapshot => quality == BrokerSourceQuality.AUTHORITATIVE,
+            _ => false
+        };
+
+    public static bool IsUsableFor(BrokerAuthoritySourceRole role, BrokerAuthoritySourceState source, TimeSpan maxAge, DateTimeOffset nowUtc)
+        => IsAcceptedQuality(role, source.Quality) && !source.IsStale(maxAge, nowUtc);
+
+    public static string AcceptedQualityDescription(BrokerAuthoritySourceRole role)
+        => role switch
+        {
+            BrokerAuthoritySourceRole.ExecutionFeed => "AUTHORITATIVE or RECONSTRUCTED execution evidence",
+            BrokerAuthoritySourceRole.BrokerPositionSnapshot => "AUTHORITATIVE broker position snapshot only",
+            BrokerAuthoritySourceRole.BrokerOpenOrderSnapshot => "AUTHORITATIVE broker open-order snapshot only",
+            _ => "unsupported broker authority source role"
+        };
 }
 
 public sealed record BrokerAuthorityScope(
@@ -273,3 +305,4 @@ public sealed record BrokerReconciliationResult(
     IReadOnlyList<BrokerReconciliationBreak> Breaks,
     IReadOnlyList<BrokerRemainingDelta> RemainingDeltas,
     BrokerAuthorityReadiness Readiness);
+
