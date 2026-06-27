@@ -29,10 +29,12 @@ AWS1 is a plan-ready, read-only shadow foundation for running the M2C1B LMAX Dem
 3. SSM runbook downloads both artifacts with `aws:downloadContent` and verifies SHA-256 locally.
 4. Install script expands the self-contained release, materializes the M2 config, registers an explicit `SYSTEM` scheduled task, disables autostart by default, and writes an install manifest.
 5. Start script reads Secrets Manager at runtime, injects credential labels into the child process environment only, and starts the self-contained capture host with mutation-disabled flags.
-6. The wrapper remains alive, drains stdout/stderr, records verified PID state, and returns the child exit code.
-7. Post-run status and metrics are computed from `final_manifest.json`, `m2c1b_capture_manifest.json`, `health/data_quality_report.json`, and manifest-listed chunks.
-8. Upload stores only `final_manifest.json` plus chunks listed in the final manifest under `environment=<env>/date=<yyyy-mm-dd>/recorder_run=<id>/...` and verifies S3 `ChecksumSHA256`.
+6. The wrapper remains alive through bounded finalization, drains stdout/stderr after the child exits, records verified PID state, and writes sanitized last-run state with both the raw child exit code and the artifact verdict.
+7. The wrapper exits 0 only when recorder artifacts validate GO; missing, stale, or incoherent artifacts keep the wrapper non-zero even if the child process returned 0.
+8. Post-run status and metrics are computed from `final_manifest.json`, `m2c1b_capture_manifest.json`, `health/data_quality_report.json`, and manifest-listed chunks.
+9. Upload is an explicit post-capture/runbook step. It stores only `final_manifest.json` plus chunks listed in the final manifest under `environment=<env>/date=<yyyy-mm-dd>/recorder_run=<id>/...`, verifies S3 `ChecksumSHA256`, and writes the local archive marker only after every file is remotely verified.
 
 ## Boundary
 
 AWS1 does not add Order Entry, Account API, OMS/PMS mutation, canonical RDS, Databento, Bloomberg EMSX, Morgan Stanley, AWS apply, push, or merge. Continuous recorder watchdog behavior remains out of scope for this gate.
+

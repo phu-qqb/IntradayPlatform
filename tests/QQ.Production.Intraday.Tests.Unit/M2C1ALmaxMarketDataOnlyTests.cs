@@ -1,4 +1,4 @@
-﻿extern alias M2C1A;
+extern alias M2C1A;
 extern alias M2C1ATool;
 
 using System.Reflection;
@@ -394,6 +394,7 @@ public sealed class M2C1ALmaxMarketDataOnlyTests
         var configPath = Path.Combine(root, "config.json");
         var replayPath = Path.Combine(root, "replay.fix");
         await File.WriteAllTextAsync(configPath, JsonSerializer.Serialize(config, CanonicalRecorderV2Constants.JsonOptions));
+        await WritePackagedCatalogAsync(root);
         await File.WriteAllLinesAsync(replayPath, [MarketDataFrame(1, 1.10000m, 1.10020m), MarketDataFrame(2, 1.10001m, 1.10021m)]);
 
         var exit = await LmaxMarketDataCaptureOnlyPreflightCommand.RunAsync(["capture", "--config", configPath, "--operator-approved-market-data-fix-logon", "--no-order-entry", "--no-account-api", "--no-db", "--synthetic-replay", replayPath]);
@@ -430,6 +431,175 @@ public sealed class M2C1ALmaxMarketDataOnlyTests
     }
 
 
+    [Fact]
+    public void T29_secrets_manager_arn_for_market_data_only_passes_structured_preflight()
+    {
+        var config = ValidConfig() with
+        {
+            MarketDataCredentialReference = "aws-secretsmanager:arn:aws:secretsmanager:eu-west-2:761018894194:secret:qq/fund-platform/demo/lmax/market-data"
+        };
+        using var document = JsonDocument.Parse(SerializeConfig(config));
+
+        var report = LmaxMarketDataOnlyPreflight.Validate(config, networkDisabled: true, noOrderEntry: true, noAccountApi: true, noDb: true, outputRootMustBeEmpty: false, configDocument: document.RootElement);
+
+        Assert.Equal("GO_M2C1B_PREFLIGHT_READY", report.Status);
+        Assert.DoesNotContain("config_contains_order_account_or_db_shape", report.Issues);
+        Assert.Empty(LmaxMarketDataOnlyPreflight.FindForbiddenConfigShapeIssues(config, document.RootElement));
+    }
+
+    [Fact]
+    public void T30_structured_preflight_rejects_order_entry_credential_field()
+    {
+        var (config, document) = ConfigWithExtraTopLevelProperty("\"order_entry_credentials\":{\"credential_reference\":\"redacted\"}");
+        using (document)
+        {
+            var report = LmaxMarketDataOnlyPreflight.Validate(config, networkDisabled: true, noOrderEntry: true, noAccountApi: true, noDb: true, outputRootMustBeEmpty: false, configDocument: document.RootElement);
+
+            Assert.Equal("NO_GO_M2C1B", report.Status);
+            Assert.Contains("config_contains_order_account_or_db_shape", report.Issues);
+            Assert.Contains(LmaxMarketDataOnlyPreflight.FindForbiddenConfigShapeIssues(config, document.RootElement), x => x.Contains("order_entry_credentials", StringComparison.OrdinalIgnoreCase));
+        }
+    }
+
+    [Fact]
+    public void T31_structured_preflight_rejects_account_api_field()
+    {
+        var (config, document) = ConfigWithExtraTopLevelProperty("\"account_api\":{\"enabled\":true}");
+        using (document)
+        {
+            var report = LmaxMarketDataOnlyPreflight.Validate(config, networkDisabled: true, noOrderEntry: true, noAccountApi: true, noDb: true, outputRootMustBeEmpty: false, configDocument: document.RootElement);
+
+            Assert.Equal("NO_GO_M2C1B", report.Status);
+            Assert.Contains("config_contains_order_account_or_db_shape", report.Issues);
+        }
+    }
+
+    [Fact]
+    public void T32_structured_preflight_rejects_db_connection_field()
+    {
+        var (config, document) = ConfigWithExtraTopLevelProperty("\"db_connection\":\"Server=blocked\"");
+        using (document)
+        {
+            var report = LmaxMarketDataOnlyPreflight.Validate(config, networkDisabled: true, noOrderEntry: true, noAccountApi: true, noDb: true, outputRootMustBeEmpty: false, configDocument: document.RootElement);
+
+            Assert.Equal("NO_GO_M2C1B", report.Status);
+            Assert.Contains("config_contains_order_account_or_db_shape", report.Issues);
+        }
+    }
+
+    [Fact]
+    public void T33_structured_preflight_rejects_password_bearing_config_field()
+    {
+        var (config, document) = ConfigWithExtraTopLevelProperty("\"market_data_password\":\"RAW_SECRET_SENTINEL\"");
+        using (document)
+        {
+            var report = LmaxMarketDataOnlyPreflight.Validate(config, networkDisabled: true, noOrderEntry: true, noAccountApi: true, noDb: true, outputRootMustBeEmpty: false, configDocument: document.RootElement);
+
+            Assert.Equal("NO_GO_M2C1B", report.Status);
+            Assert.Contains("config_contains_order_account_or_db_shape", report.Issues);
+            Assert.Contains(LmaxMarketDataOnlyPreflight.FindForbiddenConfigShapeIssues(config, document.RootElement), x => x.Contains("market_data_password", StringComparison.OrdinalIgnoreCase));
+        }
+    }
+
+    [Fact]
+    public async Task T34_preflight_cli_does_not_print_or_persist_secret_values_from_forbidden_config_fields()
+    {
+        const string sentinel = "RAW_SECRET_SENTINEL_AWS2B";
+        var root = Path.Combine(Path.GetTempPath(), "m2c1b-secret-redaction", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        var config = WithValidHash(ValidConfig() with { OutputRoot = Path.Combine(root, "capture") });
+        var configPath = Path.Combine(root, "config.json");
+        var output = Path.Combine(root, "out");
+        await File.WriteAllTextAsync(configPath, AppendTopLevelProperty(SerializeConfig(config), $"\"password\":\"{sentinel}\""));
+
+        using var stdout = new StringWriter();
+        using var stderr = new StringWriter();
+        var originalOut = Console.Out;
+        var originalError = Console.Error;
+        int exit;
+        try
+        {
+            Console.SetOut(stdout);
+            Console.SetError(stderr);
+            exit = await LmaxMarketDataCaptureOnlyPreflightCommand.RunAsync(["preflight", "--config", configPath, "--output", output, "--network-disabled", "--no-order-entry", "--no-account-api", "--no-db"]);
+        }
+        finally
+        {
+            Console.SetOut(originalOut);
+            Console.SetError(originalError);
+        }
+
+        Assert.Equal(1, exit);
+        var emitted = stdout + stderr.ToString() + string.Concat(Directory.EnumerateFiles(output, "*", SearchOption.AllDirectories).Select(File.ReadAllText));
+        Assert.DoesNotContain(sentinel, emitted, StringComparison.Ordinal);
+        Assert.Contains("config_contains_order_account_or_db_shape", emitted, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task T35_packaged_catalog_loads_eurusd_and_rejects_unknown_instrument()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "m2c1b-packaged-catalog", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        await WritePackagedCatalogAsync(root);
+
+        var catalog = LmaxMarketDataOnlyApprovedInstrumentCatalog.LoadFromConfigDirectory(root);
+        var eurusd = catalog.ResolveApproved("EURUSD");
+
+        Assert.Equal("EURUSD", eurusd.Symbol);
+        Assert.Equal("4001", eurusd.SecurityId);
+        Assert.Equal("8", eurusd.SecurityIdSource);
+        Assert.Equal("EUR/USD", eurusd.LmaxSlashSymbol);
+        Assert.Equal("M2C1B_EXPLICIT_DEMO_MARKET_DATA_ONLY_SCOPE", eurusd.PermissionScope);
+        Assert.Throws<InvalidOperationException>(() => catalog.ResolveApproved("GBPUSD"));
+    }
+
+    [Fact]
+    public async Task T36_capture_command_synthetic_replay_uses_packaged_catalog_without_repo_root_or_order_entry()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "m2c1b-capture-packaged-catalog", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        Assert.False(File.Exists(Path.Combine(root, "QQ.Production.Intraday.sln")));
+        await WritePackagedCatalogAsync(root);
+        var config = WithValidHash(ValidConfig() with { OutputRoot = Path.Combine(root, "capture") });
+        var configPath = Path.Combine(root, "config.json");
+        var replayPath = Path.Combine(root, "replay.fix");
+        await File.WriteAllTextAsync(configPath, SerializeConfig(config));
+        await File.WriteAllLinesAsync(replayPath, [MarketDataFrame(1, 1.10000m, 1.10020m)]);
+
+        var programText = File.ReadAllText(Path.Combine(FindRepoRoot(), "tools", "QQ.Production.Intraday.Tools.LmaxMarketDataCaptureOnly", "Program.cs"));
+        Assert.DoesNotContain("FindRepoRoot", programText, StringComparison.Ordinal);
+        Assert.DoesNotContain("LoadFromConnectivityLab", programText, StringComparison.Ordinal);
+
+        var exit = await LmaxMarketDataCaptureOnlyPreflightCommand.RunAsync(["capture", "--config", configPath, "--operator-approved-market-data-fix-logon", "--no-order-entry", "--no-account-api", "--no-db", "--synthetic-replay", replayPath]);
+
+        Assert.Equal(0, exit);
+        var result = await File.ReadAllTextAsync(Path.Combine(config.OutputRoot, "m2c1b_capture_command_result.json"));
+        Assert.Contains("GO_M2C2_CAPTURE_VALIDATED", result, StringComparison.Ordinal);
+        Assert.DoesNotContain("order_entry", result, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("account_api", result, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("db_connection", result, StringComparison.OrdinalIgnoreCase);
+    }
+    [Fact]
+    public async Task T37_capture_command_synthetic_replay_allows_existing_recorder_root_contents()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "m2c1b-existing-recorder-root", Guid.NewGuid().ToString("N"));
+        var recorderRoot = Path.Combine(root, "recorder");
+        Directory.CreateDirectory(recorderRoot);
+        await File.WriteAllTextAsync(Path.Combine(recorderRoot, "existing_m2c1b_report.json"), "{}");
+        await WritePackagedCatalogAsync(root);
+        var config = WithValidHash(ValidConfig() with { OutputRoot = recorderRoot });
+        var configPath = Path.Combine(root, "config.json");
+        var replayPath = Path.Combine(root, "replay.fix");
+        await File.WriteAllTextAsync(configPath, SerializeConfig(config));
+        await File.WriteAllLinesAsync(replayPath, [MarketDataFrame(1, 1.10000m, 1.10020m)]);
+
+        var exit = await LmaxMarketDataCaptureOnlyPreflightCommand.RunAsync(["capture", "--config", configPath, "--operator-approved-market-data-fix-logon", "--no-order-entry", "--no-account-api", "--no-db", "--synthetic-replay", replayPath]);
+
+        Assert.Equal(0, exit);
+        var report = await File.ReadAllTextAsync(Path.Combine(recorderRoot, "m2c1b_preflight_report.json"));
+        Assert.DoesNotContain("output_root_not_empty", report, StringComparison.Ordinal);
+        Assert.Contains("GO_M2C1B_PREFLIGHT_READY", report, StringComparison.Ordinal);
+    }
     private static IReadOnlyList<LmaxMarketDataOnlyInstrument> Instruments =>
     [
         new("4001", "EURUSD", "EUR/USD"),
@@ -463,6 +633,40 @@ public sealed class M2C1ALmaxMarketDataOnlyTests
     private static string PipeToSoh(string pipeFix)
         => pipeFix.Replace('|', LmaxFixMarketDataCodec.Soh) + LmaxFixMarketDataCodec.Soh;
 
+    private static (LmaxMarketDataOnlyPreflightConfig Config, JsonDocument Document) ConfigWithExtraTopLevelProperty(string propertyJson)
+    {
+        var config = ValidConfig();
+        var json = AppendTopLevelProperty(SerializeConfig(config), propertyJson);
+        return (config, JsonDocument.Parse(json));
+    }
+
+    private static string AppendTopLevelProperty(string json, string propertyJson)
+        => json.TrimEnd('}', '\r', '\n', ' ') + "," + propertyJson + "}";
+
+    private static string SerializeConfig(LmaxMarketDataOnlyPreflightConfig config)
+        => JsonSerializer.Serialize(config, CanonicalRecorderV2Constants.JsonOptions);
+
+    private static async Task WritePackagedCatalogAsync(string directory)
+    {
+        Directory.CreateDirectory(directory);
+        await File.WriteAllTextAsync(Path.Combine(directory, LmaxMarketDataOnlyApprovedInstrumentCatalog.PackagedCatalogFileName), """
+        {
+          "schema_version": "lmax-market-data-only-approved-instrument-catalog.v1",
+          "source": "tools/QQ.Production.Intraday.Lmax.ConnectivityLab/appsettings.json",
+          "permission_scope": "M2C1B_EXPLICIT_DEMO_MARKET_DATA_ONLY_SCOPE",
+          "instruments": [
+            {
+              "symbol": "EURUSD",
+              "security_id": "4001",
+              "security_id_source": "8",
+              "lmax_slash_symbol": "EUR/USD",
+              "evidence_source": "tools/QQ.Production.Intraday.Lmax.ConnectivityLab/appsettings.json:LmaxConnectivityLab",
+              "permission_scope": "M2C1B_EXPLICIT_DEMO_MARKET_DATA_ONLY_SCOPE"
+            }
+          ]
+        }
+        """);
+    }
     private static LmaxMarketDataOnlyPreflightConfig ValidConfig()
         => new(
             "CAPTURE_ONLY",
