@@ -1,0 +1,31 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\QQ.Production.Intraday.Application\QQ.Production.Intraday.Application.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Include="..\..\tools\QQ.Production.Intraday.Lmax.ConnectivityLab\LabMarketData.cs" Link="Reused\LabMarketData.cs" />
+    <Compile Include="..\QQ.Production.Intraday.Infrastructure.Lmax\LmaxApprovedBoundedExecutableRetryPhaseReservations.cs" Link="Reused\InfrastructureLmax\LmaxApprovedBoundedExecutableRetryPhaseReservations.cs" />
+    <Compile Include="..\QQ.Production.Intraday.Infrastructure.Lmax\LmaxExecutableReadOnlyLowLevelSessionStack.cs" Link="Reused\InfrastructureLmax\LmaxExecutableReadOnlyLowLevelSessionStack.cs" />
+    <Compile Include="..\QQ.Production.Intraday.Infrastructure.Lmax\LmaxExecutableReadOnlyMarketDataSessionClient.cs" Link="Reused\InfrastructureLmax\LmaxExecutableReadOnlyMarketDataSessionClient.cs" />
+    <Compile Include="..\QQ.Production.Intraday.Infrastructure.Lmax\LmaxExecutableReadOnlyRealDependencyProviders.cs" Link="Reused\InfrastructureLmax\LmaxExecutableReadOnlyRealDependencyProviders.cs" />
+    <Compile Include="..\QQ.Production.Intraday.Infrastructure.Lmax\LmaxExecutableReadOnlyRealLowLevelDependencies.cs" Link="Reused\InfrastructureLmax\LmaxExecutableReadOnlyRealLowLevelDependencies.cs" />
+    <Compile Include="..\QQ.Production.Intraday.Infrastructure.Lmax\LmaxRealReadOnlyCredentialConfigBoundaryProvider.cs" Link="Reused\InfrastructureLmax\LmaxRealReadOnlyCredentialConfigBoundaryProvider.cs" />
+    <Compile Include="..\QQ.Production.Intraday.Infrastructure.Lmax\LmaxRealReadOnlyFixFrameBoundaryProvider.cs" Link="Reused\InfrastructureLmax\LmaxRealReadOnlyFixFrameBoundaryProvider.cs" />
+    <Compile Include="..\QQ.Production.Intraday.Infrastructure.Lmax\LmaxRealReadOnlyMarketDataFrameBoundaryProvider.cs" Link="Reused\InfrastructureLmax\LmaxRealReadOnlyMarketDataFrameBoundaryProvider.cs" />
+    <Compile Include="..\QQ.Production.Intraday.Infrastructure.Lmax\LmaxRealReadOnlyMarketDataTransport.cs" Link="Reused\InfrastructureLmax\LmaxRealReadOnlyMarketDataTransport.cs" />
+    <Compile Include="..\QQ.Production.Intraday.Infrastructure.Lmax\LmaxRealReadOnlyProviderClients.cs" Link="Reused\InfrastructureLmax\LmaxRealReadOnlyProviderClients.cs" />
+    <Compile Include="..\QQ.Production.Intraday.Infrastructure.Lmax\LmaxRealReadOnlySocketBoundaryProvider.cs" Link="Reused\InfrastructureLmax\LmaxRealReadOnlySocketBoundaryProvider.cs" />
+    <Compile Include="..\QQ.Production.Intraday.Infrastructure.Lmax\LmaxRealReadOnlyTlsBoundaryProvider.cs" Link="Reused\InfrastructureLmax\LmaxRealReadOnlyTlsBoundaryProvider.cs" />
+    <Compile Include="..\QQ.Production.Intraday.Infrastructure.Lmax\LmaxTemporaryReadOnlyRuntimeActivation.cs" Link="Reused\InfrastructureLmax\LmaxTemporaryReadOnlyRuntimeActivation.cs" />
+    <Compile Include="..\..\tools\QQ.Production.Intraday.Tools.LmaxReadOnlyActivation\LmaxReadOnlyActivationManualDemoEndpointBinding.cs" Link="Reused\LmaxReadOnlyActivation\LmaxReadOnlyActivationManualDemoEndpointBinding.cs" />
+    <Compile Include="..\..\tools\QQ.Production.Intraday.Tools.LmaxReadOnlyActivation\LmaxReadOnlyActivationManualFixLogonFrameWriter.cs" Link="Reused\LmaxReadOnlyActivation\LmaxReadOnlyActivationManualFixLogonFrameWriter.cs" />
+    <Compile Include="..\..\tools\QQ.Production.Intraday.Tools.LmaxReadOnlyActivation\LmaxReadOnlyActivationManualMarketDataRequestOperation.cs" Link="Reused\LmaxReadOnlyActivation\LmaxReadOnlyActivationManualMarketDataRequestOperation.cs" />
+  </ItemGroup>
+</Project>
