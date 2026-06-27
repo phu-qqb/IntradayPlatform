@@ -9,7 +9,11 @@
     [string]$Environment = "demo",
     [string]$CloudWatchNamespace = "QQFundPlatform/AWS1",
     [string]$ExpectedAwsCliSha256 = "",
-    [switch]$EnableAutoStart
+    [switch]$EnableAutoStart,
+    [int]$CommandTimeoutSeconds = 900,
+    [int]$FinalizationBudgetSeconds = 120,
+    [int]$StartupBudgetSeconds = 30,
+    [int]$ArchiveFinalizationBudgetSeconds = 60
 )
 
 $ErrorActionPreference = "Stop"
@@ -51,9 +55,12 @@ Copy-Item -LiteralPath $releaseRoot -Destination $currentRoot -Recurse -Force
 $configPath = Join-Path $currentRoot "config\m2c1b_aws_capture_config.json"
 $credentialReference = if ([string]::IsNullOrWhiteSpace($CredentialSecretId)) { "aws-secretsmanager:market-data-only" } else { "aws-secretsmanager:$CredentialSecretId" }
 & (Join-Path $currentRoot "deploy\aws\anubis-shadow\scripts\New-M2C1BConfig.ps1") -OutputPath $configPath -RecorderRoot $RecorderRoot -MarketDataEndpointAlias $MarketDataEndpointAlias -CredentialReference $credentialReference | Out-Null
+$catalogSource = Join-Path $currentRoot "deploy\aws\anubis-shadow\config\lmax_demo_market_data_instrument_catalog.json"
+if (-not (Test-Path -LiteralPath $catalogSource)) { throw "approved_instrument_catalog_not_found:$catalogSource" }
+Copy-Item -LiteralPath $catalogSource -Destination (Join-Path (Split-Path -Parent $configPath) "lmax_demo_market_data_instrument_catalog.json") -Force
 
 $taskScript = Join-Path $currentRoot "deploy\aws\anubis-shadow\scripts\Start-AnubisAws1Recorder.ps1"
-$taskArgs = "-NoProfile -ExecutionPolicy Bypass -File `"$taskScript`" -InstallRoot `"$currentRoot`" -ConfigPath `"$configPath`" -RecorderRoot `"$RecorderRoot`" -CredentialSecretId `"$CredentialSecretId`" -ArchiveBucketName `"$ArchiveBucketName`" -Environment `"$Environment`" -CloudWatchNamespace `"$CloudWatchNamespace`" -ExpectedAwsCliSha256 `"$ExpectedAwsCliSha256`""
+$taskArgs = "-NoProfile -ExecutionPolicy Bypass -File `"$taskScript`" -InstallRoot `"$currentRoot`" -ConfigPath `"$configPath`" -RecorderRoot `"$RecorderRoot`" -CredentialSecretId `"$CredentialSecretId`" -ArchiveBucketName `"$ArchiveBucketName`" -Environment `"$Environment`" -CloudWatchNamespace `"$CloudWatchNamespace`" -ExpectedAwsCliSha256 `"$ExpectedAwsCliSha256`" -CommandTimeoutSeconds $CommandTimeoutSeconds -FinalizationBudgetSeconds $FinalizationBudgetSeconds -StartupBudgetSeconds $StartupBudgetSeconds -ArchiveFinalizationBudgetSeconds $ArchiveFinalizationBudgetSeconds"
 $action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument $taskArgs
 $trigger = New-ScheduledTaskTrigger -AtStartup
 $settings = New-ScheduledTaskSettingsSet -MultipleInstances IgnoreNew -RestartCount 0 -ExecutionTimeLimit (New-TimeSpan -Minutes 15)
@@ -78,9 +85,14 @@ $installManifest = [ordered]@{
     credential_secret_id_present = -not [string]::IsNullOrWhiteSpace($CredentialSecretId)
     archive_bucket_name_present = -not [string]::IsNullOrWhiteSpace($ArchiveBucketName)
     autostart_enabled = [bool]$EnableAutoStart
+    command_timeout_seconds = $CommandTimeoutSeconds
+    finalization_budget_seconds = $FinalizationBudgetSeconds
+    startup_budget_seconds = $StartupBudgetSeconds
+    archive_finalization_budget_seconds = $ArchiveFinalizationBudgetSeconds
     no_secret_values = $true
     no_order_entry = $true
     timestamp_utc = (Get-Date).ToUniversalTime().ToString("o")
 }
 $installManifest | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath (Join-Path $stateRoot "aws1_install_manifest.json") -Encoding UTF8
 $installManifest | ConvertTo-Json -Depth 6
+

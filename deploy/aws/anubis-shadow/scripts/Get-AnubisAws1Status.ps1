@@ -1,4 +1,4 @@
-﻿param(
+param(
     [string]$RecorderRoot = "D:\Anubis\Recorder",
     [string]$Environment = "demo",
     [string]$StateRoot = "C:\Anubis\State"
@@ -89,17 +89,17 @@ function Get-VerifiedProcessState {
         return [ordered]@{ evaluated = $false; alive = $null; pid = $null; reason = "pid_state_unreadable"; state = $state }
     }
 
-    $pid = [int](Get-Prop $state "pid")
-    $process = Get-Process -Id $pid -ErrorAction SilentlyContinue
+    $recordedPid = [int](Get-Prop $state "pid")
+    $process = Get-Process -Id $recordedPid -ErrorAction SilentlyContinue
     if ($null -eq $process) {
-        return [ordered]@{ evaluated = $true; alive = 0; pid = $pid; reason = "process_missing"; state = $state }
+        return [ordered]@{ evaluated = $true; alive = 0; pid = $recordedPid; reason = "process_missing"; state = $state }
     }
 
     $expectedPath = [string](Get-Prop $state "executable_path")
     if (-not [string]::IsNullOrWhiteSpace($expectedPath)) {
         $actualPath = $process.Path
         if ([string]::IsNullOrWhiteSpace($actualPath) -or -not [string]::Equals($actualPath, $expectedPath, [System.StringComparison]::OrdinalIgnoreCase)) {
-            return [ordered]@{ evaluated = $true; alive = 0; pid = $pid; reason = "executable_path_mismatch"; state = $state }
+            return [ordered]@{ evaluated = $true; alive = 0; pid = $recordedPid; reason = "executable_path_mismatch"; state = $state }
         }
     }
 
@@ -107,11 +107,11 @@ function Get-VerifiedProcessState {
     if ($null -ne $expectedStart) {
         $actualStart = $process.StartTime.ToUniversalTime()
         if ([math]::Abs(($actualStart - $expectedStart.UtcDateTime).TotalSeconds) -gt 2) {
-            return [ordered]@{ evaluated = $true; alive = 0; pid = $pid; reason = "process_start_time_mismatch"; state = $state }
+            return [ordered]@{ evaluated = $true; alive = 0; pid = $recordedPid; reason = "process_start_time_mismatch"; state = $state }
         }
     }
 
-    return [ordered]@{ evaluated = $true; alive = 1; pid = $pid; reason = "verified_pid_json"; state = $state }
+    return [ordered]@{ evaluated = $true; alive = 1; pid = $recordedPid; reason = "verified_pid_json"; state = $state }
 }
 
 function Get-DiskFreePercentMetric {
