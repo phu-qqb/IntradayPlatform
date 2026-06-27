@@ -1,3 +1,4 @@
+using System.Security.Cryptography;
 using QQ.Production.Intraday.Application;
 using QQ.Production.Intraday.Domain;
 
@@ -325,6 +326,291 @@ public sealed class LmaxEodReportTests
         Assert.DoesNotContain(reconciliation.Breaks, x => x.Description.Contains("NO-FILL", StringComparison.Ordinal));
     }
 
+    [Fact]
+    public async Task Missing_report_file_is_rejected_without_rows_or_hash()
+    {
+        var services = CreateServices();
+        var missing = Path.Combine(services.Options.DataRoot, "valid", "missing-individual-trades.csv");
+
+        var result = await services.Importer.ImportIndividualTradesAsync(missing, ReportDate, "LMAX", "LMAX_DEMO_LOCAL", CancellationToken.None);
+
+        Assert.Equal(LmaxReportImportStatus.Rejected, result.Status);
+        Assert.Equal(0, result.RowCount);
+        Assert.Contains(result.Issues, x => x.IssueType == LmaxReportValidationIssueType.MissingFile);
+        var run = services.State.LmaxReportImportRuns.Single(x => x.Id == result.ImportRunId);
+        Assert.Null(run.FileHash);
+        Assert.Empty(services.State.LmaxIndividualTrades);
+    }
+
+    [Fact]
+    public async Task Successful_import_records_file_hash_import_run_and_row_provenance()
+    {
+        var services = CreateServices();
+        var path = Fixture(services, "valid", "individual-trades.csv");
+
+        var result = await services.Importer.ImportIndividualTradesAsync(path, ReportDate, "LMAX", "LMAX_DEMO_LOCAL", CancellationToken.None);
+
+        var expectedHash = Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(path)));
+        var run = services.State.LmaxReportImportRuns.Single(x => x.Id == result.ImportRunId);
+        Assert.Equal(LmaxReportImportStatus.Imported, result.Status);
+        Assert.Equal(expectedHash, run.FileHash);
+        Assert.All(services.State.LmaxIndividualTrades, trade =>
+        {
+            Assert.Equal(result.ImportRunId, trade.ImportRunId);
+            Assert.False(string.IsNullOrWhiteSpace(trade.RawLine));
+        });
+    }
+
+    [Fact]
+    public async Task Repeated_imports_are_idempotent_for_trades_summaries_and_wallets()
+    {
+        var services = CreateServices();
+        var individualPath = Fixture(services, "valid", "individual-trades.csv");
+        var summaryPath = Fixture(services, "valid", "trades.csv");
+        var walletPath = Fixture(services, "valid", "currency-wallets.csv");
+
+        await services.Importer.ImportIndividualTradesAsync(individualPath, ReportDate, "LMAX", "LMAX_DEMO_LOCAL", CancellationToken.None);
+        var individualCount = services.State.LmaxIndividualTrades.Count;
+        await services.Importer.ImportIndividualTradesAsync(individualPath, ReportDate, "LMAX", "LMAX_DEMO_LOCAL", CancellationToken.None);
+        Assert.Equal(individualCount, services.State.LmaxIndividualTrades.Count);
+
+        await services.Importer.ImportTradesSummaryAsync(summaryPath, ReportDate, "LMAX", "LMAX_DEMO_LOCAL", CancellationToken.None);
+        var summaryCount = services.State.LmaxTradeSummaries.Count;
+        await services.Importer.ImportTradesSummaryAsync(summaryPath, ReportDate, "LMAX", "LMAX_DEMO_LOCAL", CancellationToken.None);
+        Assert.Equal(summaryCount, services.State.LmaxTradeSummaries.Count);
+
+        await services.Importer.ImportCurrencyWalletsAsync(walletPath, ReportDate, "LMAX", "LMAX_DEMO_LOCAL", CancellationToken.None);
+        var walletCount = services.State.LmaxCurrencyWallets.Count;
+        await services.Importer.ImportCurrencyWalletsAsync(walletPath, ReportDate, "LMAX", "LMAX_DEMO_LOCAL", CancellationToken.None);
+        Assert.Equal(walletCount, services.State.LmaxCurrencyWallets.Count);
+    }
+
+    [Fact]
+    public async Task Individual_trades_wrong_account_and_wrong_report_date_are_rejected()
+    {
+        var services = CreateServices();
+        var path = WriteReport(services, LmaxReportType.IndividualTrades, "individual-wrong-account-date.csv",
+        [
+            string.Join(",", LmaxEodHeaders.Individual),
+            "EX1,MTF1,30-04-2026 16:00:00.000,1,1.10000,29-04-2026,4001,EUR/USD,INST1,ORD1,,,30-04-2026 16:00:00.000,Market,LMAX,test-user,0,-1,OTHER_ACCOUNT,10000,-11000,UTI1"
+        ]);
+
+        var result = await services.Importer.ImportIndividualTradesAsync(path, ReportDate, "LMAX", "LMAX_DEMO_LOCAL", CancellationToken.None);
+
+        Assert.Equal(LmaxReportImportStatus.Rejected, result.Status);
+        Assert.Contains(result.Issues, x => x.IssueType == LmaxReportValidationIssueType.AccountIdMismatch);
+        Assert.Contains(result.Issues, x => x.IssueType == LmaxReportValidationIssueType.ReportDateMismatch);
+    }
+
+    [Fact]
+    public async Task Trades_summary_wrong_account_and_wrong_report_date_are_rejected()
+    {
+        var services = CreateServices();
+        var path = WriteReport(services, LmaxReportType.TradesSummary, "summary-wrong-account-date.csv",
+        [
+            string.Join(",", LmaxEodHeaders.Summary),
+            "4/29/2026 16:00,EUR/USD,Market,USD,1,1.10000,0.22,11000,EUR/USD,test-user,0.220000,OTHER_ACCOUNT"
+        ]);
+
+        var result = await services.Importer.ImportTradesSummaryAsync(path, ReportDate, "LMAX", "LMAX_DEMO_LOCAL", CancellationToken.None);
+
+        Assert.Equal(LmaxReportImportStatus.Rejected, result.Status);
+        Assert.Contains(result.Issues, x => x.IssueType == LmaxReportValidationIssueType.AccountIdMismatch);
+        Assert.Contains(result.Issues, x => x.IssueType == LmaxReportValidationIssueType.ReportDateMismatch);
+    }
+
+    [Fact]
+    public async Task Partial_report_set_with_missing_file_is_rejected()
+    {
+        var services = CreateServices();
+        var missingWalletPath = Path.Combine(services.Options.DataRoot, "valid", "missing-currency-wallets.csv");
+
+        var result = await services.Importer.ImportReportSetAsync(
+            Fixture(services, "valid", "individual-trades.csv"),
+            Fixture(services, "valid", "trades.csv"),
+            missingWalletPath,
+            ReportDate,
+            "LMAX",
+            "LMAX_DEMO_LOCAL",
+            CancellationToken.None);
+
+        Assert.Equal(LmaxReportImportStatus.Rejected, result.Status);
+        Assert.Contains(result.Issues, x => x.IssueType == LmaxReportValidationIssueType.MissingFile);
+    }
+
+    [Fact]
+    public async Task Unit_import_path_uses_in_memory_repository_without_database()
+    {
+        var services = CreateServices();
+
+        Assert.IsType<InMemoryLmaxEodReportRepository>(services.EodRepository);
+        await services.Importer.ImportIndividualTradesAsync(Fixture(services, "valid", "individual-trades.csv"), ReportDate, "LMAX", "LMAX_DEMO_LOCAL", CancellationToken.None);
+
+        Assert.Equal(3, services.State.LmaxIndividualTrades.Count);
+        Assert.Empty(services.State.EodReconciliationRuns);
+    }
+
+    [Fact]
+    public async Task Trades_summary_accepts_legacy_and_real_lmax_timestamp_formats()
+    {
+        var services = CreateServices();
+        var path = WriteReport(services, LmaxReportType.TradesSummary, "summary-real-and-legacy-timestamps.csv",
+        [
+            string.Join(",", LmaxEodHeaders.Summary),
+            "4/30/2026 16:00,EUR/USD,Market,USD,1,1.10000,0.22,11000,EUR/USD,test-user,0.220000,LMAX_DEMO_LOCAL",
+            "2026-04-30 16:01:02,EUR/USD,Market,USD,1,1.10001,0.22,11001,EUR/USD,test-user,0.220000,LMAX_DEMO_LOCAL"
+        ]);
+
+        var result = await services.Importer.ImportTradesSummaryAsync(path, ReportDate, "LMAX", "LMAX_DEMO_LOCAL", CancellationToken.None);
+
+        Assert.Equal(LmaxReportImportStatus.Imported, result.Status);
+        Assert.Equal(LmaxEodImportClassifications.ImportedPartialNonAuthority, result.Message);
+        Assert.Equal(2, services.State.LmaxTradeSummaries.Count);
+    }
+
+    [Fact]
+    public async Task Trades_summary_unsupported_timestamp_format_is_blocked_and_not_persisted()
+    {
+        var services = CreateServices();
+        var path = WriteReport(services, LmaxReportType.TradesSummary, "summary-unsupported-timestamp.csv",
+        [
+            string.Join(",", LmaxEodHeaders.Summary),
+            "30/04/2026 16:00,EUR/USD,Market,USD,1,1.10000,0.22,11000,EUR/USD,test-user,0.220000,LMAX_DEMO_LOCAL"
+        ]);
+
+        var result = await services.Importer.ImportTradesSummaryAsync(path, ReportDate, "LMAX", "LMAX_DEMO_LOCAL", CancellationToken.None);
+
+        Assert.Equal(LmaxReportImportStatus.Rejected, result.Status);
+        Assert.Equal(LmaxEodImportClassifications.BlockedUnsupportedTimestampFormat, result.Message);
+        Assert.Empty(services.State.LmaxTradeSummaries);
+    }
+
+    [Fact]
+    public async Task Unknown_account_is_quarantined_and_rows_are_not_persisted()
+    {
+        var services = CreateServices();
+        var path = WriteReport(services, LmaxReportType.TradesSummary, "summary-unknown-account.csv",
+        [
+            string.Join(",", LmaxEodHeaders.Summary),
+            "2026-04-30 16:00:00,EUR/USD,Market,USD,1,1.10000,0.22,11000,EUR/USD,test-user,0.220000,9900009999"
+        ]);
+
+        var result = await services.Importer.ImportTradesSummaryAsync(path, ReportDate, "LMAX", "LMAX_DEMO_LOCAL", CancellationToken.None);
+
+        Assert.Equal(LmaxReportImportStatus.Rejected, result.Status);
+        Assert.Equal(LmaxEodImportClassifications.QuarantineUnknownAccount, result.Message);
+        Assert.Empty(services.State.LmaxTradeSummaries);
+    }
+
+    [Fact]
+    public async Task Recognized_synthetic_account_mapping_allows_local_partial_non_authority_import()
+    {
+        var services = CreateServices();
+        AddBrokerAccount(services, "LMAX_SYNTH_ACCOUNT_A_LOCAL", "9900000001");
+        var path = WriteReport(services, LmaxReportType.TradesSummary, "summary-synthetic-account.csv",
+        [
+            string.Join(",", LmaxEodHeaders.Summary),
+            "2026-04-30 16:00:00,EUR/USD,Market,USD,1,1.10000,0.22,11000,EUR/USD,test-user,0.220000,9900000001"
+        ]);
+
+        var result = await services.Importer.ImportTradesSummaryAsync(path, ReportDate, "LMAX", "LMAX_SYNTH_ACCOUNT_A_LOCAL", CancellationToken.None);
+
+        Assert.Equal(LmaxReportImportStatus.Imported, result.Status);
+        Assert.Equal(LmaxEodImportClassifications.ImportedPartialNonAuthority, result.Message);
+        Assert.Single(services.State.LmaxTradeSummaries);
+    }
+
+    [Fact]
+    public async Task Outside_data_root_is_blocked_before_import()
+    {
+        var services = CreateServices();
+        var outside = Path.Combine(Path.GetTempPath(), $"lmax-outside-{Guid.NewGuid():N}.csv");
+        await File.WriteAllLinesAsync(outside,
+        [
+            string.Join(",", LmaxEodHeaders.Summary),
+            "2026-04-30 16:00:00,EUR/USD,Market,USD,1,1.10000,0.22,11000,EUR/USD,test-user,0.220000,LMAX_DEMO_LOCAL"
+        ]);
+
+        await Assert.ThrowsAsync<DomainRuleViolationException>(() => services.Importer.ImportTradesSummaryAsync(outside, ReportDate, "LMAX", "LMAX_DEMO_LOCAL", CancellationToken.None));
+        Assert.Empty(services.State.LmaxTradeSummaries);
+    }
+
+    [Fact]
+    public void Staging_contract_resolves_controlled_wallet_report_date_and_blocks_missing_metadata()
+    {
+        var services = CreateServices();
+        var staged = LmaxEodReportStagingContract.BuildInboxPath(services.Options.DataRoot, "9900000001", ReportDate, LmaxReportType.CurrencyWallets);
+        var missingDate = Path.Combine(services.Options.DataRoot, "inbox", "9900000001", "currency-wallets.csv");
+        var outside = Path.Combine(Path.GetTempPath(), "currency-wallets.csv");
+
+        Assert.True(LmaxEodReportStagingContract.TryResolveReportDateFromStagedPath(staged, services.Options.DataRoot, out var resolved, out var blockReason));
+        Assert.Equal(ReportDate, resolved);
+        Assert.Null(blockReason);
+        Assert.False(LmaxEodReportStagingContract.TryResolveReportDateFromStagedPath(missingDate, services.Options.DataRoot, out _, out blockReason));
+        Assert.Equal(LmaxEodImportClassifications.BlockedMissingReportDate, blockReason);
+        Assert.False(LmaxEodReportStagingContract.TryResolveReportDateFromStagedPath(outside, services.Options.DataRoot, out _, out blockReason));
+        Assert.Equal(LmaxEodImportClassifications.BlockedOutsideDataRoot, blockReason);
+    }
+
+    [Fact]
+    public async Task Wallet_with_explicit_report_date_metadata_imports_as_partial_non_authority()
+    {
+        var services = CreateServices();
+
+        var result = await services.Importer.ImportCurrencyWalletsAsync(Fixture(services, "valid", "currency-wallets.csv"), ReportDate, "LMAX", "LMAX_DEMO_LOCAL", CancellationToken.None);
+
+        Assert.Equal(LmaxReportImportStatus.Imported, result.Status);
+        Assert.Equal(LmaxEodImportClassifications.ImportedPartialNonAuthority, result.Message);
+        Assert.NotEmpty(services.State.LmaxCurrencyWallets);
+    }
+
+    [Fact]
+    public async Task Complete_report_set_is_candidate_authority_but_single_report_is_partial()
+    {
+        var services = CreateServices();
+
+        var partial = await services.Importer.ImportTradesSummaryAsync(Fixture(services, "valid", "trades.csv"), ReportDate, "LMAX", "LMAX_DEMO_LOCAL", CancellationToken.None);
+        var complete = await services.Importer.ImportReportSetAsync(Fixture(services, "valid", "individual-trades.csv"), Fixture(services, "valid", "trades.csv"), Fixture(services, "valid", "currency-wallets.csv"), ReportDate, "LMAX", "LMAX_DEMO_LOCAL", CancellationToken.None);
+
+        Assert.Equal(LmaxEodImportClassifications.ImportedPartialNonAuthority, partial.Message);
+        Assert.Equal(LmaxEodImportClassifications.ImportedCompleteCandidateAuthority, complete.Message);
+    }
+
+    [Fact]
+    public async Task Cross_account_rows_are_forbidden_even_when_both_accounts_are_mapped()
+    {
+        var services = CreateServices();
+        AddBrokerAccount(services, "LMAX_SYNTH_ACCOUNT_A_LOCAL", "9900000001");
+        AddBrokerAccount(services, "LMAX_SYNTH_ACCOUNT_B_LOCAL", "9900000002");
+        var path = WriteReport(services, LmaxReportType.TradesSummary, "summary-cross-account.csv",
+        [
+            string.Join(",", LmaxEodHeaders.Summary),
+            "2026-04-30 16:00:00,EUR/USD,Market,USD,1,1.10000,0.22,11000,EUR/USD,test-user,0.220000,9900000002"
+        ]);
+
+        var result = await services.Importer.ImportTradesSummaryAsync(path, ReportDate, "LMAX", "LMAX_SYNTH_ACCOUNT_A_LOCAL", CancellationToken.None);
+
+        Assert.Equal(LmaxReportImportStatus.Rejected, result.Status);
+        Assert.Equal(LmaxEodImportClassifications.QuarantineUnknownAccount, result.Message);
+        Assert.Empty(services.State.LmaxTradeSummaries);
+    }
+
+    [Fact]
+    public async Task Missing_lmax_report_alias_blocks_authority_and_rows_are_not_persisted()
+    {
+        var services = CreateServices();
+        var path = WriteReport(services, LmaxReportType.TradesSummary, "summary-missing-alias.csv",
+        [
+            string.Join(",", LmaxEodHeaders.Summary),
+            "2026-04-30 16:00:00,USD/SEK,Market,SEK,1,9.90000,0.22,99000,USD/SEK,test-user,0.220000,LMAX_DEMO_LOCAL"
+        ]);
+
+        var result = await services.Importer.ImportTradesSummaryAsync(path, ReportDate, "LMAX", "LMAX_DEMO_LOCAL", CancellationToken.None);
+
+        Assert.Equal(LmaxReportImportStatus.Rejected, result.Status);
+        Assert.Equal(LmaxEodImportClassifications.BlockedUnsupportedSymbol, result.Message);
+        Assert.Empty(services.State.LmaxTradeSummaries);
+    }
     private static void AddInternalFill(PlatformState state)
     {
         var instrument = state.Instruments.Single(x => x.Symbol == "EURUSD");
@@ -351,9 +637,16 @@ public sealed class LmaxEodReportTests
         var reconciliation = new EodReconciliationService(intradayRepository, eodRepository, clock);
         var pnl = new EodPnlSummaryService(intradayRepository, eodRepository);
         var generator = new FakeLmaxEodReportGenerator(intradayRepository, clock, options);
-        return new Services(state, options, generator, importer, reconciliation, pnl);
+        return new Services(state, options, eodRepository, generator, importer, reconciliation, pnl);
     }
 
+
+    private static BrokerAccount AddBrokerAccount(Services services, string accountCode, string externalAccountId)
+    {
+        var account = new BrokerAccount(BrokerAccountId.New(), services.State.Funds.Single().Id, accountCode, true, externalAccountId);
+        services.State.BrokerAccounts.Add(account);
+        return account;
+    }
     private static void AddReportInstrument(PlatformState state, string internalSymbol, string externalSymbol, string externalId, string baseCurrency, string quoteCurrency, bool isEnabled)
     {
         if (state.InstrumentAliases.Any(x => x.Source == "LMAX_REPORT" && x.ExternalSymbol == externalSymbol))
@@ -416,8 +709,10 @@ public sealed class LmaxEodReportTests
     private sealed record Services(
         PlatformState State,
         LmaxEodReportOptions Options,
+        ILmaxEodReportRepository EodRepository,
         IFakeLmaxEodReportGenerator Generator,
         ILmaxEodReportImportService Importer,
         IEodReconciliationService Reconciliation,
         IEodPnlSummaryService Pnl);
 }
+

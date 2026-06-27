@@ -1113,7 +1113,25 @@ public sealed class SqlServerLmaxEodReportRepository(IntradayDbContext dbContext
 
     public async Task AddTradeSummariesAsync(IReadOnlyList<LmaxTradeSummary> summaries, CancellationToken cancellationToken)
     {
-        dbContext.LmaxTradeSummaries.AddRange(summaries);
+        foreach (var summary in summaries)
+        {
+            if (!await dbContext.LmaxTradeSummaries.AnyAsync(x =>
+                    x.ReportDate == summary.ReportDate &&
+                    x.VenueId == summary.VenueId &&
+                    x.BrokerAccountId == summary.BrokerAccountId &&
+                    x.LmaxSymbol == summary.LmaxSymbol &&
+                    x.Type == summary.Type &&
+                    x.DateTimeUtc == summary.DateTimeUtc &&
+                    x.Contracts == summary.Contracts &&
+                    x.AveragePrice == summary.AveragePrice &&
+                    x.NotionalValue == summary.NotionalValue &&
+                    x.CommissionFullPrecision == summary.CommissionFullPrecision,
+                    cancellationToken))
+            {
+                dbContext.LmaxTradeSummaries.Add(summary);
+            }
+        }
+
         await dbContext.SaveChangesAsync(cancellationToken);
     }
 
