@@ -59,8 +59,8 @@ Required future plan/apply values:
 
 - approved Windows AMI ID and owner allow-list;
 - explicit LMAX market-data egress CIDRs;
-- artifact S3 URI and SHA-256;
-- AWS CLI MSI S3 URI and SHA-256;
+- artifact S3 object location and SHA-256;
+- AWS CLI MSI S3 object location and SHA-256;
 - market-data-only secret value populated out of band;
 - alarm action ARNs only if `enable_cloudwatch_alarms=true`.
 
@@ -73,6 +73,14 @@ qq-fund-platform-demo-aws1-install-runbook
 ```
 
 The runbook downloads the AWS CLI MSI and app artifact using `aws:downloadContent`, verifies SHA-256 for both, installs AWS CLI v2, expands the app artifact, and invokes `Install-AnubisAws1Host.ps1`.
+
+The live SSM document `aws:downloadContent` steps expect regional HTTPS S3 object URLs in `ArtifactS3Uri` and `AwsCliMsiS3Uri`, for example:
+
+```text
+https://<bucket>.s3.<region>.amazonaws.com/<key>
+```
+
+Use `New-AnubisAws1InstallRunbookParameters.ps1` to generate the `send-command --parameters` payload. It accepts either `s3://<bucket>/<key>` or the regional HTTPS form, converts `s3://` inputs to the download contract, preserves HTTPS inputs, and rejects malformed paths before SSM execution.
 
 Autostart defaults to disabled for `SMOKE_CAPTURE_BOUNDED`.
 
@@ -104,4 +112,3 @@ After the bounded capture exits cleanly:
 Metrics with missing evidence are reported as `NOT_EVALUATED` and are not published to CloudWatch. Upload verifies local chunk size/SHA from `final_manifest.json` and remote S3 `ChecksumSHA256`; it performs no deletion.
 
 Archive upload remains an explicit manual/runbook step. The upload marker is written only after every manifest-listed object is present in S3 with the expected checksum. CloudWatch publishing remains metrics-only and must not include raw ticks, raw FIX frames, chunk contents, or secret values.
-
