@@ -1,4 +1,4 @@
-﻿# AWS1 Deployment Runbook
+# AWS1 Deployment Runbook
 
 This runbook is plan-ready for review. AWS1 still does not perform `terraform apply`.
 
@@ -60,7 +60,7 @@ Required future plan/apply values:
 - approved Windows AMI ID and owner allow-list;
 - explicit LMAX market-data egress CIDRs;
 - artifact S3 object location and SHA-256;
-- AWS CLI MSI S3 object location and SHA-256;
+- AWS CLI MSI S3 object location and MSI SHA-256;
 - market-data-only secret value populated out of band;
 - alarm action ARNs only if `enable_cloudwatch_alarms=true`.
 
@@ -73,6 +73,8 @@ qq-fund-platform-demo-aws1-install-runbook
 ```
 
 The runbook downloads the AWS CLI MSI and app artifact using `aws:downloadContent`, verifies SHA-256 for both, installs AWS CLI v2, expands the app artifact, and invokes `Install-AnubisAws1Host.ps1`.
+
+The AWS CLI MSI SHA-256 verifies the downloaded `AWSCLIV2.msi` only. Host prerequisite checks report the installed `aws.exe` SHA-256 separately and compare it only when an explicit installed-executable expected SHA is configured; the MSI SHA must not be reused as the executable SHA.
 
 The live SSM document `aws:downloadContent` steps expect regional HTTPS S3 object URLs in `ArtifactS3Uri` and `AwsCliMsiS3Uri`, for example:
 
