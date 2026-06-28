@@ -8,6 +8,8 @@
     [string]$ArchiveBucketName = "",
     [string]$Environment = "demo",
     [string]$CloudWatchNamespace = "QQFundPlatform/AWS1",
+    [string]$ExpectedAwsCliMsiSha256 = "",
+    [string]$ExpectedAwsCliExeSha256 = "",
     [string]$ExpectedAwsCliSha256 = "",
     [switch]$EnableAutoStart,
     [int]$CommandTimeoutSeconds = 900,
@@ -19,6 +21,19 @@
 $ErrorActionPreference = "Stop"
 
 function Get-HashUpper { param([string]$Path) (Get-FileHash -Algorithm SHA256 -LiteralPath $Path).Hash.ToUpperInvariant() }
+
+function Normalize-Sha256OrEmpty {
+    param([string]$Value)
+    if ([string]::IsNullOrWhiteSpace($Value)) { return "" }
+    return $Value.Trim().ToUpperInvariant()
+}
+
+$effectiveAwsCliMsiSha256 = Normalize-Sha256OrEmpty $ExpectedAwsCliMsiSha256
+$expectedAwsCliExeSha256Normalized = Normalize-Sha256OrEmpty $ExpectedAwsCliExeSha256
+$legacyExpectedAwsCliSha256 = Normalize-Sha256OrEmpty $ExpectedAwsCliSha256
+if ([string]::IsNullOrWhiteSpace($effectiveAwsCliMsiSha256) -and -not [string]::IsNullOrWhiteSpace($legacyExpectedAwsCliSha256)) {
+    $effectiveAwsCliMsiSha256 = $legacyExpectedAwsCliSha256
+}
 
 if (-not (Test-Path -LiteralPath $ArtifactZipPath)) { throw "artifact_not_found:$ArtifactZipPath" }
 $actual = Get-HashUpper $ArtifactZipPath
@@ -44,7 +59,8 @@ if (-not (Test-Path -LiteralPath $appExe)) { throw "self_contained_executable_mi
 $appExeSha = Get-HashUpper $appExe
 if ($appExeSha -ne ([string]$appManifest.executable_sha256).ToUpperInvariant()) { throw "self_contained_executable_sha256_mismatch:$appExeSha" }
 
-& (Join-Path $releaseRoot "deploy\aws\anubis-shadow\scripts\Test-AnubisAws1HostPrerequisites.ps1") -ExpectedAwsCliSha256 $ExpectedAwsCliSha256 | Out-Null
+$hostPrereq = & (Join-Path $releaseRoot "deploy\aws\anubis-shadow\scripts\Test-AnubisAws1HostPrerequisites.ps1") -ExpectedAwsCliMsiSha256 $effectiveAwsCliMsiSha256 -ExpectedAwsCliExeSha256 $expectedAwsCliExeSha256Normalized -ExpectedAwsCliSha256 $legacyExpectedAwsCliSha256 -Json | ConvertFrom-Json
+if ($hostPrereq.status -ne "PASS") { throw "host_prerequisites_failed:$($hostPrereq | ConvertTo-Json -Compress)" }
 
 if (Test-Path -LiteralPath $currentRoot) {
     $backup = Join-Path $InstallRoot ("rollback-" + (Get-Date -Format "yyyyMMddHHmmss"))
@@ -60,7 +76,7 @@ if (-not (Test-Path -LiteralPath $catalogSource)) { throw "approved_instrument_c
 Copy-Item -LiteralPath $catalogSource -Destination (Join-Path (Split-Path -Parent $configPath) "lmax_demo_market_data_instrument_catalog.json") -Force
 
 $taskScript = Join-Path $currentRoot "deploy\aws\anubis-shadow\scripts\Start-AnubisAws1Recorder.ps1"
-$taskArgs = "-NoProfile -ExecutionPolicy Bypass -File `"$taskScript`" -InstallRoot `"$currentRoot`" -ConfigPath `"$configPath`" -RecorderRoot `"$RecorderRoot`" -CredentialSecretId `"$CredentialSecretId`" -ArchiveBucketName `"$ArchiveBucketName`" -Environment `"$Environment`" -CloudWatchNamespace `"$CloudWatchNamespace`" -ExpectedAwsCliSha256 `"$ExpectedAwsCliSha256`" -CommandTimeoutSeconds $CommandTimeoutSeconds -FinalizationBudgetSeconds $FinalizationBudgetSeconds -StartupBudgetSeconds $StartupBudgetSeconds -ArchiveFinalizationBudgetSeconds $ArchiveFinalizationBudgetSeconds"
+$taskArgs = "-NoProfile -ExecutionPolicy Bypass -File `"$taskScript`" -InstallRoot `"$currentRoot`" -ConfigPath `"$configPath`" -RecorderRoot `"$RecorderRoot`" -CredentialSecretId `"$CredentialSecretId`" -ArchiveBucketName `"$ArchiveBucketName`" -Environment `"$Environment`" -CloudWatchNamespace `"$CloudWatchNamespace`" -ExpectedAwsCliMsiSha256 `"$effectiveAwsCliMsiSha256`" -ExpectedAwsCliExeSha256 `"$expectedAwsCliExeSha256Normalized`" -CommandTimeoutSeconds $CommandTimeoutSeconds -FinalizationBudgetSeconds $FinalizationBudgetSeconds -StartupBudgetSeconds $StartupBudgetSeconds -ArchiveFinalizationBudgetSeconds $ArchiveFinalizationBudgetSeconds"
 $action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument $taskArgs
 $trigger = New-ScheduledTaskTrigger -AtStartup
 $settings = New-ScheduledTaskSettingsSet -MultipleInstances IgnoreNew -RestartCount 0 -ExecutionTimeLimit (New-TimeSpan -Minutes 15)
@@ -79,6 +95,12 @@ $installManifest = [ordered]@{
     config_path = $configPath
     app_executable = "app\$($appManifest.executable)"
     app_executable_sha256 = $appManifest.executable_sha256
+    aws_cli_msi_sha256 = if ([string]::IsNullOrWhiteSpace($effectiveAwsCliMsiSha256)) { $null } else { $effectiveAwsCliMsiSha256 }
+    aws_cli_exe_sha256_expected = if ([string]::IsNullOrWhiteSpace($expectedAwsCliExeSha256Normalized)) { $null } else { $expectedAwsCliExeSha256Normalized }
+    aws_cli_exe_sha256_observed = $hostPrereq.aws_cli_exe_sha256_observed
+    aws_cli_path = $hostPrereq.aws_cli_path
+    aws_cli_version = $hostPrereq.aws_cli_version
+    aws_cli_legacy_expected_sha_ignored = [bool]$hostPrereq.legacy_expected_aws_cli_sha256_ignored
     self_contained = [bool]$appManifest.self_contained
     scheduled_task = "AnubisAws1M2SmokeCaptureOnly"
     scheduled_task_principal = "SYSTEM"
@@ -95,4 +117,3 @@ $installManifest = [ordered]@{
 }
 $installManifest | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath (Join-Path $stateRoot "aws1_install_manifest.json") -Encoding UTF8
 $installManifest | ConvertTo-Json -Depth 6
-

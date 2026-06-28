@@ -6,6 +6,8 @@
     [string]$ArchiveBucketName = "",
     [string]$Environment = "demo",
     [string]$CloudWatchNamespace = "QQFundPlatform/AWS1",
+    [string]$ExpectedAwsCliMsiSha256 = "",
+    [string]$ExpectedAwsCliExeSha256 = "",
     [string]$ExpectedAwsCliSha256 = "",
     [switch]$NoSecretFetch,
     [string]$StateRoot = "C:\Anubis\State",
@@ -46,10 +48,27 @@ $script:finalizationCompletedUtc = $null
 $script:requiredTimeoutSeconds = $null
 $script:recorderMaxDurationSecondsResolved = $null
 $script:failureIssue = $null
+$script:hostPrerequisites = $null
+$script:awsCliMsiSha256Expected = $null
+$script:awsCliExeSha256Expected = $null
+$script:legacyExpectedAwsCliSha256 = $null
 
 function Get-HashUpper {
     param([string]$Path)
     return (Get-FileHash -Algorithm SHA256 -LiteralPath $Path).Hash.ToUpperInvariant()
+}
+
+function Normalize-Sha256OrEmpty {
+    param([string]$Value)
+    if ([string]::IsNullOrWhiteSpace($Value)) { return "" }
+    return $Value.Trim().ToUpperInvariant()
+}
+
+$script:awsCliMsiSha256Expected = Normalize-Sha256OrEmpty $ExpectedAwsCliMsiSha256
+$script:awsCliExeSha256Expected = Normalize-Sha256OrEmpty $ExpectedAwsCliExeSha256
+$script:legacyExpectedAwsCliSha256 = Normalize-Sha256OrEmpty $ExpectedAwsCliSha256
+if ([string]::IsNullOrWhiteSpace($script:awsCliMsiSha256Expected) -and -not [string]::IsNullOrWhiteSpace($script:legacyExpectedAwsCliSha256)) {
+    $script:awsCliMsiSha256Expected = $script:legacyExpectedAwsCliSha256
 }
 
 function Get-JsonFileOrNull {
@@ -197,6 +216,12 @@ function New-LastRunResult {
         }
         executable_path = $script:appExe
         executable_sha256 = $script:appExeSha
+        aws_cli_msi_sha256 = if ([string]::IsNullOrWhiteSpace($script:awsCliMsiSha256Expected)) { $null } else { $script:awsCliMsiSha256Expected }
+        aws_cli_exe_sha256_expected = if ([string]::IsNullOrWhiteSpace($script:awsCliExeSha256Expected)) { $null } else { $script:awsCliExeSha256Expected }
+        aws_cli_exe_sha256_observed = if ($null -ne $script:hostPrerequisites) { $script:hostPrerequisites.aws_cli_exe_sha256_observed } else { $null }
+        aws_cli_path = if ($null -ne $script:hostPrerequisites) { $script:hostPrerequisites.aws_cli_path } else { $null }
+        aws_cli_version = if ($null -ne $script:hostPrerequisites) { $script:hostPrerequisites.aws_cli_version } else { $null }
+        aws_cli_legacy_expected_sha_ignored = if ($null -ne $script:hostPrerequisites) { [bool]$script:hostPrerequisites.legacy_expected_aws_cli_sha256_ignored } else { -not [string]::IsNullOrWhiteSpace($script:legacyExpectedAwsCliSha256) }
         config_path = $ConfigPath
         recorder_root = $RecorderRoot
         stdout_log = $script:stdout
@@ -272,7 +297,8 @@ try {
 
     $awsCliPath = ""
     if (-not $SkipHostPrerequisites) {
-        $prereq = & (Join-Path $PSScriptRoot "Test-AnubisAws1HostPrerequisites.ps1") -ExpectedAwsCliSha256 $ExpectedAwsCliSha256 -Json | ConvertFrom-Json
+        $prereq = & (Join-Path $PSScriptRoot "Test-AnubisAws1HostPrerequisites.ps1") -ExpectedAwsCliMsiSha256 $script:awsCliMsiSha256Expected -ExpectedAwsCliExeSha256 $script:awsCliExeSha256Expected -ExpectedAwsCliSha256 $script:legacyExpectedAwsCliSha256 -Json | ConvertFrom-Json
+        $script:hostPrerequisites = $prereq
         if ($prereq.status -ne "PASS") { throw "host_prerequisites_failed:$($prereq | ConvertTo-Json -Compress)" }
         $awsCliPath = [string]$prereq.aws_cli_path
     }
@@ -366,7 +392,6 @@ catch {
     }
     Fail-Controlled -Issue "wrapper_controlled_failure:$issue" -Status "SMOKE_CAPTURE_WRAPPER_NO_GO"
 }
-
 
 
 

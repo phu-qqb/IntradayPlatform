@@ -5,6 +5,8 @@
     [string]$RecorderRoot = "D:\Anubis\Recorder",
     [string]$Prefix = "m2-capture",
     [string]$Environment = "",
+    [string]$ExpectedAwsCliMsiSha256 = "",
+    [string]$ExpectedAwsCliExeSha256 = "",
     [string]$ExpectedAwsCliSha256 = "",
     [string]$AwsCliPath = "",
     [switch]$DryRun
@@ -36,6 +38,12 @@ function Get-Prop {
 function Get-Sha256Hex {
     param([string]$Path)
     return (Get-FileHash -Algorithm SHA256 -LiteralPath $Path).Hash.ToUpperInvariant()
+}
+
+function Normalize-Sha256OrEmpty {
+    param([string]$Value)
+    if ([string]::IsNullOrWhiteSpace($Value)) { return "" }
+    return $Value.Trim().ToUpperInvariant()
 }
 
 function Convert-HexSha256ToBase64 {
@@ -135,14 +143,21 @@ function New-UploadFileSpec {
 function Resolve-AwsCliPath {
     param([bool]$RequireAwsCli)
 
+    $effectiveAwsCliMsiSha256 = Normalize-Sha256OrEmpty $ExpectedAwsCliMsiSha256
+    $expectedAwsCliExeSha256Normalized = Normalize-Sha256OrEmpty $ExpectedAwsCliExeSha256
+    $legacyExpectedAwsCliSha256 = Normalize-Sha256OrEmpty $ExpectedAwsCliSha256
+    if ([string]::IsNullOrWhiteSpace($effectiveAwsCliMsiSha256) -and -not [string]::IsNullOrWhiteSpace($legacyExpectedAwsCliSha256)) {
+        $effectiveAwsCliMsiSha256 = $legacyExpectedAwsCliSha256
+    }
+
     if (-not [string]::IsNullOrWhiteSpace($AwsCliPath)) {
-        $prereq = & (Join-Path $PSScriptRoot "Test-AnubisAws1HostPrerequisites.ps1") -AwsCliPath $AwsCliPath -ExpectedAwsCliSha256 $ExpectedAwsCliSha256 -Json | ConvertFrom-Json
+        $prereq = & (Join-Path $PSScriptRoot "Test-AnubisAws1HostPrerequisites.ps1") -AwsCliPath $AwsCliPath -ExpectedAwsCliMsiSha256 $effectiveAwsCliMsiSha256 -ExpectedAwsCliExeSha256 $expectedAwsCliExeSha256Normalized -ExpectedAwsCliSha256 $legacyExpectedAwsCliSha256 -Json | ConvertFrom-Json
         if ($prereq.status -ne "PASS") { throw "host_prerequisites_failed:$($prereq | ConvertTo-Json -Compress)" }
         return [string]$prereq.aws_cli_path
     }
 
     try {
-        $prereq = & (Join-Path $PSScriptRoot "Test-AnubisAws1HostPrerequisites.ps1") -ExpectedAwsCliSha256 $ExpectedAwsCliSha256 -Json | ConvertFrom-Json
+        $prereq = & (Join-Path $PSScriptRoot "Test-AnubisAws1HostPrerequisites.ps1") -ExpectedAwsCliMsiSha256 $effectiveAwsCliMsiSha256 -ExpectedAwsCliExeSha256 $expectedAwsCliExeSha256Normalized -ExpectedAwsCliSha256 $legacyExpectedAwsCliSha256 -Json | ConvertFrom-Json
         if ($prereq.status -eq "PASS") { return [string]$prereq.aws_cli_path }
         if ($RequireAwsCli) { throw "host_prerequisites_failed:$($prereq | ConvertTo-Json -Compress)" }
     }
@@ -429,5 +444,4 @@ $blockedCount = @($blockedRuns).Count
     dry_run_no_put_object = [bool]$DryRun
     dry_run_no_marker_write = [bool]$DryRun
 } | ConvertTo-Json -Depth 12
-
 
