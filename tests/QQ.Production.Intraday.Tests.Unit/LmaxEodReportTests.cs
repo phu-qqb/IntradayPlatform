@@ -89,6 +89,27 @@ public sealed class LmaxEodReportTests
     }
 
     [Fact]
+    public async Task Individual_trades_allows_blank_trade_uti_from_lmax_portal()
+    {
+        var services = CreateServices();
+        AddBrokerAccount(services, "LMAX_SYNTH_ACCOUNT_A_LOCAL", "9900000001");
+        var path = WriteReport(services, LmaxReportType.IndividualTrades, "individual-blank-trade-uti.csv",
+        [
+            string.Join(",", LmaxEodHeaders.Individual),
+            "EX1,MTF1,30-04-2026 16:00:00.000,1,1.10000,30-04-2026,4001,EUR/USD,INST1,ORD1,,,30-04-2026 16:00:00.000,Market,LMAX,test-user,0,-1,9900000001,10000,-11000,",
+            "EX2,MTF2,30-04-2026 16:01:00.000,1,1.10000,30-04-2026,4001,EUR/USD,INST2,ORD2,,,30-04-2026 16:01:00.000,Market,LMAX,test-user,0,-1,9900000001,10000,-11000,"
+        ]);
+
+        var result = await services.Importer.ImportIndividualTradesAsync(path, ReportDate, "LMAX", "LMAX_SYNTH_ACCOUNT_A_LOCAL", CancellationToken.None);
+
+        Assert.Equal(LmaxReportImportStatus.Imported, result.Status);
+        Assert.Equal(0, result.BlockingIssueCount);
+        Assert.DoesNotContain(result.Issues, x => x.IssueType == LmaxReportValidationIssueType.DuplicateTradeUti);
+        Assert.Equal(2, services.State.LmaxIndividualTrades.Count);
+        Assert.All(services.State.LmaxIndividualTrades, x => Assert.True(string.IsNullOrWhiteSpace(x.TradeUti)));
+    }
+
+    [Fact]
     public async Task Known_disabled_for_trading_alias_imports_with_warning_only_and_does_not_change_trading_state()
     {
         var services = CreateServices();
