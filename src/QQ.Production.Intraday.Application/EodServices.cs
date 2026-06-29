@@ -329,7 +329,7 @@ public sealed class LmaxEodReportImportService(
             var executionId = row[0].Trim();
             var tradeUti = row[21].Trim();
             if (!executionIds.Add(executionId)) issues.Add(Issue(run.Id, LmaxReportValidationIssueType.DuplicateExecutionId, LmaxReportValidationSeverity.Blocking, $"Duplicate Execution ID '{executionId}'.", rowNumber, raw.ElementAtOrDefault(i)));
-            if (!utis.Add(tradeUti)) issues.Add(Issue(run.Id, LmaxReportValidationIssueType.DuplicateTradeUti, LmaxReportValidationSeverity.Blocking, $"Duplicate Trade UTI '{tradeUti}'.", rowNumber, raw.ElementAtOrDefault(i)));
+            if (!string.IsNullOrWhiteSpace(tradeUti) && !utis.Add(tradeUti)) issues.Add(Issue(run.Id, LmaxReportValidationIssueType.DuplicateTradeUti, LmaxReportValidationSeverity.Blocking, $"Duplicate Trade UTI '{tradeUti}'.", rowNumber, raw.ElementAtOrDefault(i)));
             var instrumentId = ResolveInstrument(state, row[7], row[6], run.Id, rowNumber, raw.ElementAtOrDefault(i), issues);
             ValidateAccount(account, row[18], run.Id, rowNumber, raw.ElementAtOrDefault(i), issues);
             var timestamp = ParseTimestamp(row[2], "dd-MM-yyyy HH:mm:ss.fff", LmaxReportValidationIssueType.InvalidTimestamp, run.Id, rowNumber, raw.ElementAtOrDefault(i), issues);
