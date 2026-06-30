@@ -179,6 +179,7 @@ public static class LmaxEodHeaders
     public static readonly string[] Individual = ["Execution ID", "Mtf Execution ID", "Timestamp", "Trade Quantity", "Trade Price", "Trade Date", "Instrument ID", "Symbol", "Instruction ID", "Order ID", "Stop Price", "Limit Price", "Order Placement Timestamp", "Type", "Remote Venue", "User Placing Order", "Total Profit Loss", "Total Commission", "Account Id", "Units Bought/Sold", "Notional Value", "Trade UTI"];
     public static readonly string[] Summary = ["Date & Time", "Instrument", "Type", "Currency", "Contracts", "Average Price", "Commission", "Notional Value", "LMAX Symbol", "User Placing Order", "Commission (full precision)", "Account Id"];
     public static readonly string[] Wallet = ["CCY", "Balance + Net Deposits", "Adjustments", "Inter Account Transfers", "Profit & Loss", "Commission", "Dividends", "Financing", "Wallet Balance", "Rate to Base CCY", "Account Id"];
+    public static readonly string[] OpenPositions = ["Instrument", "CCY", "Open Quantity", "Margin on Open Position", "Average Opening Price", "Closing Price", "Open Profit / Loss", "MTM Valuation Rate to Base CCY", "LMAX Symbol", "Account Id", "Position UTI"];
 }
 
 public static class LmaxEodImportClassifications
@@ -191,6 +192,16 @@ public static class LmaxEodImportClassifications
     public const string BlockedUnsupportedTimestampFormat = "BLOCKED_UNSUPPORTED_TIMESTAMP_FORMAT";
     public const string BlockedUnsupportedSymbol = "BLOCKED_UNSUPPORTED_SYMBOL";
     public const string RejectedByValidation = "REJECTED_BY_VALIDATION";
+    public const string AccountMetadataFromPortalSelection = "ACCOUNT_METADATA_FROM_PORTAL_SELECTION";
+    public const string AccountMetadataFromPdfSupportingEvidence = "ACCOUNT_METADATA_FROM_PDF_SUPPORTING_EVIDENCE";
+    public const string BlockedAmbiguousAccountMetadata = "BLOCKED_AMBIGUOUS_ACCOUNT_METADATA";
+    public const string BlockedAccountMismatch = "BLOCKED_ACCOUNT_MISMATCH";
+    public const string EodOpenPositionsCandidateEvidence = "EOD_OPEN_POSITIONS_CANDIDATE_EVIDENCE";
+    public const string OpenPositionsMarginRollupWarning = "OPEN_POSITIONS_MARGIN_ROLLUP_WARNING";
+    public const string OpenPositionsContractPending = "OPEN_POSITIONS_CONTRACT_PENDING";
+    public const string NotLiveBrokerStateAuthority = "NOT_LIVE_BROKER_STATE_AUTHORITY";
+    public const string NotPreTradeAuthority = "NOT_PRE_TRADE_AUTHORITY";
+    public const string NotOpenOrderAuthority = "NOT_OPEN_ORDER_AUTHORITY";
 }
 
 public static class LmaxEodReportStagingContract
@@ -223,6 +234,33 @@ public static class LmaxEodReportStagingContract
         return false;
     }
 
+    public static bool TryResolveBrokerAccountFromStagedPath(string filePath, string dataRoot, out string? brokerAccount, out string? blockReason)
+    {
+        brokerAccount = null;
+        blockReason = null;
+        var fullPath = Path.GetFullPath(filePath);
+        var root = Path.GetFullPath(dataRoot);
+        if (!fullPath.StartsWith(root, StringComparison.OrdinalIgnoreCase))
+        {
+            blockReason = LmaxEodImportClassifications.BlockedOutsideDataRoot;
+            return false;
+        }
+
+        var relative = Path.GetRelativePath(root, fullPath);
+        var segments = relative.Split([Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar], StringSplitOptions.RemoveEmptyEntries);
+        for (var i = 0; i < segments.Length - 1; i++)
+        {
+            if (segments[i].Equals("inbox", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrWhiteSpace(segments[i + 1]))
+            {
+                brokerAccount = segments[i + 1].Trim();
+                return true;
+            }
+        }
+
+        blockReason = LmaxEodImportClassifications.BlockedAmbiguousAccountMetadata;
+        return false;
+    }
+
     private static string FileName(LmaxReportType reportType)
         => reportType switch
         {
@@ -231,6 +269,161 @@ public static class LmaxEodReportStagingContract
             LmaxReportType.CurrencyWallets => "currency-wallets.csv",
             _ => "report-set.csv"
         };
+}
+
+public sealed record LmaxPortalAcquisitionMetadata(
+    string? SelectedAccountId,
+    string? StagingPathAccountId,
+    string? PdfAccountNumber);
+
+public sealed record LmaxPortalAccountMetadataResolution(
+    string Status,
+    string? AccountId,
+    bool Blocking,
+    bool AccountIdFromPortalSelection,
+    bool PdfSupportingEvidenceUsed,
+    string Message);
+
+public static class LmaxPortalAccountMetadataContract
+{
+    public static LmaxPortalAccountMetadataResolution ResolveAccountMetadata(
+        IReadOnlyDictionary<string, string> reportMetadata,
+        LmaxPortalAcquisitionMetadata acquisitionMetadata,
+        IEnumerable<string> approvedExternalAccountIds)
+    {
+        var approved = approvedExternalAccountIds
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Select(x => x.Trim())
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var selected = Normalize(acquisitionMetadata.SelectedAccountId);
+        var accountFromExactHeader = reportMetadata.TryGetValue("Account Id", out var exactAccountId) ? Normalize(exactAccountId) : null;
+        var accountId = selected ?? accountFromExactHeader;
+        if (accountId is null)
+        {
+            return Blocked(LmaxEodImportClassifications.BlockedAmbiguousAccountMetadata, null, "No selected portal account id or exact report Account Id column is available.");
+        }
+
+        var stagingAccount = Normalize(acquisitionMetadata.StagingPathAccountId);
+        if (stagingAccount is not null && !stagingAccount.Equals(accountId, StringComparison.OrdinalIgnoreCase))
+        {
+            return Blocked(LmaxEodImportClassifications.BlockedAccountMismatch, accountId, $"Selected/report account '{accountId}' does not match staging account '{stagingAccount}'.");
+        }
+
+        var pdfAccount = Normalize(acquisitionMetadata.PdfAccountNumber);
+        if (pdfAccount is not null && !pdfAccount.Equals(accountId, StringComparison.OrdinalIgnoreCase))
+        {
+            return Blocked(LmaxEodImportClassifications.BlockedAccountMismatch, accountId, $"Selected/report account '{accountId}' does not match PDF account evidence '{pdfAccount}'.");
+        }
+
+        if (!approved.Contains(accountId))
+        {
+            return Blocked(LmaxEodImportClassifications.QuarantineUnknownAccount, accountId, $"Account '{accountId}' has no approved mapping.");
+        }
+
+        var status = pdfAccount is null
+            ? LmaxEodImportClassifications.AccountMetadataFromPortalSelection
+            : LmaxEodImportClassifications.AccountMetadataFromPdfSupportingEvidence;
+        return new LmaxPortalAccountMetadataResolution(
+            status,
+            accountId,
+            Blocking: false,
+            AccountIdFromPortalSelection: selected is not null,
+            PdfSupportingEvidenceUsed: pdfAccount is not null,
+            pdfAccount is null
+                ? "Account id resolved from portal selection or exact report Account Id metadata."
+                : "Account id resolved from portal selection/report metadata and confirmed by PDF supporting evidence.");
+    }
+
+    private static LmaxPortalAccountMetadataResolution Blocked(string status, string? accountId, string message)
+        => new(status, accountId, Blocking: true, AccountIdFromPortalSelection: false, PdfSupportingEvidenceUsed: false, message);
+
+    private static string? Normalize(string? value)
+        => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+}
+
+public sealed record LmaxOpenPositionsClassificationResult(
+    string Status,
+    int RowCount,
+    bool IsEodPositionCandidateEvidence,
+    bool IsLiveBrokerStateAuthority,
+    bool IsPreTradeAuthority,
+    bool IsOpenOrderAuthority,
+    bool Blocking,
+    IReadOnlyList<string> Warnings,
+    string Message);
+
+public static class LmaxOpenPositionsEvidenceClassifier
+{
+    public static LmaxOpenPositionsClassificationResult Classify(
+        IReadOnlyList<string> lines,
+        decimal? accountSummaryMargin = null,
+        decimal tolerance = 0.01m)
+    {
+        if (lines.Count == 0)
+        {
+            return new LmaxOpenPositionsClassificationResult(
+                LmaxEodImportClassifications.RejectedByValidation,
+                0,
+                IsEodPositionCandidateEvidence: false,
+                IsLiveBrokerStateAuthority: false,
+                IsPreTradeAuthority: false,
+                IsOpenOrderAuthority: false,
+                Blocking: true,
+                [LmaxEodImportClassifications.OpenPositionsContractPending],
+                "Open positions report is empty.");
+        }
+
+        var header = SplitCsvLine(lines[0]);
+        if (!header.SequenceEqual(LmaxEodHeaders.OpenPositions, StringComparer.Ordinal))
+        {
+            return new LmaxOpenPositionsClassificationResult(
+                LmaxEodImportClassifications.RejectedByValidation,
+                0,
+                IsEodPositionCandidateEvidence: false,
+                IsLiveBrokerStateAuthority: false,
+                IsPreTradeAuthority: false,
+                IsOpenOrderAuthority: false,
+                Blocking: true,
+                [LmaxEodImportClassifications.OpenPositionsContractPending],
+                "Open positions header does not match the observed LMAX portal schema.");
+        }
+
+        var rows = lines.Skip(1).Where(x => !string.IsNullOrWhiteSpace(x)).Select(SplitCsvLine).ToList();
+        var warnings = new List<string>
+        {
+            LmaxEodImportClassifications.OpenPositionsContractPending,
+            LmaxEodImportClassifications.NotLiveBrokerStateAuthority,
+            LmaxEodImportClassifications.NotPreTradeAuthority,
+            LmaxEodImportClassifications.NotOpenOrderAuthority
+        };
+
+        var marginSum = rows
+            .Where(x => x.Length == LmaxEodHeaders.OpenPositions.Length)
+            .Select(x => TryDecimal(x[3]))
+            .Where(x => x.HasValue)
+            .Sum(x => x!.Value);
+        if (accountSummaryMargin.HasValue && Math.Abs(marginSum - accountSummaryMargin.Value) > tolerance)
+        {
+            warnings.Add(LmaxEodImportClassifications.OpenPositionsMarginRollupWarning);
+        }
+
+        return new LmaxOpenPositionsClassificationResult(
+            LmaxEodImportClassifications.EodOpenPositionsCandidateEvidence,
+            rows.Count,
+            IsEodPositionCandidateEvidence: rows.Count > 0,
+            IsLiveBrokerStateAuthority: false,
+            IsPreTradeAuthority: false,
+            IsOpenOrderAuthority: false,
+            Blocking: false,
+            warnings,
+            "Open positions report is EOD position candidate evidence only; it is not live broker-state, pre-trade, or open-order authority.");
+    }
+
+    private static string[] SplitCsvLine(string line)
+        => line.Split(',').Select(x => x.Trim()).ToArray();
+
+    private static decimal? TryDecimal(string value)
+        => decimal.TryParse(value.Trim(), NumberStyles.Any, CultureInfo.InvariantCulture, out var parsed) ? parsed : null;
 }
 public sealed class LmaxEodReportImportService(
     IIntradayRepository intradayRepository,

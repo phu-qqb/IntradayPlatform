@@ -632,6 +632,137 @@ public sealed class LmaxEodReportTests
         Assert.Equal(LmaxEodImportClassifications.BlockedUnsupportedSymbol, result.Message);
         Assert.Empty(services.State.LmaxTradeSummaries);
     }
+    [Fact]
+    public void Portal_account_metadata_uses_selected_account_and_ignores_amount_like_fields()
+    {
+        var resolution = LmaxPortalAccountMetadataContract.ResolveAccountMetadata(
+            new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["Account Value"] = "1234567890.10",
+                ["Margin on Open Position"] = "9876543210"
+            },
+            new LmaxPortalAcquisitionMetadata("9900000001", "9900000001", null),
+            ["9900000001"]);
+
+        Assert.Equal(LmaxEodImportClassifications.AccountMetadataFromPortalSelection, resolution.Status);
+        Assert.Equal("9900000001", resolution.AccountId);
+        Assert.False(resolution.Blocking);
+        Assert.True(resolution.AccountIdFromPortalSelection);
+    }
+
+    [Fact]
+    public void Portal_account_metadata_blocks_ambiguous_account_when_only_amount_like_fields_exist()
+    {
+        var resolution = LmaxPortalAccountMetadataContract.ResolveAccountMetadata(
+            new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["Account Value"] = "9900000001",
+                ["Open Profit / Loss"] = "42.0"
+            },
+            new LmaxPortalAcquisitionMetadata(null, null, null),
+            ["9900000001"]);
+
+        Assert.Equal(LmaxEodImportClassifications.BlockedAmbiguousAccountMetadata, resolution.Status);
+        Assert.Null(resolution.AccountId);
+        Assert.True(resolution.Blocking);
+    }
+
+    [Fact]
+    public void Portal_account_metadata_accepts_matching_pdf_supporting_evidence_and_blocks_mismatch()
+    {
+        var ok = LmaxPortalAccountMetadataContract.ResolveAccountMetadata(
+            new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
+            new LmaxPortalAcquisitionMetadata("9900000001", "9900000001", "9900000001"),
+            ["9900000001"]);
+        var mismatch = LmaxPortalAccountMetadataContract.ResolveAccountMetadata(
+            new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
+            new LmaxPortalAcquisitionMetadata("9900000001", "9900000001", "9900000002"),
+            ["9900000001", "9900000002"]);
+
+        Assert.Equal(LmaxEodImportClassifications.AccountMetadataFromPdfSupportingEvidence, ok.Status);
+        Assert.True(ok.PdfSupportingEvidenceUsed);
+        Assert.False(ok.Blocking);
+        Assert.Equal(LmaxEodImportClassifications.BlockedAccountMismatch, mismatch.Status);
+        Assert.True(mismatch.Blocking);
+    }
+
+    [Fact]
+    public void Portal_account_metadata_blocks_staging_mismatch_and_unknown_account()
+    {
+        var stagingMismatch = LmaxPortalAccountMetadataContract.ResolveAccountMetadata(
+            new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
+            new LmaxPortalAcquisitionMetadata("9900000001", "9900000002", null),
+            ["9900000001", "9900000002"]);
+        var unknown = LmaxPortalAccountMetadataContract.ResolveAccountMetadata(
+            new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) { ["Account Id"] = "9900009999" },
+            new LmaxPortalAcquisitionMetadata(null, null, null),
+            ["9900000001"]);
+
+        Assert.Equal(LmaxEodImportClassifications.BlockedAccountMismatch, stagingMismatch.Status);
+        Assert.True(stagingMismatch.Blocking);
+        Assert.Equal(LmaxEodImportClassifications.QuarantineUnknownAccount, unknown.Status);
+        Assert.True(unknown.Blocking);
+    }
+
+    [Fact]
+    public void Staging_contract_resolves_broker_account_from_controlled_inbox_path()
+    {
+        var services = CreateServices();
+        var staged = LmaxEodReportStagingContract.BuildInboxPath(services.Options.DataRoot, "9900000001", ReportDate, LmaxReportType.TradesSummary);
+        var missingInbox = Path.Combine(services.Options.DataRoot, "quarantine", "9900000001", "trades.csv");
+        var outside = Path.Combine(Path.GetTempPath(), "trades.csv");
+
+        Assert.True(LmaxEodReportStagingContract.TryResolveBrokerAccountFromStagedPath(staged, services.Options.DataRoot, out var brokerAccount, out var blockReason));
+        Assert.Equal("9900000001", brokerAccount);
+        Assert.Null(blockReason);
+        Assert.False(LmaxEodReportStagingContract.TryResolveBrokerAccountFromStagedPath(missingInbox, services.Options.DataRoot, out _, out blockReason));
+        Assert.Equal(LmaxEodImportClassifications.BlockedAmbiguousAccountMetadata, blockReason);
+        Assert.False(LmaxEodReportStagingContract.TryResolveBrokerAccountFromStagedPath(outside, services.Options.DataRoot, out _, out blockReason));
+        Assert.Equal(LmaxEodImportClassifications.BlockedOutsideDataRoot, blockReason);
+    }
+
+    [Fact]
+    public void Open_positions_report_is_candidate_eod_evidence_not_live_broker_state_authority()
+    {
+        var lines = new[]
+        {
+            string.Join(",", LmaxEodHeaders.OpenPositions),
+            "USD/JPY,JPY,1,16195,161.953,161.95,-30,0.0061747,USD/JPY,9900000001,"
+        };
+
+        var result = LmaxOpenPositionsEvidenceClassifier.Classify(lines, accountSummaryMargin: 16195m);
+
+        Assert.Equal(LmaxEodImportClassifications.EodOpenPositionsCandidateEvidence, result.Status);
+        Assert.Equal(1, result.RowCount);
+        Assert.True(result.IsEodPositionCandidateEvidence);
+        Assert.False(result.IsLiveBrokerStateAuthority);
+        Assert.False(result.IsPreTradeAuthority);
+        Assert.False(result.IsOpenOrderAuthority);
+        Assert.False(result.Blocking);
+        Assert.Contains(LmaxEodImportClassifications.OpenPositionsContractPending, result.Warnings);
+        Assert.Contains(LmaxEodImportClassifications.NotLiveBrokerStateAuthority, result.Warnings);
+        Assert.Contains(LmaxEodImportClassifications.NotPreTradeAuthority, result.Warnings);
+        Assert.Contains(LmaxEodImportClassifications.NotOpenOrderAuthority, result.Warnings);
+    }
+
+    [Fact]
+    public void Open_positions_margin_rollup_mismatch_is_warning_not_authority_upgrade()
+    {
+        var lines = new[]
+        {
+            string.Join(",", LmaxEodHeaders.OpenPositions),
+            "USD/JPY,JPY,1,16195,161.953,161.95,-30,0.0061747,USD/JPY,9900000001,"
+        };
+
+        var result = LmaxOpenPositionsEvidenceClassifier.Classify(lines, accountSummaryMargin: 10m);
+
+        Assert.Equal(LmaxEodImportClassifications.EodOpenPositionsCandidateEvidence, result.Status);
+        Assert.Contains(LmaxEodImportClassifications.OpenPositionsMarginRollupWarning, result.Warnings);
+        Assert.False(result.Blocking);
+        Assert.False(result.IsLiveBrokerStateAuthority);
+        Assert.False(result.IsPreTradeAuthority);
+        Assert.False(result.IsOpenOrderAuthority);
+    }
     private static void AddInternalFill(PlatformState state)
     {
         var instrument = state.Instruments.Single(x => x.Symbol == "EURUSD");
