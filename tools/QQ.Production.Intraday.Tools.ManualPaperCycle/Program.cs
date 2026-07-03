@@ -5,13 +5,14 @@ using QQ.Production.Intraday.Domain;
 using QQ.Production.Intraday.Domain.PmsEmsOmsFoundation;
 
 var producedAt = new DateTimeOffset(2026, 05, 20, 09, 00, 00, TimeSpan.Zero);
-var context = CreateContext(producedAt, args);
+var mig27bReadiness = Mig27BReadinessBindingLoader.Load(args);
+var context = CreateContext(producedAt, args, mig27bReadiness);
 var surface = new ManualPaperCycleCliSurface(
     new ManualPaperCycleRunnerContractService(new InMemoryManualPaperCycleRunnerContractRepository(), new FixedClock(producedAt)),
     CreateRunner(producedAt));
 var result = await surface.RunAsync(args, context, CancellationToken.None);
 
-await WriteSafeOutputAsync(result, CancellationToken.None);
+await WriteSafeOutputAsync(result, mig27bReadiness, CancellationToken.None);
 Console.WriteLine(result.CliStatus);
 return result.CliStatus is ManualPaperCycleCliStatus.CompletedNoExternal or ManualPaperCycleCliStatus.DuplicateReturned ? 0 : 1;
 
@@ -35,10 +36,10 @@ static ManualPaperCycleFixtureRunner CreateRunner(DateTimeOffset producedAt)
         new InMemoryManualPaperCycleRunResultRepository());
 }
 
-static ManualPaperCycleCliExecutionContext CreateContext(DateTimeOffset producedAt, string[] args)
+static ManualPaperCycleCliExecutionContext CreateContext(DateTimeOffset producedAt, string[] args, Mig27BReadinessBinding? mig27bReadiness)
 {
     var state = SeedData.Create(producedAt);
-    var rawQubesLines = ReadRawQubesLines(args);
+    var rawQubesLines = ReadRawQubesLines(args, mig27bReadiness);
     var normalizedSymbols = ResolveNormalizedSymbols(args, rawQubesLines, producedAt);
     EnsureInstruments(state, normalizedSymbols.Concat(["AUDUSD", "EURUSD", "GBPUSD"]));
     var idsBySymbol = state.Instruments
@@ -68,8 +69,13 @@ static ManualPaperCycleCliExecutionContext CreateContext(DateTimeOffset produced
         1);
 }
 
-static IReadOnlyList<string> ReadRawQubesLines(string[] args)
+static IReadOnlyList<string> ReadRawQubesLines(string[] args, Mig27BReadinessBinding? mig27bReadiness)
 {
+    if (mig27bReadiness is not null)
+    {
+        return mig27bReadiness.InternalPaperInputLines;
+    }
+
     var syntheticPmsFixturePath = GetOption(args, "--pms-synthetic-fixture-path");
     if (!string.IsNullOrWhiteSpace(syntheticPmsFixturePath) && File.Exists(syntheticPmsFixturePath))
     {
@@ -180,7 +186,7 @@ static bool Flag(string[] args, string option)
            parsed;
 }
 
-static async Task WriteSafeOutputAsync(ManualPaperCycleCliResult result, CancellationToken cancellationToken)
+static async Task WriteSafeOutputAsync(ManualPaperCycleCliResult result, Mig27BReadinessBinding? mig27bReadiness, CancellationToken cancellationToken)
 {
     var outputDirectory = result.ParsedRequest?.OutputArtifactsDirectory;
     if (string.IsNullOrWhiteSpace(outputDirectory))
@@ -214,13 +220,14 @@ static async Task WriteSafeOutputAsync(ManualPaperCycleCliResult result, Cancell
 
     if (result.CycleRunResult is not null)
     {
-        await WriteLineLevelArtifactsAsync(outputDirectory, result, cancellationToken);
+        await WriteLineLevelArtifactsAsync(outputDirectory, result, mig27bReadiness, cancellationToken);
     }
 }
 
 static async Task WriteLineLevelArtifactsAsync(
     string outputDirectory,
     ManualPaperCycleCliResult result,
+    Mig27BReadinessBinding? mig27bReadiness,
     CancellationToken cancellationToken)
 {
     var cycle = result.CycleRunResult!;
@@ -230,21 +237,14 @@ static async Task WriteLineLevelArtifactsAsync(
         .ToDictionary(x => x.Key, x => x.First(), StringComparer.OrdinalIgnoreCase);
     var normalizedBySymbol = cycle.CycleResult.QubesWeights.NormalizedWeights
         .ToDictionary(x => x.Symbol, StringComparer.OrdinalIgnoreCase);
+    var missingEvidence = mig27bReadiness is null ? MissingR009ReadinessEvidence() : Array.Empty<string>();
     var linePayloads = cycle.CycleResult.RebalanceIntents
         .OrderBy(x => x.Symbol, StringComparer.OrdinalIgnoreCase)
         .Select(intent =>
         {
             normalizedBySymbol.TryGetValue(intent.Symbol, out var normalized);
             var mapping = MapExecutionSymbol(intent.Symbol);
-            var missing = new List<string>
-            {
-                "MissingCanonicalTargetClose",
-                "MissingQuoteWindowReadinessBinding",
-                "MissingCloseBenchmarkReadinessBinding",
-                "MissingFeedQualityReadinessBinding",
-                "MissingRiskReview",
-                "MissingOperatorApproval"
-            };
+            var missing = missingEvidence;
 
             return new
             {
@@ -283,10 +283,11 @@ static async Task WriteLineLevelArtifactsAsync(
                 DeltaNotional = intent.DeltaNotional,
                 ArithmeticValid = intent.DeltaWeight == intent.TargetWeight - intent.CurrentWeight &&
                                   intent.DeltaNotional == intent.TargetNotional - intent.CurrentNotional,
-                CanonicalTargetCloseTimestamp = (DateTimeOffset?)null,
-                CanonicalSession = (object?)null,
-                CanonicalQuarterHourTimestampConfirmed = false,
-                RiskReviewId = (string?)null,
+                CanonicalTargetCloseTimestamp = mig27bReadiness?.TargetCloseUtc,
+                CanonicalSession = mig27bReadiness?.CanonicalSession,
+                CanonicalQuarterHourTimestampConfirmed = mig27bReadiness?.CanonicalQuarterHourTimestampConfirmed ?? false,
+                RiskReviewId = mig27bReadiness?.RiskReviewId,
+                OperatorApprovalId = mig27bReadiness?.OperatorApprovalId,
                 LotSizingId = (string?)null,
                 RebalanceIntentId = $"{cycle.Request.RequestedCycleRunId}:rebalance-intent:{intent.Symbol}",
                 PaperCandidateId = (string?)null,
@@ -303,8 +304,28 @@ static async Task WriteLineLevelArtifactsAsync(
                 NoRoute = true,
                 NoSubmission = true,
                 NoPaperLedgerCommit = true,
+                PmsInputContractPath = mig27bReadiness?.ContractPath,
+                PmsScope = mig27bReadiness?.PmsScope,
+                BrokerAccountId = mig27bReadiness?.BrokerAccountId,
+                ReportDate = mig27bReadiness?.ReportDate,
+                TargetCloseBindingStatus = mig27bReadiness?.TargetCloseBindingStatus,
+                ReadinessBindingStatus = mig27bReadiness?.ReadinessBindingStatus,
+                QuoteWindowReadiness = mig27bReadiness?.QuoteWindowReadiness,
+                CloseBenchmarkReadiness = mig27bReadiness?.CloseBenchmarkReadiness,
+                FeedQualityReadiness = mig27bReadiness?.FeedQualityReadiness,
+                ReadinessLiveClaim = mig27bReadiness?.ReadinessLiveClaim ?? false,
+                RiskApprovalDesignOnlyAccepted = mig27bReadiness?.RiskApprovalDesignOnlyAccepted ?? false,
+                OperatorApprovalDesignOnlyAccepted = mig27bReadiness?.OperatorApprovalDesignOnlyAccepted ?? false,
+                OrderEntryEnabled = false,
+                BrokerSendStatus = "DISABLED_NO_ORDER_ENTRY",
+                SecurityIdOnlyRowsNotConsumed = mig27bReadiness?.SecurityIdOnlyRowsNotConsumed ?? true,
+                SecurityIdOnlyExcludedRowCount = mig27bReadiness?.SecurityIdOnlyExcludedRowCount,
+                AcceptedSyntheticPmsSymbols = mig27bReadiness?.AcceptedSyntheticPmsSymbols ?? Array.Empty<string>(),
+                ExcludedSyntheticPmsSymbols = mig27bReadiness?.ExcludedSyntheticPmsSymbols ?? Array.Empty<Mig27BExcludedSyntheticPmsSymbol>(),
                 MissingEvidence = missing,
-                HoldReason = "Line emitted from ManualNoExternal no-external pipeline; canonical target close, readiness bindings, risk review, and operator approval are not present in the current CLI inputs."
+                HoldReason = mig27bReadiness is null
+                    ? "Line emitted from ManualNoExternal no-external pipeline; canonical target close, readiness bindings, risk review, and operator approval are not present in the current CLI inputs."
+                    : "Line emitted from ManualNoExternal no-external pipeline with validated MIG27B design-only readiness bindings; execution remains disabled."
             };
         })
         .ToArray();
@@ -316,7 +337,9 @@ static async Task WriteLineLevelArtifactsAsync(
         QubesRunId = cycle.Request.QubesRunId?.Value,
         SourceQubesFixturePath = sourceFixturePath,
         LineCount = linePayloads.Length,
-        PlanStatus = "PaperPlanPartiallyReadyMissingR009ReadinessBindings",
+        PlanStatus = mig27bReadiness is null
+            ? "PaperPlanPartiallyReadyMissingR009ReadinessBindings"
+            : "PaperPlanReadyDesignOnlyR009ReadinessBindingsNoOrder",
         DerivedFromQubesFixtureAndManualNoExternalPipeline = true,
         DirectCrossExecutionDisabled = true,
         USDPairNormalizedOnly = true,
@@ -333,15 +356,30 @@ static async Task WriteLineLevelArtifactsAsync(
         NoSubmission = true,
         NoPaperLedgerCommit = true,
         ExecutionAllowed = false,
-        MissingEvidence = new[]
-        {
-            "MissingCanonicalTargetClose",
-            "MissingQuoteWindowReadinessBinding",
-            "MissingCloseBenchmarkReadinessBinding",
-            "MissingFeedQualityReadinessBinding",
-            "MissingRiskReview",
-            "MissingOperatorApproval"
-        }
+        PmsInputContractPath = mig27bReadiness?.ContractPath,
+        PmsScope = mig27bReadiness?.PmsScope,
+        BrokerAccountId = mig27bReadiness?.BrokerAccountId,
+        ReportDate = mig27bReadiness?.ReportDate,
+        CanonicalTargetCloseTimestamp = mig27bReadiness?.TargetCloseUtc,
+        CanonicalSession = mig27bReadiness?.CanonicalSession,
+        CanonicalQuarterHourTimestampConfirmed = mig27bReadiness?.CanonicalQuarterHourTimestampConfirmed ?? false,
+        TargetCloseBindingStatus = mig27bReadiness?.TargetCloseBindingStatus,
+        ReadinessBindingStatus = mig27bReadiness?.ReadinessBindingStatus,
+        QuoteWindowReadiness = mig27bReadiness?.QuoteWindowReadiness,
+        CloseBenchmarkReadiness = mig27bReadiness?.CloseBenchmarkReadiness,
+        FeedQualityReadiness = mig27bReadiness?.FeedQualityReadiness,
+        ReadinessLiveClaim = mig27bReadiness?.ReadinessLiveClaim ?? false,
+        RiskReviewId = mig27bReadiness?.RiskReviewId,
+        OperatorApprovalId = mig27bReadiness?.OperatorApprovalId,
+        RiskApprovalDesignOnlyAccepted = mig27bReadiness?.RiskApprovalDesignOnlyAccepted ?? false,
+        OperatorApprovalDesignOnlyAccepted = mig27bReadiness?.OperatorApprovalDesignOnlyAccepted ?? false,
+        OrderEntryEnabled = false,
+        BrokerSendStatus = "DISABLED_NO_ORDER_ENTRY",
+        SecurityIdOnlyRowsNotConsumed = mig27bReadiness?.SecurityIdOnlyRowsNotConsumed ?? true,
+        SecurityIdOnlyExcludedRowCount = mig27bReadiness?.SecurityIdOnlyExcludedRowCount,
+        AcceptedSyntheticPmsSymbols = mig27bReadiness?.AcceptedSyntheticPmsSymbols ?? Array.Empty<string>(),
+        ExcludedSyntheticPmsSymbols = mig27bReadiness?.ExcludedSyntheticPmsSymbols ?? Array.Empty<Mig27BExcludedSyntheticPmsSymbol>(),
+        MissingEvidence = missingEvidence
     };
 
     var options = new JsonSerializerOptions { WriteIndented = true };
@@ -354,6 +392,17 @@ static async Task WriteLineLevelArtifactsAsync(
         JsonSerializer.Serialize(new { Lines = linePayloads }, options),
         cancellationToken);
 }
+
+static string[] MissingR009ReadinessEvidence()
+    =>
+    [
+        "MissingCanonicalTargetClose",
+        "MissingQuoteWindowReadinessBinding",
+        "MissingCloseBenchmarkReadinessBinding",
+        "MissingFeedQualityReadinessBinding",
+        "MissingRiskReview",
+        "MissingOperatorApproval"
+    ];
 
 static (string ExecutionTradableSymbol, string NormalizedPortfolioSymbol, bool RequiresInversion, string? SecurityId, string? SecurityIdSource) MapExecutionSymbol(string normalizedSymbol)
     => normalizedSymbol.ToUpperInvariant() switch

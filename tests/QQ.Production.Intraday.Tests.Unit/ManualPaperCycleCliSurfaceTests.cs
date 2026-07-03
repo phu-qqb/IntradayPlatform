@@ -555,6 +555,182 @@ public sealed class ManualPaperCycleCliSurfaceTests
         }
     }
 
+
+    [Fact]
+    public async Task Manual_no_external_tool_consumes_mig27b_pms_input_contract_directly()
+    {
+        var root = RepoRoot();
+        var runId = $"mig27f-readiness-binding-{Guid.NewGuid():N}";
+        var qubesRunId = $"mig27b-pms-contract-v3-{Guid.NewGuid():N}";
+        var output = Path.Combine(Path.GetTempPath(), $"manual-paper-cycle-mig27f-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(output);
+        var contractPath = await CreateMig27BContractAsync(output);
+
+        try
+        {
+            var result = await RunManualPaperCycleToolAsync(root, output, runId, qubesRunId, "--pms-input-contract-v3-path", contractPath);
+
+            Assert.True(result.ExitCode == 0, $"stdout={result.Stdout}; stderr={result.Stderr}");
+            var planPath = Path.Combine(output, "phase-pms-ems-oms-manual-noexternal-paper-execution-plan.json");
+            var linesPath = Path.Combine(output, "phase-pms-ems-oms-manual-noexternal-paper-execution-plan-lines.json");
+            Assert.True(File.Exists(planPath));
+            Assert.True(File.Exists(linesPath));
+
+            using var plan = JsonDocument.Parse(await File.ReadAllTextAsync(planPath));
+            var planRoot = plan.RootElement;
+            Assert.Equal("PaperPlanReadyDesignOnlyR009ReadinessBindingsNoOrder", planRoot.GetProperty("PlanStatus").GetString());
+            Assert.Equal("LMAX_TEST_EOD_ONLY", planRoot.GetProperty("PmsScope").GetString());
+            Assert.Equal("1754288005", planRoot.GetProperty("BrokerAccountId").GetString());
+            Assert.Equal("2026-06-30", planRoot.GetProperty("ReportDate").GetString());
+            Assert.Equal(new DateTimeOffset(2025, 12, 16, 21, 00, 00, TimeSpan.Zero), planRoot.GetProperty("CanonicalTargetCloseTimestamp").GetDateTimeOffset());
+            Assert.True(planRoot.GetProperty("CanonicalQuarterHourTimestampConfirmed").GetBoolean());
+            Assert.False(planRoot.GetProperty("ReadinessLiveClaim").GetBoolean());
+            Assert.True(planRoot.GetProperty("RiskApprovalDesignOnlyAccepted").GetBoolean());
+            Assert.True(planRoot.GetProperty("OperatorApprovalDesignOnlyAccepted").GetBoolean());
+            Assert.False(planRoot.GetProperty("ExecutionAllowed").GetBoolean());
+            Assert.True(planRoot.GetProperty("NotAnOrder").GetBoolean());
+            Assert.True(planRoot.GetProperty("NoBrokerRoute").GetBoolean());
+            Assert.True(planRoot.GetProperty("NoFixMessage").GetBoolean());
+            Assert.False(planRoot.GetProperty("OrderEntryEnabled").GetBoolean());
+            Assert.Equal("DISABLED_NO_ORDER_ENTRY", planRoot.GetProperty("BrokerSendStatus").GetString());
+            Assert.Empty(planRoot.GetProperty("MissingEvidence").EnumerateArray());
+            Assert.Contains("EURUSD", planRoot.GetProperty("AcceptedSyntheticPmsSymbols").EnumerateArray().Select(x => x.GetString()));
+            Assert.Contains(planRoot.GetProperty("ExcludedSyntheticPmsSymbols").EnumerateArray(), x =>
+                x.GetProperty("Symbol").GetString() == "AUDUSD" &&
+                x.GetProperty("Reason").GetString() == "SyntheticPmsFixtureAdapterCurrentlyAcceptsOnlyEURUSDInPaperGate");
+            Assert.True(planRoot.GetProperty("SecurityIdOnlyRowsNotConsumed").GetBoolean());
+            Assert.Equal(89, planRoot.GetProperty("SecurityIdOnlyExcludedRowCount").GetInt32());
+
+            using var lines = JsonDocument.Parse(await File.ReadAllTextAsync(linesPath));
+            var emitted = lines.RootElement.GetProperty("Lines").EnumerateArray().ToArray();
+            Assert.NotEmpty(emitted);
+            Assert.All(emitted, line =>
+            {
+                Assert.Equal(runId, line.GetProperty("CycleRunId").GetString());
+                Assert.Equal(qubesRunId, line.GetProperty("QubesRunId").GetString());
+                Assert.False(line.GetProperty("ExecutionAllowed").GetBoolean());
+                Assert.True(line.GetProperty("NotAnOrder").GetBoolean());
+                Assert.True(line.GetProperty("NoBrokerRoute").GetBoolean());
+                Assert.True(line.GetProperty("NoFixMessage").GetBoolean());
+                Assert.False(line.GetProperty("OrderEntryEnabled").GetBoolean());
+                Assert.Equal("DISABLED_NO_ORDER_ENTRY", line.GetProperty("BrokerSendStatus").GetString());
+                Assert.Empty(line.GetProperty("MissingEvidence").EnumerateArray());
+            });
+
+            var eurusd = emitted.Single(line => line.GetProperty("Symbol").GetString() == "EURUSD");
+            var audusd = emitted.Single(line => line.GetProperty("Symbol").GetString() == "AUDUSD");
+            Assert.Equal("SyntheticTarget", eurusd.GetProperty("PreviewLineReason").GetString());
+            Assert.Equal("PriorBaselineZeroTarget", audusd.GetProperty("PreviewLineReason").GetString());
+        }
+        finally
+        {
+            if (Directory.Exists(output))
+            {
+                Directory.Delete(output, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task Manual_no_external_tool_rejects_real_account_mig27b_contract()
+    {
+        var root = RepoRoot();
+        var output = Path.Combine(Path.GetTempPath(), $"manual-paper-cycle-mig27f-real-account-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(output);
+        var contractPath = await CreateMig27BContractAsync(output, brokerAccountId: "921640160");
+
+        try
+        {
+            var result = await RunManualPaperCycleToolAsync(root, output, $"mig27f-reject-real-{Guid.NewGuid():N}", $"mig27f-contract-{Guid.NewGuid():N}", "--pms-input-contract-v3-path", contractPath);
+
+            Assert.NotEqual(0, result.ExitCode);
+            Assert.Contains("forbidden real account 921640160", result.Stdout + result.Stderr, StringComparison.OrdinalIgnoreCase);
+        }
+        finally
+        {
+            if (Directory.Exists(output))
+            {
+                Directory.Delete(output, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task Manual_no_external_tool_rejects_enabled_order_entry_mig27b_contract()
+    {
+        var root = RepoRoot();
+        var output = Path.Combine(Path.GetTempPath(), $"manual-paper-cycle-mig27f-order-entry-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(output);
+        var contractPath = await CreateMig27BContractAsync(output, orderEntryEnabled: true);
+
+        try
+        {
+            var result = await RunManualPaperCycleToolAsync(root, output, $"mig27f-reject-order-entry-{Guid.NewGuid():N}", $"mig27f-contract-{Guid.NewGuid():N}", "--pms-input-contract-v3-path", contractPath);
+
+            Assert.NotEqual(0, result.ExitCode);
+            Assert.Contains("order_entry_enabled", result.Stdout + result.Stderr, StringComparison.OrdinalIgnoreCase);
+        }
+        finally
+        {
+            if (Directory.Exists(output))
+            {
+                Directory.Delete(output, recursive: true);
+            }
+        }
+    }
+
+    [Theory]
+    [InlineData("broker_send_status")]
+    [InlineData("accountapi")]
+    [InlineData("db_apply")]
+    [InlineData("databento")]
+    public async Task Manual_no_external_tool_rejects_unsafe_mig27b_safety_fields(string unsafeSafetyField)
+    {
+        var root = RepoRoot();
+        var output = Path.Combine(Path.GetTempPath(), $"manual-paper-cycle-mig27f-unsafe-{unsafeSafetyField}-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(output);
+        var contractPath = await CreateMig27BContractAsync(output, unsafeSafetyField: unsafeSafetyField);
+
+        try
+        {
+            var result = await RunManualPaperCycleToolAsync(root, output, $"mig27f-reject-unsafe-{Guid.NewGuid():N}", $"mig27f-contract-{Guid.NewGuid():N}", "--pms-input-contract-v3-path", contractPath);
+
+            Assert.NotEqual(0, result.ExitCode);
+            Assert.Contains(unsafeSafetyField, result.Stdout + result.Stderr, StringComparison.OrdinalIgnoreCase);
+        }
+        finally
+        {
+            if (Directory.Exists(output))
+            {
+                Directory.Delete(output, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task Manual_no_external_tool_rejects_missing_mig27b_readiness_reference()
+    {
+        var root = RepoRoot();
+        var output = Path.Combine(Path.GetTempPath(), $"manual-paper-cycle-mig27f-missing-readiness-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(output);
+        var contractPath = await CreateMig27BContractAsync(output, omitQuoteWindowReadiness: true);
+
+        try
+        {
+            var result = await RunManualPaperCycleToolAsync(root, output, $"mig27f-reject-missing-readiness-{Guid.NewGuid():N}", $"mig27f-contract-{Guid.NewGuid():N}", "--pms-input-contract-v3-path", contractPath);
+
+            Assert.NotEqual(0, result.ExitCode);
+            Assert.Contains("quote_window_readiness_v2", result.Stdout + result.Stderr, StringComparison.OrdinalIgnoreCase);
+        }
+        finally
+        {
+            if (Directory.Exists(output))
+            {
+                Directory.Delete(output, recursive: true);
+            }
+        }
+    }
+
     [Fact]
     public void Audusd_is_not_misclassified_as_failed()
     {
@@ -573,6 +749,217 @@ public sealed class ManualPaperCycleCliSurfaceTests
         Assert.Equal("4004", usdjpy.SecurityId);
         Assert.Equal("8", usdjpy.SecurityIdSource);
         Assert.Equal(ApprovedInstrumentValidationStatus.NotProvenNotFailed, usdjpy.ValidationStatus);
+    }
+
+
+    private static async Task<ManualPaperCycleProcessResult> RunManualPaperCycleToolAsync(
+        string root,
+        string output,
+        string runId,
+        string qubesRunId,
+        string inputOption,
+        string inputPath)
+    {
+        using var process = Process.Start(new ProcessStartInfo
+        {
+            FileName = "dotnet",
+            WorkingDirectory = root,
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true
+        }.AddArguments(
+            "run",
+            "--no-build",
+            "--no-restore",
+            "--project",
+            "tools/QQ.Production.Intraday.Tools.ManualPaperCycle/QQ.Production.Intraday.Tools.ManualPaperCycle.csproj",
+            "--",
+            "--mode",
+            "ManualNoExternal",
+            "--requested-cycle-run-id",
+            runId,
+            "--qubes-run-id",
+            qubesRunId,
+            inputOption,
+            inputPath,
+            "--prior-paper-ledger-state-id",
+            "paper-ledger-commit-r025-sample:paper-ledger-state",
+            "--prior-continuity-gate-id",
+            "cycle-r026-second-paper-baseline:paper-continuity-archive:paper-continuity-gate",
+            "--requested-by",
+            "operator-sanitized",
+            "--expected-cadence-minutes",
+            "15",
+            "--output-artifacts-dir",
+            output,
+            "--allow-synthetic-pms-fixture",
+            "true",
+            "--allow-not-qubes-economic-output-fixture",
+            "true",
+            "--no-order",
+            "true",
+            "--no-route",
+            "true",
+            "--no-fill",
+            "true",
+            "--no-broker",
+            "true",
+            "--no-fix",
+            "true",
+            "--no-executable-schedule",
+            "true",
+            "--no-live-state-mutation",
+            "true",
+            "--no-ledger-commit",
+            "true",
+            "--no-paper-ledger-commit",
+            "true")) ?? throw new InvalidOperationException("Manual paper cycle process could not start.");
+
+        var stdout = await process.StandardOutput.ReadToEndAsync();
+        var stderr = await process.StandardError.ReadToEndAsync();
+        await process.WaitForExitAsync();
+        return new ManualPaperCycleProcessResult(process.ExitCode, stdout, stderr);
+    }
+
+    private static async Task<string> CreateMig27BContractAsync(
+        string root,
+        string brokerAccountId = "1754288005",
+        bool orderEntryEnabled = false,
+        bool omitQuoteWindowReadiness = false,
+        string? unsafeSafetyField = null)
+    {
+        var fixturePath = Path.Combine(root, "manual_paper_cycle_test_fixture.json");
+        await File.WriteAllTextAsync(
+            fixturePath,
+            JsonSerializer.Serialize(
+                new
+                {
+                    gate = "MIG27A_TEST_ENV_PMS_CONTRACT_REPAIR_IDENTITY_BASELINE_READINESS_NO_ORDER",
+                    fixture_status = "READY_WITH_EXCLUSIONS_FOR_TEST_NO_ORDER_PREVIEW_INPUT_ONLY",
+                    pms_scope = "LMAX_TEST_EOD_ONLY",
+                    broker_account_id = brokerAccountId,
+                    report_date = "2026-06-30",
+                    consumed_row_count = 2,
+                    excluded_row_count = 89,
+                    consumed_rows = new[]
+                    {
+                        new
+                        {
+                            symbol = "AUDUSD",
+                            security_id = "59",
+                            weight = 0.02449610m,
+                            manual_paper_cycle_fixture_line = "AUDUSD Curncy;0.02449610",
+                            identity_status = "SYMBOL_BOUND"
+                        },
+                        new
+                        {
+                            symbol = "EURUSD",
+                            security_id = "66",
+                            weight = 0.01633020m,
+                            manual_paper_cycle_fixture_line = "EURUSD Curncy;0.01633020",
+                            identity_status = "SYMBOL_BOUND"
+                        }
+                    }
+                },
+                new JsonSerializerOptions { WriteIndented = true }));
+
+        var referenceFiles = new Dictionary<string, string>
+        {
+            ["target_close_binding_v2"] = Path.Combine(root, "target_close_binding_v2.json"),
+            ["quote_window_readiness_v2"] = Path.Combine(root, "quote_window_readiness_v2.json"),
+            ["close_benchmark_readiness_v2"] = Path.Combine(root, "close_benchmark_readiness_v2.json"),
+            ["feed_quality_readiness_v2"] = Path.Combine(root, "feed_quality_readiness_v2.json"),
+            ["risk_approval_design_only_v2"] = Path.Combine(root, "risk_approval_design_only_v2.json"),
+            ["operator_approval_design_only_v2"] = Path.Combine(root, "operator_approval_design_only_v2.json")
+        };
+        foreach (var reference in referenceFiles)
+        {
+            if (omitQuoteWindowReadiness && reference.Key == "quote_window_readiness_v2")
+            {
+                continue;
+            }
+
+            await File.WriteAllTextAsync(
+                reference.Value,
+                JsonSerializer.Serialize(
+                    new
+                    {
+                        gate = reference.Key,
+                        classification = "DESIGN_ONLY_PLACEHOLDER_ACCEPTED_FOR_NO_ORDER_PREVIEW",
+                        order_entry_enabled = false,
+                        broker_send_status = "DISABLED_NO_ORDER_ENTRY"
+                    },
+                    new JsonSerializerOptions { WriteIndented = true }));
+        }
+
+        var references = new Dictionary<string, string>
+        {
+            ["manual_paper_cycle_test_fixture"] = fixturePath
+        };
+        foreach (var reference in referenceFiles)
+        {
+            references[reference.Key] = reference.Value;
+        }
+
+        var contract = new
+        {
+            gate = "MIG27B_TARGET_CLOSE_BINDING_AND_READINESS_EVIDENCE_NO_ORDER",
+            contract_version = "mig27b.test-env.pms-input-contract.v3",
+            classification = "PMS_INPUT_CONTRACT_READY_FOR_WIRING_PR",
+            final_gate = "GO_MIG27B_TARGET_CLOSE_AND_READINESS_BOUND_READY_NO_ORDER",
+            ready_for_wiring_pr = true,
+            wiring_pr_scope = "MANUAL_PAPER_CYCLE_TEST_ENV_NO_ORDER_ONLY",
+            pms_handoff_execution_allowed = false,
+            pms_scope = "LMAX_TEST_EOD_ONLY",
+            broker_account_id = brokerAccountId,
+            report_date = "2026-06-30",
+            real_account_operational_use = false,
+            identity_mapping_decision = "IDENTITY_READY_WITH_EXCLUSIONS_FOR_TEST_PMS_PREVIEW",
+            identity_rows = new
+            {
+                security_id_rows = 91,
+                symbol_bound_rows = 2,
+                excluded_rows = 89,
+                consumed_rows = 2
+            },
+            manual_paper_cycle_fixture_status = "READY_WITH_EXCLUSIONS_FOR_TEST_NO_ORDER_PREVIEW_INPUT_ONLY",
+            target_close_binding_status = "READY_FOR_TEST_ENV_DESIGN_ONLY_PMS_PREVIEW",
+            target_close_utc = "2025-12-16T21:00:00Z",
+            target_close_binding_rule = "CEIL_TO_NEXT_15_MINUTE_BOUNDARY",
+            readiness = new
+            {
+                quote_window = "DESIGN_ONLY_PLACEHOLDER_ACCEPTED_FOR_NO_ORDER_PREVIEW",
+                close_benchmark = "DESIGN_ONLY_PLACEHOLDER_ACCEPTED_FOR_NO_ORDER_PREVIEW",
+                feed_quality = "DESIGN_ONLY_PLACEHOLDER_ACCEPTED_FOR_NO_ORDER_PREVIEW",
+                readiness_live_claim = false
+            },
+            approvals = new
+            {
+                risk = "DESIGN_ONLY_ACCEPTED_FOR_TEST_NO_ORDER_PREVIEW",
+                @operator = "DESIGN_ONLY_ACCEPTED_FOR_TEST_NO_ORDER_PREVIEW"
+            },
+            blockers = Array.Empty<string>(),
+            references,
+            safety = new
+            {
+                pms_handoff_execution = false,
+                broker_order_send = false,
+                fix_order_entry_logon = false,
+                order_entry = false,
+                accountapi = unsafeSafetyField == "accountapi",
+                db_apply = unsafeSafetyField == "db_apply",
+                databento = unsafeSafetyField == "databento",
+                lmax_portal_login = false,
+                report_download = false,
+                real_account_operational_use = false,
+                order_entry_enabled = orderEntryEnabled,
+                broker_send_status = unsafeSafetyField == "broker_send_status" ? "ENABLED_FOR_TEST" : "DISABLED_NO_ORDER_ENTRY"
+            }
+        };
+
+        var contractPath = Path.Combine(root, "pms_input_contract_v3.json");
+        await File.WriteAllTextAsync(contractPath, JsonSerializer.Serialize(contract, new JsonSerializerOptions { WriteIndented = true }));
+        return contractPath;
     }
 
     private static async Task<ManualPaperCycleCliResult> RunAsync(string[]? args = null)
@@ -906,6 +1293,8 @@ public sealed class ManualPaperCycleCliSurfaceTests
 
         return directory?.FullName ?? throw new InvalidOperationException("Repository root could not be found.");
     }
+
+    private sealed record ManualPaperCycleProcessResult(int ExitCode, string Stdout, string Stderr);
 
     private sealed record TestServices(
         ManualPaperCycleCliSurface Surface,
