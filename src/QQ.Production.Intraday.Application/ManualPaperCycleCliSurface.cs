@@ -185,13 +185,13 @@ public sealed class ManualPaperCycleCliSurface(
             "--mode",
             "--requested-cycle-run-id",
             "--qubes-run-id",
-            "--qubes-fixture-path or --qubes-batch-reference",
+            "--qubes-fixture-path, --qubes-batch-reference, or --pms-input-contract-v3-path",
             "--prior-paper-ledger-state-id",
             "--prior-continuity-gate-id",
             "--requested-by",
             "--expected-cadence-minutes",
             "--output-artifacts-dir",
-            "--qubes-fixture-path, --qubes-batch-reference, or --pms-synthetic-fixture-path",
+            "--qubes-fixture-path, --qubes-batch-reference, --pms-synthetic-fixture-path, or --pms-input-contract-v3-path",
             "--allow-synthetic-pms-fixture true",
             "--allow-not-qubes-economic-output-fixture true",
             "--no-order true",
@@ -348,7 +348,7 @@ public sealed class ManualPaperCycleCliSurface(
             HasValue(options, "--mode") &&
             HasValue(options, "--requested-cycle-run-id") &&
             HasValue(options, "--qubes-run-id") &&
-            (HasValue(options, "--qubes-fixture-path") || HasValue(options, "--qubes-batch-reference") || HasValue(options, "--pms-synthetic-fixture-path")) &&
+            (HasValue(options, "--qubes-fixture-path") || HasValue(options, "--qubes-batch-reference") || HasValue(options, "--pms-synthetic-fixture-path") || HasValue(options, "--pms-input-contract-v3-path")) &&
             HasValue(options, "--prior-paper-ledger-state-id") &&
             HasValue(options, "--prior-continuity-gate-id") &&
             HasValue(options, "--requested-by") &&
@@ -403,7 +403,7 @@ public sealed class ManualPaperCycleCliSurface(
             options["--requested-by"],
             DateTimeOffset.UtcNow,
             cadence,
-            options.GetValueOrDefault("--qubes-fixture-path") ?? options.GetValueOrDefault("--pms-synthetic-fixture-path"),
+            options.GetValueOrDefault("--qubes-fixture-path") ?? options.GetValueOrDefault("--pms-synthetic-fixture-path") ?? options.GetValueOrDefault("--pms-input-contract-v3-path"),
             options.GetValueOrDefault("--qubes-batch-reference"),
             baselineReference,
             new PaperLedgerStateId(options["--prior-paper-ledger-state-id"]),
