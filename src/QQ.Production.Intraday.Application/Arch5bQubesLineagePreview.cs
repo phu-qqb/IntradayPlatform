@@ -440,20 +440,47 @@ public sealed class Arch5bQubesLineagePreviewService
         Arch5bSessionLineageContractV1 contract,
         Arch5bCanonicalPreviewInputs? canonicalInputs = null)
     {
+        if (canonicalInputs is not null)
+        {
+            ValidateCanonicalInputs(contract.Runs, canonicalInputs);
+        }
+
+        return BuildCore(contract, _ => canonicalInputs);
+    }
+
+    public Arch5bSessionLineagePreview Build(
+        Arch5bSessionLineageContractV1 contract,
+        IReadOnlyDictionary<string, Arch5bCanonicalPreviewInputs> canonicalInputsByStrategy)
+    {
+        ArgumentNullException.ThrowIfNull(canonicalInputsByStrategy);
+        var expectedStrategies = contract.Runs.Select(run => run.StrategyId).OrderBy(value => value, StringComparer.Ordinal).ToArray();
+        var suppliedStrategies = canonicalInputsByStrategy.Keys.OrderBy(value => value, StringComparer.Ordinal).ToArray();
+        if (!expectedStrategies.SequenceEqual(suppliedStrategies, StringComparer.Ordinal))
+        {
+            throw new InvalidDataException("CANONICAL_RUN_INPUT_SET_MISMATCH");
+        }
+
+        foreach (var run in contract.Runs)
+        {
+            ValidateCanonicalInputs([run], canonicalInputsByStrategy[run.StrategyId]);
+        }
+
+        return BuildCore(contract, run => canonicalInputsByStrategy[run.StrategyId]);
+    }
+
+    private static Arch5bSessionLineagePreview BuildCore(
+        Arch5bSessionLineageContractV1 contract,
+        Func<Arch5bRunLineageContractV1, Arch5bCanonicalPreviewInputs?> resolveCanonicalInputs)
+    {
         var validation = new Arch5bLineageContractValidator().Validate(contract);
         if (!validation.IsValid)
         {
             throw new InvalidDataException(string.Join(";", validation.Issues));
         }
 
-        if (canonicalInputs is not null)
-        {
-            ValidateCanonicalInputs(contract, canonicalInputs);
-        }
-
         var runPreviews = contract.Runs
             .OrderBy(x => x.StrategyId, StringComparer.Ordinal)
-            .Select(run => BuildRun(contract, run, canonicalInputs))
+            .Select(run => BuildRun(contract, run, resolveCanonicalInputs(run)))
             .ToArray();
 
         var sessionHash = Arch5bHashing.HashCanonical(new
@@ -771,7 +798,7 @@ public sealed class Arch5bQubesLineagePreviewService
             NoPaperLedgerCommit: true);
     }
 
-    private static void ValidateCanonicalInputs(Arch5bSessionLineageContractV1 contract, Arch5bCanonicalPreviewInputs inputs)
+    private static void ValidateCanonicalInputs(IEnumerable<Arch5bRunLineageContractV1> runs, Arch5bCanonicalPreviewInputs inputs)
     {
         if (inputs.AccountId != Arch5bLineageContractVersions.TestAccountId ||
             inputs.AccountScope != Arch5bLineageContractVersions.TestAccountScope ||
@@ -784,7 +811,7 @@ public sealed class Arch5bQubesLineagePreviewService
         {
             throw new InvalidDataException("CANONICAL_ACCOUNT_SNAPSHOT_INVALID");
         }
-        foreach (var run in contract.Runs)
+        foreach (var run in runs)
         {
             if (run.MarketDataSnapshotId is not null && run.MarketDataSnapshotId != inputs.MarketDataSnapshotId.Value.ToString("D"))
             {

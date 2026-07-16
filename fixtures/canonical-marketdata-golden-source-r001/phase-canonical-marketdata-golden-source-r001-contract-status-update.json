@@ -1,0 +1,7 @@
+{
+  "phase": "CANONICAL-MARKETDATA-GOLDEN-SOURCE-R001",
+  "contractStatuses": [
+    { "contract": "accounting-attribution.v1", "status": "BLOCKED" },
+    { "contract": "production-readiness.v1", "status": "BLOCKED" }
+  ]
+}

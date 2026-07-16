@@ -1,0 +1,23 @@
+{
+  "phase": "CANONICAL-MARKETDATA-GOLDEN-SOURCE-R001",
+  "coverage": [
+    {
+      "symbol": "AUDUSD",
+      "classification": "NEAREST_BEFORE_CLOSE_PRICE_PRESENT",
+      "rowCountInWindow": 1194,
+      "exactCloseRows": 0
+    },
+    {
+      "symbol": "EURUSD",
+      "classification": "NEAREST_BEFORE_CLOSE_PRICE_PRESENT",
+      "rowCountInWindow": 1000,
+      "exactCloseRows": 0
+    },
+    {
+      "symbol": "GBPUSD",
+      "classification": "NEAREST_BEFORE_CLOSE_PRICE_PRESENT",
+      "rowCountInWindow": 1189,
+      "exactCloseRows": 0
+    }
+  ]
+}
