@@ -184,8 +184,7 @@ public sealed class CanonicalMarketDataGoldenSourceTests
             "..",
             "..",
             "..",
-            "artifacts",
-            "readiness",
+            "fixtures",
             "canonical-marketdata-golden-source-r001",
             fileName);
 

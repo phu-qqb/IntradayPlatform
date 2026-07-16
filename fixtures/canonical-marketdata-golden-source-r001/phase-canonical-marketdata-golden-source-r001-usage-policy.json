@@ -1,0 +1,7 @@
+{
+  "phase": "CANONICAL-MARKETDATA-GOLDEN-SOURCE-R001",
+  "canUseForNetPnl": false,
+  "canUseForAccountingPnl": false,
+  "canUseForLedgerCommit": false,
+  "canUseForProductionLive": false
+}

@@ -1,0 +1,17 @@
+{
+  "phase": "CANONICAL-MARKETDATA-GOLDEN-SOURCE-R001",
+  "candidates": [
+    {
+      "candidateId": "polygon-offline-bbo-aud-eur-gbp-usd-20251217T020000Z",
+      "classification": "TRUE_MARKETDATA_SOURCE_CANDIDATE",
+      "containsMarketPrices": true,
+      "containsWeights": false
+    },
+    {
+      "candidateId": "r005-sandbox-qubes-prototype-output",
+      "classification": "OUTPUT_WEIGHTS_ONLY",
+      "containsMarketPrices": false,
+      "containsWeights": true
+    }
+  ]
+}
