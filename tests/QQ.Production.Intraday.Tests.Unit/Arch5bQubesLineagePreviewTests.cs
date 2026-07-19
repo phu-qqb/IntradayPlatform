@@ -295,6 +295,146 @@ public sealed class Arch5bQubesLineagePreviewTests
     }
 
     [Fact]
+    public void Contract_v2_accepts_exact_historical_diagnostic_flip()
+    {
+        var contract = WithR083V2(ValidContract());
+        var validation = new Arch5bLineageContractValidator().Validate(contract);
+
+        Assert.True(validation.IsValid, string.Join(";", validation.Issues));
+        Assert.All(contract.Runs, run =>
+        {
+            Assert.Equal(1, run.FullMatrixRawSignFlipCount);
+            Assert.Equal(0, run.DecisionSliceSignFlipCount);
+            Assert.Equal(1, run.DiagnosticOnlyHistoricalFlipCount);
+        });
+    }
+
+    [Fact]
+    public void Contract_v2_round_trips_all_decision_scope_fields_with_deterministic_json()
+    {
+        var contract = WithR083V2(ValidContract());
+        var options = new JsonSerializerOptions
+        {
+            PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower
+        };
+
+        var firstJson = JsonSerializer.Serialize(contract, options);
+        var roundTripped = JsonSerializer.Deserialize<Arch5bSessionLineageContractV1>(firstJson, options);
+        var secondJson = JsonSerializer.Serialize(roundTripped, options);
+
+        Assert.NotNull(roundTripped);
+        Assert.Equal(firstJson, secondJson);
+        Assert.All(roundTripped.Runs, run =>
+        {
+            Assert.Equal(Arch5bLineageContractVersions.R083DecisionEffectiveScopeV2, run.R083ContractVersion);
+            Assert.Equal(Arch5bLineageContractVersions.R083DecisionSliceRule, run.R083DecisionSliceSelectionRule);
+            Assert.Equal(1, run.FullMatrixRawSignFlipCount);
+            Assert.Equal(0, run.FullMatrixMaterialDifferenceCount);
+            Assert.Equal(0, run.DecisionSliceSignFlipCount);
+            Assert.Equal(0, run.DecisionSliceMaterialDifferenceCount);
+            Assert.Equal(1, run.DiagnosticOnlyHistoricalFlipCount);
+        });
+        var validation = new Arch5bLineageContractValidator().Validate(roundTripped);
+        Assert.True(validation.IsValid, string.Join(";", validation.Issues));
+    }
+
+    [Theory]
+    [InlineData("target-close-flip", "R083_DECISION_SLICE_SIGN_FLIP_NONZERO")]
+    [InlineData("historical-material", "R083_FULL_MATRIX_MATERIAL_DIFFERENCE_NONZERO")]
+    [InlineData("alias-mismatch", "R083_SIGN_FLIP_ALIAS_MISMATCH")]
+    [InlineData("counter-mismatch", "R083_SIGN_FLIP_COUNTERS_INCONSISTENT")]
+    [InlineData("selection-rule", "R083_DECISION_SLICE_SELECTION_RULE_INVALID")]
+    [InlineData("target-close-source", "R083_TARGET_CLOSE_SOURCE_MISMATCH")]
+    [InlineData("unknown-version", "R083_CONTRACT_VERSION_UNKNOWN")]
+    public void Contract_v2_fail_closed_matrix_rejects_unsafe_scope(string mutation, string expectedIssue)
+    {
+        var contract = WithR083V2(ValidContract());
+        var runs = contract.Runs.ToArray();
+        runs[0] = mutation switch
+        {
+            "target-close-flip" => runs[0] with
+            {
+                DecisionSliceSignFlipCount = 1,
+                DiagnosticOnlyHistoricalFlipCount = 0
+            },
+            "historical-material" => runs[0] with
+            {
+                MaterialDifferenceCount = 1,
+                FullMatrixMaterialDifferenceCount = 1
+            },
+            "alias-mismatch" => runs[0] with { SignFlipCount = 0 },
+            "counter-mismatch" => runs[0] with { DiagnosticOnlyHistoricalFlipCount = 0 },
+            "selection-rule" => runs[0] with { R083DecisionSliceSelectionRule = "UNKNOWN" },
+            "target-close-source" => runs[0] with { TargetCloseSourceValue = "202606111914" },
+            "unknown-version" => runs[0] with { R083ContractVersion = "r083_unknown_v99" },
+            _ => throw new ArgumentOutOfRangeException(nameof(mutation))
+        };
+        contract = contract with { Runs = runs };
+
+        var validation = new Arch5bLineageContractValidator().Validate(contract);
+
+        Assert.False(validation.IsValid);
+        Assert.Contains(expectedIssue, validation.Issues);
+        Assert.Throws<InvalidDataException>(() => new Arch5bQubesLineagePreviewService().Build(contract));
+    }
+
+    [Fact]
+    public void Historical_v2_diagnostic_counts_do_not_change_any_downstream_decision_output()
+    {
+        var canonical = CanonicalInputs();
+        var baselineContract = WithCanonicalMarketData(ValidContract(), canonical.MarketDataSnapshotId);
+        var v2Contract = WithCanonicalMarketData(WithR083V2(ValidContract()), canonical.MarketDataSnapshotId);
+        var baseline = new Arch5bQubesLineagePreviewService().Build(baselineContract, canonical);
+        var v2 = new Arch5bQubesLineagePreviewService().Build(v2Contract, canonical);
+
+        Assert.Equal(
+            Arch5bHashing.HashCanonical(baseline.Runs.Select(run => new
+            {
+                run.TargetWeights,
+                run.TargetPositions,
+                run.DriftSnapshot,
+                run.ManualPaperCycle,
+                run.R009
+            })),
+            Arch5bHashing.HashCanonical(v2.Runs.Select(run => new
+            {
+                run.TargetWeights,
+                run.TargetPositions,
+                run.DriftSnapshot,
+                run.ManualPaperCycle,
+                run.R009
+            })));
+        Assert.All(v2.Runs, run =>
+        {
+            Assert.Single(run.TargetWeights);
+            Assert.Equal(Arch5bComputationStatus.COMPUTED_CANONICAL_PREVIEW, run.TargetPositions.ComputationStatus);
+            Assert.Equal(Arch5bComputationStatus.COMPUTED_CANONICAL_PREVIEW, run.DriftSnapshot.ComputationStatus);
+            Assert.False(run.DriftSnapshot.ProducedTradeIntent);
+            Assert.Equal("CompletedNoExternal", run.R009.Status);
+        });
+    }
+
+    [Fact]
+    public void Same_near_zero_flip_at_target_close_changes_effective_position_sign()
+    {
+        var canonical = CanonicalInputs();
+        var reference = WithTargetCloseWeight(
+            WithCanonicalMarketData(WithR083V2(ValidContract(), fullFlips: 0), canonical.MarketDataSnapshotId),
+            "-6.26084e-08",
+            -6.26084e-08);
+        var candidate = WithTargetCloseWeight(
+            WithCanonicalMarketData(WithR083V2(ValidContract(), fullFlips: 0), canonical.MarketDataSnapshotId),
+            "7.80437e-09",
+            7.80437e-09);
+
+        var referencePreview = new Arch5bQubesLineagePreviewService().Build(reference, canonical);
+        var candidatePreview = new Arch5bQubesLineagePreviewService().Build(candidate, canonical);
+
+        Assert.All(referencePreview.Runs, run => Assert.True(Assert.Single(run.TargetPositions.Positions).TargetVenueQuantity < 0));
+        Assert.All(candidatePreview.Runs, run => Assert.True(Assert.Single(run.TargetPositions.Positions).TargetVenueQuantity > 0));
+    }
+
+    [Fact]
     public void Evidence_loader_rejects_missing_root_and_invalid_expected_zip_hash()
     {
         Assert.Equal("ARCH5A_EVIDENCE_ROOT_MISSING", Assert.Throws<InvalidDataException>(() =>
@@ -422,6 +562,44 @@ public sealed class Arch5bQubesLineagePreviewTests
             false,
             runs);
     }
+
+    private static Arch5bSessionLineageContractV1 WithR083V2(
+        Arch5bSessionLineageContractV1 value,
+        int fullFlips = 1)
+        => value with
+        {
+            Runs = value.Runs.Select(run => run with
+            {
+                R083ContractVersion = Arch5bLineageContractVersions.R083DecisionEffectiveScopeV2,
+                R083DecisionSliceSelectionRule = Arch5bLineageContractVersions.R083DecisionSliceRule,
+                SignFlipCount = fullFlips,
+                MaterialDifferenceCount = 0,
+                FullMatrixRawSignFlipCount = fullFlips,
+                FullMatrixMaterialDifferenceCount = 0,
+                DecisionSliceSignFlipCount = 0,
+                DecisionSliceMaterialDifferenceCount = 0,
+                DiagnosticOnlyHistoricalFlipCount = fullFlips
+            }).ToArray()
+        };
+
+    private static Arch5bSessionLineageContractV1 WithTargetCloseWeight(
+        Arch5bSessionLineageContractV1 value,
+        string exactWeight,
+        double weight)
+        => value with
+        {
+            Runs = value.Runs.Select(run => run with
+            {
+                TargetCloseWeights =
+                [
+                    run.TargetCloseWeights[0] with
+                    {
+                        ExactWeightText = exactWeight,
+                        Weight = weight
+                    }
+                ]
+            }).ToArray()
+        };
 
     private static Arch5bSessionLineageContractV1 WithCanonicalMarketData(Arch5bSessionLineageContractV1 value, MarketDataSnapshotId snapshotId)
         => value with
