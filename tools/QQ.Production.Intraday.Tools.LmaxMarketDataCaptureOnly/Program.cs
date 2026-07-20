@@ -17,11 +17,14 @@ public static class LmaxMarketDataCaptureOnlyPreflightCommand
         var configJson=await File.ReadAllTextAsync(configPath,cancellationToken).ConfigureAwait(false);
         using var configDocument=JsonDocument.Parse(configJson);
         var config=JsonSerializer.Deserialize<LmaxMarketDataOnlyPreflightConfig>(configJson,CanonicalRecorderV2Constants.JsonOptions)??throw new InvalidOperationException("config_deserialize_failed");
+        var configDirectory=Path.GetDirectoryName(Path.GetFullPath(configPath))??throw new InvalidOperationException("config_directory_not_found");
+        var packagedCatalogPath=Path.Combine(configDirectory,LmaxMarketDataOnlyApprovedInstrumentCatalog.PackagedCatalogFileName);
+        var packagedCatalog=File.Exists(packagedCatalogPath)?LmaxMarketDataOnlyApprovedInstrumentCatalog.LoadFromConfigDirectory(configDirectory):null;
         if(string.Equals(command,"preflight",StringComparison.OrdinalIgnoreCase))
         {
             if(!parsed.TryGetValue("output",out var outputRoot)){Console.Error.WriteLine("missing --output");return 2;}
             Directory.CreateDirectory(outputRoot);
-            var report=LmaxMarketDataOnlyPreflight.Validate(config,parsed.ContainsKey("network-disabled"),parsed.ContainsKey("no-order-entry"),parsed.ContainsKey("no-account-api"),parsed.ContainsKey("no-db"),outputRootMustBeEmpty:false,configDocument:configDocument.RootElement);
+            var report=LmaxMarketDataOnlyPreflight.Validate(config,parsed.ContainsKey("network-disabled"),parsed.ContainsKey("no-order-entry"),parsed.ContainsKey("no-account-api"),parsed.ContainsKey("no-db"),outputRootMustBeEmpty:false,configDocument:configDocument.RootElement,approvedInstruments:packagedCatalog?.Instruments.Select(x=>x.Symbol).ToArray());
             await WriteCommonReports(outputRoot,config,report,cancellationToken).ConfigureAwait(false);
             await File.WriteAllTextAsync(Path.Combine(outputRoot,"m2c1b_operator_command.txt"),OperatorCommand(configPath),cancellationToken).ConfigureAwait(false);
             Console.WriteLine(report.Status);return report.Issues.Count==0?0:1;
@@ -29,13 +32,12 @@ public static class LmaxMarketDataCaptureOnlyPreflightCommand
         if(!string.Equals(command,"capture",StringComparison.OrdinalIgnoreCase)){Usage();return 2;}
         if(parsed.ContainsKey("operator-approved-market-data-fix-logon")==false||parsed.ContainsKey("no-order-entry")==false||parsed.ContainsKey("no-account-api")==false||parsed.ContainsKey("no-db")==false){Console.Error.WriteLine("capture_requires_operator_and_no_mutation_flags");return 2;}
         if(LmaxMarketDataOnlyConfigHash.Matches(config)==false){Console.Error.WriteLine("config_hash_mismatch");return 1;}
-        var preflight=LmaxMarketDataOnlyPreflight.Validate(config,networkDisabled:true,noOrderEntry:true,noAccountApi:true,noDb:true,outputRootMustBeEmpty:false,configDocument:configDocument.RootElement);
+        if(packagedCatalog is null){Console.Error.WriteLine("market_data_only_packaged_instrument_catalog_not_found");return 1;}
+        var preflight=LmaxMarketDataOnlyPreflight.Validate(config,networkDisabled:true,noOrderEntry:true,noAccountApi:true,noDb:true,outputRootMustBeEmpty:false,configDocument:configDocument.RootElement,approvedInstruments:packagedCatalog.Instruments.Select(x=>x.Symbol).ToArray());
         Directory.CreateDirectory(config.OutputRoot);
         await WriteCommonReports(config.OutputRoot,config,preflight,cancellationToken).ConfigureAwait(false);
         if(preflight.Issues.Count>0){Console.WriteLine("NO_GO_M2C1B");return 1;}
-        var configDirectory=Path.GetDirectoryName(Path.GetFullPath(configPath))??throw new InvalidOperationException("config_directory_not_found");
-        var catalog=LmaxMarketDataOnlyApprovedInstrumentCatalog.LoadFromConfigDirectory(configDirectory);
-        var runner=new LmaxMarketDataOnlyCaptureRunner(catalog);
+        var runner=new LmaxMarketDataOnlyCaptureRunner(packagedCatalog);
         if(parsed.TryGetValue("synthetic-replay",out var replayPath))
         {
             var rows=(await File.ReadAllLinesAsync(replayPath,cancellationToken)).Where(x=>!string.IsNullOrWhiteSpace(x)).ToArray();

@@ -536,6 +536,71 @@ public sealed class M2C1ALmaxMarketDataOnlyTests
     }
 
     [Fact]
+    public void T35a_preflight_accepts_exact_multi_instrument_catalog_scope()
+    {
+        var config = ValidConfig() with { Instruments = ["EURUSD", "GBPUSD"] };
+
+        var report = LmaxMarketDataOnlyPreflight.Validate(
+            config,
+            networkDisabled: true,
+            noOrderEntry: true,
+            noAccountApi: true,
+            noDb: true,
+            outputRootMustBeEmpty: false,
+            approvedInstruments: ["GBPUSD", "EURUSD"]);
+
+        Assert.Equal("GO_M2C1B_PREFLIGHT_READY", report.Status);
+        Assert.Empty(report.Issues);
+    }
+
+    [Fact]
+    public void T35b_preflight_rejects_duplicate_subscription_even_when_catalog_approved()
+    {
+        var config = ValidConfig() with { Instruments = ["EURUSD", "EURUSD"] };
+
+        var report = LmaxMarketDataOnlyPreflight.Validate(
+            config,
+            networkDisabled: true,
+            noOrderEntry: true,
+            noAccountApi: true,
+            noDb: true,
+            outputRootMustBeEmpty: false,
+            approvedInstruments: ["EURUSD"]);
+
+        Assert.Contains("duplicate_instrument_subscription", report.Issues);
+    }
+
+    [Fact]
+    public void T35c_arch6a_catalog_loads_only_the_hash_pinned_49_instrument_set()
+    {
+        var path = Path.Combine(FindRepoRoot(), "deploy", "aws", "anubis-shadow", "config", LmaxMarketDataOnlyApprovedInstrumentCatalog.PackagedCatalogFileName);
+
+        var catalog = LmaxMarketDataOnlyApprovedInstrumentCatalog.LoadFromPackagedCatalog(path);
+
+        Assert.Equal(49, catalog.Instruments.Count);
+        Assert.Equal("4001", catalog.ResolveApproved("EURUSD").SecurityId);
+        Assert.Equal("100501", catalog.ResolveApproved("USDHUF").SecurityId);
+    }
+
+    [Fact]
+    public async Task T35d_arch6a_catalog_rejects_a_changed_mapping_sha()
+    {
+        var source = Path.Combine(FindRepoRoot(), "deploy", "aws", "anubis-shadow", "config", LmaxMarketDataOnlyApprovedInstrumentCatalog.PackagedCatalogFileName);
+        var directory = Path.Combine(Path.GetTempPath(), "arch6a-catalog-sha", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        var path = Path.Combine(directory, LmaxMarketDataOnlyApprovedInstrumentCatalog.PackagedCatalogFileName);
+        var json = (await File.ReadAllTextAsync(source)).Replace(
+            "8cc46b113815eba940e27eda2fde04c530d5ea27986fbe15293a4dee224cec1c",
+            new string('0', 64),
+            StringComparison.Ordinal);
+        await File.WriteAllTextAsync(path, json);
+
+        var error = Assert.Throws<InvalidDataException>(() => LmaxMarketDataOnlyApprovedInstrumentCatalog.LoadFromPackagedCatalog(path));
+
+        Assert.Equal("arch6a_catalog_mapping_or_plan_sha_mismatch", error.Message);
+    }
+
+    [Fact]
     public async Task T35_packaged_catalog_loads_eurusd_and_rejects_unknown_instrument()
     {
         var root = Path.Combine(Path.GetTempPath(), "m2c1b-packaged-catalog", Guid.NewGuid().ToString("N"));

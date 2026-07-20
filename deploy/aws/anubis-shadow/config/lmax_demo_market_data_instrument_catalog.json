@@ -1,15 +1,401 @@
 {
-  "schema_version": "lmax-market-data-only-approved-instrument-catalog.v1",
-  "source": "tools/QQ.Production.Intraday.Lmax.ConnectivityLab/appsettings.json",
-  "permission_scope": "M2C1B_EXPLICIT_DEMO_MARKET_DATA_ONLY_SCOPE",
-  "instruments": [
-    {
-      "symbol": "EURUSD",
-      "security_id": "4001",
-      "security_id_source": "8",
-      "lmax_slash_symbol": "EUR/USD",
-      "evidence_source": "tools/QQ.Production.Intraday.Lmax.ConnectivityLab/appsettings.json:LmaxConnectivityLab",
-      "permission_scope": "M2C1B_EXPLICIT_DEMO_MARKET_DATA_ONLY_SCOPE"
-    }
-  ]
+    "schema_version":  "lmax-market-data-only-approved-instrument-catalog.v1",
+    "source":  "arch6a_qubes_security_id_to_lmax_market_instrument_mapping.v1.json",
+    "source_mapping_sha256":  "8cc46b113815eba940e27eda2fde04c530d5ea27986fbe15293a4dee224cec1c",
+    "source_subscription_plan_sha256":  "87871a026fe14e1325c8acf5ef8f21e7340a1fc5860eac9f1f153213aa41e313",
+    "permission_scope":  "ARCH6A_LMAX_DEMO_MARKET_DATA_ONLY_SCOPE",
+    "instruments":  [
+                        {
+                            "symbol":  "EURUSD",
+                            "security_id":  "4001",
+                            "security_id_source":  "8",
+                            "lmax_slash_symbol":  "EUR/USD",
+                            "evidence_source":  "lmax/operator-evidence/LMAX-Instruments-operator-20260528.csv#sha256=7ff5889abb8b1712c1651dd27a932f4924388fc8675f375978515bd4d1e1df01",
+                            "permission_scope":  "ARCH6A_LMAX_DEMO_MARKET_DATA_ONLY_SCOPE"
+                        },
+                        {
+                            "symbol":  "GBPUSD",
+                            "security_id":  "4002",
+                            "security_id_source":  "8",
+                            "lmax_slash_symbol":  "GBP/USD",
+                            "evidence_source":  "lmax/operator-evidence/LMAX-Instruments-operator-20260528.csv#sha256=7ff5889abb8b1712c1651dd27a932f4924388fc8675f375978515bd4d1e1df01",
+                            "permission_scope":  "ARCH6A_LMAX_DEMO_MARKET_DATA_ONLY_SCOPE"
+                        },
+                        {
+                            "symbol":  "EURGBP",
+                            "security_id":  "4003",
+                            "security_id_source":  "8",
+                            "lmax_slash_symbol":  "EUR/GBP",
+                            "evidence_source":  "lmax/operator-evidence/LMAX-Instruments-operator-20260528.csv#sha256=7ff5889abb8b1712c1651dd27a932f4924388fc8675f375978515bd4d1e1df01",
+                            "permission_scope":  "ARCH6A_LMAX_DEMO_MARKET_DATA_ONLY_SCOPE"
+                        },
+                        {
+                            "symbol":  "USDJPY",
+                            "security_id":  "4004",
+                            "security_id_source":  "8",
+                            "lmax_slash_symbol":  "USD/JPY",
+                            "evidence_source":  "lmax/operator-evidence/LMAX-Instruments-operator-20260528.csv#sha256=7ff5889abb8b1712c1651dd27a932f4924388fc8675f375978515bd4d1e1df01",
+                            "permission_scope":  "ARCH6A_LMAX_DEMO_MARKET_DATA_ONLY_SCOPE"
+                        },
+                        {
+                            "symbol":  "GBPJPY",
+                            "security_id":  "4005",
+                            "security_id_source":  "8",
+                            "lmax_slash_symbol":  "GBP/JPY",
+                            "evidence_source":  "lmax/operator-evidence/LMAX-Instruments-operator-20260528.csv#sha256=7ff5889abb8b1712c1651dd27a932f4924388fc8675f375978515bd4d1e1df01",
+                            "permission_scope":  "ARCH6A_LMAX_DEMO_MARKET_DATA_ONLY_SCOPE"
+                        },
+                        {
+                            "symbol":  "EURJPY",
+                            "security_id":  "4006",
+                            "security_id_source":  "8",
+                            "lmax_slash_symbol":  "EUR/JPY",
+                            "evidence_source":  "lmax/operator-evidence/LMAX-Instruments-operator-20260528.csv#sha256=7ff5889abb8b1712c1651dd27a932f4924388fc8675f375978515bd4d1e1df01",
+                            "permission_scope":  "ARCH6A_LMAX_DEMO_MARKET_DATA_ONLY_SCOPE"
+                        },
+                        {
+                            "symbol":  "AUDUSD",
+                            "security_id":  "4007",
+                            "security_id_source":  "8",
+                            "lmax_slash_symbol":  "AUD/USD",
+                            "evidence_source":  "lmax/operator-evidence/LMAX-Instruments-operator-20260528.csv#sha256=7ff5889abb8b1712c1651dd27a932f4924388fc8675f375978515bd4d1e1df01",
+                            "permission_scope":  "ARCH6A_LMAX_DEMO_MARKET_DATA_ONLY_SCOPE"
+                        },
+                        {
+                            "symbol":  "AUDJPY",
+                            "security_id":  "4008",
+                            "security_id_source":  "8",
+                            "lmax_slash_symbol":  "AUD/JPY",
+                            "evidence_source":  "lmax/operator-evidence/LMAX-Instruments-operator-20260528.csv#sha256=7ff5889abb8b1712c1651dd27a932f4924388fc8675f375978515bd4d1e1df01",
+                            "permission_scope":  "ARCH6A_LMAX_DEMO_MARKET_DATA_ONLY_SCOPE"
+                        },
+                        {
+                            "symbol":  "CHFJPY",
+                            "security_id":  "4009",
+                            "security_id_source":  "8",
+                            "lmax_slash_symbol":  "CHF/JPY",
+                            "evidence_source":  "lmax/operator-evidence/LMAX-Instruments-operator-20260528.csv#sha256=7ff5889abb8b1712c1651dd27a932f4924388fc8675f375978515bd4d1e1df01",
+                            "permission_scope":  "ARCH6A_LMAX_DEMO_MARKET_DATA_ONLY_SCOPE"
+                        },
+                        {
+                            "symbol":  "USDCHF",
+                            "security_id":  "4010",
+                            "security_id_source":  "8",
+                            "lmax_slash_symbol":  "USD/CHF",
+                            "evidence_source":  "lmax/operator-evidence/LMAX-Instruments-operator-20260528.csv#sha256=7ff5889abb8b1712c1651dd27a932f4924388fc8675f375978515bd4d1e1df01",
+                            "permission_scope":  "ARCH6A_LMAX_DEMO_MARKET_DATA_ONLY_SCOPE"
+                        },
+                        {
+                            "symbol":  "EURCHF",
+                            "security_id":  "4011",
+                            "security_id_source":  "8",
+                            "lmax_slash_symbol":  "EUR/CHF",
+                            "evidence_source":  "lmax/operator-evidence/LMAX-Instruments-operator-20260528.csv#sha256=7ff5889abb8b1712c1651dd27a932f4924388fc8675f375978515bd4d1e1df01",
+                            "permission_scope":  "ARCH6A_LMAX_DEMO_MARKET_DATA_ONLY_SCOPE"
+                        },
+                        {
+                            "symbol":  "GBPCHF",
+                            "security_id":  "4012",
+                            "security_id_source":  "8",
+                            "lmax_slash_symbol":  "GBP/CHF",
+                            "evidence_source":  "lmax/operator-evidence/LMAX-Instruments-operator-20260528.csv#sha256=7ff5889abb8b1712c1651dd27a932f4924388fc8675f375978515bd4d1e1df01",
+                            "permission_scope":  "ARCH6A_LMAX_DEMO_MARKET_DATA_ONLY_SCOPE"
+                        },
+                        {
+                            "symbol":  "USDCAD",
+                            "security_id":  "4013",
+                            "security_id_source":  "8",
+                            "lmax_slash_symbol":  "USD/CAD",
+                            "evidence_source":  "lmax/operator-evidence/LMAX-Instruments-operator-20260528.csv#sha256=7ff5889abb8b1712c1651dd27a932f4924388fc8675f375978515bd4d1e1df01",
+                            "permission_scope":  "ARCH6A_LMAX_DEMO_MARKET_DATA_ONLY_SCOPE"
+                        },
+                        {
+                            "symbol":  "GBPCAD",
+                            "security_id":  "4014",
+                            "security_id_source":  "8",
+                            "lmax_slash_symbol":  "GBP/CAD",
+                            "evidence_source":  "lmax/operator-evidence/LMAX-Instruments-operator-20260528.csv#sha256=7ff5889abb8b1712c1651dd27a932f4924388fc8675f375978515bd4d1e1df01",
+                            "permission_scope":  "ARCH6A_LMAX_DEMO_MARKET_DATA_ONLY_SCOPE"
+                        },
+                        {
+                            "symbol":  "EURCAD",
+                            "security_id":  "4015",
+                            "security_id_source":  "8",
+                            "lmax_slash_symbol":  "EUR/CAD",
+                            "evidence_source":  "lmax/operator-evidence/LMAX-Instruments-operator-20260528.csv#sha256=7ff5889abb8b1712c1651dd27a932f4924388fc8675f375978515bd4d1e1df01",
+                            "permission_scope":  "ARCH6A_LMAX_DEMO_MARKET_DATA_ONLY_SCOPE"
+                        },
+                        {
+                            "symbol":  "EURAUD",
+                            "security_id":  "4016",
+                            "security_id_source":  "8",
+                            "lmax_slash_symbol":  "EUR/AUD",
+                            "evidence_source":  "lmax/operator-evidence/LMAX-Instruments-operator-20260528.csv#sha256=7ff5889abb8b1712c1651dd27a932f4924388fc8675f375978515bd4d1e1df01",
+                            "permission_scope":  "ARCH6A_LMAX_DEMO_MARKET_DATA_ONLY_SCOPE"
+                        },
+                        {
+                            "symbol":  "GBPAUD",
+                            "security_id":  "4017",
+                            "security_id_source":  "8",
+                            "lmax_slash_symbol":  "GBP/AUD",
+                            "evidence_source":  "lmax/operator-evidence/LMAX-Instruments-operator-20260528.csv#sha256=7ff5889abb8b1712c1651dd27a932f4924388fc8675f375978515bd4d1e1df01",
+                            "permission_scope":  "ARCH6A_LMAX_DEMO_MARKET_DATA_ONLY_SCOPE"
+                        },
+                        {
+                            "symbol":  "EURHUF",
+                            "security_id":  "100497",
+                            "security_id_source":  "8",
+                            "lmax_slash_symbol":  "EUR/HUF",
+                            "evidence_source":  "lmax/operator-evidence/LMAX-Instruments-operator-20260528.csv#sha256=7ff5889abb8b1712c1651dd27a932f4924388fc8675f375978515bd4d1e1df01",
+                            "permission_scope":  "ARCH6A_LMAX_DEMO_MARKET_DATA_ONLY_SCOPE"
+                        },
+                        {
+                            "symbol":  "GBPHUF",
+                            "security_id":  "100499",
+                            "security_id_source":  "8",
+                            "lmax_slash_symbol":  "GBP/HUF",
+                            "evidence_source":  "lmax/operator-evidence/LMAX-Instruments-operator-20260528.csv#sha256=7ff5889abb8b1712c1651dd27a932f4924388fc8675f375978515bd4d1e1df01",
+                            "permission_scope":  "ARCH6A_LMAX_DEMO_MARKET_DATA_ONLY_SCOPE"
+                        },
+                        {
+                            "symbol":  "USDHUF",
+                            "security_id":  "100501",
+                            "security_id_source":  "8",
+                            "lmax_slash_symbol":  "USD/HUF",
+                            "evidence_source":  "lmax/operator-evidence/LMAX-Instruments-operator-20260528.csv#sha256=7ff5889abb8b1712c1651dd27a932f4924388fc8675f375978515bd4d1e1df01",
+                            "permission_scope":  "ARCH6A_LMAX_DEMO_MARKET_DATA_ONLY_SCOPE"
+                        },
+                        {
+                            "symbol":  "EURMXN",
+                            "security_id":  "100503",
+                            "security_id_source":  "8",
+                            "lmax_slash_symbol":  "EUR/MXN",
+                            "evidence_source":  "lmax/operator-evidence/LMAX-Instruments-operator-20260528.csv#sha256=7ff5889abb8b1712c1651dd27a932f4924388fc8675f375978515bd4d1e1df01",
+                            "permission_scope":  "ARCH6A_LMAX_DEMO_MARKET_DATA_ONLY_SCOPE"
+                        },
+                        {
+                            "symbol":  "GBPMXN",
+                            "security_id":  "100505",
+                            "security_id_source":  "8",
+                            "lmax_slash_symbol":  "GBP/MXN",
+                            "evidence_source":  "lmax/operator-evidence/LMAX-Instruments-operator-20260528.csv#sha256=7ff5889abb8b1712c1651dd27a932f4924388fc8675f375978515bd4d1e1df01",
+                            "permission_scope":  "ARCH6A_LMAX_DEMO_MARKET_DATA_ONLY_SCOPE"
+                        },
+                        {
+                            "symbol":  "USDMXN",
+                            "security_id":  "100507",
+                            "security_id_source":  "8",
+                            "lmax_slash_symbol":  "USD/MXN",
+                            "evidence_source":  "lmax/operator-evidence/LMAX-Instruments-operator-20260528.csv#sha256=7ff5889abb8b1712c1651dd27a932f4924388fc8675f375978515bd4d1e1df01",
+                            "permission_scope":  "ARCH6A_LMAX_DEMO_MARKET_DATA_ONLY_SCOPE"
+                        },
+                        {
+                            "symbol":  "EURNOK",
+                            "security_id":  "100509",
+                            "security_id_source":  "8",
+                            "lmax_slash_symbol":  "EUR/NOK",
+                            "evidence_source":  "lmax/operator-evidence/LMAX-Instruments-operator-20260528.csv#sha256=7ff5889abb8b1712c1651dd27a932f4924388fc8675f375978515bd4d1e1df01",
+                            "permission_scope":  "ARCH6A_LMAX_DEMO_MARKET_DATA_ONLY_SCOPE"
+                        },
+                        {
+                            "symbol":  "GBPNOK",
+                            "security_id":  "100511",
+                            "security_id_source":  "8",
+                            "lmax_slash_symbol":  "GBP/NOK",
+                            "evidence_source":  "lmax/operator-evidence/LMAX-Instruments-operator-20260528.csv#sha256=7ff5889abb8b1712c1651dd27a932f4924388fc8675f375978515bd4d1e1df01",
+                            "permission_scope":  "ARCH6A_LMAX_DEMO_MARKET_DATA_ONLY_SCOPE"
+                        },
+                        {
+                            "symbol":  "USDNOK",
+                            "security_id":  "100513",
+                            "security_id_source":  "8",
+                            "lmax_slash_symbol":  "USD/NOK",
+                            "evidence_source":  "lmax/operator-evidence/LMAX-Instruments-operator-20260528.csv#sha256=7ff5889abb8b1712c1651dd27a932f4924388fc8675f375978515bd4d1e1df01",
+                            "permission_scope":  "ARCH6A_LMAX_DEMO_MARKET_DATA_ONLY_SCOPE"
+                        },
+                        {
+                            "symbol":  "EURNZD",
+                            "security_id":  "100515",
+                            "security_id_source":  "8",
+                            "lmax_slash_symbol":  "EUR/NZD",
+                            "evidence_source":  "lmax/operator-evidence/LMAX-Instruments-operator-20260528.csv#sha256=7ff5889abb8b1712c1651dd27a932f4924388fc8675f375978515bd4d1e1df01",
+                            "permission_scope":  "ARCH6A_LMAX_DEMO_MARKET_DATA_ONLY_SCOPE"
+                        },
+                        {
+                            "symbol":  "GBPNZD",
+                            "security_id":  "100517",
+                            "security_id_source":  "8",
+                            "lmax_slash_symbol":  "GBP/NZD",
+                            "evidence_source":  "lmax/operator-evidence/LMAX-Instruments-operator-20260528.csv#sha256=7ff5889abb8b1712c1651dd27a932f4924388fc8675f375978515bd4d1e1df01",
+                            "permission_scope":  "ARCH6A_LMAX_DEMO_MARKET_DATA_ONLY_SCOPE"
+                        },
+                        {
+                            "symbol":  "EURPLN",
+                            "security_id":  "100519",
+                            "security_id_source":  "8",
+                            "lmax_slash_symbol":  "EUR/PLN",
+                            "evidence_source":  "lmax/operator-evidence/LMAX-Instruments-operator-20260528.csv#sha256=7ff5889abb8b1712c1651dd27a932f4924388fc8675f375978515bd4d1e1df01",
+                            "permission_scope":  "ARCH6A_LMAX_DEMO_MARKET_DATA_ONLY_SCOPE"
+                        },
+                        {
+                            "symbol":  "GBPPLN",
+                            "security_id":  "100521",
+                            "security_id_source":  "8",
+                            "lmax_slash_symbol":  "GBP/PLN",
+                            "evidence_source":  "lmax/operator-evidence/LMAX-Instruments-operator-20260528.csv#sha256=7ff5889abb8b1712c1651dd27a932f4924388fc8675f375978515bd4d1e1df01",
+                            "permission_scope":  "ARCH6A_LMAX_DEMO_MARKET_DATA_ONLY_SCOPE"
+                        },
+                        {
+                            "symbol":  "USDPLN",
+                            "security_id":  "100523",
+                            "security_id_source":  "8",
+                            "lmax_slash_symbol":  "USD/PLN",
+                            "evidence_source":  "lmax/operator-evidence/LMAX-Instruments-operator-20260528.csv#sha256=7ff5889abb8b1712c1651dd27a932f4924388fc8675f375978515bd4d1e1df01",
+                            "permission_scope":  "ARCH6A_LMAX_DEMO_MARKET_DATA_ONLY_SCOPE"
+                        },
+                        {
+                            "symbol":  "EURSEK",
+                            "security_id":  "100525",
+                            "security_id_source":  "8",
+                            "lmax_slash_symbol":  "EUR/SEK",
+                            "evidence_source":  "lmax/operator-evidence/LMAX-Instruments-operator-20260528.csv#sha256=7ff5889abb8b1712c1651dd27a932f4924388fc8675f375978515bd4d1e1df01",
+                            "permission_scope":  "ARCH6A_LMAX_DEMO_MARKET_DATA_ONLY_SCOPE"
+                        },
+                        {
+                            "symbol":  "GBPSEK",
+                            "security_id":  "100527",
+                            "security_id_source":  "8",
+                            "lmax_slash_symbol":  "GBP/SEK",
+                            "evidence_source":  "lmax/operator-evidence/LMAX-Instruments-operator-20260528.csv#sha256=7ff5889abb8b1712c1651dd27a932f4924388fc8675f375978515bd4d1e1df01",
+                            "permission_scope":  "ARCH6A_LMAX_DEMO_MARKET_DATA_ONLY_SCOPE"
+                        },
+                        {
+                            "symbol":  "USDSEK",
+                            "security_id":  "100529",
+                            "security_id_source":  "8",
+                            "lmax_slash_symbol":  "USD/SEK",
+                            "evidence_source":  "lmax/operator-evidence/LMAX-Instruments-operator-20260528.csv#sha256=7ff5889abb8b1712c1651dd27a932f4924388fc8675f375978515bd4d1e1df01",
+                            "permission_scope":  "ARCH6A_LMAX_DEMO_MARKET_DATA_ONLY_SCOPE"
+                        },
+                        {
+                            "symbol":  "EURZAR",
+                            "security_id":  "100543",
+                            "security_id_source":  "8",
+                            "lmax_slash_symbol":  "EUR/ZAR",
+                            "evidence_source":  "lmax/operator-evidence/LMAX-Instruments-operator-20260528.csv#sha256=7ff5889abb8b1712c1651dd27a932f4924388fc8675f375978515bd4d1e1df01",
+                            "permission_scope":  "ARCH6A_LMAX_DEMO_MARKET_DATA_ONLY_SCOPE"
+                        },
+                        {
+                            "symbol":  "GBPZAR",
+                            "security_id":  "100545",
+                            "security_id_source":  "8",
+                            "lmax_slash_symbol":  "GBP/ZAR",
+                            "evidence_source":  "lmax/operator-evidence/LMAX-Instruments-operator-20260528.csv#sha256=7ff5889abb8b1712c1651dd27a932f4924388fc8675f375978515bd4d1e1df01",
+                            "permission_scope":  "ARCH6A_LMAX_DEMO_MARKET_DATA_ONLY_SCOPE"
+                        },
+                        {
+                            "symbol":  "USDZAR",
+                            "security_id":  "100547",
+                            "security_id_source":  "8",
+                            "lmax_slash_symbol":  "USD/ZAR",
+                            "evidence_source":  "lmax/operator-evidence/LMAX-Instruments-operator-20260528.csv#sha256=7ff5889abb8b1712c1651dd27a932f4924388fc8675f375978515bd4d1e1df01",
+                            "permission_scope":  "ARCH6A_LMAX_DEMO_MARKET_DATA_ONLY_SCOPE"
+                        },
+                        {
+                            "symbol":  "NOKSEK",
+                            "security_id":  "100555",
+                            "security_id_source":  "8",
+                            "lmax_slash_symbol":  "NOK/SEK",
+                            "evidence_source":  "lmax/operator-evidence/LMAX-Instruments-operator-20260528.csv#sha256=7ff5889abb8b1712c1651dd27a932f4924388fc8675f375978515bd4d1e1df01",
+                            "permission_scope":  "ARCH6A_LMAX_DEMO_MARKET_DATA_ONLY_SCOPE"
+                        },
+                        {
+                            "symbol":  "NZDUSD",
+                            "security_id":  "100613",
+                            "security_id_source":  "8",
+                            "lmax_slash_symbol":  "NZD/USD",
+                            "evidence_source":  "lmax/operator-evidence/LMAX-Instruments-operator-20260528.csv#sha256=7ff5889abb8b1712c1651dd27a932f4924388fc8675f375978515bd4d1e1df01",
+                            "permission_scope":  "ARCH6A_LMAX_DEMO_MARKET_DATA_ONLY_SCOPE"
+                        },
+                        {
+                            "symbol":  "AUDNZD",
+                            "security_id":  "100615",
+                            "security_id_source":  "8",
+                            "lmax_slash_symbol":  "AUD/NZD",
+                            "evidence_source":  "lmax/operator-evidence/LMAX-Instruments-operator-20260528.csv#sha256=7ff5889abb8b1712c1651dd27a932f4924388fc8675f375978515bd4d1e1df01",
+                            "permission_scope":  "ARCH6A_LMAX_DEMO_MARKET_DATA_ONLY_SCOPE"
+                        },
+                        {
+                            "symbol":  "NZDJPY",
+                            "security_id":  "100617",
+                            "security_id_source":  "8",
+                            "lmax_slash_symbol":  "NZD/JPY",
+                            "evidence_source":  "lmax/operator-evidence/LMAX-Instruments-operator-20260528.csv#sha256=7ff5889abb8b1712c1651dd27a932f4924388fc8675f375978515bd4d1e1df01",
+                            "permission_scope":  "ARCH6A_LMAX_DEMO_MARKET_DATA_ONLY_SCOPE"
+                        },
+                        {
+                            "symbol":  "AUDCHF",
+                            "security_id":  "100619",
+                            "security_id_source":  "8",
+                            "lmax_slash_symbol":  "AUD/CHF",
+                            "evidence_source":  "lmax/operator-evidence/LMAX-Instruments-operator-20260528.csv#sha256=7ff5889abb8b1712c1651dd27a932f4924388fc8675f375978515bd4d1e1df01",
+                            "permission_scope":  "ARCH6A_LMAX_DEMO_MARKET_DATA_ONLY_SCOPE"
+                        },
+                        {
+                            "symbol":  "AUDCAD",
+                            "security_id":  "100667",
+                            "security_id_source":  "8",
+                            "lmax_slash_symbol":  "AUD/CAD",
+                            "evidence_source":  "lmax/operator-evidence/LMAX-Instruments-operator-20260528.csv#sha256=7ff5889abb8b1712c1651dd27a932f4924388fc8675f375978515bd4d1e1df01",
+                            "permission_scope":  "ARCH6A_LMAX_DEMO_MARKET_DATA_ONLY_SCOPE"
+                        },
+                        {
+                            "symbol":  "CADJPY",
+                            "security_id":  "100669",
+                            "security_id_source":  "8",
+                            "lmax_slash_symbol":  "CAD/JPY",
+                            "evidence_source":  "lmax/operator-evidence/LMAX-Instruments-operator-20260528.csv#sha256=7ff5889abb8b1712c1651dd27a932f4924388fc8675f375978515bd4d1e1df01",
+                            "permission_scope":  "ARCH6A_LMAX_DEMO_MARKET_DATA_ONLY_SCOPE"
+                        },
+                        {
+                            "symbol":  "CADCHF",
+                            "security_id":  "100671",
+                            "security_id_source":  "8",
+                            "lmax_slash_symbol":  "CAD/CHF",
+                            "evidence_source":  "lmax/operator-evidence/LMAX-Instruments-operator-20260528.csv#sha256=7ff5889abb8b1712c1651dd27a932f4924388fc8675f375978515bd4d1e1df01",
+                            "permission_scope":  "ARCH6A_LMAX_DEMO_MARKET_DATA_ONLY_SCOPE"
+                        },
+                        {
+                            "symbol":  "NZDCAD",
+                            "security_id":  "100673",
+                            "security_id_source":  "8",
+                            "lmax_slash_symbol":  "NZD/CAD",
+                            "evidence_source":  "lmax/operator-evidence/LMAX-Instruments-operator-20260528.csv#sha256=7ff5889abb8b1712c1651dd27a932f4924388fc8675f375978515bd4d1e1df01",
+                            "permission_scope":  "ARCH6A_LMAX_DEMO_MARKET_DATA_ONLY_SCOPE"
+                        },
+                        {
+                            "symbol":  "NZDCHF",
+                            "security_id":  "100675",
+                            "security_id_source":  "8",
+                            "lmax_slash_symbol":  "NZD/CHF",
+                            "evidence_source":  "lmax/operator-evidence/LMAX-Instruments-operator-20260528.csv#sha256=7ff5889abb8b1712c1651dd27a932f4924388fc8675f375978515bd4d1e1df01",
+                            "permission_scope":  "ARCH6A_LMAX_DEMO_MARKET_DATA_ONLY_SCOPE"
+                        },
+                        {
+                            "symbol":  "EURRON",
+                            "security_id":  "100930",
+                            "security_id_source":  "8",
+                            "lmax_slash_symbol":  "EUR/RON",
+                            "evidence_source":  "lmax/operator-evidence/LMAX-Instruments-operator-20260528.csv#sha256=7ff5889abb8b1712c1651dd27a932f4924388fc8675f375978515bd4d1e1df01",
+                            "permission_scope":  "ARCH6A_LMAX_DEMO_MARKET_DATA_ONLY_SCOPE"
+                        },
+                        {
+                            "symbol":  "USDRON",
+                            "security_id":  "100931",
+                            "security_id_source":  "8",
+                            "lmax_slash_symbol":  "USD/RON",
+                            "evidence_source":  "lmax/operator-evidence/LMAX-Instruments-operator-20260528.csv#sha256=7ff5889abb8b1712c1651dd27a932f4924388fc8675f375978515bd4d1e1df01",
+                            "permission_scope":  "ARCH6A_LMAX_DEMO_MARKET_DATA_ONLY_SCOPE"
+                        }
+                    ]
 }
