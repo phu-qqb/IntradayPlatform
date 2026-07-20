@@ -583,6 +583,24 @@ public sealed class M2C1ALmaxMarketDataOnlyTests
     }
 
     [Fact]
+    public void T35e_arch6a_live_session_builds_one_request_per_catalog_instrument_with_contiguous_sequences()
+    {
+        var path = Path.Combine(FindRepoRoot(), "deploy", "aws", "anubis-shadow", "config", LmaxMarketDataOnlyApprovedInstrumentCatalog.PackagedCatalogFileName);
+        var catalog = LmaxMarketDataOnlyApprovedInstrumentCatalog.LoadFromPackagedCatalog(path);
+        var config = ValidConfig() with { Instruments = catalog.Instruments.Select(x => x.Symbol).ToArray() };
+        var sequence = 2;
+
+        var requests = LmaxMarketDataOnlyCaptureRunner.BuildMarketDataRequests(config, catalog.Instruments, "SENDER", "TARGET", () => sequence++);
+
+        Assert.Equal(49, requests.Count);
+        Assert.All(requests, request => Assert.Equal("V", LmaxFixMarketDataCodec.GetMsgType(request)));
+        Assert.All(requests, request => Assert.Equal("8", LmaxFixMarketDataCodec.GetTag(request, "22")));
+        Assert.Equal(49, requests.Select(request => LmaxFixMarketDataCodec.GetTag(request, "48")).Distinct(StringComparer.Ordinal).Count());
+        Assert.Equal(Enumerable.Range(2, 49).Select(x => x.ToString(System.Globalization.CultureInfo.InvariantCulture)), requests.Select(request => LmaxFixMarketDataCodec.GetTag(request, "34")));
+        Assert.Equal(51, sequence);
+    }
+
+    [Fact]
     public async Task T35d_arch6a_catalog_rejects_a_changed_mapping_sha()
     {
         var source = Path.Combine(FindRepoRoot(), "deploy", "aws", "anubis-shadow", "config", LmaxMarketDataOnlyApprovedInstrumentCatalog.PackagedCatalogFileName);

@@ -31,7 +31,9 @@ public sealed partial class LmaxMarketDataOnlyCaptureRunner
             await ReadUntilLogonAckAsync(guarded,state,cancellationToken).ConfigureAwait(false);
             if(state.ShouldStop==false)
             {
-                await guarded.WriteAsync(Encoding.ASCII.GetBytes(BuildMarketDataRequest(config,state.Instruments.Single(),outbound.SenderCompId,outbound.TargetCompId,outbound.NextSequence())),cancellationToken).ConfigureAwait(false);await guarded.FlushAsync(cancellationToken).ConfigureAwait(false);
+                foreach(var request in BuildMarketDataRequests(config,state.Instruments,outbound.SenderCompId,outbound.TargetCompId,outbound.NextSequence))
+                    await guarded.WriteAsync(Encoding.ASCII.GetBytes(request),cancellationToken).ConfigureAwait(false);
+                await guarded.FlushAsync(cancellationToken).ConfigureAwait(false);
                 await state.RecordSubscriptionStateAsync("md_request_sent",cancellationToken).ConfigureAwait(false);
                 await ReadCaptureLoopAsync(config,guarded,state,started,outbound,cancellationToken).ConfigureAwait(false);
                 await guarded.WriteAsync(Encoding.ASCII.GetBytes(outbound.Build("5",[])),cancellationToken).ConfigureAwait(false);await guarded.FlushAsync(cancellationToken).ConfigureAwait(false);
