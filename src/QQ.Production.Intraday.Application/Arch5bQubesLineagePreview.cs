@@ -11,6 +11,9 @@ public static class Arch5bLineageContractVersions
     public const string LineageV1 = "arch5b_qubes_lineage_preview_v1";
     public const string SourceQubesWeightsOutputV1 = "QubesWeightsOutputV1";
     public const string OutputQubesWeightsOutputV1 = "QubesWeightsOutputV1";
+    public const string R083FullMatrixSignStrictV1 = "r083_full_matrix_sign_strict_v1";
+    public const string R083DecisionEffectiveScopeV2 = "r083_full_matrix_diagnostic_decision_slice_strict_v2";
+    public const string R083DecisionSliceRule = "LAST_CHRONOLOGICAL_DATA_ROW_EQUAL_TO_EXPLICIT_TARGET_CLOSE";
     public const string EvidenceOnlyClassification = "EVIDENCE_ONLY_NON_ACCOUNTING";
     public const string MissingMarketDataSnapshot = "MISSING_CANONICAL_MARKET_DATA_SNAPSHOT";
     public const string TestAccountId = "1754288005";
@@ -76,7 +79,14 @@ public sealed record Arch5bRunLineageContractV1(
     bool EvidenceOnlyNonAccounting,
     bool AccountingEligible,
     bool ExecutionAllowed,
-    IReadOnlyList<Arch5bTargetCloseWeightV1> TargetCloseWeights);
+    IReadOnlyList<Arch5bTargetCloseWeightV1> TargetCloseWeights,
+    string R083ContractVersion = Arch5bLineageContractVersions.R083FullMatrixSignStrictV1,
+    string? R083DecisionSliceSelectionRule = null,
+    int? FullMatrixRawSignFlipCount = null,
+    int? FullMatrixMaterialDifferenceCount = null,
+    int? DecisionSliceSignFlipCount = null,
+    int? DecisionSliceMaterialDifferenceCount = null,
+    int? DiagnosticOnlyHistoricalFlipCount = null);
 
 public sealed record Arch5bSessionLineageContractV1(
     string LineageContractVersion,
@@ -394,9 +404,7 @@ public sealed class Arch5bLineageContractValidator
         Require(run.OutputAsOfUtc == run.TargetCloseUtc, "OUTPUT_AS_OF_TARGET_CLOSE_MISMATCH", issues);
         Require(run.TargetCloseUtc.Offset == TimeSpan.Zero && !string.IsNullOrWhiteSpace(run.TargetCloseSourceValue), "TARGET_CLOSE_MISSING_OR_INVALID", issues);
         Require(run.TargetCloseSelectionRule == "PRODMANAGERV4_LAST_CHRONOLOGICAL_DATA_ROW", "TARGET_CLOSE_SELECTION_RULE_INVALID", issues);
-        Require(run.R083Status == "PASS", "R083_NOT_PASSED", issues);
-        Require(run.MaterialDifferenceCount == 0, "R083_MATERIAL_DIFFERENCE_NONZERO", issues);
-        Require(run.SignFlipCount == 0, "R083_SIGN_FLIP_NONZERO", issues);
+        ValidateR083(run, issues);
         Require(run.TransferVerified, "TRANSFER_INCOMPLETE", issues);
         if (run.MarketDataSnapshotId is null)
         {
@@ -417,6 +425,61 @@ public sealed class Arch5bLineageContractValidator
         Require(run.TargetCloseWeights.All(x => double.IsFinite(x.Weight)), "NON_FINITE_WEIGHT", issues);
         Require(run.TargetCloseWeights.All(x => x.SourceRowKey.StartsWith(run.TargetCloseSourceValue + ":", StringComparison.Ordinal)), "WEIGHT_SOURCE_ROW_KEY_INVALID", issues);
         Require(run.TargetCloseWeights.All(x => IsSha256(x.EntrySha256)), "WEIGHT_ENTRY_HASH_INVALID", issues);
+    }
+
+    private static void ValidateR083(Arch5bRunLineageContractV1 run, List<string> issues)
+    {
+        Require(run.R083Status == "PASS", "R083_NOT_PASSED", issues);
+        switch (run.R083ContractVersion)
+        {
+            case Arch5bLineageContractVersions.R083FullMatrixSignStrictV1:
+                Require(run.MaterialDifferenceCount == 0, "R083_MATERIAL_DIFFERENCE_NONZERO", issues);
+                Require(run.SignFlipCount == 0, "R083_SIGN_FLIP_NONZERO", issues);
+                Require(
+                    run.R083DecisionSliceSelectionRule is null &&
+                    run.FullMatrixRawSignFlipCount is null &&
+                    run.FullMatrixMaterialDifferenceCount is null &&
+                    run.DecisionSliceSignFlipCount is null &&
+                    run.DecisionSliceMaterialDifferenceCount is null &&
+                    run.DiagnosticOnlyHistoricalFlipCount is null,
+                    "R083_V1_FIELDS_AMBIGUOUS",
+                    issues);
+                break;
+
+            case Arch5bLineageContractVersions.R083DecisionEffectiveScopeV2:
+                Require(
+                    run.R083DecisionSliceSelectionRule == Arch5bLineageContractVersions.R083DecisionSliceRule,
+                    "R083_DECISION_SLICE_SELECTION_RULE_INVALID",
+                    issues);
+                Require(
+                    run.TargetCloseSourceValue == run.TargetCloseUtc.ToString("yyyyMMddHHmm", CultureInfo.InvariantCulture),
+                    "R083_TARGET_CLOSE_SOURCE_MISMATCH",
+                    issues);
+                Require(run.FullMatrixRawSignFlipCount is >= 0, "R083_FULL_MATRIX_SIGN_FLIP_COUNT_INVALID", issues);
+                Require(run.FullMatrixMaterialDifferenceCount is >= 0, "R083_FULL_MATRIX_MATERIAL_COUNT_INVALID", issues);
+                Require(run.DecisionSliceSignFlipCount is >= 0, "R083_DECISION_SLICE_SIGN_FLIP_COUNT_INVALID", issues);
+                Require(run.DecisionSliceMaterialDifferenceCount is >= 0, "R083_DECISION_SLICE_MATERIAL_COUNT_INVALID", issues);
+                Require(run.DiagnosticOnlyHistoricalFlipCount is >= 0, "R083_DIAGNOSTIC_HISTORICAL_FLIP_COUNT_INVALID", issues);
+                if (run.FullMatrixRawSignFlipCount is int fullFlips &&
+                    run.FullMatrixMaterialDifferenceCount is int fullMaterial &&
+                    run.DecisionSliceSignFlipCount is int decisionFlips &&
+                    run.DecisionSliceMaterialDifferenceCount is int decisionMaterial &&
+                    run.DiagnosticOnlyHistoricalFlipCount is int historicalFlips)
+                {
+                    Require(run.SignFlipCount == fullFlips, "R083_SIGN_FLIP_ALIAS_MISMATCH", issues);
+                    Require(run.MaterialDifferenceCount == fullMaterial, "R083_MATERIAL_ALIAS_MISMATCH", issues);
+                    Require(decisionFlips <= fullFlips && historicalFlips == fullFlips - decisionFlips, "R083_SIGN_FLIP_COUNTERS_INCONSISTENT", issues);
+                    Require(decisionMaterial <= fullMaterial, "R083_MATERIAL_COUNTERS_INCONSISTENT", issues);
+                    Require(fullMaterial == 0, "R083_FULL_MATRIX_MATERIAL_DIFFERENCE_NONZERO", issues);
+                    Require(decisionFlips == 0, "R083_DECISION_SLICE_SIGN_FLIP_NONZERO", issues);
+                    Require(decisionMaterial == 0, "R083_DECISION_SLICE_MATERIAL_DIFFERENCE_NONZERO", issues);
+                }
+                break;
+
+            default:
+                Require(false, "R083_CONTRACT_VERSION_UNKNOWN", issues);
+                break;
+        }
     }
 
     private static bool IsSha256(string? value)
