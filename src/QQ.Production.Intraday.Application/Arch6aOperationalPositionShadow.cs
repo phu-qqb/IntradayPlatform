@@ -9,6 +9,7 @@ public static class Arch6aOperationalPositionShadowContracts
     public const string PositionV1 = "operational_position_snapshot_v1";
     public const string MarketDataV1 = "operational_market_data_snapshot_v1";
     public const string WorkingLeavesV1 = "broker_working_leaves_observation_v1";
+    public const string QubesToLmaxMappingV1 = "qubes_security_id_to_lmax_market_instrument_mapping_v1";
     public const string Classification = "LMAX_OPERATIONAL_POSITION_SHADOW";
     public const string WorkingLeavesClassification = "BROKER_WORKING_LEAVES_UNAVAILABLE";
     public const string EvidenceClassification = "EVIDENCE_ONLY_NONACCOUNTING";
@@ -141,6 +142,8 @@ public sealed record OperationalPositionShadowInputBundleV1(
     string NoOrderClassification,
     Arch5bSessionLineageContractV1 PinnedModelRuns,
     int TargetWeightCount,
+    string QubesToLmaxMappingContractVersion,
+    string QubesToLmaxMappingSha256,
     OperationalAccountSnapshotV1 Account,
     OperationalPositionSnapshotV1 Positions,
     OperationalMarketDataSnapshotV1 MarketData,
@@ -189,7 +192,12 @@ public static class Arch6aOperationalPositionShadowValidator
             .ToArray();
         var actualWeightCount = bundle.PinnedModelRuns.Runs.Sum(run => run.TargetCloseWeights.Count);
         Require(bundle.PinnedModelRuns.Runs.Count == 4, "FOUR_MODEL_RUNS_REQUIRED", issues);
-        Require(bundle.TargetWeightCount == 288 && actualWeightCount == 288, "TARGET_WEIGHT_COUNT_INVALID", issues);
+        Require(actualWeightCount > 0 && bundle.TargetWeightCount == actualWeightCount, "TARGET_WEIGHT_COUNT_INVALID", issues);
+        Require(
+            bundle.QubesToLmaxMappingContractVersion == Arch6aOperationalPositionShadowContracts.QubesToLmaxMappingV1 &&
+            Arch5bHashing.IsSha256(bundle.QubesToLmaxMappingSha256),
+            "QUBES_TO_LMAX_MAPPING_BINDING_INVALID",
+            issues);
 
         ValidateAccount(bundle.Account, issues);
         ValidatePositions(bundle.Positions, issues);
@@ -224,6 +232,8 @@ public static class Arch6aOperationalPositionShadowValidator
             bundle.NoOrderClassification,
             bundle.PinnedModelRuns,
             bundle.TargetWeightCount,
+            bundle.QubesToLmaxMappingContractVersion,
+            bundle.QubesToLmaxMappingSha256,
             bundle.Account,
             bundle.Positions,
             bundle.MarketData,
@@ -292,7 +302,6 @@ public static class Arch6aOperationalPositionShadowValidator
         var mappedIds = mappings.Select(value => value.SecurityId).OrderBy(value => value, StringComparer.Ordinal).ToArray();
         Require(mappedIds.SequenceEqual(requiredSecurityIds, StringComparer.Ordinal), "SECURITY_MAPPING_COVERAGE_INCOMPLETE", issues);
         Require(mappedIds.Distinct(StringComparer.Ordinal).Count() == mappedIds.Length, "SECURITY_MAPPING_DUPLICATE", issues);
-        Require(mappings.Select(value => value.LmaxInstrumentId).Distinct(StringComparer.Ordinal).Count() == mappings.Count, "LMAX_INSTRUMENT_MAPPING_AMBIGUOUS", issues);
         Require(mappings.All(value => value.InstrumentId != Guid.Empty && value.VenueId != Guid.Empty &&
                                       value.VenueInstrumentId != Guid.Empty && !string.IsNullOrWhiteSpace(value.Symbol) &&
                                       !string.IsNullOrWhiteSpace(value.LmaxInstrumentId) && value.QuantityMultiplier > 0m &&

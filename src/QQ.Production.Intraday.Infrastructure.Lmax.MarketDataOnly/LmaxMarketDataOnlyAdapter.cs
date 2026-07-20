@@ -353,7 +353,8 @@ public static class LmaxMarketDataOnlyPreflight
         bool noAccountApi,
         bool noDb,
         bool outputRootMustBeEmpty = true,
-        JsonElement? configDocument = null)
+        JsonElement? configDocument = null,
+        IReadOnlyCollection<string>? approvedInstruments = null)
     {
         var issues = new List<string>();
         if (config.Mode != "CAPTURE_ONLY") issues.Add("mode_must_be_CAPTURE_ONLY");
@@ -375,7 +376,11 @@ public static class LmaxMarketDataOnlyPreflight
         if (config.FlushIntervalMs <= 0) issues.Add("flush_interval_ms_required");
         if (string.IsNullOrWhiteSpace(config.OutputRoot)) issues.Add("output_root_required");
         else if (!HasRequiredFreeDisk(config.OutputRoot, config.MinimumFreeDiskBytes)) issues.Add("minimum_free_disk_bytes_not_available");
-        if (config.Instruments is null || config.Instruments.Count == 0 || config.Instruments.Any(x => !AllowedInstruments.Contains(x))) issues.Add("instrument_not_allowlisted");
+        var effectiveApprovedInstruments = approvedInstruments is null
+            ? AllowedInstruments
+            : approvedInstruments.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        if (config.Instruments is null || config.Instruments.Count == 0 || config.Instruments.Any(x => !effectiveApprovedInstruments.Contains(x))) issues.Add("instrument_not_allowlisted");
+        else if (config.Instruments.Distinct(StringComparer.OrdinalIgnoreCase).Count() != config.Instruments.Count) issues.Add("duplicate_instrument_subscription");
         if (config.AllowedOutboundFixMsgTypes is null) issues.Add("allowed_outbound_fix_msg_types_required");
         else if (config.AllowedOutboundFixMsgTypes.Any(x => !LmaxMarketDataOnlyOutboundFixMessageGuard.AllowedOutboundMsgTypes.Contains(x))) issues.Add("outbound_fix_whitelist_contains_forbidden_or_unknown_type");
         if (FindForbiddenConfigShapeIssues(config, configDocument).Count > 0) issues.Add("config_contains_order_account_or_db_shape");

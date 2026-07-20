@@ -1,0 +1,453 @@
+{
+    "contract_version":  "lmax_market_data_subscription_plan_v1",
+    "mapping_sha256":  "8cc46b113815eba940e27eda2fde04c530d5ea27986fbe15293a4dee224cec1c",
+    "subscription_plan_sha256":  "87871a026fe14e1325c8acf5ef8f21e7340a1fc5860eac9f1f153213aa41e313",
+    "requested_instrument_reference_count":  149,
+    "unique_subscription_count":  49,
+    "duplicate_subscription_count":  100,
+    "subscriptions":  [
+                          {
+                              "instrument_id":  "4001",
+                              "instrument_name":  "EUR/USD",
+                              "required_by_qubes_security_ids":  [
+                                                                     "66"
+                                                                 ]
+                          },
+                          {
+                              "instrument_id":  "4002",
+                              "instrument_name":  "GBP/USD",
+                              "required_by_qubes_security_ids":  [
+                                                                     "68",
+                                                                     "286"
+                                                                 ]
+                          },
+                          {
+                              "instrument_id":  "4003",
+                              "instrument_name":  "EUR/GBP",
+                              "required_by_qubes_security_ids":  [
+                                                                     "60"
+                                                                 ]
+                          },
+                          {
+                              "instrument_id":  "4004",
+                              "instrument_name":  "USD/JPY",
+                              "required_by_qubes_security_ids":  [
+                                                                     "150",
+                                                                     "214",
+                                                                     "215",
+                                                                     "217",
+                                                                     "220",
+                                                                     "287",
+                                                                     "289",
+                                                                     "303"
+                                                                 ]
+                          },
+                          {
+                              "instrument_id":  "4005",
+                              "instrument_name":  "GBP/JPY",
+                              "required_by_qubes_security_ids":  [
+                                                                     "204"
+                                                                 ]
+                          },
+                          {
+                              "instrument_id":  "4006",
+                              "instrument_name":  "EUR/JPY",
+                              "required_by_qubes_security_ids":  [
+                                                                     "63"
+                                                                 ]
+                          },
+                          {
+                              "instrument_id":  "4007",
+                              "instrument_name":  "AUD/USD",
+                              "required_by_qubes_security_ids":  [
+                                                                     "59",
+                                                                     "156",
+                                                                     "157",
+                                                                     "159",
+                                                                     "162",
+                                                                     "260",
+                                                                     "261",
+                                                                     "262"
+                                                                 ]
+                          },
+                          {
+                              "instrument_id":  "4008",
+                              "instrument_name":  "AUD/JPY",
+                              "required_by_qubes_security_ids":  [
+                                                                     "154"
+                                                                 ]
+                          },
+                          {
+                              "instrument_id":  "4009",
+                              "instrument_name":  "CHF/JPY",
+                              "required_by_qubes_security_ids":  [
+                                                                     "176"
+                                                                 ]
+                          },
+                          {
+                              "instrument_id":  "4010",
+                              "instrument_name":  "USD/CHF",
+                              "required_by_qubes_security_ids":  [
+                                                                     "136",
+                                                                     "178",
+                                                                     "179",
+                                                                     "181",
+                                                                     "184",
+                                                                     "273",
+                                                                     "274",
+                                                                     "277"
+                                                                 ]
+                          },
+                          {
+                              "instrument_id":  "4011",
+                              "instrument_name":  "EUR/CHF",
+                              "required_by_qubes_security_ids":  [
+                                                                     "174"
+                                                                 ]
+                          },
+                          {
+                              "instrument_id":  "4012",
+                              "instrument_name":  "GBP/CHF",
+                              "required_by_qubes_security_ids":  [
+                                                                     "175"
+                                                                 ]
+                          },
+                          {
+                              "instrument_id":  "4013",
+                              "instrument_name":  "USD/CAD",
+                              "required_by_qubes_security_ids":  [
+                                                                     "148",
+                                                                     "166",
+                                                                     "167",
+                                                                     "169",
+                                                                     "172",
+                                                                     "268",
+                                                                     "272",
+                                                                     "310"
+                                                                 ]
+                          },
+                          {
+                              "instrument_id":  "4014",
+                              "instrument_name":  "GBP/CAD",
+                              "required_by_qubes_security_ids":  [
+                                                                     "164"
+                                                                 ]
+                          },
+                          {
+                              "instrument_id":  "4015",
+                              "instrument_name":  "EUR/CAD",
+                              "required_by_qubes_security_ids":  [
+                                                                     "131"
+                                                                 ]
+                          },
+                          {
+                              "instrument_id":  "4016",
+                              "instrument_name":  "EUR/AUD",
+                              "required_by_qubes_security_ids":  [
+                                                                     "125"
+                                                                 ]
+                          },
+                          {
+                              "instrument_id":  "4017",
+                              "instrument_name":  "GBP/AUD",
+                              "required_by_qubes_security_ids":  [
+                                                                     "153"
+                                                                 ]
+                          },
+                          {
+                              "instrument_id":  "100497",
+                              "instrument_name":  "EUR/HUF",
+                              "required_by_qubes_security_ids":  [
+                                                                     "280"
+                                                                 ]
+                          },
+                          {
+                              "instrument_id":  "100499",
+                              "instrument_name":  "GBP/HUF",
+                              "required_by_qubes_security_ids":  [
+                                                                     "283"
+                                                                 ]
+                          },
+                          {
+                              "instrument_id":  "100501",
+                              "instrument_name":  "USD/HUF",
+                              "required_by_qubes_security_ids":  [
+                                                                     "258",
+                                                                     "261",
+                                                                     "273",
+                                                                     "278",
+                                                                     "287",
+                                                                     "290",
+                                                                     "294",
+                                                                     "297",
+                                                                     "300",
+                                                                     "310"
+                                                                 ]
+                          },
+                          {
+                              "instrument_id":  "100503",
+                              "instrument_name":  "EUR/MXN",
+                              "required_by_qubes_security_ids":  [
+                                                                     "197"
+                                                                 ]
+                          },
+                          {
+                              "instrument_id":  "100505",
+                              "instrument_name":  "GBP/MXN",
+                              "required_by_qubes_security_ids":  [
+                                                                     "206"
+                                                                 ]
+                          },
+                          {
+                              "instrument_id":  "100507",
+                              "instrument_name":  "USD/MXN",
+                              "required_by_qubes_security_ids":  [
+                                                                     "139",
+                                                                     "156",
+                                                                     "166",
+                                                                     "178",
+                                                                     "214",
+                                                                     "228",
+                                                                     "229",
+                                                                     "230",
+                                                                     "233"
+                                                                 ]
+                          },
+                          {
+                              "instrument_id":  "100509",
+                              "instrument_name":  "EUR/NOK",
+                              "required_by_qubes_security_ids":  [
+                                                                     "198"
+                                                                 ]
+                          },
+                          {
+                              "instrument_id":  "100511",
+                              "instrument_name":  "GBP/NOK",
+                              "required_by_qubes_security_ids":  [
+                                                                     "207"
+                                                                 ]
+                          },
+                          {
+                              "instrument_id":  "100513",
+                              "instrument_name":  "USD/NOK",
+                              "required_by_qubes_security_ids":  [
+                                                                     "141",
+                                                                     "157",
+                                                                     "167",
+                                                                     "179",
+                                                                     "215",
+                                                                     "228",
+                                                                     "234",
+                                                                     "238",
+                                                                     "290",
+                                                                     "293",
+                                                                     "304"
+                                                                 ]
+                          },
+                          {
+                              "instrument_id":  "100515",
+                              "instrument_name":  "EUR/NZD",
+                              "required_by_qubes_security_ids":  [
+                                                                     "199"
+                                                                 ]
+                          },
+                          {
+                              "instrument_id":  "100517",
+                              "instrument_name":  "GBP/NZD",
+                              "required_by_qubes_security_ids":  [
+                                                                     "208"
+                                                                 ]
+                          },
+                          {
+                              "instrument_id":  "100519",
+                              "instrument_name":  "EUR/PLN",
+                              "required_by_qubes_security_ids":  [
+                                                                     "301"
+                                                                 ]
+                          },
+                          {
+                              "instrument_id":  "100521",
+                              "instrument_name":  "GBP/PLN",
+                              "required_by_qubes_security_ids":  [
+                                                                     "302"
+                                                                 ]
+                          },
+                          {
+                              "instrument_id":  "100523",
+                              "instrument_name":  "USD/PLN",
+                              "required_by_qubes_security_ids":  [
+                                                                     "257",
+                                                                     "260",
+                                                                     "268",
+                                                                     "274",
+                                                                     "278",
+                                                                     "279",
+                                                                     "303",
+                                                                     "304",
+                                                                     "305",
+                                                                     "306"
+                                                                 ]
+                          },
+                          {
+                              "instrument_id":  "100525",
+                              "instrument_name":  "EUR/SEK",
+                              "required_by_qubes_security_ids":  [
+                                                                     "200"
+                                                                 ]
+                          },
+                          {
+                              "instrument_id":  "100527",
+                              "instrument_name":  "GBP/SEK",
+                              "required_by_qubes_security_ids":  [
+                                                                     "209"
+                                                                 ]
+                          },
+                          {
+                              "instrument_id":  "100529",
+                              "instrument_name":  "USD/SEK",
+                              "required_by_qubes_security_ids":  [
+                                                                     "142",
+                                                                     "159",
+                                                                     "169",
+                                                                     "181",
+                                                                     "217",
+                                                                     "230",
+                                                                     "239",
+                                                                     "245",
+                                                                     "297",
+                                                                     "299",
+                                                                     "306"
+                                                                 ]
+                          },
+                          {
+                              "instrument_id":  "100543",
+                              "instrument_name":  "EUR/ZAR",
+                              "required_by_qubes_security_ids":  [
+                                                                     "203"
+                                                                 ]
+                          },
+                          {
+                              "instrument_id":  "100545",
+                              "instrument_name":  "GBP/ZAR",
+                              "required_by_qubes_security_ids":  [
+                                                                     "212"
+                                                                 ]
+                          },
+                          {
+                              "instrument_id":  "100547",
+                              "instrument_name":  "USD/ZAR",
+                              "required_by_qubes_security_ids":  [
+                                                                     "147",
+                                                                     "162",
+                                                                     "172",
+                                                                     "184",
+                                                                     "220",
+                                                                     "233",
+                                                                     "238",
+                                                                     "242",
+                                                                     "245"
+                                                                 ]
+                          },
+                          {
+                              "instrument_id":  "100555",
+                              "instrument_name":  "NOK/SEK",
+                              "required_by_qubes_security_ids":  [
+                                                                     "235"
+                                                                 ]
+                          },
+                          {
+                              "instrument_id":  "100613",
+                              "instrument_name":  "NZD/USD",
+                              "required_by_qubes_security_ids":  [
+                                                                     "58",
+                                                                     "229",
+                                                                     "234",
+                                                                     "239",
+                                                                     "242",
+                                                                     "294",
+                                                                     "296",
+                                                                     "305"
+                                                                 ]
+                          },
+                          {
+                              "instrument_id":  "100615",
+                              "instrument_name":  "AUD/NZD",
+                              "required_by_qubes_security_ids":  [
+                                                                     "158"
+                                                                 ]
+                          },
+                          {
+                              "instrument_id":  "100617",
+                              "instrument_name":  "NZD/JPY",
+                              "required_by_qubes_security_ids":  [
+                                                                     "216"
+                                                                 ]
+                          },
+                          {
+                              "instrument_id":  "100619",
+                              "instrument_name":  "AUD/CHF",
+                              "required_by_qubes_security_ids":  [
+                                                                     "151"
+                                                                 ]
+                          },
+                          {
+                              "instrument_id":  "100667",
+                              "instrument_name":  "AUD/CAD",
+                              "required_by_qubes_security_ids":  [
+                                                                     "135"
+                                                                 ]
+                          },
+                          {
+                              "instrument_id":  "100669",
+                              "instrument_name":  "CAD/JPY",
+                              "required_by_qubes_security_ids":  [
+                                                                     "62"
+                                                                 ]
+                          },
+                          {
+                              "instrument_id":  "100671",
+                              "instrument_name":  "CAD/CHF",
+                              "required_by_qubes_security_ids":  [
+                                                                     "129"
+                                                                 ]
+                          },
+                          {
+                              "instrument_id":  "100673",
+                              "instrument_name":  "NZD/CAD",
+                              "required_by_qubes_security_ids":  [
+                                                                     "168"
+                                                                 ]
+                          },
+                          {
+                              "instrument_id":  "100675",
+                              "instrument_name":  "NZD/CHF",
+                              "required_by_qubes_security_ids":  [
+                                                                     "180"
+                                                                 ]
+                          },
+                          {
+                              "instrument_id":  "100930",
+                              "instrument_name":  "EUR/RON",
+                              "required_by_qubes_security_ids":  [
+                                                                     "282"
+                                                                 ]
+                          },
+                          {
+                              "instrument_id":  "100931",
+                              "instrument_name":  "USD/RON",
+                              "required_by_qubes_security_ids":  [
+                                                                     "259",
+                                                                     "262",
+                                                                     "272",
+                                                                     "277",
+                                                                     "279",
+                                                                     "286",
+                                                                     "289",
+                                                                     "293",
+                                                                     "296",
+                                                                     "299",
+                                                                     "300"
+                                                                 ]
+                          }
+                      ]
+}

@@ -256,6 +256,8 @@ public sealed class Arch6aOperationalPositionShadowTests
             Arch6aOperationalPositionShadowContracts.NoOrderClassification,
             lineage,
             288,
+            Arch6aOperationalPositionShadowContracts.QubesToLmaxMappingV1,
+            Sha('9'),
             account,
             positions,
             market,

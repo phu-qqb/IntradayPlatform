@@ -14,10 +14,48 @@ public sealed record LmaxMarketDataOnlyCaptureSummary(string Status,string Recor
 
 public sealed class LmaxMarketDataOnlyApprovedInstrumentCatalog
 {
+    private const string SchemaV1="lmax-market-data-only-approved-instrument-catalog.v1";
+    private const string BaselineScope="M2C1B_EXPLICIT_DEMO_MARKET_DATA_ONLY_SCOPE";
+    private const string Arch6aScope="ARCH6A_LMAX_DEMO_MARKET_DATA_ONLY_SCOPE";
+    private const string Arch6aMappingSha256="8cc46b113815eba940e27eda2fde04c530d5ea27986fbe15293a4dee224cec1c";
+    private const string Arch6aSubscriptionPlanSha256="87871a026fe14e1325c8acf5ef8f21e7340a1fc5860eac9f1f153213aa41e313";
+    private const string Arch6aInstrumentSetSha256="3be17c14d267a48098906b5949a89d4ed879a3d62a769309b839e1fbf00f96b6";
     private readonly Dictionary<string,LmaxMarketDataOnlyCatalogInstrument> bySymbol;
     public const string PackagedCatalogFileName = "lmax_demo_market_data_instrument_catalog.json";
-    public LmaxMarketDataOnlyApprovedInstrumentCatalog(IEnumerable<LmaxMarketDataOnlyCatalogInstrument> instruments)=>bySymbol=instruments.ToDictionary(x=>x.Symbol,StringComparer.OrdinalIgnoreCase);
+    public LmaxMarketDataOnlyApprovedInstrumentCatalog(
+        IEnumerable<LmaxMarketDataOnlyCatalogInstrument> instruments,
+        string schemaVersion=SchemaV1,
+        string permissionScope=BaselineScope,
+        string? sourceMappingSha256=null,
+        string? sourceSubscriptionPlanSha256=null)
+    {
+        var values=instruments.OrderBy(x=>ParseSecurityId(x.SecurityId)).ThenBy(x=>x.SecurityId,StringComparer.Ordinal).ToArray();
+        if(schemaVersion!=SchemaV1)throw new InvalidDataException("market_data_only_catalog_schema_unknown");
+        if(permissionScope is not (BaselineScope or Arch6aScope))throw new InvalidDataException("market_data_only_catalog_permission_scope_unknown");
+        if(values.Length==0||
+           values.Select(x=>x.Symbol).Distinct(StringComparer.OrdinalIgnoreCase).Count()!=values.Length||
+           values.Select(x=>x.SecurityId).Distinct(StringComparer.Ordinal).Count()!=values.Length)
+            throw new InvalidDataException("market_data_only_catalog_duplicate_or_empty");
+        foreach(var value in values)
+        {
+            if(value.Symbol.Length!=6||value.Symbol!=value.Symbol.ToUpperInvariant()||
+               value.LmaxSlashSymbol!=value.Symbol[..3]+"/"+value.Symbol[3..]||
+               ParseSecurityId(value.SecurityId)==int.MaxValue||value.SecurityIdSource!="8"||
+               string.IsNullOrWhiteSpace(value.EvidenceSource)||value.PermissionScope!=permissionScope)
+                throw new InvalidDataException($"market_data_only_catalog_instrument_invalid:{value.Symbol}");
+        }
+        if(permissionScope==Arch6aScope)
+        {
+            if(sourceMappingSha256!=Arch6aMappingSha256||sourceSubscriptionPlanSha256!=Arch6aSubscriptionPlanSha256)
+                throw new InvalidDataException("arch6a_catalog_mapping_or_plan_sha_mismatch");
+            var canonical=string.Join("\n",values.Select(x=>$"{x.Symbol}|{x.SecurityId}|{x.LmaxSlashSymbol}"));
+            if(values.Length!=49||CanonicalRecorderV2.Sha256Text(canonical)!=Arch6aInstrumentSetSha256)
+                throw new InvalidDataException("arch6a_catalog_instrument_set_mismatch");
+        }
+        bySymbol=values.ToDictionary(x=>x.Symbol,StringComparer.OrdinalIgnoreCase);
+    }
     public IReadOnlyList<LmaxMarketDataOnlyCatalogInstrument> Instruments=>bySymbol.Values.OrderBy(x=>x.Symbol,StringComparer.Ordinal).ToArray();
+    private static int ParseSecurityId(string value)=>int.TryParse(value,NumberStyles.None,CultureInfo.InvariantCulture,out var parsed)&&parsed>0?parsed:int.MaxValue;
     public LmaxMarketDataOnlyCatalogInstrument ResolveApproved(string symbol)=>bySymbol.TryGetValue(symbol,out var i)?i:throw new InvalidOperationException($"market_data_only_instrument_not_approved:{symbol}");
     public static LmaxMarketDataOnlyApprovedInstrumentCatalog LoadFromConfigDirectory(string configDirectory)
     {
@@ -28,14 +66,20 @@ public sealed class LmaxMarketDataOnlyApprovedInstrumentCatalog
     public static LmaxMarketDataOnlyApprovedInstrumentCatalog LoadFromPackagedCatalog(string path)
     {
         using var doc=JsonDocument.Parse(File.ReadAllText(path));
-        var instruments=doc.RootElement.GetProperty("instruments").EnumerateArray().Select(x=>new LmaxMarketDataOnlyCatalogInstrument(
+        var root=doc.RootElement;
+        var instruments=root.GetProperty("instruments").EnumerateArray().Select(x=>new LmaxMarketDataOnlyCatalogInstrument(
             x.GetProperty("symbol").GetString()??throw new InvalidOperationException("symbol_missing"),
             x.GetProperty("security_id").GetString()??throw new InvalidOperationException("security_id_missing"),
             x.GetProperty("security_id_source").GetString()??"8",
             x.GetProperty("lmax_slash_symbol").GetString()??throw new InvalidOperationException("lmax_slash_symbol_missing"),
             x.TryGetProperty("evidence_source",out var evidence)?evidence.GetString()??path.Replace('\\','/'):path.Replace('\\','/'),
             x.GetProperty("permission_scope").GetString()??throw new InvalidOperationException("permission_scope_missing"))).ToArray();
-        return new LmaxMarketDataOnlyApprovedInstrumentCatalog(instruments);
+        return new LmaxMarketDataOnlyApprovedInstrumentCatalog(
+            instruments,
+            root.GetProperty("schema_version").GetString()??throw new InvalidOperationException("schema_version_missing"),
+            root.GetProperty("permission_scope").GetString()??throw new InvalidOperationException("permission_scope_missing"),
+            root.TryGetProperty("source_mapping_sha256",out var mappingSha)?mappingSha.GetString():null,
+            root.TryGetProperty("source_subscription_plan_sha256",out var planSha)?planSha.GetString():null);
     }
     public static LmaxMarketDataOnlyApprovedInstrumentCatalog LoadFromConnectivityLab(string repoRoot)
     {

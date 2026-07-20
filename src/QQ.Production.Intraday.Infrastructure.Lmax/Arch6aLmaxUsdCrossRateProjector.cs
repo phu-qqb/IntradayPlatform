@@ -1,3 +1,5 @@
+using System.Globalization;
+
 namespace QQ.Production.Intraday.Infrastructure.Lmax;
 
 public sealed record Arch6aLmaxFxQuote(
@@ -40,13 +42,16 @@ public sealed class Arch6aLmaxUsdCrossRateProjector
         string targetBaseCurrency,
         string targetQuoteCurrency,
         IReadOnlyList<Arch6aLmaxFxQuote> quotes,
-        TimeSpan maximumLegSkew)
+        TimeSpan maximumLegSkew,
+        TimeSpan? maximumQuoteAge = null)
     {
         var targetBase = NormalizeCurrency(targetBaseCurrency);
         var targetQuote = NormalizeCurrency(targetQuoteCurrency);
         if (targetBase == targetQuote) throw new InvalidOperationException("ARCH6A_LMAX_TARGET_PAIR_IDENTICAL_CURRENCIES");
         if (maximumLegSkew < TimeSpan.Zero) throw new InvalidOperationException("ARCH6A_LMAX_MAXIMUM_LEG_SKEW_INVALID");
-        foreach (var quote in quotes) ValidateQuote(quote);
+        var effectiveMaximumQuoteAge = maximumQuoteAge ?? TimeSpan.FromSeconds(1);
+        if (effectiveMaximumQuoteAge < TimeSpan.Zero) throw new InvalidOperationException("ARCH6A_LMAX_MAXIMUM_QUOTE_AGE_INVALID");
+        foreach (var quote in quotes) ValidateQuote(quote, effectiveMaximumQuoteAge);
 
         var direct = FindUnique(quotes, targetBase, targetQuote);
         if (direct is not null)
@@ -92,6 +97,16 @@ public sealed class Arch6aLmaxUsdCrossRateProjector
             true,
             skew,
             provenance);
+    }
+
+    public static decimal ParseObservedPrice(string value)
+    {
+        if (!decimal.TryParse(value, NumberStyles.Number, CultureInfo.InvariantCulture, out var parsed) || parsed <= 0m)
+        {
+            throw new InvalidDataException("ARCH6A_LMAX_PRICE_NOT_FINITE_OR_POSITIVE");
+        }
+
+        return parsed;
     }
 
     private static Arch6aLmaxFxProjectedQuote BuildSingleLeg(
@@ -170,7 +185,7 @@ public sealed class Arch6aLmaxUsdCrossRateProjector
             leg.Source.SourceTimestampUtc,
             leg.Source.SourceResponseSha256);
 
-    private static void ValidateQuote(Arch6aLmaxFxQuote quote)
+    private static void ValidateQuote(Arch6aLmaxFxQuote quote, TimeSpan maximumQuoteAge)
     {
         if (!quote.SourceSystem.Equals("LMAX", StringComparison.Ordinal))
         {
@@ -178,7 +193,7 @@ public sealed class Arch6aLmaxUsdCrossRateProjector
         }
         if (string.IsNullOrWhiteSpace(quote.InstrumentId) ||
             string.IsNullOrWhiteSpace(quote.SecurityId) ||
-            string.IsNullOrWhiteSpace(quote.SourceResponseSha256))
+            !IsSha256(quote.SourceResponseSha256))
         {
             throw new InvalidOperationException("ARCH6A_LMAX_QUOTE_PROVENANCE_INCOMPLETE");
         }
@@ -189,6 +204,14 @@ public sealed class Arch6aLmaxUsdCrossRateProjector
         if (quote.SourceTimestampUtc.Offset != TimeSpan.Zero || quote.ReceivedAtUtc.Offset != TimeSpan.Zero)
         {
             throw new InvalidOperationException("ARCH6A_LMAX_QUOTE_TIMESTAMP_MUST_BE_UTC");
+        }
+        if (quote.SourceTimestampUtc > quote.ReceivedAtUtc)
+        {
+            throw new InvalidOperationException("ARCH6A_LMAX_QUOTE_TIMESTAMP_ORDER_INVALID");
+        }
+        if (quote.ReceivedAtUtc - quote.SourceTimestampUtc > maximumQuoteAge)
+        {
+            throw new InvalidOperationException($"ARCH6A_LMAX_QUOTE_STALE:{Symbol(quote)}");
         }
         var sourceBase = NormalizeCurrency(quote.BaseCurrency);
         var sourceQuote = NormalizeCurrency(quote.QuoteCurrency);
@@ -208,6 +231,10 @@ public sealed class Arch6aLmaxUsdCrossRateProjector
 
     private static string Symbol(Arch6aLmaxFxQuote value)
         => NormalizeCurrency(value.BaseCurrency) + NormalizeCurrency(value.QuoteCurrency);
+
+    private static bool IsSha256(string value)
+        => value.Length == 64 && value.All(character =>
+            character is >= '0' and <= '9' or >= 'a' and <= 'f' or >= 'A' and <= 'F');
 
     private sealed record NormalizedUsdLeg(
         Arch6aLmaxFxQuote Source,

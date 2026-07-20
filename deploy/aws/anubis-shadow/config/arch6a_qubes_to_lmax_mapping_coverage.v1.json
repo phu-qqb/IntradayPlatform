@@ -1,0 +1,23 @@
+{
+    "contract_version":  "qubes_to_lmax_mapping_coverage_v1",
+    "required_occurrences":  288,
+    "required_unique_security_ids":  99,
+    "direct_mapping_count":  49,
+    "usd_leg_reconstruction_count":  50,
+    "mapped_occurrences":  288,
+    "mapped_unique_security_ids":  99,
+    "missing_security_ids":  [
+
+                             ],
+    "ambiguous_security_ids":  [
+
+                               ],
+    "duplicate_security_ids":  [
+
+                               ],
+    "unavailable_lmax_legs":  [
+
+                              ],
+    "coverage_percent":  100,
+    "final_success":  true
+}
