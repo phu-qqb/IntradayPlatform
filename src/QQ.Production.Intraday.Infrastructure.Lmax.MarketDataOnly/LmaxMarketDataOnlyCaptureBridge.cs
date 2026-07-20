@@ -178,6 +178,12 @@ public sealed partial class LmaxMarketDataOnlyCaptureRunner
         return LmaxFixMarketDataCodec.BuildMarketDataRequest(senderCompId,targetCompId,sequenceNumber,"M2C1B_"+Guid.NewGuid().ToString("N",CultureInfo.InvariantCulture)[..16].ToUpperInvariant(),options);
     }
 
+    public static IReadOnlyList<string> BuildMarketDataRequests(LmaxMarketDataOnlyPreflightConfig config,IReadOnlyList<LmaxMarketDataOnlyCatalogInstrument> instruments,string senderCompId,string targetCompId,Func<int> nextSequence)
+    {
+        ArgumentNullException.ThrowIfNull(nextSequence);
+        return instruments.Select(instrument=>BuildMarketDataRequest(config,instrument,senderCompId,targetCompId,nextSequence())).ToArray();
+    }
+
     private IReadOnlyList<LmaxMarketDataOnlyCatalogInstrument> Resolve(LmaxMarketDataOnlyPreflightConfig config)=>config.Instruments.Select(catalog.ResolveApproved).ToArray();
     private static async Task<LmaxMarketDataOnlyCaptureSummary> FinalizeAsync(CaptureState state,CancellationToken cancellationToken)
     {
