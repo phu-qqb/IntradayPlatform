@@ -24,6 +24,7 @@ public static class Arch5bLineageContractVersions
 public enum Arch5bComputationStatus
 {
     COMPUTED_CANONICAL_PREVIEW,
+    BLOCKED_BROKER_WORKING_LEAVES_UNOBSERVABLE,
     BLOCKED_MISSING_CANONICAL_MARKET_DATA_SNAPSHOT,
     BLOCKED_MISSING_CANONICAL_ACCOUNT_SNAPSHOT,
     BLOCKED_MISSING_CANONICAL_PRICE_SNAPSHOT,
@@ -35,7 +36,8 @@ public enum Arch5bComputationStatus
 public enum Arch5bWorkingLeavesStatus
 {
     CANONICAL_SNAPSHOT_PRESENT,
-    ABSENT_NOT_ASSUMED_ZERO
+    ABSENT_NOT_ASSUMED_ZERO,
+    UNAVAILABLE_WITH_CURRENT_LMAX_INTERFACES
 }
 
 public sealed record Arch5bTargetCloseWeightV1(
@@ -165,6 +167,14 @@ public sealed record Arch5bDriftSnapshotPreviewItem(
     decimal SignedReservedWorkingLeaves,
     decimal RemainingDeltaBaseQuantity);
 
+public sealed record Arch5bPositionOnlyDriftPreviewItem(
+    string ModelRunPreviewId,
+    string InstrumentId,
+    string Symbol,
+    decimal TargetBaseQuantity,
+    decimal CurrentBaseQuantity,
+    decimal PositionOnlyDeltaBaseQuantity);
+
 public sealed record Arch5bDriftSnapshotPreviewStage(
     Arch5bComputationStatus ComputationStatus,
     Arch5bWorkingLeavesStatus WorkingLeavesStatus,
@@ -174,7 +184,11 @@ public sealed record Arch5bDriftSnapshotPreviewStage(
     bool ProducedTradeIntent,
     bool ProducedExecutableQuantity,
     bool AccountingEligible,
-    bool ExecutionAllowed);
+    bool ExecutionAllowed,
+    IReadOnlyList<Arch5bPositionOnlyDriftPreviewItem>? PositionOnlyDrifts = null,
+    bool PositionOnlyDriftCalculated = false,
+    bool BrokerAdjustedDriftCalculated = false,
+    string? BrokerAdjustedDriftBlocker = null);
 
 public sealed record Arch5bManualPaperCycleIntegrationResult(
     ManualPaperCycleCliStatus Status,
@@ -243,7 +257,8 @@ public sealed record Arch5bCanonicalPreviewInputs(
     string AccountSnapshotSha256,
     MarketDataSnapshotId MarketDataSnapshotId,
     DateTimeOffset AsOfUtc,
-    IReadOnlyDictionary<string, Arch5bCanonicalSecurityPreviewInput> Securities);
+    IReadOnlyDictionary<string, Arch5bCanonicalSecurityPreviewInput> Securities,
+    BrokerWorkingLeavesObservationV1? BrokerWorkingLeavesObservation = null);
 
 public sealed record Arch5bParsedWeightsMatrix(
     int DataRowCount,
@@ -709,6 +724,8 @@ public sealed class Arch5bQubesLineagePreviewService
         var calculator = new TargetPositionCalculator();
         var positionItems = new List<Arch5bTargetPositionPreviewItem>();
         var driftItems = new List<Arch5bDriftSnapshotPreviewItem>();
+        var positionOnlyDriftItems = new List<Arch5bPositionOnlyDriftPreviewItem>();
+        var workingLeavesUnavailable = canonicalInputs.BrokerWorkingLeavesObservation is not null;
 
         foreach (var weight in run.TargetCloseWeights.OrderBy(x => x.Order))
         {
@@ -722,6 +739,13 @@ public sealed class Arch5bQubesLineagePreviewService
                 target.TargetNotionalUsd,
                 target.TargetBaseQuantity,
                 target.TargetVenueQuantity));
+            positionOnlyDriftItems.Add(new Arch5bPositionOnlyDriftPreviewItem(
+                modelRunPreviewId,
+                input.InstrumentId.Value.ToString("D"),
+                input.Symbol,
+                target.TargetBaseQuantity,
+                input.CurrentBaseQuantity,
+                target.TargetBaseQuantity - input.CurrentBaseQuantity));
             if (driftReasons.Count == 0)
             {
                 driftItems.Add(new Arch5bDriftSnapshotPreviewItem(
@@ -748,14 +772,22 @@ public sealed class Arch5bQubesLineagePreviewService
                 targetPositionStage,
                 new Arch5bDriftSnapshotPreviewStage(
                     driftReasons[0],
-                    Arch5bWorkingLeavesStatus.ABSENT_NOT_ASSUMED_ZERO,
+                    workingLeavesUnavailable
+                        ? Arch5bWorkingLeavesStatus.UNAVAILABLE_WITH_CURRENT_LMAX_INTERFACES
+                        : Arch5bWorkingLeavesStatus.ABSENT_NOT_ASSUMED_ZERO,
                     driftReasons,
                     [],
-                    false,
+                    workingLeavesUnavailable,
                     ProducedTradeIntent: false,
                     ProducedExecutableQuantity: false,
                     AccountingEligible: false,
-                    ExecutionAllowed: false));
+                    ExecutionAllowed: false,
+                    PositionOnlyDrifts: positionOnlyDriftItems,
+                    PositionOnlyDriftCalculated: true,
+                    BrokerAdjustedDriftCalculated: false,
+                    BrokerAdjustedDriftBlocker: workingLeavesUnavailable
+                        ? "BROKER_WORKING_LEAVES_UNOBSERVABLE"
+                        : null));
         }
 
         return (
@@ -769,7 +801,11 @@ public sealed class Arch5bQubesLineagePreviewService
                 ProducedTradeIntent: false,
                 ProducedExecutableQuantity: false,
                 AccountingEligible: false,
-                ExecutionAllowed: false));
+                ExecutionAllowed: false,
+                PositionOnlyDrifts: positionOnlyDriftItems,
+                PositionOnlyDriftCalculated: true,
+                BrokerAdjustedDriftCalculated: true,
+                BrokerAdjustedDriftBlocker: null));
     }
 
     private static IReadOnlyList<Arch5bComputationStatus> ResolvePositionBlockingReasons(
@@ -805,7 +841,11 @@ public sealed class Arch5bQubesLineagePreviewService
         Arch5bCanonicalPreviewInputs? inputs)
     {
         var reasons = positionReasons.ToList();
-        if (inputs is null || inputs.Securities.Values.Any(x => string.IsNullOrWhiteSpace(x.WorkingLeavesSnapshotSha256)))
+        if (inputs?.BrokerWorkingLeavesObservation is not null)
+        {
+            reasons.Add(Arch5bComputationStatus.BLOCKED_BROKER_WORKING_LEAVES_UNOBSERVABLE);
+        }
+        else if (inputs is null || inputs.Securities.Values.Any(x => string.IsNullOrWhiteSpace(x.WorkingLeavesSnapshotSha256)))
         {
             reasons.Add(Arch5bComputationStatus.BLOCKED_MISSING_CANONICAL_WORKING_LEAVES);
         }
@@ -889,6 +929,17 @@ public sealed class Arch5bQubesLineagePreviewService
                 (!string.IsNullOrWhiteSpace(input.WorkingLeavesSnapshotSha256) && !Arch5bHashing.IsSha256(input.WorkingLeavesSnapshotSha256)))
             {
                 throw new InvalidDataException("CANONICAL_SECURITY_INPUT_INVALID");
+            }
+        }
+        if (inputs.BrokerWorkingLeavesObservation is not null)
+        {
+            var workingLeavesValidation = Arch6aOperationalPositionShadowValidator.ValidateWorkingLeaves(
+                inputs.BrokerWorkingLeavesObservation);
+            if (workingLeavesValidation.Count > 0 ||
+                inputs.Securities.Values.Any(value => !string.IsNullOrWhiteSpace(value.WorkingLeavesSnapshotSha256) ||
+                                                      value.SignedReservedWorkingLeaves != 0m))
+            {
+                throw new InvalidDataException("BROKER_WORKING_LEAVES_OBSERVATION_INVALID");
             }
         }
     }
