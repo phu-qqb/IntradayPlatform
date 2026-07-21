@@ -65,8 +65,26 @@ public sealed class PmsShadowDbContext(DbContextOptions<PmsShadowDbContext> opti
 
     private void RejectMutations()
     {
-        if (ChangeTracker.Entries().Any(x => x.State is EntityState.Modified or EntityState.Deleted))
-            throw new InvalidOperationException("PMS_SHADOW_FACTS_ARE_APPEND_ONLY");
+        foreach (var entry in ChangeTracker.Entries())
+        {
+            if (entry.State == EntityState.Deleted)
+                throw new InvalidOperationException("PMS_SHADOW_FACTS_ARE_APPEND_ONLY");
+            if (entry.State != EntityState.Modified)
+                continue;
+
+            if (entry.Entity is not PmsShadowIngestionRow ||
+                entry.Properties.Where(x => x.IsModified).Any(x =>
+                    x.Metadata.Name is not nameof(PmsShadowIngestionRow.Status) and
+                    not nameof(PmsShadowIngestionRow.CompletedAtUtc)) ||
+                !string.Equals(entry.OriginalValues.GetValue<string>(nameof(PmsShadowIngestionRow.Status)),
+                    PmsShadowIngestionStatuses.Applying, StringComparison.Ordinal) ||
+                !string.Equals(entry.CurrentValues.GetValue<string>(nameof(PmsShadowIngestionRow.Status)),
+                    PmsShadowIngestionStatuses.Completed, StringComparison.Ordinal) ||
+                entry.OriginalValues.GetValue<DateTimeOffset?>(nameof(PmsShadowIngestionRow.CompletedAtUtc)) is not null ||
+                entry.CurrentValues.GetValue<DateTimeOffset?>(nameof(PmsShadowIngestionRow.CompletedAtUtc)) is not { } completedAtUtc ||
+                completedAtUtc.Offset != TimeSpan.Zero)
+                throw new InvalidOperationException("PMS_SHADOW_FACTS_ARE_APPEND_ONLY");
+        }
     }
 
     private static void ConfigureIngestion(EntityTypeBuilder<PmsShadowIngestionRow> entity)
