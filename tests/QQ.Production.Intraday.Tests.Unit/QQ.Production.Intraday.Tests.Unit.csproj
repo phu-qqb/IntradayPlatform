@@ -27,6 +27,7 @@
     <ProjectReference Include="..\..\src\QQ.Production.Intraday.Infrastructure.Simulator\QQ.Production.Intraday.Infrastructure.Simulator.csproj" />
     <ProjectReference Include="..\..\tools\QQ.Production.Intraday.Lmax.ConnectivityLab\QQ.Production.Intraday.Lmax.ConnectivityLab.csproj" />
     <ProjectReference Include="..\..\tools\QQ.Production.Intraday.Tools.LmaxReadOnlyActivation\QQ.Production.Intraday.Tools.LmaxReadOnlyActivation.csproj" />
+    <ProjectReference Include="..\..\src\QQ.Production.Intraday.Infrastructure.PostgreSql\QQ.Production.Intraday.Infrastructure.PostgreSql.csproj" />
   </ItemGroup>
 
 </Project>
