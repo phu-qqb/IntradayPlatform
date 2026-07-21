@@ -370,7 +370,7 @@ public sealed class Arch6cPostgreSqlPmsShadowStateTests
     private static PmsShadowDbContext NewContext()
         => new PmsShadowDesignTimeDbContextFactory().CreateDbContext([]);
 
-    private static PmsShadowPersistencePlan BuildPlan()
+    internal static PmsShadowPersistencePlan BuildPlan()
     {
         var bundle = ValidBundle();
         var result = new Arch6aOperationalPositionShadowService().Build(bundle);
