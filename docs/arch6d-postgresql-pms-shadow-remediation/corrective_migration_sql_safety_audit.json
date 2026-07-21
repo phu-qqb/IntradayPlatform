@@ -1,0 +1,19 @@
+{
+  "migration_id": "20260721175549_CorrectGitCommitIdentityContract",
+  "result": "PASS",
+  "destructive_application_data_operations": 0,
+  "order_fill_ledger_tables_touched": 0,
+  "application_dml": 0,
+  "tables_dropped_in_up": 0,
+  "unrelated_business_columns_dropped": 0,
+  "secrets": 0,
+  "connection_strings": 0,
+  "allowed_git_contract_operations": [
+    "drop old combined check ck_model_run_hashes",
+    "rename core_master_sha256 to core_master_commit_id",
+    "add core_master_object_format as deterministic stored generated column",
+    "add separated artifact and Git identity checks"
+  ],
+  "migration_history_dml": "EF-generated insert/delete only; not application data",
+  "no_order": true
+}

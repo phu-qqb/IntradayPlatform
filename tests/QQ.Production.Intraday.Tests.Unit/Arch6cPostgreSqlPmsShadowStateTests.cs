@@ -358,13 +358,13 @@ public sealed class Arch6cPostgreSqlPmsShadowStateTests
     }
 
     [Fact]
-    public void Down_sql_only_removes_the_dedicated_schema_tables_and_migration_history_row()
+    public void Down_sql_removes_the_dedicated_schema_after_its_tables_and_migration_history_row()
     {
         var sql = ReadSql("20260721152240_down.sql");
         Assert.Contains("DROP TABLE pms_shadow.ingestions", sql, StringComparison.Ordinal);
         Assert.DoesNotContain("DROP TABLE public.", sql, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("DROP DATABASE", sql, StringComparison.OrdinalIgnoreCase);
-        Assert.DoesNotContain("DROP SCHEMA", sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("DROP SCHEMA pms_shadow", sql, StringComparison.OrdinalIgnoreCase);
     }
 
     private static PmsShadowDbContext NewContext()

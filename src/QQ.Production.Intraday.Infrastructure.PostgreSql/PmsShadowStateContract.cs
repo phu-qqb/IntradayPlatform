@@ -8,7 +8,10 @@ public static class PmsShadowStateContract
 {
     public const string SchemaName = "pms_shadow";
     public const string ContractVersion = "postgresql_pms_shadow_state_contract_v1";
-    public const string MigrationId = "20260721152240_InitialPostgreSqlPmsShadowState";
+    public const string InitialMigrationId = "20260721152240_InitialPostgreSqlPmsShadowState";
+    public const string CorrectiveMigrationId = "20260721175549_CorrectGitCommitIdentityContract";
+    public const string MigrationId = InitialMigrationId;
+    public static readonly IReadOnlyList<string> MigrationIds = [InitialMigrationId, CorrectiveMigrationId];
     public const string EvidenceClassification = "EVIDENCE_ONLY_NONACCOUNTING";
     public const string NoOrderClassification = "NO_ORDER";
     public const string TestEnvironment = "LMAX_TEST_EOD_ONLY";
@@ -17,6 +20,34 @@ public static class PmsShadowStateContract
     public const string BrokerAdjustedImpact = "BROKER_ADJUSTED_DRIFT_NOT_COMPUTABLE";
     public const string CompletedNoExternal = "CompletedNoExternal";
     public const string DisabledBrokerSend = "DISABLED_NO_ORDER_ENTRY";
+}
+
+public static class GitCommitIdentityContract
+{
+    public const string Version = "git_commit_identity_v1";
+    public const string Sha1 = "sha1";
+    public const string Sha256 = "sha256";
+
+    public static bool IsValid(string? commitId, string? objectFormat)
+    {
+        if (string.IsNullOrEmpty(commitId) || string.IsNullOrEmpty(objectFormat) ||
+            commitId.Any(character => !char.IsAsciiHexDigit(character) || char.IsUpper(character)))
+            return false;
+
+        return objectFormat switch
+        {
+            Sha1 => commitId.Length == 40,
+            Sha256 => commitId.Length == 64,
+            _ => false
+        };
+    }
+
+    public static string DetectObjectFormat(string commitId)
+    {
+        if (IsValid(commitId, Sha1)) return Sha1;
+        if (IsValid(commitId, Sha256)) return Sha256;
+        throw new InvalidDataException("GIT_COMMIT_IDENTITY_INVALID");
+    }
 }
 
 public sealed record Arch6cArtifactReference(
@@ -189,7 +220,8 @@ public sealed record PmsShadowModelRunRow(
     decimal BenchmarkParameter,
     DateTimeOffset TargetCloseUtc,
     DateTimeOffset AsOfUtc,
-    string CoreMasterSha256,
+    string CoreMasterCommitId,
+    string CoreMasterObjectFormat,
     string PackageSha256,
     string EngineSha256,
     int WrapperExitCode,
@@ -407,7 +439,8 @@ public static class Arch6cPmsShadowPersistencePlanner
                 modelRunId, ingestionId, qubesInputByStrategy[run.ModelRun.StrategyId].SnapshotId,
                 ArtifactId(lineage.OutputSha256), run.ModelRun.ModelRunPreviewId, run.ModelRun.SourceDomainModel,
                 run.ModelRun.StrategyId, lineage.BenchmarkParameter, lineage.TargetCloseUtc, run.ModelRun.AsOfUtc,
-                lineage.SourceMasterSha, lineage.RunnerPackageSha256, lineage.ExecutableSha256, 0, 0, "SUCCEEDED",
+                lineage.SourceMasterSha, GitCommitIdentityContract.DetectObjectFormat(lineage.SourceMasterSha),
+                lineage.RunnerPackageSha256, lineage.ExecutableSha256, 0, 0, "SUCCEEDED",
                 lineage.R083Status, lineage.OutputSha256, run.ModelRun.ContractVersion,
                 PmsShadowStateContract.EvidenceClassification, false, false, true));
 
@@ -525,6 +558,8 @@ public static class Arch6cPmsShadowPersistencePlanner
         Require(plan.CycleResults.Count == 4, "CYCLE_RESULT_COUNT_INVALID", issues);
         Require(plan.TargetWeights.All(x => modelIds.Contains(x.ModelRunId)), "TARGET_WEIGHT_ORPHAN", issues);
         Require(plan.ModelRuns.All(x => snapshotIds.Contains(x.QubesInputSnapshotId) && plan.SourceArtifacts.Any(a => a.ArtifactId == x.OutputArtifactId && a.Sha256 == x.OutputSha256)), "MODEL_RUN_LINEAGE_INCOMPLETE", issues);
+        Require(plan.ModelRuns.All(x => GitCommitIdentityContract.IsValid(x.CoreMasterCommitId, x.CoreMasterObjectFormat)), "GIT_COMMIT_IDENTITY_INVALID", issues);
+        Require(plan.ModelRuns.All(x => Arch5bHashing.IsSha256(x.PackageSha256) && Arch5bHashing.IsSha256(x.EngineSha256) && Arch5bHashing.IsSha256(x.OutputSha256)), "MODEL_RUN_ARTIFACT_SHA256_INVALID", issues);
         Require(plan.TargetPositions.All(x => weightKeys.Contains((x.ModelRunId, x.InstrumentId)) && marketKeys.Contains(x.InstrumentId)), "TARGET_POSITION_LINEAGE_INCOMPLETE", issues);
         Require(plan.PositionOnlyDrifts.All(x => positionKeys.Contains((x.ModelRunId, x.InstrumentId))), "DRIFT_TARGET_POSITION_MISSING", issues);
         Require(plan.TargetWeights.All(x => Fits(x.Weight, RatioLimit, 12)), "NUMERIC_ENVELOPE_INVALID", issues);
@@ -554,7 +589,7 @@ public sealed class InMemoryPmsShadowAtomicIngestionRegistry
 {
     private readonly object sync = new();
     private readonly Dictionary<string, PmsShadowPersistencePlan> bySession = new(StringComparer.Ordinal);
-    private readonly Dictionary<Guid, string> modelOutputs = [];
+    private readonly Dictionary<Guid, (string OutputSha256, string CoreCommitId, string CoreObjectFormat)> modelIdentities = [];
     private readonly Dictionary<Guid, string> snapshots = [];
 
     public PmsShadowApplyResult Apply(PmsShadowPersistencePlan plan, bool simulateInterruptionBeforeCommit = false)
@@ -569,17 +604,39 @@ public sealed class InMemoryPmsShadowAtomicIngestionRegistry
                     throw new InvalidDataException("SOURCE_SESSION_EVIDENCE_SHA_CONFLICT");
                 if (existing.RowsetSha256 != plan.RowsetSha256)
                     throw new InvalidDataException("SOURCE_SESSION_ROWSET_CONFLICT");
+                foreach (var model in plan.ModelRuns)
+                {
+                    var stored = existing.ModelRuns.SingleOrDefault(x => x.ModelRunId == model.ModelRunId)
+                        ?? throw new InvalidDataException("MODEL_RUN_IDENTITY_CONFLICT");
+                    if (stored.OutputSha256 != model.OutputSha256)
+                        throw new InvalidDataException("MODEL_RUN_OUTPUT_SHA_CONFLICT");
+                    if (stored.CoreMasterCommitId != model.CoreMasterCommitId)
+                        throw new InvalidDataException("MODEL_RUN_CORE_COMMIT_ID_CONFLICT");
+                    if (stored.CoreMasterObjectFormat != model.CoreMasterObjectFormat)
+                        throw new InvalidDataException("MODEL_RUN_CORE_OBJECT_FORMAT_CONFLICT");
+                }
                 return PmsShadowApplyResult.AlreadyAppliedIdentical;
             }
+            var modelAlreadyOwned = false;
             foreach (var model in plan.ModelRuns)
-                if (modelOutputs.TryGetValue(model.ModelRunId, out var output) && output != model.OutputSha256)
-                    throw new InvalidDataException("MODEL_RUN_OUTPUT_SHA_CONFLICT");
+                if (modelIdentities.TryGetValue(model.ModelRunId, out var stored))
+                {
+                    if (stored.OutputSha256 != model.OutputSha256)
+                        throw new InvalidDataException("MODEL_RUN_OUTPUT_SHA_CONFLICT");
+                    if (stored.CoreCommitId != model.CoreMasterCommitId)
+                        throw new InvalidDataException("MODEL_RUN_CORE_COMMIT_ID_CONFLICT");
+                    if (stored.CoreObjectFormat != model.CoreMasterObjectFormat)
+                        throw new InvalidDataException("MODEL_RUN_CORE_OBJECT_FORMAT_CONFLICT");
+                    modelAlreadyOwned = true;
+                }
             foreach (var snapshot in plan.QubesInputSnapshots)
                 if (snapshots.TryGetValue(snapshot.SnapshotId, out var sha) && sha != snapshot.InputSha256)
                     throw new InvalidDataException("QUBES_INPUT_SNAPSHOT_CONTENT_CONFLICT");
+            if (modelAlreadyOwned) throw new InvalidDataException("MODEL_RUN_ID_ALREADY_OWNED_BY_ANOTHER_SESSION");
             if (simulateInterruptionBeforeCommit) throw new InvalidOperationException("SIMULATED_INTERRUPTION_BEFORE_ATOMIC_COMMIT");
             bySession.Add(plan.Ingestion.SourceSessionId, plan);
-            foreach (var model in plan.ModelRuns) modelOutputs[model.ModelRunId] = model.OutputSha256;
+            foreach (var model in plan.ModelRuns)
+                modelIdentities[model.ModelRunId] = (model.OutputSha256, model.CoreMasterCommitId, model.CoreMasterObjectFormat);
             foreach (var snapshot in plan.QubesInputSnapshots) snapshots[snapshot.SnapshotId] = snapshot.InputSha256;
             return PmsShadowApplyResult.Applied;
         }

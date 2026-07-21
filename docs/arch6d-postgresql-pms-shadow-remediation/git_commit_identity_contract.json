@@ -1,0 +1,42 @@
+{
+  "contract_version": "git_commit_identity_v1",
+  "properties": {
+    "commit_id": "full lowercase hexadecimal Git object identity",
+    "object_format": "required discriminator"
+  },
+  "allowed_formats": {
+    "sha1": {
+      "length": 40,
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "sha256": {
+      "length": 64,
+      "pattern": "^[0-9a-f]{64}$"
+    }
+  },
+  "rejected": [
+    "abbreviated identities",
+    "uppercase hexadecimal",
+    "whitespace",
+    "0x prefixes",
+    "missing or unknown object format",
+    "format-length mismatch"
+  ],
+  "transformations_forbidden": [
+    "rehash",
+    "padding",
+    "truncation",
+    "replacement with package, tree or artifact hash"
+  ],
+  "legacy_adapter": {
+    "accepted_source_property": "core_master_sha256",
+    "target_property": "core_master_commit_id",
+    "format_detection": "exact validated length and lowercase hexadecimal only",
+    "scope": "sealed ARCH6C persistence plan only",
+    "new_contract_missing_format": "rejected"
+  },
+  "arch6b_core_identity": {
+    "commit_id": "a96ca2eb725dcba3bc66579b8782fdd14ecfe97a",
+    "object_format": "sha1"
+  }
+}
