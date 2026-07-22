@@ -34,13 +34,17 @@ Migration `20260722231500_AddIntradayEconomicProjectionRevisions` adds:
 - `pms_shadow.intraday_target_positions`;
 - `pms_shadow.intraday_position_only_drifts`.
 
+Migration `20260722234500_CorrectIntradayMarketPriceScaleInvariant` aligns the midpoint
+check with the `numeric(28,12)` storage scale by comparing against the midpoint rounded to
+12 decimals. It does not rewrite stored prices or economic facts.
+
 Every revision carries the raw capture SHA, market snapshot SHA, economic input SHA,
 target and drift SHA values, the superseded technical manifest SHA, and no-order status.
 The old `intraday_slots` rows are not updated or deleted. An identical replay returns
 `AlreadyAppliedIdentical`; contradictory content fails closed with
 `FAILED_CLOSED_CONFLICT`.
 
-The migration `Down` removes only these four revision-owned tables. It does not remove the
+The base economic revision migration `Down` removes only these four revision-owned tables. It does not remove the
 base PMS schema or the original intraday slot registry.
 
 ## Bounded replay
