@@ -1,0 +1,26 @@
+{
+  "gate": "ARCH6F_QUALIFY_15_MINUTE_PMS_SHADOW_OPERATIONS_RESTART_RECOVERY_AND_FRESHNESS_ALERTING_NO_ORDER",
+  "blocker": "NO_GO_ARCH6F_TARGET_POSITIONS_NOT_REFRESHED_FROM_REAL_SLOT_LMAX",
+  "class": "EfPmsShadowIntradayReadService",
+  "method": "GetAsync",
+  "repository_path": "src/QQ.Production.Intraday.Infrastructure.PostgreSql/PmsShadowIntradayReadService.cs",
+  "old_flow": [
+    "select latest completed technical intraday slot",
+    "load the slot source_session_id",
+    "call EfPmsShadowOperationalReadService.GetSessionAsync",
+    "return daily ARCH6B TargetPositions and PositionOnlyDrifts as slot results"
+  ],
+  "new_flow": [
+    "verify the immutable real-slot capture and SHA-256",
+    "create a distinct slot MarketDataSnapshot identity",
+    "select the four scheduled finalized daily ModelRuns and their TargetWeights",
+    "invoke the canonical TargetPositionCalculator with each slot decision price",
+    "calculate PositionOnlyDrift from the new target and authoritative position snapshot",
+    "persist an append-only qualifying projection revision linked to the superseded attempt",
+    "select only the qualifying economic revision for latest target and drift read models"
+  ],
+  "why_previous_tests_missed_it": "The deterministic scheduler and handoff fixtures asserted counts, cadence, freshness, idempotence and no-order invariants, but supplied a manifest whose 288 target and drift counts were already finalized. They did not assert that slot BBO values participated in the target-position input fingerprint or canonical calculation.",
+  "non_regression_test": "Arch6fEconomicRefreshTests.FreshSlotPricesRecalculateCanonicalTargetsAndDriftsWhileReusingDailyModels",
+  "old_attempts_preserved": true,
+  "no_order": true
+}
