@@ -5,6 +5,13 @@ using Npgsql;
 using QQ.Production.Intraday.Infrastructure.PostgreSql;
 
 var arguments = Arguments.Parse(args);
+
+if (arguments.Mode == "--intraday-cadence-decision")
+{
+    Write(PmsShadowIntradayCadenceDecision.Authoritative);
+    return;
+}
+
 arguments.RequireEvidenceBoundary();
 
 if (arguments.Mode == "--build-daily-handoff")
@@ -67,6 +74,14 @@ var snapshot = sessionId is null
     ? await reads.GetLatestAsync(policy, nowUtc)
     : await reads.GetSessionAsync(sessionId, policy, nowUtc);
 
+if (arguments.Mode == "--pms-shadow-intraday")
+{
+    var intraday = new EfPmsShadowIntradayReadService(
+        new EfPmsShadowIntradaySlotStore(factory), reads);
+    Write(await intraday.GetAsync(nowUtc));
+    return;
+}
+
 if (snapshot is null)
 {
     Write(new
@@ -114,7 +129,8 @@ sealed class Arguments
     [
         "--build-daily-handoff", "--coordinate-daily-ingestion", "--pms-shadow-latest",
         "--pms-shadow-session", "--pms-shadow-targets", "--pms-shadow-drifts",
-        "--pms-shadow-lineage", "--pms-shadow-health"
+        "--pms-shadow-lineage", "--pms-shadow-health", "--pms-shadow-intraday",
+        "--intraday-cadence-decision"
     ];
     private readonly Dictionary<string, string> values;
 

@@ -1,5 +1,6 @@
 using QQ.Production.Intraday.Application;
 using QQ.Production.Intraday.Domain;
+using QQ.Production.Intraday.Infrastructure.PostgreSql;
 
 namespace QQ.Production.Intraday.Worker;
 
@@ -13,6 +14,7 @@ public sealed class Worker(IServiceScopeFactory scopeFactory, IConfiguration con
             await PromoteWeightsIfEnabled(stoppingToken);
             await ProcessOnce(stoppingToken);
             await BuildBarsIfEnabled(stoppingToken);
+            await RunIntradaySchedulerIfEnabled(stoppingToken);
         }
 
         using var timer = new PeriodicTimer(pollInterval);
@@ -22,6 +24,7 @@ public sealed class Worker(IServiceScopeFactory scopeFactory, IConfiguration con
             await ProcessOnce(stoppingToken);
             await BuildBarsIfEnabled(stoppingToken);
             await RunLocalSchedulerIfEnabled(stoppingToken);
+            await RunIntradaySchedulerIfEnabled(stoppingToken);
         }
     }
 
@@ -85,5 +88,22 @@ public sealed class Worker(IServiceScopeFactory scopeFactory, IConfiguration con
             await runner.RunRunbookAsync(new RunOperationalRunbookRequest(definition.RunbookType, $"Local scheduler triggered schedule '{schedule.Name}'.", TriggerType: OperationalRunbookTriggerType.LocalScheduler), cancellationToken);
             logger.LogInformation("Local scheduler triggered runbook {RunbookType} from schedule {ScheduleName}", definition.RunbookType, schedule.Name);
         }
+    }
+
+    private async Task RunIntradaySchedulerIfEnabled(CancellationToken cancellationToken)
+    {
+        if (!configuration.GetValue("Intraday15m:Enabled", false))
+        {
+            return;
+        }
+
+        using var scope = scopeFactory.CreateScope();
+        var scheduler = scope.ServiceProvider.GetRequiredService<PmsShadowIntradayScheduler>();
+        var clock = scope.ServiceProvider.GetRequiredService<IClock>();
+        var coordinatorId = configuration.GetValue<string>("Intraday15m:CoordinatorId")
+            ?? $"worker-{Environment.MachineName}";
+        var tick = await scheduler.RunClosedSlotAsync(clock.UtcNow, coordinatorId, cancellationToken);
+        logger.LogInformation("Intraday 15m slot result: SlotId={SlotId} Claim={Claim} Final={Final}",
+            tick.Slot.SlotId, tick.ClaimResult, tick.FinalStatus);
     }
 }
