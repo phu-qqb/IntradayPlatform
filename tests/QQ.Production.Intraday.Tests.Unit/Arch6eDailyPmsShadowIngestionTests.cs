@@ -1,3 +1,4 @@
+using Microsoft.EntityFrameworkCore;
 using QQ.Production.Intraday.Infrastructure.PostgreSql;
 
 namespace QQ.Production.Intraday.Tests.Unit;
@@ -181,6 +182,18 @@ public sealed class Arch6eDailyPmsShadowIngestionTests
         Assert.Equal(4, result.BrokerAdjustedDrifts.Count);
         Assert.Equal(result.TargetPositions.OrderBy(value => value.StrategyId).ThenBy(value => value.SecurityId),
             result.TargetPositions);
+    }
+
+    [Fact]
+    public void DecisionPriceQueryRoundsHighScalePostgreSqlNumericsBeforeMaterialization()
+    {
+        using var context = new PmsShadowDesignTimeDbContextFactory().CreateDbContext([]);
+        var method = typeof(EfPmsShadowOperationalReadService).GetMethod("DecisionPriceObservations",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)!;
+        var query = Assert.IsAssignableFrom<IQueryable>(method.Invoke(null, [context, Guid.Empty]));
+        var sql = query.ToQueryString();
+        Assert.Contains("round(", sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains(", 12)", sql, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
