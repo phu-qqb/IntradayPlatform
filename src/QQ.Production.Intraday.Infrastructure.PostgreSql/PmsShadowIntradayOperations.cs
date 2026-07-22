@@ -11,6 +11,7 @@ public static class PmsShadowIntradayCadenceContract
     public const string TimeZone = "UTC";
     public const string OperationalCalendar = "CONTINUOUS_WEEKDAYS_UTC_EXCLUDING_SATURDAY_SUNDAY";
     public const int SlotMinutes = 15;
+    public const int MinimumRealConsecutiveQualificationSlots = 3;
     public const int MaximumStartDelayMinutes = 5;
     public const int MaximumFinalizationDelayMinutes = 14;
     public const int FreshnessMinutes = 20;

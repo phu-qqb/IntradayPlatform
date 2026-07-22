@@ -1,0 +1,26 @@
+{
+  "version": "arch6f-real-slot-qualification-policy-v2",
+  "minimumRealConsecutiveQualificationSlots": 3,
+  "slotDurationMinutes": 15,
+  "requiredDistinctCaptureArtifacts": 3,
+  "requiresNonOverlappingRanges": true,
+  "finalGateAfterThirdCompletedSlot": true,
+  "deterministicValidationsReused": [
+    "operational_date_change",
+    "utc_rollover",
+    "multiday_history",
+    "restart_recovery",
+    "post_commit_replay",
+    "concurrent_coordinators",
+    "freshness_and_failure_states",
+    "structured_alerts",
+    "overlap_rejection"
+  ],
+  "supersededRequirements": [
+    "eight_real_slots",
+    "two_real_operational_dates",
+    "two_hour_campaign",
+    "forty_eight_hour_wait"
+  ],
+  "noOrder": true
+}

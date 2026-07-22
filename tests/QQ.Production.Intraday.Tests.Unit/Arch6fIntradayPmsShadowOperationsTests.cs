@@ -14,6 +14,7 @@ public sealed class Arch6fIntradayPmsShadowOperationsTests
         Assert.Equal("pms_shadow_intraday_15m_cadence_v1", PmsShadowIntradayCadenceContract.Version);
         Assert.Equal("UTC", PmsShadowIntradayCadenceContract.TimeZone);
         Assert.Equal(15, PmsShadowIntradayCadenceContract.SlotMinutes);
+        Assert.Equal(3, PmsShadowIntradayCadenceContract.MinimumRealConsecutiveQualificationSlots);
         Assert.Equal(5, PmsShadowIntradayCadenceContract.MaximumStartDelayMinutes);
         Assert.Equal(14, PmsShadowIntradayCadenceContract.MaximumFinalizationDelayMinutes);
         Assert.Equal(20, PmsShadowIntradayCadenceContract.FreshnessMinutes);
@@ -65,28 +66,30 @@ public sealed class Arch6fIntradayPmsShadowOperationsTests
     }
 
     [Fact]
-    public async Task EightConsecutiveSlotsAcrossTwoOperationalDatesAreCompletedAndQueryable()
+    public async Task MinimumQualificationSlotsAcrossTwoOperationalDatesAreCompletedAndQueryable()
     {
         var store = new InMemoryPmsShadowIntradaySlotStore();
         var pipeline = new FixturePipeline();
         var scheduler = new PmsShadowIntradayScheduler(store, pipeline);
-        var firstEnd = Utc(2026, 7, 21, 23, 15);
-        for (var index = 0; index < 8; index++)
+        var firstEnd = Utc(2026, 7, 21, 23, 45);
+        var slotCount = PmsShadowIntradayCadenceContract.MinimumRealConsecutiveQualificationSlots;
+        for (var index = 0; index < slotCount; index++)
         {
             var tick = await scheduler.RunClosedSlotAsync(firstEnd.AddMinutes(index * 15), "coordinator-a");
             Assert.Equal(PmsShadowIntradaySlotStatus.Completed, tick.FinalStatus);
         }
 
         var rows = await store.ReadAllAsync();
-        Assert.Equal(8, rows.Count);
+        Assert.Equal(slotCount, rows.Count);
         Assert.Equal(2, rows.Select(value => value.OperationalDate).Distinct().Count());
         Assert.All(rows, value => Assert.Equal("COMPLETED", value.Status));
-        Assert.Equal(8, rows.Select(value => value.SlotId).Distinct().Count());
-        Assert.Equal(8, pipeline.Invocations);
+        Assert.Equal(slotCount, rows.Select(value => value.SlotId).Distinct().Count());
+        Assert.Equal(slotCount, pipeline.Invocations);
 
-        var readModels = PmsShadowIntradayProjection.Build(rows, firstEnd.AddMinutes(7 * 15 + 1));
+        var readModels = PmsShadowIntradayProjection.Build(rows,
+            firstEnd.AddMinutes((slotCount - 1) * PmsShadowIntradayCadenceContract.SlotMinutes + 1));
         Assert.Equal(rows[^1].SlotId, readModels.LatestIntradayShadowSlot.Slot!.SlotId);
-        Assert.Equal(8, readModels.IntradayShadowSlotHistory.Slots.Count);
+        Assert.Equal(slotCount, readModels.IntradayShadowSlotHistory.Slots.Count);
         Assert.Equal(288, readModels.LatestTargetPositionBySlot.Count);
         Assert.Equal(288, readModels.LatestPositionOnlyDriftBySlot.Count);
         Assert.Equal(PmsShadowIntradayFreshness.Fresh,
