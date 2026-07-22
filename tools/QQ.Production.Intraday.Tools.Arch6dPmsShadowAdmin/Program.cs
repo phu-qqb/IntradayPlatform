@@ -61,20 +61,26 @@ await using var context = new PmsShadowDbContext(options);
 if (arguments.Mode == "--apply-migration")
 {
     var known = context.Database.GetMigrations().ToArray();
+    var applied = (await context.Database.GetAppliedMigrationsAsync()).ToArray();
     var pending = (await context.Database.GetPendingMigrationsAsync()).ToArray();
-    Require(known.SequenceEqual([PmsShadowStateContract.MigrationId]), "MIGRATION_SET_NOT_EXACT");
-    Require(pending.SequenceEqual([PmsShadowStateContract.MigrationId]), "PENDING_MIGRATION_SET_NOT_EXACT");
+    Require(known.SequenceEqual(PmsShadowStateContract.MigrationIds), "MIGRATION_SET_NOT_EXACT");
+    Require(applied.SequenceEqual(Array.Empty<string>()) ||
+        applied.SequenceEqual([PmsShadowStateContract.InitialMigrationId]), "APPLIED_MIGRATION_SET_NOT_SAFE");
+    var expectedPending = applied.Length == 0
+        ? PmsShadowStateContract.MigrationIds
+        : [PmsShadowStateContract.CorrectiveMigrationId];
+    Require(pending.SequenceEqual(expectedPending), "PENDING_MIGRATION_SET_NOT_EXACT");
     await context.Database.MigrateAsync();
-    Write(new { result = "APPLIED", migration_id = PmsShadowStateContract.MigrationId });
+    Write(new { result = "APPLIED", migration_ids = pending });
     return;
 }
 
 if (arguments.Mode == "--rollback-migration")
 {
     var applied = (await context.Database.GetAppliedMigrationsAsync()).ToArray();
-    Require(applied.SequenceEqual([PmsShadowStateContract.MigrationId]), "APPLIED_MIGRATION_SET_NOT_EXACT");
+    Require(applied.SequenceEqual(PmsShadowStateContract.MigrationIds), "APPLIED_MIGRATION_SET_NOT_EXACT");
     await context.GetService<IMigrator>().MigrateAsync(Migration.InitialDatabase);
-    Write(new { result = "ROLLED_BACK", migration_id = PmsShadowStateContract.MigrationId });
+    Write(new { result = "ROLLED_BACK", migration_ids = applied });
     return;
 }
 

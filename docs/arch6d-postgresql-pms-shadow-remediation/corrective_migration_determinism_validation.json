@@ -1,0 +1,55 @@
+{
+  "result": "PASS",
+  "tested_commit": "760d9e5bfcbf1036722005201c0ec19ebdc8555f",
+  "postgresql_project_tree": "5b3204ffc0919b476d4706dcb29730ccb91befd6",
+  "roots": [
+    "clean detached worktree A",
+    "clean detached worktree B"
+  ],
+  "root_commit_equal": true,
+  "generation": {
+    "provider": "Npgsql.EntityFrameworkCore.PostgreSQL 10.0.0",
+    "canonicalization": "UTF-8 without BOM; trim terminal blank lines; retain one terminal CRLF",
+    "volatile_dates_added": 0,
+    "absolute_paths": 0,
+    "connection_strings": 0,
+    "secrets": 0
+  },
+  "scripts": [
+    {
+      "name": "corrective_up.sql",
+      "raw_sha256_root_a": "dfc9b7529dda7c14c7b1748e74ab4fd802a7e698271cc46ef0a7a8d7373006e0",
+      "raw_sha256_root_b": "dfc9b7529dda7c14c7b1748e74ab4fd802a7e698271cc46ef0a7a8d7373006e0",
+      "canonical_sha256_root_a": "02564903ae9d6ff169421a9976e38765727e8bcc4a21e3ce42beef9484277db5",
+      "canonical_sha256_root_b": "02564903ae9d6ff169421a9976e38765727e8bcc4a21e3ce42beef9484277db5",
+      "versioned_sha256": "02564903ae9d6ff169421a9976e38765727e8bcc4a21e3ce42beef9484277db5",
+      "byte_identical": true
+    },
+    {
+      "name": "full_idempotent.sql",
+      "raw_sha256_root_a": "cc392f71020007256d0f6bf1dbe1668ba5039aa300bf44b2209644349fb276f7",
+      "raw_sha256_root_b": "cc392f71020007256d0f6bf1dbe1668ba5039aa300bf44b2209644349fb276f7",
+      "canonical_sha256_root_a": "1a0df183a8cf8d0e041ec2e73e5b63931ba9e43fd3219b9fbc3c1aa1f54bf5a5",
+      "canonical_sha256_root_b": "1a0df183a8cf8d0e041ec2e73e5b63931ba9e43fd3219b9fbc3c1aa1f54bf5a5",
+      "versioned_sha256": "1a0df183a8cf8d0e041ec2e73e5b63931ba9e43fd3219b9fbc3c1aa1f54bf5a5",
+      "byte_identical": true
+    },
+    {
+      "name": "full_down.sql",
+      "raw_sha256_root_a": "65444f4cbf5b7677e45d8b733b759d9ca22dc8718a51347e1fd94cb016ea6f4f",
+      "raw_sha256_root_b": "65444f4cbf5b7677e45d8b733b759d9ca22dc8718a51347e1fd94cb016ea6f4f",
+      "canonical_sha256_root_a": "e95a4888f0ce9a6bb0f59a1a4f5c91b591f65cb31919028ea0803f40f61612ea",
+      "canonical_sha256_root_b": "e95a4888f0ce9a6bb0f59a1a4f5c91b591f65cb31919028ea0803f40f61612ea",
+      "versioned_sha256": "e95a4888f0ce9a6bb0f59a1a4f5c91b591f65cb31919028ea0803f40f61612ea",
+      "byte_identical": true
+    },
+    {
+      "name": "corrective_down.sql",
+      "raw_sha256_root_a": "20b2e0909b31e4b9495a80a7a18f29f6122f7d9b6fa37b48f7442c977e2fffb0",
+      "raw_sha256_root_b": "20b2e0909b31e4b9495a80a7a18f29f6122f7d9b6fa37b48f7442c977e2fffb0",
+      "canonical_sha256_root_a": "a36fcbdbeee06ef35f9c073adeb913d22e322a009aa0fcb263dc623a2ae4798f",
+      "canonical_sha256_root_b": "a36fcbdbeee06ef35f9c073adeb913d22e322a009aa0fcb263dc623a2ae4798f",
+      "byte_identical": true
+    }
+  ]
+}

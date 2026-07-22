@@ -2,6 +2,7 @@
 using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 using QQ.Production.Intraday.Infrastructure.PostgreSql;
@@ -11,9 +12,11 @@ using QQ.Production.Intraday.Infrastructure.PostgreSql;
 namespace QQ.Production.Intraday.Infrastructure.PostgreSql.Migrations
 {
     [DbContext(typeof(PmsShadowDbContext))]
-    partial class PmsShadowDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260721175549_CorrectGitCommitIdentityContract")]
+    partial class CorrectGitCommitIdentityContract
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder

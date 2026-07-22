@@ -40,7 +40,7 @@ public static class Arch6dPmsShadowEvidencePackageReader
 
         using var arch6c = ZipFile.OpenRead(arch6cEvidenceZip);
         using var arch6b = ZipFile.OpenRead(arch6bEvidenceZip);
-        var plan = ReadJson<PmsShadowPersistencePlan>(arch6c, "arch6b_shadow_persistence_plan.json");
+        var plan = ReadPersistencePlan(arch6c, "arch6b_shadow_persistence_plan.json");
 
         Require(plan.Ingestion.SourceSessionId == SourceSessionId, "ARCH6B_SOURCE_SESSION_MISMATCH");
         Require(plan.Ingestion.SourceEvidenceSha256 == arch6bSha, "ARCH6B_PLAN_EVIDENCE_SHA_MISMATCH");
@@ -78,11 +78,64 @@ public static class Arch6dPmsShadowEvidencePackageReader
             plan.SourceArtifacts.Count, embedded, expectedCounts));
     }
 
-    private static T ReadJson<T>(ZipArchive archive, string name)
+    private static PmsShadowPersistencePlan ReadPersistencePlan(ZipArchive archive, string name)
     {
         var entry = archive.GetEntry(name) ?? throw new InvalidDataException($"ARCH6C_ENTRY_MISSING:{name}");
         using var stream = entry.Open();
-        return JsonSerializer.Deserialize<T>(stream, Json) ??
+        using var document = JsonDocument.Parse(stream);
+        using var buffer = new MemoryStream();
+        using (var writer = new Utf8JsonWriter(buffer))
+        {
+            writer.WriteStartObject();
+            foreach (var property in document.RootElement.EnumerateObject())
+            {
+                if (property.NameEquals("model_runs"))
+                {
+                    writer.WritePropertyName(property.Name);
+                    writer.WriteStartArray();
+                    foreach (var modelRun in property.Value.EnumerateArray())
+                    {
+                        writer.WriteStartObject();
+                        string? commitId = null;
+                        var hasCommitId = false;
+                        var hasObjectFormat = false;
+                        var legacyIdentity = false;
+                        foreach (var field in modelRun.EnumerateObject())
+                        {
+                            if (field.NameEquals("core_master_sha256"))
+                            {
+                                commitId = field.Value.GetString();
+                                writer.WriteString("core_master_commit_id", commitId);
+                                hasCommitId = true;
+                                legacyIdentity = true;
+                            }
+                            else
+                            {
+                                field.WriteTo(writer);
+                                hasCommitId |= field.NameEquals("core_master_commit_id");
+                                hasObjectFormat |= field.NameEquals("core_master_object_format");
+                                if (field.NameEquals("core_master_commit_id")) commitId = field.Value.GetString();
+                            }
+                        }
+                        Require(hasCommitId && commitId is not null, "CORE_MASTER_COMMIT_ID_MISSING");
+                        if (legacyIdentity && !hasObjectFormat)
+                        {
+                            writer.WriteString("core_master_object_format",
+                                GitCommitIdentityContract.DetectObjectFormat(commitId!));
+                        }
+                        writer.WriteEndObject();
+                    }
+                    writer.WriteEndArray();
+                }
+                else
+                {
+                    property.WriteTo(writer);
+                }
+            }
+            writer.WriteEndObject();
+        }
+        buffer.Position = 0;
+        return JsonSerializer.Deserialize<PmsShadowPersistencePlan>(buffer, Json) ??
             throw new InvalidDataException($"ARCH6C_ENTRY_INVALID:{name}");
     }
 

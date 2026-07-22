@@ -59,7 +59,7 @@ public sealed class Arch6bPmsShadowSessionImporter(IPmsShadowSessionImportStore 
         var preflight = await store.InspectAsync(cancellationToken);
         if (!string.Equals(preflight.ProviderName, "Npgsql.EntityFrameworkCore.PostgreSQL", StringComparison.Ordinal))
             throw new InvalidOperationException("POSTGRESQL_PROVIDER_REQUIRED");
-        if (!preflight.AppliedMigrations.Contains(PmsShadowStateContract.MigrationId, StringComparer.Ordinal))
+        if (!preflight.AppliedMigrations.SequenceEqual(PmsShadowStateContract.MigrationIds, StringComparer.Ordinal))
             throw new InvalidOperationException("EXPECTED_PMS_SHADOW_MIGRATION_NOT_APPLIED");
 
         return await store.ImportAtomicallyAsync(plan, cancellationToken);
@@ -215,9 +215,19 @@ public sealed class EfPmsShadowSessionImportStore(IDbContextFactory<PmsShadowDbC
 
         var storedModels = await context.ModelRuns.AsNoTracking()
             .Where(x => x.IngestionId == existing.IngestionId)
-            .ToDictionaryAsync(x => x.ModelRunId, x => x.OutputSha256, cancellationToken);
-        if (plan.ModelRuns.Any(x => !storedModels.TryGetValue(x.ModelRunId, out var sha) || sha != x.OutputSha256))
-            throw new InvalidDataException("MODEL_RUN_OUTPUT_SHA_CONFLICT");
+            .Select(x => new { x.ModelRunId, x.OutputSha256, x.CoreMasterCommitId, x.CoreMasterObjectFormat })
+            .ToDictionaryAsync(x => x.ModelRunId, cancellationToken);
+        foreach (var model in plan.ModelRuns)
+        {
+            if (!storedModels.TryGetValue(model.ModelRunId, out var stored))
+                throw new InvalidDataException("MODEL_RUN_IDENTITY_CONFLICT");
+            if (stored.OutputSha256 != model.OutputSha256)
+                throw new InvalidDataException("MODEL_RUN_OUTPUT_SHA_CONFLICT");
+            if (stored.CoreMasterCommitId != model.CoreMasterCommitId)
+                throw new InvalidDataException("MODEL_RUN_CORE_COMMIT_ID_CONFLICT");
+            if (stored.CoreMasterObjectFormat != model.CoreMasterObjectFormat)
+                throw new InvalidDataException("MODEL_RUN_CORE_OBJECT_FORMAT_CONFLICT");
+        }
 
         var storedInputs = await context.QubesInputSnapshots.AsNoTracking()
             .Where(x => x.IngestionId == existing.IngestionId)
@@ -257,13 +267,17 @@ public sealed class EfPmsShadowSessionImportStore(IDbContextFactory<PmsShadowDbC
         var modelIds = plan.ModelRuns.Select(x => x.ModelRunId).ToArray();
         var existingModels = await context.ModelRuns.AsNoTracking()
             .Where(x => modelIds.Contains(x.ModelRunId))
-            .Select(x => new { x.ModelRunId, x.OutputSha256 })
+            .Select(x => new { x.ModelRunId, x.OutputSha256, x.CoreMasterCommitId, x.CoreMasterObjectFormat })
             .ToArrayAsync(cancellationToken);
         foreach (var existing in existingModels)
         {
             var expected = plan.ModelRuns.Single(x => x.ModelRunId == existing.ModelRunId);
             if (existing.OutputSha256 != expected.OutputSha256)
                 throw new InvalidDataException("MODEL_RUN_OUTPUT_SHA_CONFLICT");
+            if (existing.CoreMasterCommitId != expected.CoreMasterCommitId)
+                throw new InvalidDataException("MODEL_RUN_CORE_COMMIT_ID_CONFLICT");
+            if (existing.CoreMasterObjectFormat != expected.CoreMasterObjectFormat)
+                throw new InvalidDataException("MODEL_RUN_CORE_OBJECT_FORMAT_CONFLICT");
             throw new InvalidDataException("MODEL_RUN_ID_ALREADY_OWNED_BY_ANOTHER_SESSION");
         }
 

@@ -277,7 +277,9 @@ public sealed class PmsShadowDbContext(DbContextOptions<PmsShadowDbContext> opti
     {
         entity.ToTable("model_runs", table =>
         {
-            table.HasCheckConstraint("ck_model_run_hashes", $"{ShaCheck("core_master_sha256")} AND {ShaCheck("package_sha256")} AND {ShaCheck("engine_sha256")} AND {ShaCheck("output_sha256")}");
+            table.HasCheckConstraint("ck_model_run_artifact_hashes", $"{ShaCheck("package_sha256")} AND {ShaCheck("engine_sha256")} AND {ShaCheck("output_sha256")}");
+            table.HasCheckConstraint("ck_model_run_core_master_commit_identity",
+                GitCommitCheck("core_master_commit_id", "core_master_object_format"));
             table.HasCheckConstraint("ck_model_run_no_order", "NOT accounting_eligible AND NOT execution_allowed AND not_an_order");
             table.HasCheckConstraint("ck_model_run_exit_codes", "wrapper_exit_code = 0 AND native_exit_code = 0");
         });
@@ -292,7 +294,11 @@ public sealed class PmsShadowDbContext(DbContextOptions<PmsShadowDbContext> opti
         Text(entity.Property(x => x.SourceDomainModel), 160);
         Text(entity.Property(x => x.StrategyId), 160);
         Ratio(entity.Property(x => x.BenchmarkParameter));
-        Hash(entity.Property(x => x.CoreMasterSha256));
+        Text(entity.Property(x => x.CoreMasterCommitId), 64);
+        entity.Property(x => x.CoreMasterObjectFormat)
+            .HasMaxLength(6)
+            .HasComputedColumnSql(
+                "CASE WHEN length(core_master_commit_id) = 40 THEN 'sha1' WHEN length(core_master_commit_id) = 64 THEN 'sha256' ELSE 'invalid' END", stored: true);
         Hash(entity.Property(x => x.PackageSha256));
         Hash(entity.Property(x => x.EngineSha256));
         Text(entity.Property(x => x.SemanticStatus), 96);
@@ -427,6 +433,10 @@ public sealed class PmsShadowDbContext(DbContextOptions<PmsShadowDbContext> opti
     private static void Quantity(PropertyBuilder<decimal> property) => property.HasPrecision(28, 8);
     private static void Money(PropertyBuilder<decimal> property) => property.HasPrecision(28, 8);
     private static string ShaCheck(string column) => $"{column} ~ '^[0-9a-f]{{64}}$'";
+    private static string GitCommitCheck(string commitColumn, string formatColumn) =>
+        $"{formatColumn} IN ('{GitCommitIdentityContract.Sha1}', '{GitCommitIdentityContract.Sha256}') AND " +
+        $"(({formatColumn} = '{GitCommitIdentityContract.Sha1}' AND {commitColumn} ~ '^[0-9a-f]{{40}}$') OR " +
+        $"({formatColumn} = '{GitCommitIdentityContract.Sha256}' AND {commitColumn} ~ '^[0-9a-f]{{64}}$'))";
 
     private static void ApplySnakeCaseColumns(ModelBuilder modelBuilder)
     {

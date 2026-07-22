@@ -998,6 +998,9 @@ namespace QQ.Production.Intraday.Infrastructure.PostgreSql.Migrations
             migrationBuilder.DropTable(
                 name: "ingestions",
                 schema: "pms_shadow");
+
+            migrationBuilder.DropSchema(
+                name: "pms_shadow");
         }
     }
 }

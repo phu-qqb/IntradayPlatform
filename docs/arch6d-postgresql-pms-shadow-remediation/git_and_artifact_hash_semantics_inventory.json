@@ -1,0 +1,125 @@
+{
+  "gate": "ARCH6D_REMEDIATE_POSTGRESQL_PMS_SHADOW_CORE_MASTER_HASH_AND_DOWN_SCHEMA_CONTRACT_NO_ORDER",
+  "inventory_scope": [
+    "ARCH6C sealed persistence plan consumed by the importer",
+    "ARCH6B sealed manifests referenced by that plan",
+    "Intraday PostgreSQL shadow model, migration and importer"
+  ],
+  "observed_source_session_id": "arch6b-daily-tier1-20260721T130346Z-422530a8",
+  "fields": [
+    {
+      "repository_file_table": "QQ.Production.Core ARCH6C evidence/arch6b_shadow_persistence_plan.json/pms_shadow.model_runs",
+      "name": "core_master_sha256",
+      "observed_value": "a96ca2eb725dcba3bc66579b8782fdd14ecfe97a",
+      "length": 40,
+      "business_meaning": "full Core Git commit object identity",
+      "actual_algorithm": "git sha1 object format",
+      "must_remain_sha256_artifact": false,
+      "must_become_git_commit_identity": true,
+      "current_constraint": "misnamed and constrained as 64 lowercase hexadecimal characters",
+      "corrected_constraint": "core_master_commit_id plus core_master_object_format=sha1; exact 40 lowercase hexadecimal characters"
+    },
+    {
+      "repository_file_table": "QQ.Production.Core ARCH6B evidence/downstream_completion_manifest.json",
+      "name": "intraday_tooling_commit",
+      "observed_value": "53cdea888fbbeee28b4ebf7fad5f848a3445725d",
+      "length": 40,
+      "business_meaning": "full Intraday tooling Git commit identity recorded by ARCH6B",
+      "actual_algorithm": "git sha1 object format",
+      "must_remain_sha256_artifact": false,
+      "must_become_git_commit_identity": true,
+      "current_constraint": "manifest-only full commit string",
+      "corrected_constraint": "recognized as git_commit_identity_v1; no PMS column added because the business rowset does not carry this identity"
+    },
+    {
+      "repository_file_table": "QQ.Production.Core ARCH6B manifests",
+      "name": "source_git_commit/core_master_commit/master_sha/source_master_sha/tooling_commit",
+      "observed_value": "a96ca2eb725dcba3bc66579b8782fdd14ecfe97a",
+      "length": 40,
+      "business_meaning": "aliases for the full Core Git commit identity",
+      "actual_algorithm": "git sha1 object format",
+      "must_remain_sha256_artifact": false,
+      "must_become_git_commit_identity": true,
+      "current_constraint": "manifest lineage fields, not PostgreSQL artifact hashes",
+      "corrected_constraint": "classified as Git commit identity; no artifact SHA-256 validation"
+    },
+    {
+      "repository_file_table": "arch6b_shadow_persistence_plan.json/pms_shadow.model_runs",
+      "name": "package_sha256",
+      "observed_value": "5542f0517e8d8869cf543ff9034f4d8a03c2909e85969168350bbfcb8aef5276",
+      "length": 64,
+      "business_meaning": "content hash of the deployed runner package",
+      "actual_algorithm": "sha256",
+      "must_remain_sha256_artifact": true,
+      "must_become_git_commit_identity": false,
+      "current_constraint": "64 lowercase hexadecimal characters",
+      "corrected_constraint": "unchanged 64 lowercase hexadecimal characters"
+    },
+    {
+      "repository_file_table": "arch6b_shadow_persistence_plan.json/pms_shadow.model_runs",
+      "name": "engine_sha256",
+      "observed_value": "bc15308409b7cb0a0707bacd8070ade9830112a42b13d7d2c92a31b5efbcc83f",
+      "length": 64,
+      "business_meaning": "content hash of the model engine executable",
+      "actual_algorithm": "sha256",
+      "must_remain_sha256_artifact": true,
+      "must_become_git_commit_identity": false,
+      "current_constraint": "64 lowercase hexadecimal characters",
+      "corrected_constraint": "unchanged 64 lowercase hexadecimal characters"
+    },
+    {
+      "repository_file_table": "arch6b_shadow_persistence_plan.json/pms_shadow.model_runs",
+      "name": "output_sha256",
+      "observed_value": [
+        "d68fdb1b0dc22646f35c7fc415617c2895cc2dc0aecb9d0d40a9d920dc935ef6",
+        "55b1fd998251627a24ed65b3a43f15e1ed3d64c10c598821fceda7f42eb0b916",
+        "3306aed448b900b3de77181da6a5d1c1208098fd75dfb5792ad7ee6c1407da28",
+        "de3baff4fc43732164be9d6f888d9d2cbe45686ec2cf3f1faea9d2ceeaf6478b"
+      ],
+      "length": 64,
+      "business_meaning": "content hashes of the four Qubes weight outputs",
+      "actual_algorithm": "sha256",
+      "must_remain_sha256_artifact": true,
+      "must_become_git_commit_identity": false,
+      "current_constraint": "64 lowercase hexadecimal characters",
+      "corrected_constraint": "unchanged 64 lowercase hexadecimal characters"
+    },
+    {
+      "repository_file_table": "arch6b_shadow_persistence_plan.json/pms_shadow.ingestions",
+      "name": "source_evidence_sha256",
+      "observed_value": "8e64f3aa8eb8880f3264c0fc2ef2ac9d7ead1c55f3c0276f5d61fbf8077d8ba0",
+      "length": 64,
+      "business_meaning": "ARCH6B evidence ZIP content hash",
+      "actual_algorithm": "sha256",
+      "must_remain_sha256_artifact": true,
+      "must_become_git_commit_identity": false,
+      "current_constraint": "64 lowercase hexadecimal characters",
+      "corrected_constraint": "unchanged 64 lowercase hexadecimal characters"
+    },
+    {
+      "repository_file_table": "arch6b_shadow_persistence_plan.json/pms_shadow.ingestions",
+      "name": "rowset_sha256",
+      "observed_value": "f55dbc95b11e204c53648d815cdbb68247450dbab7e9d6e62eed324d00126b8c",
+      "length": 64,
+      "business_meaning": "canonical persistence-plan rowset hash",
+      "actual_algorithm": "sha256",
+      "must_remain_sha256_artifact": true,
+      "must_become_git_commit_identity": false,
+      "current_constraint": "64 lowercase hexadecimal characters",
+      "corrected_constraint": "unchanged 64 lowercase hexadecimal characters"
+    },
+    {
+      "repository_file_table": "arch6b_shadow_persistence_plan.json/pms_shadow.source_artifacts and snapshot tables",
+      "name": "sha256/source_artifact_sha256/input_sha256/snapshot_sha256/mapping_sha256",
+      "observed_value": "16 distinct source artifact hashes, each 64 lowercase hexadecimal characters",
+      "length": 64,
+      "business_meaning": "content-addressed evidence, inputs, snapshots and mappings",
+      "actual_algorithm": "sha256",
+      "must_remain_sha256_artifact": true,
+      "must_become_git_commit_identity": false,
+      "current_constraint": "64 lowercase hexadecimal characters",
+      "corrected_constraint": "unchanged 64 lowercase hexadecimal characters"
+    }
+  ],
+  "conclusion": "Only the Core master value stored in pms_shadow.model_runs was conflated with an artifact SHA-256. No Intraday identity exists in the PMS business rowset, so none is invented."
+}

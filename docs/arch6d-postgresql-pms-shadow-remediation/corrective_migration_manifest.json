@@ -1,0 +1,30 @@
+{
+  "migration_id": "20260721175549_CorrectGitCommitIdentityContract",
+  "predecessor_migration_id": "20260721152240_InitialPostgreSqlPmsShadowState",
+  "provider": "Npgsql.EntityFrameworkCore.PostgreSQL",
+  "operations": [
+    "drop ck_model_run_hashes",
+    "rename core_master_sha256 to core_master_commit_id",
+    "add stored deterministic core_master_object_format",
+    "add ck_model_run_artifact_hashes",
+    "add ck_model_run_core_master_commit_identity"
+  ],
+  "scripts": [
+    {
+      "path": "src/QQ.Production.Intraday.Infrastructure.PostgreSql/Sql/20260721175549_up.sql",
+      "sha256": "02564903ae9d6ff169421a9976e38765727e8bcc4a21e3ce42beef9484277db5"
+    },
+    {
+      "path": "src/QQ.Production.Intraday.Infrastructure.PostgreSql/Sql/20260721175549_idempotent.sql",
+      "sha256": "1a0df183a8cf8d0e041ec2e73e5b63931ba9e43fd3219b9fbc3c1aa1f54bf5a5"
+    },
+    {
+      "path": "src/QQ.Production.Intraday.Infrastructure.PostgreSql/Sql/20260721175549_down.sql",
+      "sha256": "e95a4888f0ce9a6bb0f59a1a4f5c91b591f65cb31919028ea0803f40f61612ea"
+    }
+  ],
+  "application_dml": 0,
+  "backfill_rows_on_current_test_database": 0,
+  "order_fill_ledger_tables_touched": 0,
+  "initial_up_modified": false
+}

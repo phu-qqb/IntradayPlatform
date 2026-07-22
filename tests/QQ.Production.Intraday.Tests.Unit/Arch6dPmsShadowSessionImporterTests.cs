@@ -164,7 +164,7 @@ public sealed class Arch6dPmsShadowSessionImporterTests
 
         public Task<PmsShadowStorePreflight> InspectAsync(CancellationToken cancellationToken = default) =>
             Task.FromResult(new PmsShadowStorePreflight(provider,
-                migrations ?? [PmsShadowStateContract.MigrationId]));
+                migrations ?? PmsShadowStateContract.MigrationIds));
 
         public Task<PmsShadowImportOutcome> ImportAtomicallyAsync(
             PmsShadowPersistencePlan plan,
