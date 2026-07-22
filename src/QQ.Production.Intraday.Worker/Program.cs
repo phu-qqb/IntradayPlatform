@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using QQ.Production.Intraday.Application;
 using QQ.Production.Intraday.Domain;
+using QQ.Production.Intraday.Infrastructure.PostgreSql;
 using QQ.Production.Intraday.Infrastructure.Simulator;
 using QQ.Production.Intraday.Infrastructure.SqlServer;
 using QQ.Production.Intraday.Worker;
@@ -35,6 +36,24 @@ builder.Services.AddScoped<ILmaxReportPairConsistencyService, LmaxReportPairCons
 builder.Services.AddScoped<IEodReconciliationService, EodReconciliationService>();
 builder.Services.AddScoped<IEodPnlSummaryService, EodPnlSummaryService>();
 builder.Services.AddScoped<IFakeLmaxEodReportGenerator, FakeLmaxEodReportGenerator>();
+
+if (builder.Configuration.GetValue("Intraday15m:Enabled", false))
+{
+    var pollInterval = builder.Configuration.GetValue("Worker:PollInterval", TimeSpan.FromMinutes(15));
+    if (pollInterval <= TimeSpan.Zero || pollInterval > TimeSpan.FromMinutes(
+        PmsShadowIntradayCadenceContract.MaximumStartDelayMinutes))
+        throw new InvalidOperationException("INTRADAY_15M_POLL_INTERVAL_EXCEEDS_MAXIMUM_START_DELAY");
+    var pmsConnection = builder.Configuration.GetConnectionString("PmsShadowPostgreSql")
+        ?? throw new InvalidOperationException("PMS_SHADOW_POSTGRESQL_CONNECTION_REQUIRED");
+    var handoffRoot = builder.Configuration.GetValue<string>("Intraday15m:FinalizedHandoffRoot")
+        ?? throw new InvalidOperationException("FINALIZED_HANDOFF_ROOT_REQUIRED");
+    builder.Services.AddPooledDbContextFactory<PmsShadowDbContext>(options =>
+        options.UseNpgsql(pmsConnection, npgsql => npgsql.SetPostgresVersion(16, 0)));
+    builder.Services.AddSingleton<IPmsShadowIntradaySlotStore, EfPmsShadowIntradaySlotStore>();
+    builder.Services.AddSingleton<IPmsShadowIntradaySlotPipeline>(
+        new FinalizedPmsShadowIntradayManifestPipeline(handoffRoot));
+    builder.Services.AddSingleton<PmsShadowIntradayScheduler>();
+}
 
 var persistenceProvider = builder.Configuration.GetValue("Persistence:Provider", "SqlServerLocal") ?? "SqlServerLocal";
 if (string.Equals(persistenceProvider, "SqlServerLocal", StringComparison.OrdinalIgnoreCase))
