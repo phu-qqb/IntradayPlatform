@@ -347,6 +347,110 @@ namespace QQ.Production.Intraday.Infrastructure.PostgreSql.Migrations
                         });
                 });
 
+            modelBuilder.Entity("QQ.Production.Intraday.Infrastructure.PostgreSql.PmsShadowExecutionQualificationRunRow", b =>
+                {
+                    b.Property<Guid>("QualificationRunId")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("qualification_run_id");
+
+                    b.Property<int>("ChildOrderCount")
+                        .HasColumnType("integer")
+                        .HasColumnName("child_order_count");
+
+                    b.Property<DateTimeOffset>("CompletedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("completed_at_utc");
+
+                    b.Property<Guid>("EconomicRevisionId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("economic_revision_id");
+
+                    b.Property<DateTimeOffset>("EvaluationAsOfUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("evaluation_as_of_utc");
+
+                    b.Property<int>("IntentCount")
+                        .HasColumnType("integer")
+                        .HasColumnName("intent_count");
+
+                    b.Property<string>("NettingSha256")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("netting_sha256");
+
+                    b.Property<bool>("NoBrokerSend")
+                        .HasColumnType("boolean")
+                        .HasColumnName("no_broker_send");
+
+                    b.Property<bool>("NoFill")
+                        .HasColumnType("boolean")
+                        .HasColumnName("no_fill");
+
+                    b.Property<bool>("NoFixLogon")
+                        .HasColumnType("boolean")
+                        .HasColumnName("no_fix_logon");
+
+                    b.Property<bool>("NoPositionLedgerEvent")
+                        .HasColumnType("boolean")
+                        .HasColumnName("no_position_ledger_event");
+
+                    b.Property<int>("ParentOrderCount")
+                        .HasColumnType("integer")
+                        .HasColumnName("parent_order_count");
+
+                    b.Property<string>("PlanSha256")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("plan_sha256");
+
+                    b.Property<int>("RiskDecisionCount")
+                        .HasColumnType("integer")
+                        .HasColumnName("risk_decision_count");
+
+                    b.Property<string>("SlotId")
+                        .IsRequired()
+                        .HasMaxLength(160)
+                        .HasColumnType("character varying(160)")
+                        .HasColumnName("slot_id");
+
+                    b.Property<string>("SourceLineageSha256")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("source_lineage_sha256");
+
+                    b.Property<string>("SourceSessionId")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)")
+                        .HasColumnName("source_session_id");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("status");
+
+                    b.HasKey("QualificationRunId");
+
+                    b.HasIndex("EconomicRevisionId")
+                        .IsUnique();
+
+                    b.ToTable("shadow_execution_qualification_runs", "pms_shadow", t =>
+                        {
+                            t.HasCheckConstraint("ck_shadow_qualification_completed", "status = 'COMPLETED'");
+
+                            t.HasCheckConstraint("ck_shadow_qualification_counts", "intent_count > 0 AND risk_decision_count = intent_count AND parent_order_count = intent_count AND child_order_count = intent_count");
+
+                            t.HasCheckConstraint("ck_shadow_qualification_hashes", "plan_sha256 ~ '^[0-9a-f]{64}$' AND netting_sha256 ~ '^[0-9a-f]{64}$' AND source_lineage_sha256 ~ '^[0-9a-f]{64}$'");
+
+                            t.HasCheckConstraint("ck_shadow_qualification_no_external", "no_fix_logon AND no_broker_send AND no_fill AND no_position_ledger_event");
+                        });
+                });
+
             modelBuilder.Entity("QQ.Production.Intraday.Infrastructure.PostgreSql.PmsShadowIngestionRow", b =>
                 {
                     b.Property<Guid>("IngestionId")
@@ -1566,6 +1670,14 @@ namespace QQ.Production.Intraday.Infrastructure.PostgreSql.Migrations
                         .HasColumnType("jsonb")
                         .HasColumnName("drift_ids_json");
 
+                    b.Property<Guid>("EconomicRevisionId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("economic_revision_id");
+
+                    b.Property<int>("EconomicRevisionNumber")
+                        .HasColumnType("integer")
+                        .HasColumnName("economic_revision_number");
+
                     b.Property<DateTimeOffset>("EffectiveFromUtc")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("effective_from_utc");
@@ -1601,6 +1713,12 @@ namespace QQ.Production.Intraday.Infrastructure.PostgreSql.Migrations
                         .HasMaxLength(64)
                         .HasColumnType("character varying(64)")
                         .HasColumnName("lineage_sha256");
+
+                    b.Property<string>("MarketDataSnapshotSha256")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("market_data_snapshot_sha256");
 
                     b.Property<string>("ModelRunIdsJson")
                         .IsRequired()
@@ -1656,6 +1774,12 @@ namespace QQ.Production.Intraday.Infrastructure.PostgreSql.Migrations
                         .HasColumnType("character varying(160)")
                         .HasColumnName("slot_id");
 
+                    b.Property<string>("SourceLineageSha256")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("source_lineage_sha256");
+
                     b.Property<string>("SourceSessionId")
                         .IsRequired()
                         .HasMaxLength(200)
@@ -1682,14 +1806,16 @@ namespace QQ.Production.Intraday.Infrastructure.PostgreSql.Migrations
 
                     b.HasIndex("PlanSha256");
 
-                    b.HasIndex("SourceSessionId", "SlotId", "ExecutionTradableSymbol")
+                    b.HasIndex("EconomicRevisionId", "ExecutionTradableSymbol")
                         .IsUnique();
 
                     b.ToTable("shadow_trade_intents", "pms_shadow", t =>
                         {
                             t.HasCheckConstraint("ck_shadow_trade_intent_no_route", "NOT actionable AND NOT execution_allowed AND NOT broker_route_allowed");
 
-                            t.HasCheckConstraint("ck_shadow_trade_intent_sha256", "idempotency_key ~ '^[0-9a-f]{64}$' AND lineage_sha256 ~ '^[0-9a-f]{64}$' AND plan_sha256 ~ '^[0-9a-f]{64}$'");
+                            t.HasCheckConstraint("ck_shadow_trade_intent_revision", "economic_revision_number = 2");
+
+                            t.HasCheckConstraint("ck_shadow_trade_intent_sha256", "idempotency_key ~ '^[0-9a-f]{64}$' AND lineage_sha256 ~ '^[0-9a-f]{64}$' AND market_data_snapshot_sha256 ~ '^[0-9a-f]{64}$' AND source_lineage_sha256 ~ '^[0-9a-f]{64}$' AND plan_sha256 ~ '^[0-9a-f]{64}$'");
 
                             t.HasCheckConstraint("ck_shadow_trade_intent_test_only", "environment = 'TEST' AND classification = 'SHADOW_ONLY'");
                         });

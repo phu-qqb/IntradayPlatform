@@ -30,6 +30,8 @@ public sealed class PmsShadowDbContext(DbContextOptions<PmsShadowDbContext> opti
     public DbSet<PmsShadowRiskDecisionRow> ShadowRiskDecisions => Set<PmsShadowRiskDecisionRow>();
     public DbSet<PmsShadowParentOrderRow> ShadowParentOrders => Set<PmsShadowParentOrderRow>();
     public DbSet<PmsShadowChildOrderRow> ShadowChildOrders => Set<PmsShadowChildOrderRow>();
+    public DbSet<PmsShadowExecutionQualificationRunRow> ShadowExecutionQualificationRuns =>
+        Set<PmsShadowExecutionQualificationRunRow>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -56,6 +58,8 @@ public sealed class PmsShadowDbContext(DbContextOptions<PmsShadowDbContext> opti
         ConfigureShadowRiskDecision(modelBuilder.Entity<PmsShadowRiskDecisionRow>());
         ConfigureShadowParentOrder(modelBuilder.Entity<PmsShadowParentOrderRow>());
         ConfigureShadowChildOrder(modelBuilder.Entity<PmsShadowChildOrderRow>());
+        ConfigureShadowExecutionQualificationRun(
+            modelBuilder.Entity<PmsShadowExecutionQualificationRunRow>());
         ApplySnakeCaseColumns(modelBuilder);
     }
 
@@ -429,18 +433,24 @@ public sealed class PmsShadowDbContext(DbContextOptions<PmsShadowDbContext> opti
         entity.ToTable("shadow_trade_intents", table =>
         {
             table.HasCheckConstraint("ck_shadow_trade_intent_sha256",
-                $"{ShaCheck("idempotency_key")} AND {ShaCheck("lineage_sha256")} AND {ShaCheck("plan_sha256")}");
+                $"{ShaCheck("idempotency_key")} AND {ShaCheck("lineage_sha256")} AND " +
+                $"{ShaCheck("market_data_snapshot_sha256")} AND {ShaCheck("source_lineage_sha256")} AND " +
+                $"{ShaCheck("plan_sha256")}");
             table.HasCheckConstraint("ck_shadow_trade_intent_test_only",
                 "environment = 'TEST' AND classification = 'SHADOW_ONLY'");
             table.HasCheckConstraint("ck_shadow_trade_intent_no_route",
                 "NOT actionable AND NOT execution_allowed AND NOT broker_route_allowed");
+            table.HasCheckConstraint("ck_shadow_trade_intent_revision", "economic_revision_number = 2");
         });
         entity.HasKey(x => x.TradeIntentId);
-        entity.HasIndex(x => new { x.SourceSessionId, x.SlotId, x.ExecutionTradableSymbol }).IsUnique();
+        entity.HasIndex(x => new { x.EconomicRevisionId, x.ExecutionTradableSymbol }).IsUnique();
         entity.HasIndex(x => x.PlanSha256);
         Restrict<PmsShadowTradeIntentRow, PmsShadowIngestionRow>(entity, x => x.IngestionId);
         Text(entity.Property(x => x.SourceSessionId), 200);
         Text(entity.Property(x => x.SlotId), 160);
+        entity.Property(x => x.EconomicRevisionNumber);
+        Hash(entity.Property(x => x.MarketDataSnapshotSha256));
+        Hash(entity.Property(x => x.SourceLineageSha256));
         entity.Property(x => x.ModelRunIdsJson).HasColumnType("jsonb");
         entity.Property(x => x.TargetPositionIdsJson).HasColumnType("jsonb");
         entity.Property(x => x.DriftIdsJson).HasColumnType("jsonb");
@@ -522,6 +532,30 @@ public sealed class PmsShadowDbContext(DbContextOptions<PmsShadowDbContext> opti
         Text(entity.Property(x => x.Status), 64);
         Hash(entity.Property(x => x.DeterministicIdentity));
         Hash(entity.Property(x => x.PlanSha256));
+    }
+    private static void ConfigureShadowExecutionQualificationRun(
+        EntityTypeBuilder<PmsShadowExecutionQualificationRunRow> entity)
+    {
+        entity.ToTable("shadow_execution_qualification_runs", table =>
+        {
+            table.HasCheckConstraint("ck_shadow_qualification_hashes",
+                $"{ShaCheck("plan_sha256")} AND {ShaCheck("netting_sha256")} AND " +
+                $"{ShaCheck("source_lineage_sha256")}");
+            table.HasCheckConstraint("ck_shadow_qualification_completed", "status = 'COMPLETED'");
+            table.HasCheckConstraint("ck_shadow_qualification_no_external",
+                "no_fix_logon AND no_broker_send AND no_fill AND no_position_ledger_event");
+            table.HasCheckConstraint("ck_shadow_qualification_counts",
+                "intent_count > 0 AND risk_decision_count = intent_count AND " +
+                "parent_order_count = intent_count AND child_order_count = intent_count");
+        });
+        entity.HasKey(x => x.QualificationRunId);
+        entity.HasIndex(x => x.EconomicRevisionId).IsUnique();
+        Text(entity.Property(x => x.SourceSessionId), 200);
+        Text(entity.Property(x => x.SlotId), 160);
+        Hash(entity.Property(x => x.PlanSha256));
+        Hash(entity.Property(x => x.NettingSha256));
+        Text(entity.Property(x => x.Status), 32);
+        Hash(entity.Property(x => x.SourceLineageSha256));
     }
     private static void Restrict<TEntity, TPrincipal>(EntityTypeBuilder<TEntity> entity, System.Linq.Expressions.Expression<Func<TEntity, object?>> foreignKey)
         where TEntity : class where TPrincipal : class =>

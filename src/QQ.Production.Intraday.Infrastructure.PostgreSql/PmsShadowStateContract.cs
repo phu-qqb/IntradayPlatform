@@ -15,7 +15,7 @@ public static class PmsShadowStateContract
         "20260722231500_AddIntradayEconomicProjectionRevisions";
     public const string IntradayEconomicRevisionMigrationId =
         "20260722234500_CorrectIntradayMarketPriceScaleInvariant";
-    public const string Arch7aMigrationId = "20260722141504_AddArch7aShadowExecution";
+    public const string Arch7aMigrationId = "20260723000000_AddArch7aShadowExecutionAfterArch6fEconomicRevisions";
     public const string MigrationId = InitialMigrationId;
     public static readonly IReadOnlyList<string> MigrationIds = [InitialMigrationId, CorrectiveMigrationId,
         IntradayMigrationId, IntradayEconomicRevisionBaseMigrationId, IntradayEconomicRevisionMigrationId,

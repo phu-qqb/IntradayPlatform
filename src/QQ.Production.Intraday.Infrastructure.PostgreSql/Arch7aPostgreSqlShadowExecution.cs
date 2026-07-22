@@ -1,3 +1,6 @@
+using System.Data;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using QQ.Production.Intraday.Application;
@@ -9,6 +12,10 @@ public sealed record PmsShadowTradeIntentRow(
     Guid IngestionId,
     string SourceSessionId,
     string SlotId,
+    Guid EconomicRevisionId,
+    int EconomicRevisionNumber,
+    string MarketDataSnapshotSha256,
+    string SourceLineageSha256,
     DateOnly OperationalDate,
     DateTimeOffset TargetCloseUtc,
     DateTimeOffset EffectiveFromUtc,
@@ -87,6 +94,26 @@ public sealed record PmsShadowChildOrderRow(
     string PlanSha256,
     DateTimeOffset CreatedAtUtc);
 
+public sealed record PmsShadowExecutionQualificationRunRow(
+    Guid QualificationRunId,
+    Guid EconomicRevisionId,
+    string SourceSessionId,
+    string SlotId,
+    DateTimeOffset EvaluationAsOfUtc,
+    string PlanSha256,
+    string NettingSha256,
+    int IntentCount,
+    int RiskDecisionCount,
+    int ParentOrderCount,
+    int ChildOrderCount,
+    string Status,
+    string SourceLineageSha256,
+    bool NoFixLogon,
+    bool NoBrokerSend,
+    bool NoFill,
+    bool NoPositionLedgerEvent,
+    DateTimeOffset CompletedAtUtc);
+
 public sealed class EfArch7aPmsExecutionSourceReader(
     IDbContextFactory<PmsShadowDbContext> contextFactory) : IArch7aPmsExecutionSourceReader
 {
@@ -100,82 +127,80 @@ public sealed class EfArch7aPmsExecutionSourceReader(
         if (nowUtc.Offset != TimeSpan.Zero)
             throw new InvalidOperationException("ARCH7A_NOW_MUST_BE_UTC");
 
-        var policy = new PmsShadowFreshnessPolicy(slot.OperationalDate, TimeSpan.FromMinutes(20));
-        var snapshot = await new EfPmsShadowOperationalReadService(contextFactory)
-            .GetSessionAsync(sourceSessionId, policy, nowUtc, cancellationToken)
-            ?? throw new InvalidOperationException("ARCH7A_COMPLETED_SOURCE_SESSION_NOT_FOUND");
+        var economicStore = new EfPmsShadowIntradayEconomicProjectionStore(contextFactory);
+        var projections = await economicStore.ReadAllAsync(cancellationToken);
+        var selected = SelectLatestQualifyingRevision(projections, slot.SlotId);
+        if (!selected.SourceSessionId.Equals(sourceSessionId, StringComparison.Ordinal))
+            throw new InvalidOperationException("ARCH7A_SOURCE_SESSION_REVISION_MISMATCH");
+        if (selected.SlotEndUtc != slot.TargetCloseUtc || selected.SlotStartUtc != slot.EffectiveFromUtc)
+            throw new InvalidOperationException("ARCH7A_EXECUTION_SLOT_REVISION_WINDOW_MISMATCH");
+
+        var slotRows = await new EfPmsShadowIntradaySlotStore(contextFactory).ReadAllAsync(cancellationToken);
+        var intraday = PmsShadowIntradayProjection.Build(slotRows, nowUtc);
+        if (intraday.LatestIntradayShadowSlot.Slot?.SlotId != selected.SlotId)
+            throw new InvalidOperationException("ARCH7A_SOURCE_NOT_LATEST_INTRADAY_SLOT");
 
         await using var context = await contextFactory.CreateDbContextAsync(cancellationToken);
-        var ingestionId = snapshot.LatestSession.IngestionId;
+        var ingestionId = selected.SourceIngestionId;
         var account = await context.AccountSnapshots.AsNoTracking()
             .SingleAsync(value => value.IngestionId == ingestionId, cancellationToken);
         var positions = await context.PositionSnapshots.AsNoTracking()
             .SingleAsync(value => value.IngestionId == ingestionId, cancellationToken);
         var leaves = await context.WorkingLeavesObservations.AsNoTracking()
             .SingleAsync(value => value.IngestionId == ingestionId, cancellationToken);
+        var modelIds = selected.ReusedModelRunIds.Distinct().Order().ToArray();
         var models = await context.ModelRuns.AsNoTracking()
-            .Where(value => value.IngestionId == ingestionId)
-            .ToArrayAsync(cancellationToken);
-        var modelIds = models.Select(value => value.ModelRunId).ToArray();
-        var weights = await context.TargetWeights.AsNoTracking()
-            .Where(value => modelIds.Contains(value.ModelRunId))
-            .ToArrayAsync(cancellationToken);
-        var targets = await context.TargetPositions.AsNoTracking()
-            .Where(value => modelIds.Contains(value.ModelRunId))
-            .ToArrayAsync(cancellationToken);
-        var drifts = await context.PositionOnlyDrifts.AsNoTracking()
             .Where(value => modelIds.Contains(value.ModelRunId))
             .ToArrayAsync(cancellationToken);
         var mappings = await context.SecurityMappings.AsNoTracking()
             .Where(value => value.IngestionId == ingestionId)
             .ToArrayAsync(cancellationToken);
-        var marketSnapshot = await context.MarketDataSnapshots.AsNoTracking()
-            .SingleAsync(value => value.IngestionId == ingestionId, cancellationToken);
-        var observations = await context.MarketDataObservations.AsNoTracking()
-            .Where(value => value.MarketDataSnapshotId == marketSnapshot.MarketDataSnapshotId)
-            .ToArrayAsync(cancellationToken);
 
-        var modelById = models.ToDictionary(value => value.ModelRunId);
-        var mappingByInstrument = mappings.GroupBy(value => value.InstrumentId)
-            .ToDictionary(group => group.Key, group => group.OrderBy(value => value.SecurityId, StringComparer.Ordinal).First());
-        var targetByKey = targets.ToDictionary(value => (value.ModelRunId, value.InstrumentId));
-        var driftByKey = drifts.ToDictionary(value => (value.ModelRunId, value.InstrumentId));
-        var contributions = weights.OrderBy(value => value.ModelRunId)
-            .ThenBy(value => value.SourceOrder)
-            .Select(weight =>
+        var driftByKey = selected.PositionOnlyDrifts.ToDictionary(
+            value => (value.ModelRunId, value.InstrumentId));
+        var marketByInstrument = selected.MarketData.ToDictionary(value => value.InstrumentId);
+        var contributions = selected.TargetPositions
+            .OrderBy(value => value.ModelRunId)
+            .ThenBy(value => value.SecurityId, StringComparer.Ordinal)
+            .Select(target =>
             {
-                var key = (weight.ModelRunId, weight.InstrumentId);
-                var model = modelById[weight.ModelRunId];
-                var target = targetByKey[key];
-                var drift = driftByKey[key];
-                var symbol = mappingByInstrument.GetValueOrDefault(weight.InstrumentId)?.Symbol ?? weight.SecurityId;
-                var lineage = snapshot.Lineage.Entries.Single(value => value.ModelRunId == weight.ModelRunId);
+                var key = (target.ModelRunId, target.InstrumentId);
+                var drift = driftByKey.GetValueOrDefault(key)
+                    ?? throw new InvalidOperationException("ARCH7A_REVISION_DRIFT_LINEAGE_MISSING");
+                var market = marketByInstrument.GetValueOrDefault(target.InstrumentId)
+                    ?? throw new InvalidOperationException("ARCH7A_REVISION_MARKET_LINEAGE_MISSING");
                 return new Arch7aPmsTargetContribution(
-                    weight.ModelRunId,
-                    model.StrategyId,
-                    Arch7aPmsShadowExecutionPipeline.DeterministicGuid(
-                        $"target-position|{weight.ModelRunId:D}|{weight.InstrumentId:D}"),
-                    Arch7aPmsShadowExecutionPipeline.DeterministicGuid(
-                        $"position-only-drift|{weight.ModelRunId:D}|{weight.InstrumentId:D}"),
-                    weight.SecurityId,
-                    symbol,
-                    weight.Weight,
+                    target.ModelRunId,
+                    target.StrategyId,
+                    target.TargetPositionId,
+                    drift.DriftId,
+                    target.SecurityId,
+                    market.Symbol,
+                    target.TargetNotionalUsd / account.NavOrEquity,
                     drift.CurrentBaseQuantity,
                     target.TargetBaseQuantity,
-                    drift.PositionOnlyDeltaBaseQuantity,
-                    lineage.InputSha256,
-                    model.OutputSha256,
-                    model.CoreMasterCommitId);
+                    drift.Delta,
+                    target.InputSha256,
+                    target.OutputSha256,
+                    target.CoreCommitId);
             }).ToArray();
 
-        var prices = observations
-            .Where(value => value.Bid > 0m && value.Ask > 0m)
+        var prices = selected.MarketData
+            .Where(value => value.DecisionPrice > 0m)
             .GroupBy(value => NormalizeSymbol(value.Symbol), StringComparer.OrdinalIgnoreCase)
             .ToDictionary(
                 group => group.Key,
                 group => group.OrderByDescending(value => value.EventTimeUtc)
-                    .Select(value => (value.Bid + value.Ask) / 2m).First(),
+                    .Select(value => value.DecisionPrice).First(),
                 StringComparer.OrdinalIgnoreCase);
+        foreach (var value in prices.ToArray())
+        {
+            if (value.Key.Length != 6 || value.Value <= 0m)
+                continue;
+            var inverse = value.Key[3..] + value.Key[..3];
+            prices.TryAdd(inverse, 1m / value.Value);
+        }
+
         var increments = mappings
             .GroupBy(value => NormalizeSymbol(value.Symbol), StringComparer.OrdinalIgnoreCase)
             .ToDictionary(
@@ -183,41 +208,57 @@ public sealed class EfArch7aPmsExecutionSourceReader(
                 group => group.OrderBy(value => value.SecurityId, StringComparer.Ordinal)
                     .Select(value => value.QuantityIncrement).First(),
                 StringComparer.OrdinalIgnoreCase);
+        foreach (var value in increments.ToArray())
+        {
+            if (value.Key.Length != 6)
+                continue;
+            increments.TryAdd(value.Key[3..] + value.Key[..3], value.Value);
+        }
+
         var current = positions.BrokerAuthority
             ? await CurrentExecutionQuantities(context, positions.PositionSnapshotId, mappings, cancellationToken)
             : new Dictionary<string, decimal>(StringComparer.OrdinalIgnoreCase);
-        var status = snapshot.LatestSession.NoOrder &&
-                     snapshot.LatestSession.TotalModels == 4 &&
-                     snapshot.LatestSession.TotalTargets == 288 &&
-                     snapshot.LatestSession.TotalDrifts == 288
+        var status = selected.Status == "COMPLETED" && selected.Qualifying && selected.NoOrder &&
+                     selected.RevisionNumber == 2 && selected.TargetPositions.Count == 288 &&
+                     selected.PositionOnlyDrifts.Count == 288 && models.Length == 4
             ? Arch7aSourceStatus.Completed
             : Arch7aSourceStatus.Incomplete;
-        var freshness = snapshot.Freshness.Status switch
+        var freshness = intraday.SlotFreshnessAndCompleteness.Freshness switch
         {
-            PmsShadowFreshnessStatus.Fresh => Arch7aSourceFreshness.Fresh,
-            PmsShadowFreshnessStatus.Stale => Arch7aSourceFreshness.Stale,
-            PmsShadowFreshnessStatus.Incomplete => Arch7aSourceFreshness.Incomplete,
+            PmsShadowIntradayFreshness.Fresh => Arch7aSourceFreshness.Fresh,
+            PmsShadowIntradayFreshness.Stale => Arch7aSourceFreshness.Stale,
+            PmsShadowIntradayFreshness.Incomplete or PmsShadowIntradayFreshness.FailedClosed =>
+                Arch7aSourceFreshness.Incomplete,
             _ => Arch7aSourceFreshness.Missing
         };
-        var workingAuthority = leaves.BrokerAuthority &&
-                               leaves.ObservationAttempted &&
+        var workingAuthority = leaves.BrokerAuthority && leaves.ObservationAttempted &&
                                !leaves.EmptyStateInferred
             ? Arch7aWorkingOrderAuthority.AuthoritativeComplete
             : Arch7aWorkingOrderAuthority.UnavailableWithCurrentLmaxInterfaces;
+        var lineageComplete = models.Length == 4 && modelIds.Length == 4 &&
+                              selected.TargetPositions.Count == 288 &&
+                              selected.PositionOnlyDrifts.Count == 288 &&
+                              selected.MarketData.Count == 99 &&
+                              selected.TargetPositions.All(value => modelIds.Contains(value.ModelRunId)) &&
+                              selected.PositionOnlyDrifts.All(value => modelIds.Contains(value.ModelRunId));
 
         return new(
             ingestionId,
             sourceSessionId,
+            selected.ProjectionRevisionId,
+            selected.RevisionNumber,
+            selected.MarketDataSnapshotSha256,
+            selected.ManifestSha256,
+            nowUtc,
+            selected.SelectedModelRuns.Max(value => value.AsOfUtc),
             slot,
-            snapshot.LatestSession.CompletedAtUtc,
-            NormalizeExecutionEnvironment(snapshot.LatestSession.Environment),
+            selected.CompletedAtUtc,
+            NormalizeExecutionEnvironment(PmsShadowStateContract.TestEnvironment),
             account.AccountId,
             account.NavOrEquity,
             status,
             freshness,
-            LineageComplete: snapshot.Lineage.Entries.Count == models.Length &&
-                             snapshot.Lineage.Entries.All(value =>
-                                 value.TargetPositionCount == 72 && value.DriftCount == 72),
+            lineageComplete,
             PositionAuthority: positions.BrokerAuthority,
             workingAuthority,
             AllowShadowSimulationWhenWorkingLeavesUnknown: true,
@@ -228,10 +269,33 @@ public sealed class EfArch7aPmsExecutionSourceReader(
             increments);
     }
 
+    public static PmsShadowIntradayEconomicProjection SelectLatestQualifyingRevision(
+        IReadOnlyList<PmsShadowIntradayEconomicProjection> projections,
+        string slotId)
+    {
+        var qualifying = projections.Where(value => value.Status == "COMPLETED" &&
+                value.Qualifying && value.NoOrder)
+            .OrderBy(value => value.SlotEndUtc)
+            .ThenBy(value => value.RevisionNumber)
+            .ThenBy(value => value.ProjectionRevisionId)
+            .ToArray();
+        var selected = qualifying.LastOrDefault(value => value.SlotId == slotId)
+            ?? throw new InvalidOperationException("ARCH7A_QUALIFYING_ECONOMIC_REVISION_NOT_FOUND");
+        if (selected.RevisionNumber != 2)
+            throw new InvalidOperationException("ARCH7A_ECONOMIC_REVISION_TWO_REQUIRED");
+        if (qualifying[^1].ProjectionRevisionId != selected.ProjectionRevisionId)
+            throw new InvalidOperationException("ARCH7A_SOURCE_NOT_LATEST_QUALIFYING_REVISION");
+        if (selected.TargetPositions.Count != 288 || selected.PositionOnlyDrifts.Count != 288 ||
+            selected.ReusedModelRunIds.Distinct().Count() != 4)
+            throw new InvalidOperationException("ARCH7A_QUALIFYING_REVISION_FACTS_INCOMPLETE");
+        return selected;
+    }
+
     public static string NormalizeExecutionEnvironment(string sourceEnvironment)
         => sourceEnvironment.Equals(PmsShadowStateContract.TestEnvironment, StringComparison.OrdinalIgnoreCase)
             ? "TEST"
             : sourceEnvironment;
+
     private static async Task<IReadOnlyDictionary<string, decimal>> CurrentExecutionQuantities(
         PmsShadowDbContext context,
         Guid positionSnapshotId,
@@ -269,24 +333,55 @@ public sealed class EfArch7aShadowExecutionStore(
     {
         if (plan.Units.Count == 0)
             throw new InvalidOperationException("ARCH7A_EMPTY_PLAN_NOT_PERSISTED");
-        if (!plan.NoBrokerSend || !plan.NoFixLogon || !plan.NoFill || !plan.NoPositionLedgerEvent ||
+        if (Arch7aPmsShadowExecutionPipeline.ComputePlanSha256(
+                plan.Netting, plan.Units, plan.Blockers) != plan.PlanSha256)
+            throw new InvalidOperationException("ARCH7A_PLAN_FINGERPRINT_CONFLICT");
+        if (!plan.NoBrokerSend || !plan.NoFixLogon || !plan.NoAccountApi || !plan.NoDatabento ||
+            !plan.NoRealAccount || !plan.NoFill || !plan.NoPositionLedgerEvent ||
             plan.NetworkLedger.Count != 0)
             throw new InvalidOperationException("ARCH7A_NO_ORDER_INVARIANT_REQUIRED");
+        if (plan.Netting.EconomicRevisionNumber != 2 || plan.Netting.EconomicRevisionId == Guid.Empty ||
+            plan.Units.Any(value => value.TradeIntent.EconomicRevisionId != plan.Netting.EconomicRevisionId ||
+                                    value.TradeIntent.EconomicRevisionNumber != 2))
+            throw new InvalidOperationException("ARCH7A_QUALIFYING_ECONOMIC_REVISION_REQUIRED");
 
         await using var context = await contextFactory.CreateDbContextAsync(cancellationToken);
+        await using var transaction = await context.Database.BeginTransactionAsync(
+            IsolationLevel.Serializable, cancellationToken);
+        var lockKey = BitConverter.ToInt64(SHA256.HashData(Encoding.UTF8.GetBytes(
+            $"arch7a|{plan.Netting.EconomicRevisionId:D}")), 0);
+        await context.Database.ExecuteSqlInterpolatedAsync(
+            $"SELECT pg_advisory_xact_lock({lockKey})", cancellationToken);
+
         var existing = await context.ShadowTradeIntents.AsNoTracking()
-            .Where(value => value.SourceSessionId == plan.Netting.SourceSessionId &&
-                            value.SlotId == plan.Netting.SlotId)
+            .Where(value => value.EconomicRevisionId == plan.Netting.EconomicRevisionId)
             .ToArrayAsync(cancellationToken);
         if (existing.Length > 0)
         {
+            var intentIds = existing.Select(value => value.TradeIntentId).ToArray();
+            var parentIds = await context.ShadowParentOrders.AsNoTracking()
+                .Where(value => intentIds.Contains(value.TradeIntentId))
+                .Select(value => value.ParentOrderId)
+                .ToArrayAsync(cancellationToken);
+            var riskCount = await context.ShadowRiskDecisions.AsNoTracking()
+                .CountAsync(value => intentIds.Contains(value.TradeIntentId), cancellationToken);
+            var parentCount = parentIds.Length;
+            var childCount = await context.ShadowChildOrders.AsNoTracking()
+                .CountAsync(value => parentIds.Contains(value.ParentOrderId), cancellationToken);
+            var run = await context.ShadowExecutionQualificationRuns.AsNoTracking()
+                .SingleOrDefaultAsync(value =>
+                    value.EconomicRevisionId == plan.Netting.EconomicRevisionId, cancellationToken);
             if (existing.All(value => value.PlanSha256 == plan.PlanSha256) &&
-                existing.Length == plan.Units.Count)
+                existing.Length == plan.Units.Count && riskCount == plan.Units.Count &&
+                parentCount == plan.Units.Count && childCount == plan.Units.Count &&
+                run is not null && run.PlanSha256 == plan.PlanSha256 && run.Status == "COMPLETED")
+            {
+                await transaction.CommitAsync(cancellationToken);
                 return Arch7aShadowStoreResult.AlreadyPersistedIdentical;
+            }
             throw new InvalidOperationException("ARCH7A_IDEMPOTENCY_CONFLICT");
         }
 
-        await using var transaction = await context.Database.BeginTransactionAsync(cancellationToken);
         foreach (var unit in plan.Units)
         {
             var intent = unit.TradeIntent;
@@ -298,6 +393,10 @@ public sealed class EfArch7aShadowExecutionStore(
                 intent.SourceIngestionId,
                 intent.SourceSessionId,
                 intent.SlotId,
+                intent.EconomicRevisionId,
+                intent.EconomicRevisionNumber,
+                intent.MarketDataSnapshotSha256,
+                intent.SourceLineageSha256,
                 intent.OperationalDate,
                 intent.TargetCloseUtc,
                 intent.EffectiveFromUtc,
@@ -374,6 +473,28 @@ public sealed class EfArch7aShadowExecutionStore(
                 child.Canonical.CreatedAtUtc));
         }
 
+        await context.SaveChangesAsync(cancellationToken);
+        var qualificationRunId = Arch7aPmsShadowExecutionPipeline.DeterministicGuid(
+            $"arch7a-qualification|{plan.Netting.EconomicRevisionId:D}|{plan.PlanSha256}");
+        context.ShadowExecutionQualificationRuns.Add(new(
+            qualificationRunId,
+            plan.Netting.EconomicRevisionId,
+            plan.Netting.SourceSessionId,
+            plan.Netting.SlotId,
+            plan.Netting.EvaluationAsOfUtc,
+            plan.PlanSha256,
+            plan.Netting.NettingSha256,
+            plan.Units.Count,
+            plan.Units.Count,
+            plan.Units.Count,
+            plan.Units.Count,
+            "COMPLETED",
+            plan.Netting.SourceLineageSha256,
+            plan.NoFixLogon,
+            plan.NoBrokerSend,
+            plan.NoFill,
+            plan.NoPositionLedgerEvent,
+            plan.Netting.EvaluationAsOfUtc));
         await context.SaveChangesAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
         return Arch7aShadowStoreResult.Persisted;

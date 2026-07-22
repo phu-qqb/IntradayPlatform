@@ -1,4 +1,5 @@
 using QQ.Production.Intraday.Application;
+using QQ.Production.Intraday.Domain;
 using QQ.Production.Intraday.Domain.PmsEmsOmsFoundation;
 
 namespace QQ.Production.Intraday.Tests.Unit;
@@ -175,6 +176,19 @@ public sealed class Arch7aPmsShadowExecutionPipelineTests
     }
 
     [Fact]
+    public void Unsupported_cross_is_excluded_atomically_without_blocking_independent_supported_symbols()
+    {
+        var plan = Build(Source([
+            Contribution("EURUSD", 0.10m),
+            Contribution("AUDCNH", 0.10m)
+        ]));
+
+        Assert.Contains("CNH", plan.Netting.UnsupportedCurrencies);
+        Assert.Contains(plan.Units, value => value.TradeIntent.ExecutionTradableSymbol == "EURUSD");
+        Assert.DoesNotContain(plan.Units, value => value.TradeIntent.ExecutionTradableSymbol == "AUDUSD");
+        Assert.DoesNotContain(plan.Units, value => value.TradeIntent.ExecutionTradableSymbol == "AUDCNH");
+    }
+    [Fact]
     public void Netted_symbol_produces_at_most_one_parent_and_one_child()
     {
         var plan = Build(Source([
@@ -318,6 +332,88 @@ public sealed class Arch7aPmsShadowExecutionPipelineTests
     }
 
     [Fact]
+    public async Task In_memory_store_rejects_every_persisted_object_conflict_for_the_same_revision()
+    {
+        var store = new InMemoryArch7aShadowExecutionStore();
+        var original = Build(Source([Contribution("EURUSD", 0.10m)]));
+        await store.PersistAsync(original);
+        var unit = Assert.Single(original.Units);
+
+        Arch7aShadowExecutionPlan Rehash(Arch7aShadowExecutionPlan candidate) =>
+            candidate with
+            {
+                PlanSha256 = Arch7aPmsShadowExecutionPipeline.ComputePlanSha256(
+                    candidate.Netting, candidate.Units, candidate.Blockers)
+            };
+        async Task Reject(Arch7aShadowExecutionPlan candidate)
+        {
+            var error = await Assert.ThrowsAsync<InvalidOperationException>(
+                () => store.PersistAsync(Rehash(candidate)));
+            Assert.Equal("ARCH7A_IDEMPOTENCY_CONFLICT", error.Message);
+        }
+
+        await Reject(original with
+        {
+            Units =
+            [
+                unit with
+                {
+                    TradeIntent = unit.TradeIntent with
+                    {
+                        SignedDesiredDelta = unit.TradeIntent.SignedDesiredDelta + 1m
+                    }
+                }
+            ]
+        });
+        await Reject(original with
+        {
+            Units =
+            [
+                unit with
+                {
+                    RiskDecision = unit.RiskDecision with { ReasonCodes = ["OTHER_RISK_REASON"] }
+                }
+            ]
+        });
+        await Reject(original with
+        {
+            Units =
+            [
+                unit with { ParentOrder = unit.ParentOrder with { Symbol = "GBPUSD" } }
+            ]
+        });
+        await Reject(original with
+        {
+            Units =
+            [
+                unit with
+                {
+                    ChildOrder = unit.ChildOrder with
+                    {
+                        Canonical = unit.ChildOrder.Canonical with
+                        {
+                            ParentOrderId = new ParentOrderId(
+                                Guid.Parse("ffffffff-ffff-ffff-ffff-ffffffffffff"))
+                        }
+                    }
+                }
+            ]
+        });
+
+        var otherLineage = new string('e', 64);
+        await Reject(original with
+        {
+            Netting = original.Netting with { SourceLineageSha256 = otherLineage },
+            Units =
+            [
+                unit with
+                {
+                    TradeIntent = unit.TradeIntent with { SourceLineageSha256 = otherLineage }
+                }
+            ]
+        });
+    }
+    [Fact]
     public void Artifact_sha_must_be_64_hex_characters()
     {
         var bad = Contribution("EURUSD", 0.10m) with { InputSha256 = "abc" };
@@ -338,6 +434,12 @@ public sealed class Arch7aPmsShadowExecutionPipelineTests
         => new(
             Guid.Parse("11111111-1111-1111-1111-111111111111"),
             Session,
+            Guid.Parse("22222222-2222-2222-2222-222222222222"),
+            2,
+            new string('c', 64),
+            new string('d', 64),
+            TargetClose.AddMinutes(1),
+            TargetClose.AddHours(-24),
             Slot(TargetClose),
             TargetClose.AddMinutes(-20),
             "TEST",

@@ -23,6 +23,7 @@ public sealed class Arch7aPersistenceAndFixtureContractTests
     [InlineData(typeof(PmsShadowRiskDecisionRow), "shadow_risk_decisions")]
     [InlineData(typeof(PmsShadowParentOrderRow), "shadow_parent_orders")]
     [InlineData(typeof(PmsShadowChildOrderRow), "shadow_child_orders")]
+    [InlineData(typeof(PmsShadowExecutionQualificationRunRow), "shadow_execution_qualification_runs")]
     public void Shadow_execution_entities_map_only_to_dedicated_pms_shadow_tables(Type type, string table)
     {
         using var context = Context();
@@ -42,11 +43,17 @@ public sealed class Arch7aPersistenceAndFixtureContractTests
     [Fact]
     public void Arch7a_up_is_additive_and_contains_no_data_mutation()
     {
-        var sql = Script(PmsShadowStateContract.IntradayMigrationId, PmsShadowStateContract.Arch7aMigrationId);
+        var sql = Script(PmsShadowStateContract.IntradayEconomicRevisionMigrationId,
+            PmsShadowStateContract.Arch7aMigrationId);
         Assert.Contains("CREATE TABLE pms_shadow.shadow_trade_intents", sql, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("CREATE TABLE pms_shadow.shadow_risk_decisions", sql, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("CREATE TABLE pms_shadow.shadow_parent_orders", sql, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("CREATE TABLE pms_shadow.shadow_child_orders", sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("CREATE TABLE pms_shadow.shadow_execution_qualification_runs", sql,
+            StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("fk_shadow_trade_intents_economic_revision", sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("fk_shadow_execution_qualification_runs_economic_revision", sql,
+            StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("ALTER TABLE pms_shadow.model_runs", sql, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("UPDATE pms_shadow", sql, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("DELETE FROM pms_shadow", sql, StringComparison.OrdinalIgnoreCase);
@@ -55,13 +62,16 @@ public sealed class Arch7aPersistenceAndFixtureContractTests
     }
 
     [Fact]
-    public void Arch7a_down_drops_only_the_four_additive_shadow_tables()
+    public void Arch7a_down_drops_only_the_five_additive_shadow_tables()
     {
-        var sql = Script(PmsShadowStateContract.Arch7aMigrationId, PmsShadowStateContract.IntradayMigrationId);
+        var sql = Script(PmsShadowStateContract.Arch7aMigrationId,
+            PmsShadowStateContract.IntradayEconomicRevisionMigrationId);
         Assert.Contains("DROP TABLE pms_shadow.shadow_child_orders", sql, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("DROP TABLE pms_shadow.shadow_parent_orders", sql, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("DROP TABLE pms_shadow.shadow_risk_decisions", sql, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("DROP TABLE pms_shadow.shadow_trade_intents", sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("DROP TABLE pms_shadow.shadow_execution_qualification_runs", sql,
+            StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("DROP SCHEMA", sql, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("DROP TABLE pms_shadow.ingestions", sql, StringComparison.OrdinalIgnoreCase);
     }
@@ -69,10 +79,10 @@ public sealed class Arch7aPersistenceAndFixtureContractTests
     [Fact]
     public void Migration_sql_generation_is_byte_deterministic_and_secret_free()
     {
-        var first = Script(PmsShadowStateContract.IntradayMigrationId, PmsShadowStateContract.Arch7aMigrationId,
-            MigrationsSqlGenerationOptions.Idempotent);
-        var second = Script(PmsShadowStateContract.IntradayMigrationId, PmsShadowStateContract.Arch7aMigrationId,
-            MigrationsSqlGenerationOptions.Idempotent);
+        var first = Script(PmsShadowStateContract.IntradayEconomicRevisionMigrationId,
+            PmsShadowStateContract.Arch7aMigrationId, MigrationsSqlGenerationOptions.Idempotent);
+        var second = Script(PmsShadowStateContract.IntradayEconomicRevisionMigrationId,
+            PmsShadowStateContract.Arch7aMigrationId, MigrationsSqlGenerationOptions.Idempotent);
         Assert.Equal(first, second);
         Assert.DoesNotContain("Password=", first, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("Host=", first, StringComparison.OrdinalIgnoreCase);

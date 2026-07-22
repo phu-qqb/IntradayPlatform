@@ -192,6 +192,53 @@ public sealed class Arch6fEconomicInvariantTests
         Assert.Contains("broker_adjusted_calculated,working_leaves_blocker,no_order", source);
     }
 
+    [Fact]
+    public void Arch7a_selects_the_latest_qualifying_revision_two_with_complete_slot_facts()
+    {
+        var older = Projection(0, 1m, 'a', 'c');
+        var latest = Projection(1, 1.01m, 'b', 'd');
+
+        var selected = EfArch7aPmsExecutionSourceReader.SelectLatestQualifyingRevision(
+            [latest, older], latest.SlotId);
+
+        Assert.Equal(latest.ProjectionRevisionId, selected.ProjectionRevisionId);
+        Assert.Equal(2, selected.RevisionNumber);
+        Assert.Equal(288, selected.TargetPositions.Count);
+        Assert.Equal(288, selected.PositionOnlyDrifts.Count);
+        Assert.Equal(4, selected.ReusedModelRunIds.Distinct().Count());
+        Assert.Equal(latest.MarketDataSnapshotSha256, selected.MarketDataSnapshotSha256);
+        Assert.Equal(latest.ManifestSha256, selected.ManifestSha256);
+    }
+
+    [Fact]
+    public void Arch7a_rejects_a_qualifying_revision_one()
+    {
+        var plan = Arch6cPostgreSqlPmsShadowStateTests.BuildPlan();
+        var source = Source(plan);
+        var slot = PmsShadowIntradayCadenceContract.WindowEnding(
+            PmsShadowIntradayCadenceContract.Floor(plan.Ingestion.CompletedAtUtc!.Value));
+        var revisionOne = new PmsShadowIntradayEconomicProjectionBuilder()
+            .Build(Capture(slot, source, 1m, 'a'), source, null);
+
+        var error = Assert.Throws<InvalidOperationException>(() =>
+            EfArch7aPmsExecutionSourceReader.SelectLatestQualifyingRevision(
+                [revisionOne], revisionOne.SlotId));
+
+        Assert.Equal("ARCH7A_ECONOMIC_REVISION_TWO_REQUIRED", error.Message);
+    }
+
+    [Fact]
+    public void Arch7a_rejects_a_superseded_slot_when_a_later_qualifying_revision_exists()
+    {
+        var superseded = Projection(0, 1m, 'a', 'c');
+        var latest = Projection(1, 1.01m, 'b', 'd');
+
+        var error = Assert.Throws<InvalidOperationException>(() =>
+            EfArch7aPmsExecutionSourceReader.SelectLatestQualifyingRevision(
+                [superseded, latest], superseded.SlotId));
+
+        Assert.Equal("ARCH7A_SOURCE_NOT_LATEST_QUALIFYING_REVISION", error.Message);
+    }
     private static PmsShadowIntradayEconomicProjection Projection(int slotOffset,
         decimal multiplier, char captureHash, char supersededHash)
     {

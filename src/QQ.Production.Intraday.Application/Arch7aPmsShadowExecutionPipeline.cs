@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 using QQ.Production.Intraday.Domain;
 using QQ.Production.Intraday.Domain.PmsEmsOmsFoundation;
 
@@ -35,9 +36,9 @@ public sealed class Arch7aPmsShadowExecutionPipeline
         blockers.AddRange(netting.UnsupportedCurrencies.Select(value => $"UNSUPPORTED_EXECUTION_CURRENCY:{value}"));
         var sourceConstructionBlocked = blockers.Any(value => value is
             "SOURCE_SESSION_NOT_COMPLETED" or "SOURCE_SESSION_STALE" or "SOURCE_LINEAGE_INCOMPLETE" or
+            "SOURCE_ECONOMIC_REVISION_NOT_QUALIFYING" or
             "REAL_ACCOUNT_REJECTED" or "NON_TEST_ENVIRONMENT_REJECTED" or
-            "WORKING_LEAVES_POLICY_FORBIDS_CONSTRUCTION") ||
-            netting.UnsupportedCurrencies.Count > 0;
+            "WORKING_LEAVES_POLICY_FORBIDS_CONSTRUCTION");
 
         var phases = ExecutionAlgoR001Foundation.CreateFixture().CloseSeeking15mPhases;
         Arch7aShadowExecutionUnit[] units = sourceConstructionBlocked
@@ -48,14 +49,7 @@ public sealed class Arch7aPmsShadowExecutionPipeline
                 .OrderBy(unit => unit.TradeIntent.ExecutionTradableSymbol, StringComparer.Ordinal)
                 .ToArray();
 
-        var planHash = Hash(string.Join("\n",
-            source.IngestionId.ToString("D"),
-            source.SourceSessionId,
-            source.Slot.SlotId,
-            source.Slot.TargetCloseUtc.UtcDateTime.ToString("O"),
-            netting.NettingSha256,
-            string.Join("|", units.Select(value => value.TradeIntent.IdempotencyKey)),
-            string.Join("|", blockers.Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal))));
+        var planHash = ComputePlanSha256(netting, units, blockers);
 
         return new Arch7aShadowExecutionPlan(
             netting,
@@ -75,17 +69,74 @@ public sealed class Arch7aPmsShadowExecutionPipeline
 
     private static Arch7aExecutionNettingManifest BuildNetting(Arch7aPmsExecutionSource source)
     {
-        var rawLines = source.Contributions
+        static IReadOnlyList<string> Currencies(string symbol)
+        {
+            var normalized = NormalizeSymbol(symbol);
+            if (normalized.Length != 6)
+                throw new InvalidOperationException($"ARCH7A_INVALID_FX_SYMBOL:{symbol}");
+            return [normalized[..3], normalized[3..]];
+        }
+        static bool IsProvenCurrency(string currency)
+        {
+            if (currency.Equals("USD", StringComparison.OrdinalIgnoreCase))
+                return true;
+            var mapping = ExecutionAlgoR002UsdPairSelectionPolicy.MapCurrency(currency);
+            return mapping.ExecutionTradableSymbol is not null &&
+                   ProvenSymbols.ContainsKey(mapping.ExecutionTradableSymbol);
+        }
+
+        var unsupported = source.Contributions
+            .SelectMany(value => Currencies(value.PortfolioSymbol))
+            .Where(currency => !IsProvenCurrency(currency))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Order(StringComparer.Ordinal)
+            .ToArray();
+        var eligible = source.Contributions
+            .Where(value => Currencies(value.PortfolioSymbol).All(IsProvenCurrency))
+            .ToArray();
+        var excludedCrosses = source.Contributions
+            .Select(value => NormalizeSymbol(value.PortfolioSymbol))
+            .Where(SandboxQubesExecutionUniverseTransformer.IsDirectCross)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Order(StringComparer.Ordinal)
+            .ToArray();
+
+        if (eligible.Length == 0)
+        {
+            var emptyHash = Hash(string.Join("\n",
+                source.SourceSessionId,
+                source.EconomicRevisionId.ToString("D"),
+                source.EconomicRevisionNumber.ToString(CultureInfo.InvariantCulture),
+                source.Slot.SlotId,
+                string.Join("|", unsupported),
+                string.Join("|", excludedCrosses)));
+            return new Arch7aExecutionNettingManifest(
+                source.SourceSessionId,
+                source.Slot.SlotId,
+                source.EconomicRevisionId,
+                source.EconomicRevisionNumber,
+                source.EvaluationAsOfUtc,
+                source.SourceLineageSha256,
+                new Dictionary<string, decimal>(StringComparer.Ordinal),
+                [],
+                [],
+                excludedCrosses,
+                unsupported,
+                emptyHash,
+                DirectCrossExecutionDisabled: true,
+                Deterministic: true);
+        }
+
+        var rawLines = eligible
             .OrderBy(value => value.StrategyId, StringComparer.Ordinal)
             .ThenBy(value => value.SecurityId, StringComparer.Ordinal)
             .Select(value =>
                 $"{NormalizeSymbol(value.PortfolioSymbol)} Curncy;{value.TargetWeight.ToString("G29", CultureInfo.InvariantCulture)}")
             .ToArray();
-
         var ingestion = new QubesFxWeightsFixtureIngestionService().ParseNormalizeAndMap(
             new QubesFxWeightsIngestionRequest(
                 new QubesRunId($"{source.SourceSessionId}:{source.Slot.SlotId}"),
-                source.CompletedAtUtc,
+                source.ModelProducedAtUtc,
                 source.Slot.EffectiveFromUtc,
                 15,
                 source.AccountScope,
@@ -97,24 +148,21 @@ public sealed class Arch7aPmsShadowExecutionPipeline
             throw new InvalidOperationException(
                 $"ARCH7A_EXISTING_NETTING_REJECTED:{string.Join(',', ingestion.Issues.Select(value => value.Code))}");
 
-        var contributions = source.Contributions
+        var contributions = eligible
             .SelectMany(ToCurrencyContributions)
             .OrderBy(value => value.Currency, StringComparer.Ordinal)
             .ThenBy(value => value.StrategyId, StringComparer.Ordinal)
             .ThenBy(value => value.SourceSymbol, StringComparer.Ordinal)
             .ToArray();
         var lines = new List<Arch7aExecutionNettingLine>();
-        var unsupported = new List<string>();
 
         foreach (var normalized in ingestion.NormalizedWeights.OrderBy(value => value.Currency, StringComparer.Ordinal))
         {
             var mapping = ExecutionAlgoR002UsdPairSelectionPolicy.MapCurrency(normalized.Currency);
             if (mapping.ExecutionTradableSymbol is null ||
                 !ProvenSymbols.TryGetValue(mapping.ExecutionTradableSymbol, out var identity))
-            {
-                unsupported.Add(normalized.Currency);
-                continue;
-            }
+                throw new InvalidOperationException(
+                    $"ARCH7A_ELIGIBLE_CURRENCY_MAPPING_MISSING:{normalized.Currency}");
 
             if (!source.ExecutionMidPrices.TryGetValue(mapping.ExecutionTradableSymbol, out var mid) || mid <= 0m)
                 throw new InvalidOperationException($"ARCH7A_EXECUTION_MID_MISSING:{mapping.ExecutionTradableSymbol}");
@@ -142,34 +190,34 @@ public sealed class Arch7aPmsShadowExecutionPipeline
                     .ToArray()));
         }
 
-        var excludedCrosses = source.Contributions
-            .Select(value => NormalizeSymbol(value.PortfolioSymbol))
-            .Where(SandboxQubesExecutionUniverseTransformer.IsDirectCross)
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .Order(StringComparer.Ordinal)
-            .ToArray();
         var hash = Hash(string.Join("\n",
             source.SourceSessionId,
+            source.EconomicRevisionId.ToString("D"),
+            source.EconomicRevisionNumber.ToString(CultureInfo.InvariantCulture),
             source.Slot.SlotId,
             string.Join("|", contributions.Select(value =>
                 $"{value.ModelRunId:D}:{value.SourceSymbol}:{value.Currency}:{value.SignedWeightContribution:G29}")),
             string.Join("|", ingestion.CurrencyExposures.Select(value => $"{value.Key}:{value.Value:G29}")),
             string.Join("|", lines.Select(value =>
-                $"{value.ExecutionTradableSymbol}:{value.TargetExecutionQuantity:G29}:{value.CurrentExecutionQuantity:G29}:{value.SignedDesiredDelta:G29}"))));
+                $"{value.ExecutionTradableSymbol}:{value.TargetExecutionQuantity:G29}:{value.CurrentExecutionQuantity:G29}:{value.SignedDesiredDelta:G29}")),
+            string.Join("|", unsupported)));
 
         return new Arch7aExecutionNettingManifest(
             source.SourceSessionId,
             source.Slot.SlotId,
+            source.EconomicRevisionId,
+            source.EconomicRevisionNumber,
+            source.EvaluationAsOfUtc,
+            source.SourceLineageSha256,
             ingestion.CurrencyExposures,
             contributions,
             lines.OrderBy(value => value.ExecutionTradableSymbol, StringComparer.Ordinal).ToArray(),
             excludedCrosses,
-            unsupported.Distinct(StringComparer.OrdinalIgnoreCase).Order(StringComparer.Ordinal).ToArray(),
+            unsupported,
             hash,
             DirectCrossExecutionDisabled: true,
             Deterministic: true);
     }
-
     private static Arch7aShadowExecutionUnit BuildUnit(
         Arch7aPmsExecutionSource source,
         Arch7aExecutionNettingLine line,
@@ -181,6 +229,8 @@ public sealed class Arch7aPmsShadowExecutionPipeline
             source.AccountScope,
             Venue,
             source.SourceSessionId,
+            source.EconomicRevisionId.ToString("D"),
+            source.EconomicRevisionNumber.ToString(CultureInfo.InvariantCulture),
             source.Slot.SlotId,
             source.Slot.TargetCloseUtc.UtcDateTime.ToString("O"),
             line.ExecutionTradableSymbol,
@@ -190,6 +240,8 @@ public sealed class Arch7aPmsShadowExecutionPipeline
         var targetIds = line.Contributions.Select(value => value.TargetPositionId).Distinct().Order().ToArray();
         var driftIds = line.Contributions.Select(value => value.DriftId).Distinct().Order().ToArray();
         var lineageHash = Hash(
+            source.SourceLineageSha256 + "\n" +
+            source.MarketDataSnapshotSha256 + "\n" +
             string.Join("|", modelIds.Select(value => value.ToString("D"))) + "\n" +
             string.Join("|", targetIds.Select(value => value.ToString("D"))) + "\n" +
             string.Join("|", driftIds.Select(value => value.ToString("D"))));
@@ -227,6 +279,10 @@ public sealed class Arch7aPmsShadowExecutionPipeline
             source.IngestionId,
             source.SourceSessionId,
             source.Slot.SlotId,
+            source.EconomicRevisionId,
+            source.EconomicRevisionNumber,
+            source.MarketDataSnapshotSha256,
+            source.SourceLineageSha256,
             source.Slot.OperationalDate,
             source.Slot.TargetCloseUtc,
             source.Slot.EffectiveFromUtc,
@@ -348,6 +404,7 @@ public sealed class Arch7aPmsShadowExecutionPipeline
         if (source.Status != Arch7aSourceStatus.Completed) blockers.Add("SOURCE_SESSION_NOT_COMPLETED");
         if (source.Freshness != Arch7aSourceFreshness.Fresh) blockers.Add("SOURCE_SESSION_STALE");
         if (!source.LineageComplete) blockers.Add("SOURCE_LINEAGE_INCOMPLETE");
+        if (source.EconomicRevisionNumber != 2) blockers.Add("SOURCE_ECONOMIC_REVISION_NOT_QUALIFYING");
         if (!source.Environment.Equals("TEST", StringComparison.OrdinalIgnoreCase))
             blockers.Add("NON_TEST_ENVIRONMENT_REJECTED");
         if (source.AccountScope.Contains("REAL", StringComparison.OrdinalIgnoreCase) ||
@@ -391,8 +448,15 @@ public sealed class Arch7aPmsShadowExecutionPipeline
             throw new InvalidOperationException("ARCH7A_INGESTION_ID_REQUIRED");
         if (string.IsNullOrWhiteSpace(source.SourceSessionId))
             throw new InvalidOperationException("ARCH7A_SOURCE_SESSION_ID_REQUIRED");
+        if (source.EconomicRevisionId == Guid.Empty || source.EconomicRevisionNumber != 2)
+            throw new InvalidOperationException("ARCH7A_QUALIFYING_ECONOMIC_REVISION_REQUIRED");
+        if (!IsSha256(source.MarketDataSnapshotSha256) || !IsSha256(source.SourceLineageSha256))
+            throw new InvalidOperationException("ARCH7A_SOURCE_REVISION_LINEAGE_REQUIRED");
         if (source.CompletedAtUtc.Offset != TimeSpan.Zero)
             throw new InvalidOperationException("ARCH7A_COMPLETED_AT_MUST_BE_UTC");
+        if (source.ModelProducedAtUtc.Offset != TimeSpan.Zero ||
+            source.ModelProducedAtUtc > source.Slot.EffectiveFromUtc)
+            throw new InvalidOperationException("ARCH7A_MODEL_PRODUCED_AT_INVALID");
         if (source.NavUsd <= 0m)
             throw new InvalidOperationException("ARCH7A_NAV_MUST_BE_POSITIVE");
         if (source.Contributions.Count == 0)
@@ -416,6 +480,34 @@ public sealed class Arch7aPmsShadowExecutionPipeline
 
     private static bool IsSha256(string value)
         => value.Length == 64 && value.All(Uri.IsHexDigit);
+
+    public static string ComputePlanSha256(
+        Arch7aExecutionNettingManifest netting,
+        IReadOnlyList<Arch7aShadowExecutionUnit> units,
+        IEnumerable<string> blockers)
+    {
+        var canonical = new
+        {
+            netting.SourceSessionId,
+            netting.SlotId,
+            netting.EconomicRevisionId,
+            netting.EconomicRevisionNumber,
+            netting.EvaluationAsOfUtc,
+            netting.SourceLineageSha256,
+            netting.NettingSha256,
+            Units = units.OrderBy(value => value.TradeIntent.ExecutionTradableSymbol,
+                    StringComparer.Ordinal)
+                .Select(value => new
+                {
+                    TradeIntent = value.TradeIntent,
+                    RiskDecision = value.RiskDecision,
+                    ParentOrder = value.ParentOrder,
+                    ChildOrder = value.ChildOrder
+                }).ToArray(),
+            Blockers = blockers.Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray()
+        };
+        return Hash(JsonSerializer.Serialize(canonical));
+    }
 
     public static Guid DeterministicGuid(string value)
     {

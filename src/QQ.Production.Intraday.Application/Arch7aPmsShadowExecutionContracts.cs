@@ -52,6 +52,12 @@ public sealed record Arch7aPmsTargetContribution(
 public sealed record Arch7aPmsExecutionSource(
     Guid IngestionId,
     string SourceSessionId,
+    Guid EconomicRevisionId,
+    int EconomicRevisionNumber,
+    string MarketDataSnapshotSha256,
+    string SourceLineageSha256,
+    DateTimeOffset EvaluationAsOfUtc,
+    DateTimeOffset ModelProducedAtUtc,
     Arch7aExecutionSlot Slot,
     DateTimeOffset CompletedAtUtc,
     string Environment,
@@ -95,6 +101,10 @@ public sealed record Arch7aExecutionNettingLine(
 public sealed record Arch7aExecutionNettingManifest(
     string SourceSessionId,
     string SlotId,
+    Guid EconomicRevisionId,
+    int EconomicRevisionNumber,
+    DateTimeOffset EvaluationAsOfUtc,
+    string SourceLineageSha256,
     IReadOnlyDictionary<string, decimal> CurrencyExposureSums,
     IReadOnlyList<Arch7aFxCurrencyContribution> Contributions,
     IReadOnlyList<Arch7aExecutionNettingLine> ExecutionLines,
@@ -109,6 +119,10 @@ public sealed record Arch7aTradeIntentEnvelope(
     Guid SourceIngestionId,
     string SourceSessionId,
     string SlotId,
+    Guid EconomicRevisionId,
+    int EconomicRevisionNumber,
+    string MarketDataSnapshotSha256,
+    string SourceLineageSha256,
     DateOnly OperationalDate,
     DateTimeOffset TargetCloseUtc,
     DateTimeOffset EffectiveFromUtc,
@@ -241,9 +255,13 @@ public sealed class InMemoryArch7aShadowExecutionStore : IArch7aShadowExecutionS
         CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
+        if (Arch7aPmsShadowExecutionPipeline.ComputePlanSha256(
+                plan.Netting, plan.Units, plan.Blockers) != plan.PlanSha256)
+            throw new InvalidOperationException("ARCH7A_PLAN_FINGERPRINT_CONFLICT");
         lock (plans)
         {
-            var key = $"{plan.Netting.SourceSessionId}|{plan.Netting.SlotId}";
+            var key = $"{plan.Netting.SourceSessionId}|{plan.Netting.SlotId}|" +
+                plan.Netting.EconomicRevisionId.ToString("D");
             if (plans.TryGetValue(key, out var existing))
             {
                 if (!string.Equals(existing, plan.PlanSha256, StringComparison.Ordinal))
