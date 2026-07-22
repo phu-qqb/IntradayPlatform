@@ -93,6 +93,7 @@ public sealed class Arch6fEconomicRefreshTests
         Assert.Contains("CREATE TABLE pms_shadow.intraday_position_only_drifts", up);
         Assert.Contains("supersedes_slot_manifest_sha256", up);
         Assert.Contains("external_completion_status character varying(32) NOT NULL", up);
+        Assert.Contains("decision_price = round((bid + ask) / 2, 12)", up);
         Assert.Contains("calculated_at_utc timestamp with time zone NOT NULL", up);
         Assert.Contains("CHECK (qualifying)", up);
         Assert.Contains("CHECK (no_order)", up);
