@@ -83,6 +83,8 @@ public interface IPmsShadowOperationalReadService
 public sealed class EfPmsShadowOperationalReadService(IDbContextFactory<PmsShadowDbContext> contextFactory)
     : IPmsShadowOperationalReadService
 {
+    private const int DecisionPriceScale = 12;
+
     public async Task<PmsShadowOperationalReadSnapshot?> GetLatestAsync(PmsShadowFreshnessPolicy policy,
         DateTimeOffset nowUtc, CancellationToken cancellationToken = default)
     {
@@ -145,8 +147,7 @@ public sealed class EfPmsShadowOperationalReadService(IDbContextFactory<PmsShado
             .Where(value => modelIds.Contains(value.ModelRunId)).ToArrayAsync(cancellationToken);
         var cycles = await context.CycleResults.AsNoTracking()
             .Where(value => value.IngestionId == ingestionId).ToArrayAsync(cancellationToken);
-        var observations = await context.MarketDataObservations.AsNoTracking()
-            .Where(value => value.MarketDataSnapshotId == market.MarketDataSnapshotId)
+        var observations = await DecisionPriceObservations(context, market.MarketDataSnapshotId)
             .ToArrayAsync(cancellationToken);
         var artifacts = await context.SourceArtifacts.AsNoTracking()
             .Where(value => value.IngestionId == ingestionId).ToArrayAsync(cancellationToken);
@@ -215,6 +216,12 @@ public sealed class EfPmsShadowOperationalReadService(IDbContextFactory<PmsShado
             brokerReadModels, freshness, lineage, alerts);
     }
 
+    private static IQueryable<DecisionPriceObservation> DecisionPriceObservations(PmsShadowDbContext context,
+        Guid marketDataSnapshotId) => context.MarketDataObservations.AsNoTracking()
+        .Where(value => value.MarketDataSnapshotId == marketDataSnapshotId)
+        .Select(value => new DecisionPriceObservation(value.InstrumentId,
+            decimal.Round(value.Bid, DecisionPriceScale), decimal.Round(value.Ask, DecisionPriceScale)));
+
     private static ShadowFreshnessAndCompletenessReadModel BuildFreshness(DateOnly operationalDate,
         DateTimeOffset completedAtUtc, int models, int weights, int targets, int drifts, bool complete,
         PmsShadowFreshnessPolicy policy, DateTimeOffset nowUtc)
@@ -268,4 +275,6 @@ public sealed class EfPmsShadowOperationalReadService(IDbContextFactory<PmsShado
     {
         if (value.Offset != TimeSpan.Zero) throw new ArgumentException("NOW_UTC_REQUIRED", nameof(value));
     }
+
+    private sealed record DecisionPriceObservation(Guid InstrumentId, decimal Bid, decimal Ask);
 }
