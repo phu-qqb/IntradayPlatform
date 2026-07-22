@@ -1,0 +1,31 @@
+{
+    "version":  "arch7a-execution-fixture-inventory-v1",
+    "fixtures":  [
+                     {
+                         "classification":  "SANITIZED_CONTRACT_FIXTURE",
+                         "path":  "tests/fixtures/arch7a/execution-shadow-scenarios.json",
+                         "brokerFact":  false
+                     },
+                     {
+                         "classification":  "SYNTHETIC_OFFLINE_FIXTURE",
+                         "path":  "tests/fixtures/arch7a/lmax-fix-order-state-scenarios.json",
+                         "brokerFact":  false
+                     },
+                     {
+                         "classification":  "SYNTHETIC_HISTORICAL_SAFETY_CONTRACT",
+                         "path":  "tests/fixtures/arch7a/historical-contracts/r009-no-validation-import-backtest-execution-audit.fixture.json",
+                         "brokerFact":  false
+                     },
+                     {
+                         "classification":  "SYNTHETIC_HISTORICAL_SAFETY_CONTRACT",
+                         "path":  "tests/fixtures/arch7a/historical-contracts/r009-no-external-audit.fixture.json",
+                         "brokerFact":  false
+                     },
+                     {
+                         "classification":  "SYNTHETIC_HISTORICAL_SAFETY_CONTRACT",
+                         "path":  "tests/fixtures/arch7a/historical-contracts/r010-disabled-preview-internal-trial-decision.fixture.json",
+                         "brokerFact":  false
+                     }
+                 ],
+    "movedHistoricalArtifactsMasked":  false
+}

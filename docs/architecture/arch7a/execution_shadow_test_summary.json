@@ -1,0 +1,57 @@
+{
+    "version":  "arch7a-shadow-test-summary-v1",
+    "runAtUtc":  "2026-07-22T14:58:17.5389331Z",
+    "pipelineCases":  43,
+    "fixCases":  39,
+    "totalArch7aCases":  97,
+    "failed":  0,
+    "configuration":  "Release",
+    "networkUsed":  false,
+    "databaseApplied":  false,
+    "coverage":  [
+                     "seven proven symbols",
+                     "JPY inversion",
+                     "multi-strategy netting",
+                     "cross netting",
+                     "deterministic IDs",
+                     "risk blockers",
+                     "CloseSeeking15m",
+                     "idempotent store",
+                     "FIX profile",
+                     "ExecutionReport reducer"
+                 ],
+    "persistenceAndFixtureCases":  14,
+    "targetedRegressionSuite":  {
+                                    "passed":  622,
+                                    "failed":  0,
+                                    "total":  622,
+                                    "filters":  [
+                                                    "ARCH6C",
+                                                    "ARCH6D",
+                                                    "ARCH6E",
+                                                    "ARCH6F",
+                                                    "ARCH7A",
+                                                    "TargetPosition",
+                                                    "Drift",
+                                                    "ManualPaperCycle",
+                                                    "R009"
+                                                ]
+                                },
+    "fullUnitSuite":  {
+                          "passed":  4035,
+                          "failed":  175,
+                          "total":  4210,
+                          "failureClass":  "MISSING_IGNORED_OR_ARCHIVED_HISTORICAL_ARTIFACTS_AND_LOCAL_CONFIG",
+                          "arch7aFailures":  0,
+                          "notMasked":  true,
+                          "scope":  "SNAPSHOT_BEFORE_FINAL_3_ENVIRONMENT_NORMALIZATION_AND_2_COORDINATOR_CASES",
+                          "additionalFinalCasesPassed":  5
+                      },
+    "releaseBuild":  {
+                         "status":  "PASSED",
+                         "errors":  0,
+                         "warnings":  12,
+                         "warningClass":  "PRE_EXISTING_NU1903_SYSTEM_SECURITY_CRYPTOGRAPHY_XML_9_0_0"
+                     },
+    "compatibilityRegressionCases":  1
+}

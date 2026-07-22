@@ -1001,7 +1001,7 @@ public sealed record ReconciliationBreak(Guid Id, Guid ReconciliationRunId, Reco
 
 public sealed record DriftSnapshot(ModelRunId ModelRunId, InstrumentId InstrumentId, decimal TargetBaseQuantity, decimal CurrentBaseQuantity, decimal DriftBaseQuantity, decimal TargetVenueQuantity, decimal CurrentVenueQuantity, decimal DriftVenueQuantity);
 
-public enum TradeIntentStatus { Created, RiskApproved, RiskRejected, Ordered, Cancelled }
+public enum TradeIntentStatus { Created, RiskApproved, RiskRejected, Ordered, Cancelled, ShadowOnly }
 public enum TradeSide { Buy, Sell }
 public sealed record TradeIntent(TradeIntentId Id, ModelRunId ModelRunId, FundId FundId, InstrumentId InstrumentId, TradeSide Side, decimal RequestedBaseQuantity, decimal RequestedVenueQuantity, string Reason, TradeIntentStatus Status, DateTimeOffset CreatedAtUtc);
 
@@ -1037,7 +1037,7 @@ public sealed record VenueRiskLimit(Guid Id, Guid RiskLimitSetId, VenueId VenueI
 public sealed record TradingWindow(Guid Id, FundId FundId, string ModelName, string TimeZoneId, DayOfWeek DayOfWeek, TimeOnly OpensAtUtc, TimeOnly ClosesAtUtc, TimeOnly NoNewOrdersAfterUtc, TimeOnly? FlattenAtUtc, bool IsEnabled = true, bool TradingEnabled = true, string ScheduleName = "Default Intraday", int Version = 1, DateTimeOffset? CreatedAtUtc = null, DateTimeOffset? UpdatedAtUtc = null);
 public sealed record KillSwitchState(Guid Id, bool IsActive, string? Reason, DateTimeOffset UpdatedAtUtc);
 
-public enum RiskDecisionStatus { Approved, Rejected, Blocked, RequiresManualApproval }
+public enum RiskDecisionStatus { Approved, Rejected, Blocked, RequiresManualApproval, ApprovedShadow, BlockNewOrders, EmergencyStop }
 public enum RiskRejectReason
 {
     None,
@@ -1056,18 +1056,22 @@ public enum RiskRejectReason
     MaxGrossExposureExceeded,
     TradingWindowClosed,
     NoNewOrdersAfter,
-    RiskConfigMissing
+    RiskConfigMissing,
+    BrokerWorkingLeavesUnobservable,
+    SourceIncomplete,
+    SourceStale,
+    CriticalReconciliationConflict
 }
 
 public sealed record RiskDecision(Guid Id, TradeIntentId TradeIntentId, RiskDecisionStatus Status, RiskRejectReason RejectReason, string Explanation, DateTimeOffset CreatedAtUtc, Guid? RiskLimitSetId = null, ModelRunId? ModelRunId = null, InstrumentId? InstrumentId = null, VenueId? VenueId = null);
 public enum RiskDecisionCheckStatus { Passed, Failed, Blocked, Informational }
 public sealed record RiskDecisionDetail(Guid Id, Guid RiskDecisionId, string CheckName, RiskDecisionCheckStatus Status, RiskRejectReason? RejectReason, decimal? ObservedValue, decimal? LimitValue, string? Unit, string Message, DateTimeOffset CreatedAtUtc);
 
-public enum OrderStatus { Created, RiskRejected, PendingNew, Acked, PartiallyFilled, Filled, PendingCancel, Cancelled, Rejected, Expired, Unknown }
+public enum OrderStatus { Created, RiskRejected, PendingNew, Acked, PartiallyFilled, Filled, PendingCancel, Cancelled, Rejected, Expired, Unknown, ShadowPlanned, ShadowOnly }
 public enum OrderSide { Buy, Sell }
 public enum OrderType { Market, Limit }
 public enum TimeInForce { IOC, FOK, GFD, GTC }
-public enum ExecutionAlgo { MarketImmediate }
+public enum ExecutionAlgo { MarketImmediate, CloseSeeking15m }
 
 public sealed record ParentOrder(ParentOrderId Id, TradeIntentId TradeIntentId, ClientOrderId ClientOrderId, OrderSide Side, decimal BaseQuantity, ExecutionAlgo Algo, OrderStatus Status, DateTimeOffset CreatedAtUtc);
 public sealed record ChildOrder(ChildOrderId Id, ParentOrderId ParentOrderId, VenueId VenueId, ClientOrderId ClientOrderId, OrderSide Side, OrderType OrderType, TimeInForce TimeInForce, decimal BaseQuantity, decimal VenueQuantity, OrderStatus Status, DateTimeOffset CreatedAtUtc);

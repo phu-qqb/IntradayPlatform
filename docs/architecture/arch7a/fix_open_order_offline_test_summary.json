@@ -1,0 +1,12 @@
+{
+    "version":  "arch7a-fix-offline-test-summary-v1",
+    "runAtUtc":  "2026-07-22T14:28:33.9280658Z",
+    "cases":  39,
+    "passed":  39,
+    "failed":  0,
+    "fixture":  "tests/fixtures/arch7a/lmax-fix-order-state-scenarios.json",
+    "liveFixConnection":  false,
+    "orderMessagesSent":  0,
+    "databaseMutations":  0,
+    "classification":  "LMAX_FIX_KNOWN_ORDER_STATUS_ONLY"
+}

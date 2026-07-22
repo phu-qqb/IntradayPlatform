@@ -1,0 +1,68 @@
+{
+    "version":  "arch7a-execution-netting-v1",
+    "sourceSession":  "arch6b-daily-tier1-20260721T130346Z-422530a8",
+    "serviceReused":  "QubesFxWeightsFixtureIngestionService",
+    "selectionPolicyReused":  "ExecutionAlgoR002UsdPairSelectionPolicy",
+    "formula":  "sum signed currency contributions, exclude USD, map currency to proven USD pair",
+    "directCrossExecutionDisabled":  true,
+    "crossPolicy":  "signal-only -\u003e netting-first -\u003e execution-disabled",
+    "deterministic":  true,
+    "symbols":  [
+                    {
+                        "normalizedPortfolioSymbol":  "EURUSD",
+                        "securityIdSource":  "8",
+                        "requiresInversion":  false,
+                        "portfolioCurrency":  "EUR",
+                        "securityId":  "4001",
+                        "executionTradableSymbol":  "EURUSD"
+                    },
+                    {
+                        "normalizedPortfolioSymbol":  "GBPUSD",
+                        "securityIdSource":  "8",
+                        "requiresInversion":  false,
+                        "portfolioCurrency":  "GBP",
+                        "securityId":  "4002",
+                        "executionTradableSymbol":  "GBPUSD"
+                    },
+                    {
+                        "normalizedPortfolioSymbol":  "AUDUSD",
+                        "securityIdSource":  "8",
+                        "requiresInversion":  false,
+                        "portfolioCurrency":  "AUD",
+                        "securityId":  "4007",
+                        "executionTradableSymbol":  "AUDUSD"
+                    },
+                    {
+                        "normalizedPortfolioSymbol":  "JPYUSD",
+                        "securityIdSource":  "8",
+                        "requiresInversion":  true,
+                        "portfolioCurrency":  "JPY",
+                        "securityId":  "4004",
+                        "executionTradableSymbol":  "USDJPY"
+                    },
+                    {
+                        "normalizedPortfolioSymbol":  "NZDUSD",
+                        "securityIdSource":  "8",
+                        "requiresInversion":  false,
+                        "portfolioCurrency":  "NZD",
+                        "securityId":  "100613",
+                        "executionTradableSymbol":  "NZDUSD"
+                    },
+                    {
+                        "normalizedPortfolioSymbol":  "CADUSD",
+                        "securityIdSource":  "8",
+                        "requiresInversion":  true,
+                        "portfolioCurrency":  "CAD",
+                        "securityId":  "4013",
+                        "executionTradableSymbol":  "USDCAD"
+                    },
+                    {
+                        "normalizedPortfolioSymbol":  "CHFUSD",
+                        "securityIdSource":  "8",
+                        "requiresInversion":  true,
+                        "portfolioCurrency":  "CHF",
+                        "securityId":  "4010",
+                        "executionTradableSymbol":  "USDCHF"
+                    }
+                ]
+}

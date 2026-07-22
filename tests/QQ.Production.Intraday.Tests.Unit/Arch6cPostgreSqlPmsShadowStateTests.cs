@@ -123,17 +123,27 @@ public sealed class Arch6cPostgreSqlPmsShadowStateTests
     }
 
     [Fact]
-    public void Ef_model_contains_no_execution_or_accounting_entity()
+    public void Ef_model_contains_only_explicit_arch7a_shadow_execution_entities_and_no_accounting_entity()
     {
         using var context = NewContext();
         var names = context.Model.GetEntityTypes().Select(x => x.ClrType.Name).ToArray();
+        var executionNames = names.Where(name =>
+                name.Contains("TradeIntent", StringComparison.OrdinalIgnoreCase) ||
+                name.Contains("Order", StringComparison.OrdinalIgnoreCase) ||
+                name.Contains("RiskDecision", StringComparison.OrdinalIgnoreCase))
+            .Order(StringComparer.Ordinal)
+            .ToArray();
 
-        Assert.DoesNotContain(names, name => name.Contains("TradeIntent", StringComparison.OrdinalIgnoreCase));
-        Assert.DoesNotContain(names, name => name.Contains("Order", StringComparison.OrdinalIgnoreCase));
+        Assert.Equal([
+            nameof(PmsShadowChildOrderRow),
+            nameof(PmsShadowParentOrderRow),
+            nameof(PmsShadowRiskDecisionRow),
+            nameof(PmsShadowTradeIntentRow)
+        ], executionNames);
         Assert.DoesNotContain(names, name => name.Contains("Fill", StringComparison.OrdinalIgnoreCase));
         Assert.DoesNotContain(names, name => name.Contains("Ledger", StringComparison.OrdinalIgnoreCase));
+        Assert.DoesNotContain(names, name => name.Contains("ExecutionReport", StringComparison.OrdinalIgnoreCase));
     }
-
     [Fact]
     public void Ef_model_uses_restrict_for_every_foreign_key()
     {

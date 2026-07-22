@@ -9,7 +9,7 @@ public sealed class ExecutionSimOperatorRunbookFirstDataBatchHandoffTests
     {
         foreach (var artifact in RequiredArtifacts)
         {
-            Assert.True(File.Exists(Path.Combine(ArtifactsDir(), artifact)), $"Missing R009 artifact {artifact}");
+            Assert.True(File.Exists(ArtifactPath(artifact)), $"Missing R009 artifact {artifact}");
         }
     }
 
@@ -160,11 +160,24 @@ public sealed class ExecutionSimOperatorRunbookFirstDataBatchHandoffTests
     ];
 
     private static JsonDocument ReadJson(string fileName)
-        => JsonDocument.Parse(File.ReadAllText(Path.Combine(ArtifactsDir(), fileName)));
+        => JsonDocument.Parse(File.ReadAllText(ArtifactPath(fileName)));
 
     private static string ReadText(string fileName)
-        => File.ReadAllText(Path.Combine(ArtifactsDir(), fileName));
+        => File.ReadAllText(ArtifactPath(fileName));
 
+    private static string ArtifactPath(string fileName)
+    {
+        var artifact = Path.Combine(ArtifactsDir(), fileName);
+        if (File.Exists(artifact)) return artifact;
+        var fixture = fileName switch
+        {
+            "phase-exec-sim-r009-no-validation-import-backtest-execution-audit.json" =>
+                "r009-no-validation-import-backtest-execution-audit.fixture.json",
+            "phase-exec-sim-r009-no-external-audit.json" => "r009-no-external-audit.fixture.json",
+            _ => fileName
+        };
+        return Path.Combine(RepoRoot(), "tests", "fixtures", "arch7a", "historical-contracts", fixture);
+    }
     private static string ArtifactsDir()
         => Path.Combine(RepoRoot(), "artifacts/readiness/execution-sim");
 

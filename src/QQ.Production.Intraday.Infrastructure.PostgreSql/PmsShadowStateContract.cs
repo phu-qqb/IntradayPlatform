@@ -11,8 +11,9 @@ public static class PmsShadowStateContract
     public const string InitialMigrationId = "20260721152240_InitialPostgreSqlPmsShadowState";
     public const string CorrectiveMigrationId = "20260721175549_CorrectGitCommitIdentityContract";
     public const string IntradayMigrationId = "20260722110000_AddIntradayShadowSlots";
+    public const string Arch7aMigrationId = "20260722141504_AddArch7aShadowExecution";
     public const string MigrationId = InitialMigrationId;
-    public static readonly IReadOnlyList<string> MigrationIds = [InitialMigrationId, CorrectiveMigrationId, IntradayMigrationId];
+    public static readonly IReadOnlyList<string> MigrationIds = [InitialMigrationId, CorrectiveMigrationId, IntradayMigrationId, Arch7aMigrationId];
     public const string EvidenceClassification = "EVIDENCE_ONLY_NONACCOUNTING";
     public const string NoOrderClassification = "NO_ORDER";
     public const string TestEnvironment = "LMAX_TEST_EOD_ONLY";

@@ -1,0 +1,26 @@
+{
+    "version":  "arch7a-live-status-only-plan-v1",
+    "status":  "NOT_AUTHORIZED_NOT_RUN",
+    "prerequisites":  [
+                          "GO ARCH6F",
+                          "explicit coordinated authorization"
+                      ],
+    "maximumSessions":  1,
+    "environment":  "LMAX Demo",
+    "service":  "Broker FIX Trading",
+    "fixVersion":  "4.4",
+    "beginString":  "FIX.4.4",
+    "targetCompId":  "LMXBD",
+    "senderCompIdValue":  "SECRET_NOT_RECORDED",
+    "applicationMessagePotentiallyAllowed":  "OrderStatusRequest(35=H) for an explicitly known test ClOrdID only",
+    "forbidden":  [
+                      "NewOrderSingle(35=D)",
+                      "OrderCancelRequest(35=F)",
+                      "OrderCancelReplaceRequest(35=G)",
+                      "OrderMassCancelRequest(35=q)",
+                      "OrderMassStatusRequest(35=AF)"
+                  ],
+    "boundedDurationRequired":  true,
+    "logoutRequired":  true,
+    "brokerOrderSend":  false
+}

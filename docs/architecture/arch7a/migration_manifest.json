@@ -1,0 +1,22 @@
+{
+    "version":  "arch7a-migration-manifest-v1",
+    "migrationId":  "20260722141504_AddArch7aShadowExecution",
+    "previousMigrationId":  "20260722110000_AddIntradayShadowSlots",
+    "additive":  true,
+    "applied":  false,
+    "existingPmsTablesMutated":  false,
+    "newTables":  [
+                      "pms_shadow.shadow_trade_intents",
+                      "pms_shadow.shadow_risk_decisions",
+                      "pms_shadow.shadow_parent_orders",
+                      "pms_shadow.shadow_child_orders"
+                  ],
+    "upSqlSha256":  "6e11b01add02be1c1bda75a7381888fb86f98cb095df06ce923cf3884be3d025",
+    "idempotentSqlSha256":  "ff96f541f948188bdfabdbc0f8fcef53178ed2aa2c51ae3c014e2d22001b52e1",
+    "downSqlSha256":  "2d5595840e9030e648691379ebf03cdbd8f763d73157c0deaf1d004afdea2cd1",
+    "pendingModelChanges":  false,
+    "databaseApplyForbiddenUntil":  [
+                                        "ARCH6F final gate",
+                                        "explicit authorization"
+                                    ]
+}

@@ -1,0 +1,20 @@
+{
+    "version":  "arch7a-lmax-open-order-capability-v1",
+    "classification":  "LMAX_FIX_KNOWN_ORDER_STATUS_ONLY",
+    "exactlyOneClassification":  true,
+    "brokerAuthority":  false,
+    "snapshotComplete":  false,
+    "emptyStateMayBeAuthoritative":  false,
+    "knownOrderReconciliation":  true,
+    "externalOrManualOrderCoverage":  "UNPROVEN",
+    "evidence":  [
+                     "35=H exists and requires a known ClOrdID, Instrument and Side",
+                     "35=AF absent from supplied LMAX dictionary",
+                     "tag 585 absent",
+                     "replay limited to latest 512 messages",
+                     "replay unavailable after gateway failure or sequence reset",
+                     "no documented drop-copy",
+                     "no complete snapshot terminator"
+                 ],
+    "blocker":  "BROKER_WORKING_LEAVES_UNOBSERVABLE"
+}

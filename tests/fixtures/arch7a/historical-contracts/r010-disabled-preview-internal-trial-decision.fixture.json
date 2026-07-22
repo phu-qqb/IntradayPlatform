@@ -1,0 +1,13 @@
+{
+    "fixtureVersion":  "arch7a-historical-contract-fixture-v1",
+    "syntheticContractFixture":  true,
+    "brokerEvidence":  false,
+    "Decision":  "DisabledPreviewTrialPassedWithHeldReadiness",
+    "TrialPassed":  true,
+    "HeldReadinessObserved":  true,
+    "ExecutableApproval":  false,
+    "BrokerApproval":  false,
+    "LiveApproval":  false,
+    "PaperLedgerCommitApproval":  false,
+    "SeparateExplicitExecutableGateRequired":  true
+}

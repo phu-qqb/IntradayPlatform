@@ -1,0 +1,79 @@
+{
+    "version":  "arch7a-lmax-supported-messages-v1",
+    "clientToLmax":  [
+                         {
+                             "allowedInArch7a":  false,
+                             "documented":  true,
+                             "name":  "NewOrderSingle",
+                             "msgType":  "D"
+                         },
+                         {
+                             "allowedInArch7a":  false,
+                             "documented":  true,
+                             "name":  "OrderCancelRequest",
+                             "msgType":  "F"
+                         },
+                         {
+                             "allowedInArch7a":  false,
+                             "documented":  true,
+                             "name":  "OrderCancelReplaceRequest",
+                             "msgType":  "G"
+                         },
+                         {
+                             "requiredFields":  [
+                                                    "ClOrdID(11)",
+                                                    "Instrument",
+                                                    "Side"
+                                                ],
+                             "documented":  true,
+                             "name":  "OrderStatusRequest",
+                             "msgType":  "H",
+                             "allowedInParallelArch7a":  false
+                         },
+                         {
+                             "allowedInArch7a":  false,
+                             "documented":  true,
+                             "name":  "TradeCaptureReportRequest",
+                             "msgType":  "AD"
+                         },
+                         {
+                             "allowedInArch7a":  false,
+                             "documented":  false,
+                             "name":  "OrderMassStatusRequest",
+                             "msgType":  "AF"
+                         },
+                         {
+                             "allowedInArch7a":  false,
+                             "name":  "OrderMassCancelRequest",
+                             "msgType":  "q"
+                         }
+                     ],
+    "lmaxToClient":  [
+                         {
+                             "documented":  true,
+                             "name":  "ExecutionReport",
+                             "msgType":  "8"
+                         },
+                         {
+                             "documented":  true,
+                             "name":  "OrderCancelReject",
+                             "msgType":  "9"
+                         },
+                         {
+                             "documented":  true,
+                             "name":  "TradeCaptureReport",
+                             "msgType":  "AE"
+                         },
+                         {
+                             "documented":  true,
+                             "name":  "TradeCaptureReportRequestAck",
+                             "msgType":  "AQ"
+                         }
+                     ],
+    "massStatusReqType585":  {
+                                 "documented":  false,
+                                 "supportedValues":  [
+
+                                                     ]
+                             }
+}

@@ -1,0 +1,105 @@
+{
+    "version":  "arch7a-lmax-fix-order-state-fixtures-v1",
+    "synthetic":  true,
+    "sensitiveData":  false,
+    "liveMessages":  false,
+    "scenarios":  [
+                      {
+                          "id":  "explicit-empty-snapshot",
+                          "expectedAuthorityOnlyWithCompleteCapability":  true
+                      },
+                      {
+                          "ordStatus":  "0",
+                          "id":  "new",
+                          "working":  true
+                      },
+                      {
+                          "id":  "partially-filled",
+                          "cumQty":  40,
+                          "orderQty":  100,
+                          "ordStatus":  "1",
+                          "working":  true,
+                          "leavesQty":  60
+                      },
+                      {
+                          "ordStatus":  "2",
+                          "id":  "fill-terminal",
+                          "working":  false
+                      },
+                      {
+                          "ordStatus":  "4",
+                          "id":  "cancel-terminal",
+                          "working":  false
+                      },
+                      {
+                          "clOrdId":  "CL-NEW",
+                          "id":  "replace-chain",
+                          "origClOrdId":  "CL-OLD"
+                      },
+                      {
+                          "id":  "duplicate-execution-report",
+                          "sameSourceSha":  true
+                      },
+                      {
+                          "id":  "possdup",
+                          "possDupFlag":  true
+                      },
+                      {
+                          "expectedIssue":  "FIX_SEQUENCE_GAP:2-2",
+                          "id":  "sequence-gap",
+                          "sequence":  [
+                                           1,
+                                           3
+                                       ]
+                      },
+                      {
+                          "id":  "incomplete-snapshot",
+                          "snapshotComplete":  false
+                      },
+                      {
+                          "id":  "35h-reject",
+                          "rejectMeansEmpty":  false
+                      },
+                      {
+                          "requestDocumented":  false,
+                          "id":  "35af-reject",
+                          "rejectMeansEmpty":  false
+                      },
+                      {
+                          "id":  "known-order-only",
+                          "coverage":  "KNOWN_PLATFORM_ORDER_ONLY"
+                      },
+                      {
+                          "id":  "external-unknown",
+                          "coverage":  "UNPROVEN"
+                      },
+                      {
+                          "securityId":  "4001",
+                          "id":  "two-same-instrument",
+                          "count":  2
+                      },
+                      {
+                          "orderQty":  100,
+                          "leavesQty":  60,
+                          "id":  "leaves-inconsistent",
+                          "cumQty":  25
+                      },
+                      {
+                          "id":  "wrong-account",
+                          "failClosed":  true
+                      },
+                      {
+                          "id":  "wrong-session",
+                          "failClosed":  true
+                      },
+                      {
+                          "id":  "restart-replay",
+                          "deterministic":  true
+                      },
+                      {
+                          "databaseMutation":  false,
+                          "id":  "no-mutation-no-send",
+                          "brokerSend":  false
+                      }
+                  ]
+}

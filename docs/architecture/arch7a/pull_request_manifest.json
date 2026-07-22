@@ -1,0 +1,12 @@
+{
+    "version":  "arch7a-pull-request-manifest-v1",
+    "repository":  "phu-qqb/IntradayPlatform",
+    "branch":  "codex/arch7a-reconnect-existing-execution-pipeline-shadow-no-send",
+    "baseBranch":  "master",
+    "baseCommit":  "9f0d1c1aae7dd37ed5e12a9fe06f200e846e01d5",
+    "headCommit":  "RESOLVE_FROM_GIT_BRANCH_HEAD",
+    "state":  "LOCAL_VALIDATED_NOT_PUBLISHED",
+    "mergeAllowed":  false,
+    "mergeBlocker":  "ARCH6F final gate and explicit authorization",
+    "brokerSendAuthorizationRequested":  false
+}
