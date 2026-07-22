@@ -1,0 +1,38 @@
+{
+  "contract": "FRESH_DRIFT_EVERY_15_MINUTES_WITH_MODEL_SCHEDULE",
+  "model_input_snapshot": {
+    "classification": "REUSED_FINALIZED_D1_MODEL",
+    "fresh_per_slot": false,
+    "identity_exposed": true,
+    "as_of_exposed": true,
+    "target_close_exposed": true,
+    "qubes_input_snapshot_id_exposed": true,
+    "new_gpu_run_required_for_qualified_slots": false
+  },
+  "slot_market_data_snapshot": {
+    "fresh_per_slot": true,
+    "market_data_snapshot_id_distinct": true,
+    "raw_capture_sha256_distinct": true,
+    "decision_prices_derived_from_slot_bbo": true,
+    "mapping_count": 99,
+    "raw_lmax_bbo_count": 49,
+    "projection": "LMAX_DIRECT_OR_CANONICAL_USD_TWO_LEG_CROSS",
+    "polygon_calls": 0
+  },
+  "target_position": {
+    "calculator": "TargetPositionCalculator",
+    "calculator_version": "canonical_target_position_calculator_v1",
+    "fresh_per_slot": true,
+    "target_weight_count": 288,
+    "d1_target_position_loaded_as_result": false
+  },
+  "position_only_drift": {
+    "fresh_per_slot": true,
+    "authoritative_position_snapshot_reused": true,
+    "formula": "TargetPosition(slot)-CurrentPosition(authoritative snapshot)",
+    "d1_drift_loaded_as_result": false,
+    "broker_adjusted_calculated": false,
+    "blocker": "BROKER_WORKING_LEAVES_UNOBSERVABLE"
+  },
+  "no_order": true
+}

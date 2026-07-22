@@ -11,6 +11,7 @@ public static class PmsShadowIntradayCadenceContract
     public const string TimeZone = "UTC";
     public const string OperationalCalendar = "CONTINUOUS_WEEKDAYS_UTC_EXCLUDING_SATURDAY_SUNDAY";
     public const int SlotMinutes = 15;
+    public const int MinimumRealConsecutiveQualificationSlots = 3;
     public const int MaximumStartDelayMinutes = 5;
     public const int MaximumFinalizationDelayMinutes = 14;
     public const int FreshnessMinutes = 20;
@@ -393,7 +394,14 @@ public sealed record MissingSlotSummary(IReadOnlyList<string> SlotIds);
 public sealed record FailedClosedSlotSummary(IReadOnlyList<string> SlotIds);
 public sealed record SlotLineageSummary(string? SlotId, string? LmaxCaptureSha256,
     IReadOnlyList<Guid> QubesInputSnapshotIds, IReadOnlyList<Guid> ProducedModelRunIds,
-    IReadOnlyList<Guid> ReusedModelRunIds, string? HandoffSha256, Guid? IngestionId);
+    IReadOnlyList<Guid> ReusedModelRunIds, string? HandoffSha256, Guid? IngestionId,
+    string? EconomicRevisionManifestSha256 = null, string? MarketDataSnapshotSha256 = null,
+    string? SupersedesSlotManifestSha256 = null);
+public sealed record IntradayEconomicProjectionRevisionSummary(Guid ProjectionRevisionId,
+    int RevisionNumber, string SlotId, string RawCaptureSha256, string MarketDataSnapshotSha256,
+    string InputSha256, string TargetPositionsSha256, string DriftsSha256, string ManifestSha256,
+    string? SupersedesSlotManifestSha256, int TargetPositionCount, int DriftCount, bool Qualifying,
+    bool NoOrder, DateTimeOffset CompletedAtUtc);
 public sealed record PmsShadowIntradayReadModels(LatestIntradayShadowSlot LatestIntradayShadowSlot,
     IntradayShadowSlotHistory IntradayShadowSlotHistory,
     LatestTargetPositionBySlot LatestTargetPositionBySlot,
@@ -402,7 +410,8 @@ public sealed record PmsShadowIntradayReadModels(LatestIntradayShadowSlot Latest
     MissingSlotSummary MissingSlotSummary,
     FailedClosedSlotSummary FailedClosedSlotSummary,
     SlotLineageSummary SlotLineageSummary,
-    IReadOnlyList<PmsShadowOperationalAlert> Alerts);
+    IReadOnlyList<PmsShadowOperationalAlert> Alerts,
+    IReadOnlyList<IntradayEconomicProjectionRevisionSummary>? EconomicProjectionHistory = null);
 
 public static class PmsShadowIntradayProjection
 {
