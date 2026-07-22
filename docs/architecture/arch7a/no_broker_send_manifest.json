@@ -1,0 +1,20 @@
+{
+    "version":  "arch7a-no-broker-send-v1",
+    "gate":  "ARCH7A_RECONNECT_EXISTING_EXECUTION_PIPELINE_TO_AUTHORITATIVE_TEST_PMS_AND_QUALIFY_SHADOW_TRADE_INTENT_RISK_PARENT_CHILD_ORDER_NO_BROKER_SEND",
+    "fixLogon":  false,
+    "newOrderSingle":  false,
+    "cancel":  false,
+    "replace":  false,
+    "massCancel":  false,
+    "orderStatusRequest":  false,
+    "accountApi":  false,
+    "databento":  false,
+    "realAccount":  false,
+    "fillCreated":  false,
+    "positionLedgerEventCreated":  false,
+    "networkLedgerCount":  0,
+    "apiWorkerGatewayRegistrationChanged":  false,
+    "arch6fSchedulerChanged":  false,
+    "arch6fCaptureChanged":  false,
+    "databaseApply":  false
+}

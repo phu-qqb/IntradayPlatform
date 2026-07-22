@@ -1,0 +1,16 @@
+{
+    "version":  "arch7a-platform-vs-external-coverage-v1",
+    "platformOrders":  {
+                           "statusRequest":  "35=H",
+                           "globalCompleteness":  false,
+                           "knownClOrdIdsMayBeQueried":  true
+                       },
+    "manualOrExternalOrders":  {
+                                   "coverage":  "UNPROVEN",
+                                   "discoverable":  false
+                               },
+    "localClOrdIdInventoryProvesBrokerEmpty":  false,
+    "remainingDeltaFormula":  "target_position - reconciled_current_position - signed_reserved_working_leaves",
+    "currentActionable":  false,
+    "currentRiskDecision":  "BLOCK_NEW_ORDERS"
+}

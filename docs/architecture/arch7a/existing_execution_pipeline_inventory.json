@@ -1,0 +1,144 @@
+{
+    "gate":  "ARCH7A_RECONNECT_EXISTING_EXECUTION_PIPELINE_TO_AUTHORITATIVE_TEST_PMS_AND_QUALIFY_SHADOW_TRADE_INTENT_RISK_PARENT_CHILD_ORDER_NO_BROKER_SEND",
+    "generatedAtUtc":  "2026-07-22T14:27:38.8815220Z",
+    "coreMaster":  "a96ca2eb725dcba3bc66579b8782fdd14ecfe97a",
+    "intradayMaster":  "9f0d1c1aae7dd37ed5e12a9fe06f200e846e01d5",
+    "duplicateTypesIntroduced":  false,
+    "components":  [
+                       {
+                           "component":  "ModelRun/TargetWeight/TargetPosition/PositionOnlyDrift",
+                           "repository":  "IntradayPlatform",
+                           "path":  "src/QQ.Production.Intraday.Infrastructure.PostgreSql",
+                           "master":  "9f0d1c1aae7dd37ed5e12a9fe06f200e846e01d5",
+                           "tests":  "Arch6C/D/E/F unit suites",
+                           "dependencies":  [
+                                                "PmsShadowDbContext",
+                                                "PMS read models"
+                                            ],
+                           "status":  "CURRENT_AND_REUSABLE",
+                           "action":  "Read completed TEST ingestion only"
+                       },
+                       {
+                           "component":  "TradeIntent/RiskDecision/ParentOrder/ChildOrder",
+                           "repository":  "IntradayPlatform",
+                           "path":  "src/QQ.Production.Intraday.Domain/DomainModels.cs",
+                           "master":  "9f0d1c1aae7dd37ed5e12a9fe06f200e846e01d5",
+                           "tests":  "ProcessModelRun and domain tests",
+                           "dependencies":  [
+                                                "Domain identifiers"
+                                            ],
+                           "status":  "CURRENT_AND_REUSABLE",
+                           "action":  "Reuse canonical records with shadow envelopes"
+                       },
+                       {
+                           "component":  "ProcessModelRunService",
+                           "repository":  "IntradayPlatform",
+                           "path":  "src/QQ.Production.Intraday.Application/ApplicationServices.cs",
+                           "master":  "9f0d1c1aae7dd37ed5e12a9fe06f200e846e01d5",
+                           "tests":  "Application service tests",
+                           "dependencies":  [
+                                                "IVenueExecutionGateway",
+                                                "Fill",
+                                                "PositionLedgerEvent"
+                                            ],
+                           "status":  "UNSAFE",
+                           "action":  "Do not invoke in ARCH7A because it sends orders"
+                       },
+                       {
+                           "component":  "IVenueExecutionGateway/FakeLmaxGateway",
+                           "repository":  "IntradayPlatform",
+                           "path":  "src/QQ.Production.Intraday.Application/ApplicationServices.cs",
+                           "master":  "9f0d1c1aae7dd37ed5e12a9fe06f200e846e01d5",
+                           "tests":  "Gateway composition tests",
+                           "dependencies":  [
+                                                "API/Worker DI"
+                                            ],
+                           "status":  "CURRENT_AND_REUSABLE",
+                           "action":  "Preserve fake registration; ARCH7A calls no gateway"
+                       },
+                       {
+                           "component":  "FX netting",
+                           "repository":  "IntradayPlatform",
+                           "path":  "src/QQ.Production.Intraday.Application/QubesFxWeightsIngestion.cs",
+                           "master":  "9f0d1c1aae7dd37ed5e12a9fe06f200e846e01d5",
+                           "tests":  "Qubes FX ingestion tests",
+                           "dependencies":  [
+                                                "QubesFxWeightsFixtureIngestionService"
+                                            ],
+                           "status":  "CURRENT_AND_REUSABLE",
+                           "action":  "Reuse currency exposure sum and USD pair normalization"
+                       },
+                       {
+                           "component":  "USD pair selection/inversion",
+                           "repository":  "IntradayPlatform",
+                           "path":  "src/QQ.Production.Intraday.Application/ExecutionAlgoUsdPairSelectionPolicy.cs",
+                           "master":  "9f0d1c1aae7dd37ed5e12a9fe06f200e846e01d5",
+                           "tests":  "ExecutionAlgoUsdPairSelectionPolicyTests",
+                           "dependencies":  [
+                                                "ExecutionAlgoR002UsdPairSelectionPolicy"
+                                            ],
+                           "status":  "CURRENT_AND_REUSABLE",
+                           "action":  "Restrict to seven historically proven symbols"
+                       },
+                       {
+                           "component":  "CloseSeeking15m",
+                           "repository":  "IntradayPlatform",
+                           "path":  "src/QQ.Production.Intraday.Application/ExecutionAlgoCloseSeekingFoundation.cs",
+                           "master":  "9f0d1c1aae7dd37ed5e12a9fe06f200e846e01d5",
+                           "tests":  "ExecutionAlgoCloseSeekingFoundationTests",
+                           "dependencies":  [
+                                                "ExecutionAlgoR001Foundation"
+                                            ],
+                           "status":  "CURRENT_AND_REUSABLE",
+                           "action":  "Reuse three phases in shadow preview"
+                       },
+                       {
+                           "component":  "execution-sim/TCA",
+                           "repository":  "IntradayPlatform",
+                           "path":  "src/QQ.Production.Intraday.Application/ExecutionSimCloseSeekingFoundation.cs",
+                           "master":  "9f0d1c1aae7dd37ed5e12a9fe06f200e846e01d5",
+                           "tests":  "ExecutionSim suites",
+                           "dependencies":  [
+                                                "offline quote fixtures"
+                                            ],
+                           "status":  "CURRENT_AND_REUSABLE",
+                           "action":  "Reuse contracts and offline fixtures only"
+                       },
+                       {
+                           "component":  "R009 sandbox order path",
+                           "repository":  "IntradayPlatform",
+                           "path":  "src/QQ.Production.Intraday.Application/R009LmaxSandboxOrderSmoke.cs",
+                           "master":  "9f0d1c1aae7dd37ed5e12a9fe06f200e846e01d5",
+                           "tests":  "R009 regression tests",
+                           "dependencies":  [
+                                                "historical Demo FIX evidence"
+                                            ],
+                           "status":  "HISTORICAL_REUSABLE",
+                           "action":  "Evidence/inventory only; never invoke live"
+                       },
+                       {
+                           "component":  "R018/R216 broker reconciliation",
+                           "repository":  "IntradayPlatform",
+                           "path":  "src/QQ.Production.Intraday.Application/BrokerAuthorityReconciliation.cs",
+                           "master":  "9f0d1c1aae7dd37ed5e12a9fe06f200e846e01d5",
+                           "tests":  "Broker authority tests",
+                           "dependencies":  [
+                                                "working leaves observations"
+                                            ],
+                           "status":  "CURRENT_AND_REUSABLE",
+                           "action":  "Reuse remaining delta contract and fail closed"
+                       },
+                       {
+                           "component":  "ExecutionReport/Fill/PositionLedgerEvent/ReconciliationBreak/ExceptionCase",
+                           "repository":  "IntradayPlatform",
+                           "path":  "src/QQ.Production.Intraday.Domain/DomainModels.cs",
+                           "master":  "9f0d1c1aae7dd37ed5e12a9fe06f200e846e01d5",
+                           "tests":  "Domain/application tests",
+                           "dependencies":  [
+                                                "Canonical execution chain"
+                                            ],
+                           "status":  "CURRENT_AND_REUSABLE",
+                           "action":  "Types retained; no Fill or ledger event created by ARCH7A"
+                       }
+                   ]
+}

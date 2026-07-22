@@ -1,0 +1,20 @@
+{
+    "version":  "arch7a-lmax-fix-profile-v1",
+    "sourcePriority":  [
+                           "local proprietary LMAX documentation",
+                           "supplied QuickFIX dictionary",
+                           "tracked config and runbooks",
+                           "historical R009/R018 evidence",
+                           "FIX standard for interpretation only"
+                       ],
+    "specification":  "LMAX Broker FIX Trading API release 99",
+    "fixVersion":  "4.4",
+    "beginString":  "FIX.4.4",
+    "service":  "Broker FIX Trading",
+    "senderCompIdSource":  "LMAX_DEMO_SENDER_COMP_ID",
+    "senderCompIdValueRecorded":  false,
+    "targetCompId":  "LMXBD",
+    "accountScope":  "FIX session / LMAX account associated with credentials",
+    "localDocumentationRoot":  "C:/tmp/arch7a-lmax-fix44-trading-api",
+    "secretsIncluded":  false
+}

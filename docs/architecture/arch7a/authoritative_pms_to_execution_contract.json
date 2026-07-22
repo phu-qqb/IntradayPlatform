@@ -1,0 +1,35 @@
+{
+    "version":  "arch7a-authoritative-pms-to-execution-v1",
+    "source":  {
+                   "tables":  [
+                                  "model_runs",
+                                  "target_weights",
+                                  "target_positions",
+                                  "position_only_drifts"
+                              ],
+                   "environment":  "TEST",
+                   "ingestionStatus":  "COMPLETED",
+                   "readOnly":  true,
+                   "sessionId":  "arch6b-daily-tier1-20260721T130346Z-422530a8"
+               },
+    "requiredLineage":  [
+                            "ingestionId",
+                            "modelRunId",
+                            "targetPositionId",
+                            "driftId",
+                            "inputSha256",
+                            "outputSha256",
+                            "coreCommitId"
+                        ],
+    "freshness":  "PmsShadowFreshnessPolicy",
+    "targetCloses":  [
+                         ":00",
+                         ":15",
+                         ":30",
+                         ":45"
+                     ],
+    "workingLeaves":  "UNAVAILABLE_WITH_CURRENT_LMAX_INTERFACES",
+    "coordinator":  "Arch7aShadowExecutionCoordinator",
+    "flow":  "IArch7aPmsExecutionSourceReader -> Arch7aPmsShadowExecutionPipeline -> IArch7aShadowExecutionStore",
+    "zeroSourceMutation":  true
+}

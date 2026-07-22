@@ -1,0 +1,10 @@
+{
+    "fixtureVersion":  "arch7a-historical-contract-fixture-v1",
+    "syntheticContractFixture":  true,
+    "brokerEvidence":  false,
+    "newQuoteFileValidationRunExecuted":  false,
+    "newImportExecuted":  false,
+    "newBacktestExecuted":  false,
+    "newDataBatchProcessed":  false,
+    "staticRunbookFocused":  true
+}

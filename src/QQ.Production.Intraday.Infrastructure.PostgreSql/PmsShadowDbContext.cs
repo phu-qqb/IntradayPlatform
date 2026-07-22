@@ -26,6 +26,12 @@ public sealed class PmsShadowDbContext(DbContextOptions<PmsShadowDbContext> opti
     public DbSet<PmsShadowPositionOnlyDriftRow> PositionOnlyDrifts => Set<PmsShadowPositionOnlyDriftRow>();
     public DbSet<PmsShadowBrokerAdjustedDriftStageRow> BrokerAdjustedDriftStages => Set<PmsShadowBrokerAdjustedDriftStageRow>();
     public DbSet<PmsShadowCycleResultRow> CycleResults => Set<PmsShadowCycleResultRow>();
+    public DbSet<PmsShadowTradeIntentRow> ShadowTradeIntents => Set<PmsShadowTradeIntentRow>();
+    public DbSet<PmsShadowRiskDecisionRow> ShadowRiskDecisions => Set<PmsShadowRiskDecisionRow>();
+    public DbSet<PmsShadowParentOrderRow> ShadowParentOrders => Set<PmsShadowParentOrderRow>();
+    public DbSet<PmsShadowChildOrderRow> ShadowChildOrders => Set<PmsShadowChildOrderRow>();
+    public DbSet<PmsShadowExecutionQualificationRunRow> ShadowExecutionQualificationRuns =>
+        Set<PmsShadowExecutionQualificationRunRow>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -48,6 +54,12 @@ public sealed class PmsShadowDbContext(DbContextOptions<PmsShadowDbContext> opti
         ConfigureDrift(modelBuilder.Entity<PmsShadowPositionOnlyDriftRow>());
         ConfigureBrokerStage(modelBuilder.Entity<PmsShadowBrokerAdjustedDriftStageRow>());
         ConfigureCycleResult(modelBuilder.Entity<PmsShadowCycleResultRow>());
+        ConfigureShadowTradeIntent(modelBuilder.Entity<PmsShadowTradeIntentRow>());
+        ConfigureShadowRiskDecision(modelBuilder.Entity<PmsShadowRiskDecisionRow>());
+        ConfigureShadowParentOrder(modelBuilder.Entity<PmsShadowParentOrderRow>());
+        ConfigureShadowChildOrder(modelBuilder.Entity<PmsShadowChildOrderRow>());
+        ConfigureShadowExecutionQualificationRun(
+            modelBuilder.Entity<PmsShadowExecutionQualificationRunRow>());
         ApplySnakeCaseColumns(modelBuilder);
     }
 
@@ -416,6 +428,135 @@ public sealed class PmsShadowDbContext(DbContextOptions<PmsShadowDbContext> opti
         Text(entity.Property(x => x.Classification), 64);
     }
 
+    private static void ConfigureShadowTradeIntent(EntityTypeBuilder<PmsShadowTradeIntentRow> entity)
+    {
+        entity.ToTable("shadow_trade_intents", table =>
+        {
+            table.HasCheckConstraint("ck_shadow_trade_intent_sha256",
+                $"{ShaCheck("idempotency_key")} AND {ShaCheck("lineage_sha256")} AND " +
+                $"{ShaCheck("market_data_snapshot_sha256")} AND {ShaCheck("source_lineage_sha256")} AND " +
+                $"{ShaCheck("plan_sha256")}");
+            table.HasCheckConstraint("ck_shadow_trade_intent_test_only",
+                "environment = 'TEST' AND classification = 'SHADOW_ONLY'");
+            table.HasCheckConstraint("ck_shadow_trade_intent_no_route",
+                "NOT actionable AND NOT execution_allowed AND NOT broker_route_allowed");
+            table.HasCheckConstraint("ck_shadow_trade_intent_revision", "economic_revision_number = 2");
+        });
+        entity.HasKey(x => x.TradeIntentId);
+        entity.HasIndex(x => new { x.EconomicRevisionId, x.ExecutionTradableSymbol }).IsUnique();
+        entity.HasIndex(x => x.PlanSha256);
+        Restrict<PmsShadowTradeIntentRow, PmsShadowIngestionRow>(entity, x => x.IngestionId);
+        Text(entity.Property(x => x.SourceSessionId), 200);
+        Text(entity.Property(x => x.SlotId), 160);
+        entity.Property(x => x.EconomicRevisionNumber);
+        Hash(entity.Property(x => x.MarketDataSnapshotSha256));
+        Hash(entity.Property(x => x.SourceLineageSha256));
+        entity.Property(x => x.ModelRunIdsJson).HasColumnType("jsonb");
+        entity.Property(x => x.TargetPositionIdsJson).HasColumnType("jsonb");
+        entity.Property(x => x.DriftIdsJson).HasColumnType("jsonb");
+        Text(entity.Property(x => x.SecurityId), 160);
+        Text(entity.Property(x => x.SecurityIdSource), 64);
+        Text(entity.Property(x => x.NormalizedPortfolioSymbol), 64);
+        Text(entity.Property(x => x.ExecutionTradableSymbol), 64);
+        Text(entity.Property(x => x.Side), 8);
+        Quantity(entity.Property(x => x.SignedDesiredDelta));
+        Quantity(entity.Property(x => x.TargetQuantity));
+        Quantity(entity.Property(x => x.CurrentQuantity));
+        Text(entity.Property(x => x.AccountScope), 96);
+        Text(entity.Property(x => x.Environment), 64);
+        Text(entity.Property(x => x.Classification), 64);
+        entity.Property(x => x.BlockingReason).HasMaxLength(160);
+        Hash(entity.Property(x => x.IdempotencyKey));
+        Hash(entity.Property(x => x.LineageSha256));
+        Hash(entity.Property(x => x.PlanSha256));
+    }
+
+    private static void ConfigureShadowRiskDecision(EntityTypeBuilder<PmsShadowRiskDecisionRow> entity)
+    {
+        entity.ToTable("shadow_risk_decisions", table =>
+        {
+            table.HasCheckConstraint("ck_shadow_risk_decision_plan_sha256", ShaCheck("plan_sha256"));
+            table.HasCheckConstraint("ck_shadow_risk_decision_no_send", "no_order_invariant AND NOT broker_send_allowed");
+        });
+        entity.HasKey(x => x.RiskDecisionId);
+        entity.HasIndex(x => x.TradeIntentId).IsUnique();
+        Restrict<PmsShadowRiskDecisionRow, PmsShadowTradeIntentRow>(entity, x => x.TradeIntentId);
+        Text(entity.Property(x => x.Outcome), 64);
+        entity.Property(x => x.ReasonCodesJson).HasColumnType("jsonb");
+        entity.Property(x => x.BlockingBreaksJson).HasColumnType("jsonb");
+        Text(entity.Property(x => x.Freshness), 32);
+        entity.Property(x => x.LimitsEvaluatedJson).HasColumnType("jsonb");
+        Hash(entity.Property(x => x.PlanSha256));
+    }
+
+    private static void ConfigureShadowParentOrder(EntityTypeBuilder<PmsShadowParentOrderRow> entity)
+    {
+        entity.ToTable("shadow_parent_orders", table =>
+        {
+            table.HasCheckConstraint("ck_shadow_parent_plan_sha256", ShaCheck("plan_sha256"));
+            table.HasCheckConstraint("ck_shadow_parent_no_route", "NOT route_allowed");
+        });
+        entity.HasKey(x => x.ParentOrderId);
+        entity.HasIndex(x => x.TradeIntentId).IsUnique();
+        entity.HasIndex(x => x.ClientOrderId).IsUnique();
+        Restrict<PmsShadowParentOrderRow, PmsShadowTradeIntentRow>(entity, x => x.TradeIntentId);
+        Restrict<PmsShadowParentOrderRow, PmsShadowRiskDecisionRow>(entity, x => x.RiskDecisionId);
+        Text(entity.Property(x => x.ClientOrderId), 128);
+        Text(entity.Property(x => x.Symbol), 64);
+        Text(entity.Property(x => x.Side), 8);
+        Quantity(entity.Property(x => x.TotalQuantity));
+        Text(entity.Property(x => x.ExecutionAlgo), 64);
+        Text(entity.Property(x => x.Status), 64);
+        Hash(entity.Property(x => x.DeterministicIdentity));
+        Hash(entity.Property(x => x.PlanSha256));
+    }
+
+    private static void ConfigureShadowChildOrder(EntityTypeBuilder<PmsShadowChildOrderRow> entity)
+    {
+        entity.ToTable("shadow_child_orders", table =>
+        {
+            table.HasCheckConstraint("ck_shadow_child_plan_sha256", ShaCheck("plan_sha256"));
+            table.HasCheckConstraint("ck_shadow_child_no_send", "NOT broker_send_allowed");
+        });
+        entity.HasKey(x => x.ChildOrderId);
+        entity.HasIndex(x => x.ParentOrderId).IsUnique();
+        entity.HasIndex(x => x.ClientOrderId).IsUnique();
+        Restrict<PmsShadowChildOrderRow, PmsShadowParentOrderRow>(entity, x => x.ParentOrderId);
+        Text(entity.Property(x => x.ClientOrderId), 128);
+        Text(entity.Property(x => x.Venue), 32);
+        Text(entity.Property(x => x.Tranche), 64);
+        Text(entity.Property(x => x.Side), 8);
+        Quantity(entity.Property(x => x.Quantity));
+        entity.Property(x => x.SimulatedLimitPrice).HasPrecision(38, 28);
+        Text(entity.Property(x => x.AlgoPhase), 64);
+        Text(entity.Property(x => x.Status), 64);
+        Hash(entity.Property(x => x.DeterministicIdentity));
+        Hash(entity.Property(x => x.PlanSha256));
+    }
+    private static void ConfigureShadowExecutionQualificationRun(
+        EntityTypeBuilder<PmsShadowExecutionQualificationRunRow> entity)
+    {
+        entity.ToTable("shadow_execution_qualification_runs", table =>
+        {
+            table.HasCheckConstraint("ck_shadow_qualification_hashes",
+                $"{ShaCheck("plan_sha256")} AND {ShaCheck("netting_sha256")} AND " +
+                $"{ShaCheck("source_lineage_sha256")}");
+            table.HasCheckConstraint("ck_shadow_qualification_completed", "status = 'COMPLETED'");
+            table.HasCheckConstraint("ck_shadow_qualification_no_external",
+                "no_fix_logon AND no_broker_send AND no_fill AND no_position_ledger_event");
+            table.HasCheckConstraint("ck_shadow_qualification_counts",
+                "intent_count > 0 AND risk_decision_count = intent_count AND " +
+                "parent_order_count = intent_count AND child_order_count = intent_count");
+        });
+        entity.HasKey(x => x.QualificationRunId);
+        entity.HasIndex(x => x.EconomicRevisionId).IsUnique();
+        Text(entity.Property(x => x.SourceSessionId), 200);
+        Text(entity.Property(x => x.SlotId), 160);
+        Hash(entity.Property(x => x.PlanSha256));
+        Hash(entity.Property(x => x.NettingSha256));
+        Text(entity.Property(x => x.Status), 32);
+        Hash(entity.Property(x => x.SourceLineageSha256));
+    }
     private static void Restrict<TEntity, TPrincipal>(EntityTypeBuilder<TEntity> entity, System.Linq.Expressions.Expression<Func<TEntity, object?>> foreignKey)
         where TEntity : class where TPrincipal : class =>
         entity.HasOne<TPrincipal>().WithMany().HasForeignKey(foreignKey).OnDelete(DeleteBehavior.Restrict);

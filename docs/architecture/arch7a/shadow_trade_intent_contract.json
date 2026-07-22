@@ -1,0 +1,30 @@
+{
+    "version":  "arch7a-shadow-trade-intent-v1",
+    "canonicalType":  "TradeIntent",
+    "classification":  "SHADOW_ONLY",
+    "environment":  "TEST",
+    "deterministicIdentityInputs":  [
+                                        "environment",
+                                        "account",
+                                        "venue",
+                                        "sourceSession",
+                                        "slot",
+                                        "targetClose",
+                                        "symbol",
+                                        "intentVersion"
+                                    ],
+    "requiredLineage":  [
+                            "sourceIngestionId",
+                            "modelRunIds",
+                            "targetPositionIds",
+                            "driftIds",
+                            "lineageSha256"
+                        ],
+    "executionAllowed":  false,
+    "brokerRouteAllowed":  false,
+    "zeroDriftCreatesIntent":  false,
+    "unknownWorkingLeaves":  {
+                                 "actionable":  false,
+                                 "blockingReason":  "BROKER_WORKING_LEAVES_UNOBSERVABLE"
+                             }
+}

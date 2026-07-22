@@ -1,0 +1,22 @@
+{
+    "version":  "arch7a-shadow-parent-child-v1",
+    "canonicalTypes":  [
+                           "ParentOrder",
+                           "ChildOrder"
+                       ],
+    "parent":  {
+                   "executionAlgo":  "CloseSeeking15m",
+                   "status":  "SHADOW_PLANNED",
+                   "routeAllowed":  false
+               },
+    "child":  {
+                  "status":  "SHADOW_ONLY",
+                  "tranche":  "WHOLE_SHADOW_PREVIEW",
+                  "brokerSendAllowed":  false,
+                  "deadlineBounded":  true
+              },
+    "deterministicIds":  true,
+    "guidNewGuidAllowed":  false,
+    "fillCreated":  false,
+    "positionLedgerEventCreated":  false
+}

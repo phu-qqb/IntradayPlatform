@@ -1,0 +1,24 @@
+{
+    "version":  "arch7a-migration-manifest-v2",
+    "migrationId":  "20260723000000_AddArch7aShadowExecutionAfterArch6fEconomicRevisions",
+    "previousMigrationId":  "20260722234500_CorrectIntradayMarketPriceScaleInvariant",
+    "additive":  true,
+    "applied":  false,
+    "existingPmsTablesMutated":  false,
+    "newTables":  [
+                      "pms_shadow.shadow_trade_intents",
+                      "pms_shadow.shadow_risk_decisions",
+                      "pms_shadow.shadow_parent_orders",
+                      "pms_shadow.shadow_child_orders",
+                      "pms_shadow.shadow_execution_qualification_runs"
+                  ],
+    "upSqlSha256":  "a9a38c7a8dd465e1a88972e93a70fbad84387ec5e7884d193c3ab2c91502fbb9",
+    "idempotentSqlSha256":  "b83efe6495968fe5a0d37ef0dc6a7375679a623feb23755d3d993952e195d6ec",
+    "downSqlSha256":  "bd40951df8dc3210d4248bb77d68cc34fd0624861d861c60464912772269d10c",
+    "pendingModelChanges":  false,
+    "databaseApplyForbiddenUntil":  [
+                                        "ARCH6F final gate",
+                                        "explicit authorization"
+                                    ],
+    "supersedesUnappliedMigrationId":  "20260722141504_AddArch7aShadowExecution"
+}

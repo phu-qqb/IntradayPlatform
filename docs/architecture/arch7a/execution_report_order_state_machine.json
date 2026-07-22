@@ -1,0 +1,42 @@
+{
+    "version":  "arch7a-execution-report-order-state-v1",
+    "inputFields":  [
+                        "Account",
+                        "OrderID(37)",
+                        "ClOrdID(11)",
+                        "OrigClOrdID(41)",
+                        "SecurityID",
+                        "Side",
+                        "OrderQty(38)",
+                        "CumQty(14)",
+                        "LeavesQty(151)",
+                        "OrdStatus(39)",
+                        "ExecType(150)",
+                        "Price",
+                        "TimeInForce",
+                        "TransactTime(60)",
+                        "MsgSeqNum",
+                        "SourceSession",
+                        "SourceMessageSha256",
+                        "PossDupFlag"
+                    ],
+    "workingStatuses":  [
+                            "New(0)",
+                            "PartiallyFilled(1)",
+                            "PendingCancel(6)",
+                            "PendingNew(A)",
+                            "PendingReplace(E)"
+                        ],
+    "terminalStatuses":  [
+                             "Filled(2)",
+                             "Canceled(4)",
+                             "Rejected(8)",
+                             "Expired(C)"
+                         ],
+    "replaceChain":  "OrigClOrdID resolves to existing ClOrdID or broker OrderID",
+    "duplicatePolicy":  "same source message SHA ignored",
+    "gapPolicy":  "record issue and fail closed",
+    "signedReservedLeaves":  "buy leaves positive; sell leaves negative",
+    "deterministic":  true,
+    "snapshotAuthorityRequiresCompleteCapability":  true
+}

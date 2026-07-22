@@ -1,0 +1,22 @@
+{
+    "version":  "arch7a-lmax-snapshot-completion-v1",
+    "required":  [
+                     "exact account scope",
+                     "request correlation",
+                     "complete sequence without gap",
+                     "explicit completion or total count",
+                     "documented external/manual coverage"
+                 ],
+    "timeoutMeansEmpty":  false,
+    "rejectMeansEmpty":  false,
+    "absenceOfResponseMeansEmpty":  false,
+    "incompleteSequenceMeansEmpty":  false,
+    "validEmptyState":  {
+                            "emptyStateWasExplicitlyObserved":  true,
+                            "emptyStateWasInferred":  false,
+                            "snapshotComplete":  true,
+                            "openOrderCount":  0,
+                            "brokerAuthority":  true
+                        },
+    "currentLmaxProfileCanMeetContract":  false
+}

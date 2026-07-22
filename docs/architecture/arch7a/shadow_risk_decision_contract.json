@@ -1,0 +1,20 @@
+{
+    "version":  "arch7a-shadow-risk-decision-v1",
+    "canonicalType":  "RiskDecision",
+    "outcomes":  [
+                     "APPROVED_SHADOW",
+                     "BLOCK_NEW_ORDERS",
+                     "EMERGENCY_STOP"
+                 ],
+    "priority":  [
+                     "critical conflict -\u003e EMERGENCY_STOP",
+                     "missing/stale/incomplete source -\u003e BLOCK_NEW_ORDERS",
+                     "blocking mismatch -\u003e BLOCK_NEW_ORDERS",
+                     "clean state -\u003e APPROVED_SHADOW"
+                 ],
+    "approvedShadowBrokerSendAllowed":  false,
+    "limitsInvented":  [
+
+                       ],
+    "workingLeavesUnknownOutcome":  "BLOCK_NEW_ORDERS"
+}

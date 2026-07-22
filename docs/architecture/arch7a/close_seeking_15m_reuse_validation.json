@@ -1,0 +1,22 @@
+{
+    "version":  "arch7a-close-seeking-reuse-v1",
+    "source":  "ExecutionAlgoR001Foundation.CreateFixture().CloseSeeking15mPhases",
+    "reimplemented":  false,
+    "phases":  [
+                   {
+                       "window":  "T-13 to T-5",
+                       "name":  "PassiveOpportunistic"
+                   },
+                   {
+                       "window":  "T-5 to T-1",
+                       "name":  "AdaptiveUrgency"
+                   },
+                   {
+                       "window":  "T-1 to close",
+                       "name":  "ControlledResidualCompletion"
+                   }
+               ],
+    "noOvernight":  true,
+    "blindMarketCrossing":  false,
+    "brokerRoute":  false
+}

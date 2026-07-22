@@ -102,6 +102,9 @@ public sealed class R009PrePaperLedgerPreviewReadinessTests
     private static JsonDocument ReadArtifact(string relativePath)
     {
         var path = Path.Combine(RepoRoot(), relativePath.Replace('/', Path.DirectorySeparatorChar));
+        if (!File.Exists(path) && relativePath.EndsWith("phase-exec-live-r010-internal-trial-decision.json", StringComparison.Ordinal))
+            path = Path.Combine(RepoRoot(), "tests", "fixtures", "arch7a", "historical-contracts",
+                "r010-disabled-preview-internal-trial-decision.fixture.json");
         Assert.True(File.Exists(path), $"Required artifact missing: {path}");
         return JsonDocument.Parse(File.ReadAllText(path));
     }

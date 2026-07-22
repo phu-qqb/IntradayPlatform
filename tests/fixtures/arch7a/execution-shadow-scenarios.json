@@ -1,0 +1,61 @@
+{
+    "version":  "arch7a-execution-shadow-fixtures-v1",
+    "sensitiveData":  false,
+    "brokerFacts":  false,
+    "sourceSession":  "arch6b-daily-tier1-20260721T130346Z-422530a8",
+    "scenarios":  [
+                      {
+                          "expectedInversion":  false,
+                          "expectedExecutionSymbol":  "EURUSD",
+                          "id":  "eurusd-direct",
+                          "symbol":  "EURUSD"
+                      },
+                      {
+                          "expectedExecutionSymbol":  "USDJPY",
+                          "expectedNormalizedSymbol":  "JPYUSD",
+                          "expectedInversion":  true,
+                          "id":  "usdjpy-inversion",
+                          "symbol":  "USDJPY"
+                      },
+                      {
+                          "nettingFirst":  true,
+                          "directOrderAllowed":  false,
+                          "id":  "eurgbp-cross",
+                          "symbol":  "EURGBP"
+                      },
+                      {
+                          "shadowOnly":  true,
+                          "id":  "fill-simulation",
+                          "fillIsBrokerFact":  false
+                      },
+                      {
+                          "id":  "no-fill",
+                          "fillCreated":  false
+                      },
+                      {
+                          "id":  "close-seeking",
+                          "phaseCount":  3
+                      },
+                      {
+                          "id":  "canonical-target-close",
+                          "minutes":  [
+                                          0,
+                                          15,
+                                          30,
+                                          45
+                                      ]
+                      },
+                      {
+                          "id":  "duplicate-prevention",
+                          "sameInputSameHash":  true
+                      },
+                      {
+                          "id":  "restart",
+                          "sameInputSameIds":  true
+                      },
+                      {
+                          "id":  "no-order",
+                          "brokerSend":  false
+                      }
+                  ]
+}
