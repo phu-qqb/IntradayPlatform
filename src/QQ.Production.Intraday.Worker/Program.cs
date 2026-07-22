@@ -45,13 +45,18 @@ if (builder.Configuration.GetValue("Intraday15m:Enabled", false))
         throw new InvalidOperationException("INTRADAY_15M_POLL_INTERVAL_EXCEEDS_MAXIMUM_START_DELAY");
     var pmsConnection = builder.Configuration.GetConnectionString("PmsShadowPostgreSql")
         ?? throw new InvalidOperationException("PMS_SHADOW_POSTGRESQL_CONNECTION_REQUIRED");
-    var handoffRoot = builder.Configuration.GetValue<string>("Intraday15m:FinalizedHandoffRoot")
-        ?? throw new InvalidOperationException("FINALIZED_HANDOFF_ROOT_REQUIRED");
+    var captureRoot = builder.Configuration.GetValue<string>("Intraday15m:RealSlotCaptureRoot")
+        ?? throw new InvalidOperationException("REAL_SLOT_CAPTURE_ROOT_REQUIRED");
+    var sourceSessionId = builder.Configuration.GetValue<string>("Intraday15m:SourceSessionId")
+        ?? throw new InvalidOperationException("SOURCE_SESSION_ID_REQUIRED");
     builder.Services.AddPooledDbContextFactory<PmsShadowDbContext>(options =>
         options.UseNpgsql(pmsConnection, npgsql => npgsql.SetPostgresVersion(16, 0)));
     builder.Services.AddSingleton<IPmsShadowIntradaySlotStore, EfPmsShadowIntradaySlotStore>();
-    builder.Services.AddSingleton<IPmsShadowIntradaySlotPipeline>(
-        new FinalizedPmsShadowIntradayManifestPipeline(handoffRoot));
+    builder.Services.AddSingleton<IPmsShadowIntradayEconomicProjectionStore,
+        EfPmsShadowIntradayEconomicProjectionStore>();
+    builder.Services.AddSingleton<IPmsShadowIntradaySlotPipeline>(provider =>
+        new PmsShadowIntradayEconomicRefreshPipeline(captureRoot, sourceSessionId,
+            provider.GetRequiredService<IPmsShadowIntradayEconomicProjectionStore>()));
     builder.Services.AddSingleton<PmsShadowIntradayScheduler>();
 }
 
