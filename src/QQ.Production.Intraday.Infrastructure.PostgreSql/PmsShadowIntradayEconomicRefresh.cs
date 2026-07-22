@@ -369,6 +369,7 @@ public sealed class EfPmsShadowIntradayEconomicProjectionStore(
                 ("input_sha", projection.InputSha256), ("targets_sha", projection.TargetPositionsSha256),
                 ("drifts_sha", projection.DriftsSha256), ("manifest_sha", projection.ManifestSha256),
                 ("supersedes", projection.SupersedesSlotManifestSha256 ?? (object)DBNull.Value),
+                ("external_completion", projection.ExternalCompletionStatus),
                 ("completed", projection.CompletedAtUtc), ("projection_json", projectionJson));
             foreach (var item in projection.MarketData)
                 await Execute(connection, transaction, """

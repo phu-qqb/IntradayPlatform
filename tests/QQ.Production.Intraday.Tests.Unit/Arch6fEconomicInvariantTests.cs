@@ -112,6 +112,7 @@ public sealed class Arch6fEconomicInvariantTests
             "Migrations", "20260722231500_AddIntradayEconomicProjectionRevisions.cs"));
         Assert.Contains("IsolationLevel.Serializable", source);
         Assert.Contains("pg_advisory_xact_lock", source);
+        Assert.Contains("(\"external_completion\", projection.ExternalCompletionStatus)", source);
         Assert.Contains("UNIQUE (slot_id, revision_number)", migration);
     }
 
