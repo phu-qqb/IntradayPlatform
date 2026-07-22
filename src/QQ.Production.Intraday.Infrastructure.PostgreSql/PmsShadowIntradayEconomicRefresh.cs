@@ -16,6 +16,17 @@ public static class PmsShadowIntradayEconomicContract
     public const string TargetPositionVersion = "canonical_target_position_calculator_v1";
     public const string TestEnvironment = "TEST";
     public const int MaximumUsdLegSkewSeconds = 15;
+    public const int PostgreSqlPriceScale = 12;
+
+    public static (decimal Bid, decimal Ask, decimal DecisionPrice) ToPostgreSqlMarketPrices(
+        decimal bid, decimal ask)
+    {
+        var storedBid = decimal.Round(bid, PostgreSqlPriceScale, MidpointRounding.AwayFromZero);
+        var storedAsk = decimal.Round(ask, PostgreSqlPriceScale, MidpointRounding.AwayFromZero);
+        var storedDecisionPrice = decimal.Round((storedBid + storedAsk) / 2m,
+            PostgreSqlPriceScale, MidpointRounding.AwayFromZero);
+        return (storedBid, storedAsk, storedDecisionPrice);
+    }
 }
 
 public sealed record PmsShadowRealSlotBbo(string Symbol, string LmaxInstrumentId,
@@ -372,6 +383,8 @@ public sealed class EfPmsShadowIntradayEconomicProjectionStore(
                 ("external_completion", projection.ExternalCompletionStatus),
                 ("completed", projection.CompletedAtUtc), ("projection_json", projectionJson));
             foreach (var item in projection.MarketData)
+            {
+                var prices = PmsShadowIntradayEconomicContract.ToPostgreSqlMarketPrices(item.Bid, item.Ask);
                 await Execute(connection, transaction, """
                     INSERT INTO pms_shadow.intraday_market_data_observations
                     (projection_revision_id,instrument_id,security_id,symbol,lmax_instrument_id,bid,ask,
@@ -380,9 +393,10 @@ public sealed class EfPmsShadowIntradayEconomicProjectionStore(
                      CAST(@legs AS jsonb))
                     """, cancellationToken, ("revision", projection.ProjectionRevisionId),
                     ("instrument", item.InstrumentId), ("security", item.SecurityId), ("symbol", item.Symbol),
-                    ("lmax", item.LmaxInstrumentId), ("bid", item.Bid), ("ask", item.Ask),
-                    ("price", item.DecisionPrice), ("event", item.EventTimeUtc),
+                    ("lmax", item.LmaxInstrumentId), ("bid", prices.Bid), ("ask", prices.Ask),
+                    ("price", prices.DecisionPrice), ("event", item.EventTimeUtc),
                     ("method", item.ProjectionMethod), ("legs", JsonSerializer.Serialize(item.ProjectionLegSecurityIds)));
+            }
             foreach (var item in projection.TargetPositions)
                 await Execute(connection, transaction, """
                     INSERT INTO pms_shadow.intraday_target_positions

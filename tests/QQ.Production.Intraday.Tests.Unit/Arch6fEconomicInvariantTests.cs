@@ -94,6 +94,18 @@ public sealed class Arch6fEconomicInvariantTests
     }
 
     [Fact]
+    public void PostgreSqlMarketPricesShareOneScaleBeforeMidpoint()
+    {
+        var prices = PmsShadowIntradayEconomicContract.ToPostgreSqlMarketPrices(
+            0.9999999999996m, 1.0000000000006m);
+
+        Assert.Equal(1.000000000000m, prices.Bid);
+        Assert.Equal(1.000000000001m, prices.Ask);
+        Assert.Equal(decimal.Round((prices.Bid + prices.Ask) / 2m, 12,
+            MidpointRounding.AwayFromZero), prices.DecisionPrice);
+    }
+
+    [Fact]
     public void ProductionPathInvokesOnlyCanonicalTargetPositionCalculator()
     {
         var source = File.ReadAllText(RepositoryFile("src", "QQ.Production.Intraday.Infrastructure.PostgreSql",
