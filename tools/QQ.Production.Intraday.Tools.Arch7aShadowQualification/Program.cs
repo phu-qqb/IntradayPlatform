@@ -11,7 +11,7 @@ var values = args.Chunk(2).ToDictionary(value => value[0], value =>
     value.Length == 2 ? value[1] : throw new InvalidOperationException($"ARGUMENT_VALUE_MISSING:{value[0]}"),
     StringComparer.Ordinal);
 var mode = Required("--mode");
-Require(mode is "preflight" or "apply-and-qualify" or "read", "UNKNOWN_MODE");
+Require(mode is "preflight" or "apply-and-qualify" or "resume-and-qualify" or "read", "UNKNOWN_MODE");
 var sourceSessionId = Required("--source-session-id");
 var connectionString = Environment.GetEnvironmentVariable(ConnectionEnvironmentVariable);
 Require(!string.IsNullOrWhiteSpace(connectionString), $"{ConnectionEnvironmentVariable}_REQUIRED");
@@ -65,9 +65,12 @@ await using (var context = factory.CreateDbContext())
     if (mode is "preflight" or "apply-and-qualify")
         Require(applied.SequenceEqual(PmsShadowStateContract.MigrationIds.Take(5), StringComparer.Ordinal),
             "ARCH7A_EXPECTED_EXACTLY_FIVE_ARCH6F_MIGRATIONS_BEFORE_APPLY");
+    else if (mode == "resume-and-qualify")
+        Require(applied.SequenceEqual(PmsShadowStateContract.MigrationIds.Take(6), StringComparer.Ordinal),
+            "ARCH7A_RESUME_EXPECTED_ORIGINAL_MIGRATION_ONLY");
     else
         Require(applied.SequenceEqual(PmsShadowStateContract.MigrationIds, StringComparer.Ordinal),
-            "ARCH7A_READ_EXPECTED_ALL_SIX_MIGRATIONS");
+            "ARCH7A_READ_EXPECTED_ALL_SEVEN_MIGRATIONS");
 }
 
 var sourceManifest = new
@@ -121,7 +124,7 @@ if (mode == "preflight")
     Write(new
     {
         status = "ARCH7A_PREFLIGHT_QUALIFIED_READ_ONLY",
-        migration_id = PmsShadowStateContract.Arch7aMigrationId,
+        migration_id = PmsShadowStateContract.Arch7aCorrectiveMigrationId,
         source = sourceManifest,
         execution = planManifest,
         database_mutated = false,
@@ -130,16 +133,20 @@ if (mode == "preflight")
     return;
 }
 
-if (mode == "apply-and-qualify")
+if (mode is "apply-and-qualify" or "resume-and-qualify")
 {
     await using (var context = factory.CreateDbContext())
         await context.Database.MigrateAsync();
 
     var store = new EfArch7aShadowExecutionStore(factory);
     var concurrent = await Task.WhenAll(store.PersistAsync(plan), store.PersistAsync(plan));
-    Require(concurrent.Count(value => value == Arch7aShadowStoreResult.Persisted) == 1 &&
-        concurrent.Count(value => value == Arch7aShadowStoreResult.AlreadyPersistedIdentical) == 1,
-        "ARCH7A_CONCURRENT_FIRST_APPLY_NOT_SINGLE_WRITER");
+    if (mode == "apply-and-qualify")
+        Require(concurrent.Count(value => value == Arch7aShadowStoreResult.Persisted) == 1 &&
+            concurrent.Count(value => value == Arch7aShadowStoreResult.AlreadyPersistedIdentical) == 1,
+            "ARCH7A_CONCURRENT_FIRST_APPLY_NOT_SINGLE_WRITER");
+    else
+        Require(concurrent.All(value => value == Arch7aShadowStoreResult.AlreadyPersistedIdentical),
+            "ARCH7A_RESUME_NOT_IDENTICAL_REPLAY");
     var replay = await store.PersistAsync(plan);
     Require(replay == Arch7aShadowStoreResult.AlreadyPersistedIdentical,
         "ARCH7A_REPLAY_NOT_ALREADY_APPLIED_IDENTICAL");
@@ -167,8 +174,9 @@ var readback = await Readback(factory, selected, plan);
 Write(new
 {
     status = mode == "read" ? "ARCH7A_POSTGRESQL_READBACK_QUALIFIED" :
+        mode == "resume-and-qualify" ? "ARCH7A_REMEDIATED_AND_QUALIFIED" :
         "ARCH7A_APPLIED_AND_QUALIFIED",
-    migration_id = PmsShadowStateContract.Arch7aMigrationId,
+    migration_id = PmsShadowStateContract.Arch7aCorrectiveMigrationId,
     source = sourceManifest,
     execution = planManifest,
     readback,
