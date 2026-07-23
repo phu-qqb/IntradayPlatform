@@ -76,6 +76,8 @@ public sealed partial class RawLmaxFixSessionClient
         var logoutSent = false;
         string? blocker = null;
         long? lastInboundSequenceNumber = null;
+        TcpClient? orderEntryTcp = null;
+        Stream? orderEntryStream = null;
 
         try
         {
@@ -95,20 +97,21 @@ public sealed partial class RawLmaxFixSessionClient
                 startedAt,
                 cancellationToken);
 
-            using var tcp = new TcpClient();
+            orderEntryTcp = new TcpClient();
             using (var connectTimeout = CreateTimeout(options.ConnectTimeoutSeconds, cancellationToken))
             {
-                await tcp.ConnectAsync(options.FixOrderHost!, options.FixOrderPort!.Value, connectTimeout.Token);
+                await orderEntryTcp.ConnectAsync(options.FixOrderHost!, options.FixOrderPort!.Value, connectTimeout.Token);
                 connected = true;
             }
 
             Stream rawStream;
             using (var connectTimeout = CreateTimeout(options.ConnectTimeoutSeconds, cancellationToken))
                 rawStream = options.UseTls
-                    ? await CreateTlsStreamAsync(tcp, options.FixOrderHost!, connectTimeout.Token)
-                    : tcp.GetStream();
+                    ? await CreateTlsStreamAsync(orderEntryTcp, options.FixOrderHost!, connectTimeout.Token)
+                    : orderEntryTcp.GetStream();
 
-            await using var stream = rawStream;
+            orderEntryStream = rawStream;
+            var stream = rawStream;
             var logonSequence = sequenceNumber++;
             var logon = LmaxFixMarketDataCodec.BuildMessage("A", logonSequence, options.FixSenderCompId!, target,
             [
@@ -133,7 +136,7 @@ public sealed partial class RawLmaxFixSessionClient
             }
 
             if (!loggedOn)
-                return Result("Failed", "ARCH7B_FIX_LOGON_NOT_CONFIRMED");
+                return ResultOutside("Failed", "ARCH7B_FIX_LOGON_NOT_CONFIRMED");
 
             await arch7bObserver.RecordSessionEventAsync(
                 request,
@@ -193,7 +196,7 @@ public sealed partial class RawLmaxFixSessionClient
                 () => OpeningTerminal() || OpeningFilledQuantity() >= Arch7bKnownOrderQualificationPolicy.VenueQuantity,
                 cancellationToken);
             if (blocker is not null)
-                return Result("Failed", blocker);
+                return await ResultWithCleanupAsync("Failed", blocker);
 
             var openingFilled = OpeningFilledQuantity();
             if (!OpeningTerminal() || OpeningLeavesQuantity() > 0m)
@@ -253,17 +256,14 @@ public sealed partial class RawLmaxFixSessionClient
             }
 
             if (blocker is not null)
-                return Result("Failed", blocker);
+                return await ResultWithCleanupAsync("Failed", blocker);
             if (!OpeningTerminal() || OpeningLeavesQuantity() > 0m)
-                return Result("Failed", "ARCH7B_OPENING_TERMINAL_NOT_CONFIRMED");
+                return await ResultWithCleanupAsync("Failed", "ARCH7B_OPENING_TERMINAL_NOT_CONFIRMED");
             if (openingFilled == 0m)
-            {
-                logoutSent = await SafeLogoutAsync(stream, "ARCH7B_OPENING_ORDER_NOT_FILLED");
-                return Result("Failed", "ARCH7B_OPENING_ORDER_NOT_FILLED");
-            }
+                return await ResultWithCleanupAsync("Failed", "ARCH7B_OPENING_ORDER_NOT_FILLED");
             if (openingFilled > Arch7bKnownOrderQualificationPolicy.VenueQuantity ||
                 openingFilled % Arch7bKnownOrderQualificationPolicy.QuantityIncrement != 0m)
-                return Result("Failed", "ARCH7B_OPENING_FILL_QUANTITY_OUT_OF_BOUNDS");
+                return await ResultWithCleanupAsync("Failed", "ARCH7B_OPENING_FILL_QUANTITY_OUT_OF_BOUNDS");
 
             var openingFillQuantity =
                 await qualificationSession.ReadValidatedFillQuantityAsync(
@@ -278,7 +278,7 @@ public sealed partial class RawLmaxFixSessionClient
                     lastInboundSequenceNumber,
                     DateTimeOffset.UtcNow,
                     cancellationToken);
-                return Result(
+                return await ResultWithCleanupAsync(
                     "Failed",
                     "ARCH7B_OPENING_FILL_CUMQTY_DIVERGENCE_EMERGENCY_STOP");
             }
@@ -286,7 +286,7 @@ public sealed partial class RawLmaxFixSessionClient
             if (!recoveryPlan.MaySendFlattenNewOrderSingle)
             {
                 if (string.IsNullOrWhiteSpace(flattenMarketObservationId))
-                    return Result("Failed", "ARCH7B_RECOVERY_FLATTEN_MARKET_OBSERVATION_MISSING");
+                    return await ResultWithCleanupAsync("Failed", "ARCH7B_RECOVERY_FLATTEN_MARKET_OBSERVATION_MISSING");
                 flattenSent = true;
                 diagnostics.Add("ARCH7B_RECOVERY_FLATTEN_SEND_INTENT_REUSED_NO_RESEND");
                 if (recoveryPlan.QueryFlattenKnownOrder)
@@ -342,7 +342,7 @@ public sealed partial class RawLmaxFixSessionClient
                         CancellationToken.None);
                     if (marketDecision is not null)
                         diagnostics.AddRange(marketDecision.Blockers);
-                    return Result(
+                    return await ResultWithCleanupAsync(
                         "Failed",
                         marketDecision?.Blockers.FirstOrDefault() ??
                         "ARCH7B_FLATTEN_BBO_UNAVAILABLE_KILL_SWITCH");
@@ -391,7 +391,7 @@ public sealed partial class RawLmaxFixSessionClient
                 cancellationToken);
 
             if (blocker is not null)
-                return Result("Failed", blocker);
+                return await ResultWithCleanupAsync("Failed", blocker);
             if (!FlattenTerminal() || FlattenLeavesQuantity() > 0m || FlattenFilledQuantity() != openingFilled)
             {
                 if (statusRequestCount < Arch7bKnownOrderQualificationPolicy.MaximumOrderStatusRequestCount)
@@ -411,7 +411,7 @@ public sealed partial class RawLmaxFixSessionClient
             }
 
             if (!FlattenTerminal() || FlattenLeavesQuantity() > 0m || FlattenFilledQuantity() != openingFilled)
-                return Result("Failed", "ARCH7B_FLATTEN_NOT_CONFIRMED");
+                return await ResultWithCleanupAsync("Failed", "ARCH7B_FLATTEN_NOT_CONFIRMED");
 
             var flattenFillQuantity =
                 await qualificationSession.ReadValidatedFillQuantityAsync(
@@ -427,7 +427,7 @@ public sealed partial class RawLmaxFixSessionClient
                     lastInboundSequenceNumber,
                     DateTimeOffset.UtcNow,
                     cancellationToken);
-                return Result(
+                return await ResultWithCleanupAsync(
                     "Failed",
                     "ARCH7B_FLATTEN_FILL_CUMQTY_DIVERGENCE_EMERGENCY_STOP");
             }
@@ -442,10 +442,9 @@ public sealed partial class RawLmaxFixSessionClient
                 request,
                 cancellationToken);
             if (!lifecycle.Qualified || !lifecycle.Flat)
-                return Result("Failed", "ARCH7B_FINAL_RECONCILIATION_NOT_FLAT");
+                return await ResultWithCleanupAsync("Failed", "ARCH7B_FINAL_RECONCILIATION_NOT_FLAT");
 
-            logoutSent = await SafeLogoutAsync(stream, "ARCH7B_KNOWN_ORDER_LIFECYCLE_FLAT");
-            return Result("Ok", null);
+            return await ResultWithCleanupAsync("Ok", null);
 
             async Task PersistThenSendAsync(
                 Stream activeStream,
@@ -683,55 +682,40 @@ public sealed partial class RawLmaxFixSessionClient
                     .ThenBy(value => value.FixSequenceNumber)
                     .LastOrDefault();
 
-            async Task<bool> SafeLogoutAsync(Stream activeStream, string reason)
-            {
-                var sent = await TrySendLogoutAsync(
-                    activeStream,
-                    options,
-                    target,
-                    sequenceNumber,
-                    diagnostics,
-                    reason);
-                if (sent)
-                    await arch7bObserver.RecordSessionEventAsync(
-                        request,
-                        "FIX_LOGOUT_SENT",
-                        sequenceNumber,
-                        DateTimeOffset.UtcNow,
-                        CancellationToken.None);
-                return sent;
-            }
-
-            LmaxFixArch7bKnownOrderResult Result(string status, string? resultBlocker)
-                => new(
-                    "fix-arch7b-known-order-lifecycle",
-                    status,
-                    connected,
-                    loggedOn,
-                    openingSent,
-                    cancelSent,
-                    flattenSent,
-                    statusRequestCount,
-                    logoutSent,
-                    resultBlocker,
-                    reports,
-                    diagnostics,
-                    startedAt,
-                    DateTimeOffset.UtcNow);
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
-            return ResultOutside("Failed", "ARCH7B_LIFECYCLE_DEADLINE_EXCEEDED");
+            return await ResultWithCleanupAsync("Failed", "ARCH7B_LIFECYCLE_DEADLINE_EXCEEDED");
         }
         catch (Exception exception) when (
             exception is SocketException or IOException or AuthenticationException or
             ArgumentException or InvalidOperationException)
         {
             diagnostics.Add($"{exception.GetType().Name}:{exception.Message}");
-            return ResultOutside("Failed", $"ARCH7B_RUNNER_FAILURE:{exception.Message}");
+            return await ResultWithCleanupAsync("Failed", $"ARCH7B_RUNNER_FAILURE:{exception.Message}");
         }
         finally
         {
+            await EnsureOrderEntryLogoutAsync("ARCH7B_SCOPE_EXIT_CLEANUP");
+            try
+            {
+                if (orderEntryStream is not null)
+                    await orderEntryStream.DisposeAsync();
+            }
+            catch (Exception exception)
+            {
+                diagnostics.Add(
+                    $"ARCH7B_ORDER_ENTRY_STREAM_DISPOSE_FAILURE:{exception.GetType().Name}");
+            }
+            try
+            {
+                orderEntryTcp?.Dispose();
+            }
+            catch (Exception exception)
+            {
+                diagnostics.Add(
+                    $"ARCH7B_ORDER_ENTRY_TCP_DISPOSE_FAILURE:{exception.GetType().Name}");
+            }
             if (qualificationSession is not null)
             {
                 try
@@ -761,6 +745,43 @@ public sealed partial class RawLmaxFixSessionClient
                 diagnostics,
                 startedAt,
                 DateTimeOffset.UtcNow);
+
+        async Task<LmaxFixArch7bKnownOrderResult> ResultWithCleanupAsync(
+            string status,
+            string? resultBlocker)
+        {
+            await EnsureOrderEntryLogoutAsync(
+                resultBlocker ?? "ARCH7B_KNOWN_ORDER_LIFECYCLE_FLAT");
+            return ResultOutside(status, resultBlocker);
+        }
+
+        async Task EnsureOrderEntryLogoutAsync(string reason)
+        {
+            if (!loggedOn || logoutSent || orderEntryStream is null)
+                return;
+            try
+            {
+                logoutSent = await TrySendLogoutAsync(
+                    orderEntryStream,
+                    options,
+                    target,
+                    sequenceNumber,
+                    diagnostics,
+                    reason);
+                if (logoutSent && arch7bObserver is not null)
+                    await arch7bObserver.RecordSessionEventAsync(
+                        request,
+                        "FIX_LOGOUT_SENT",
+                        sequenceNumber,
+                        DateTimeOffset.UtcNow,
+                        CancellationToken.None);
+            }
+            catch (Exception exception)
+            {
+                diagnostics.Add(
+                    $"ARCH7B_FAIL_CLOSED_LOGOUT_FAILURE:{exception.GetType().Name}");
+            }
+        }
     }
 
     private static string Sha256(string value)

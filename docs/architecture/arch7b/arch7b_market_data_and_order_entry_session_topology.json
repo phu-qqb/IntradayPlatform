@@ -80,7 +80,7 @@
     "cleanup":  [
                     "unsubscribe when SnapshotPlusUpdates is ever used outside ARCH7B",
                     "market-data logout and socket disposal per attempt",
-                    "order-entry logout only after flat reconciliation",
+                    "order-entry logout attempted on every post-logon exit, including fail-closed exits",
                     "order-entry socket disposal on every exit",
                     "PostgreSQL advisory lease release on every exit"
                 ]

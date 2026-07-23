@@ -33,7 +33,7 @@ Status: PREPARED, DISABLED, NOT AUTHORIZED, NOT APPLIED.
 9. Build Fill and PositionLedgerEvent only from valid fill/partial-fill ExecutionReports.
 10. Require both known lifecycles terminal, zero known leaves, zero ledger quantity and zero critical break.
 11. Persist final reconciliation with authority `LMAX_FIX_EXECUTION_REPORTS_KNOWN_ORDERS`.
-12. Logout, dispose socket and release lease.
+12. Attempt FIX Logout on every post-logon exit, including fail-closed exits, then dispose stream/socket and release the lease without masking the original blocker.
 
 ## Recovery
 

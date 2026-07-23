@@ -24,10 +24,11 @@ Requalifies the existing LMAX Demo FIX order-entry path as one bounded, known-or
 - Persists distinct opening and flatten observation SHA values in the outbound ledger.
 - Never resends a persisted D or F after restart; known-order status only.
 - Uses durable deduplicated Fills as the flatten quantity authority.
+- Attempts FIX Logout on every post-logon exit before disposing the order-entry stream/socket and releasing the advisory lease.
 
 ## Validation
 
-- ARCH7B targeted tests: 48 passed.
+- ARCH7B targeted tests: 49 passed.
 - Coupled ARCH6C-F, ARCH7A, PMS and PostgreSQL regressions: see `docs/architecture/arch7b/validation_summary.json`.
 - Release solution build: zero errors.
 - EF pending model changes: none.

@@ -109,6 +109,23 @@ public sealed class Arch7bLmaxFixKnownOrderContractTests
     }
 
     [Fact]
+    public void RawClient_CleansUpOrderEntrySessionOnEveryPostLogonExit()
+    {
+        var source = File.ReadAllText(Path.Combine(
+            RepoRoot(),
+            "tools",
+            "QQ.Production.Intraday.Lmax.ConnectivityLab",
+            "RawFixSessionClient.Arch7b.cs"));
+
+        Assert.DoesNotContain("return Result(\"Failed\"", source, StringComparison.Ordinal);
+        Assert.Contains("return await ResultWithCleanupAsync(\"Failed\"", source, StringComparison.Ordinal);
+        Assert.Contains(
+            "await EnsureOrderEntryLogoutAsync(\"ARCH7B_SCOPE_EXIT_CLEANUP\")",
+            source,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void LiveValidation_RejectsRealAccountAndMissingExactAuthorization()
     {
         var request = Request(LmaxFixArch7bActivation.AuthorizedOnce) with
@@ -466,4 +483,18 @@ public sealed class Arch7bLmaxFixKnownOrderContractTests
             MarketDataRequestMode = LmaxFixMarketDataRequestMode.SnapshotOnly,
             MarketDataSymbolEncodingMode = LmaxFixMarketDataSymbolEncodingMode.SecurityIdAndSymbol
         };
+
+    private static string RepoRoot()
+    {
+        var directory = new DirectoryInfo(AppContext.BaseDirectory);
+        while (directory is not null)
+        {
+            if (File.Exists(Path.Combine(directory.FullName, "QQ.Production.Intraday.sln")))
+                return directory.FullName;
+            directory = directory.Parent;
+        }
+
+        throw new DirectoryNotFoundException(
+            "QQ.Production.Intraday.sln was not found above the test output directory.");
+    }
 }
