@@ -1,3 +1,4 @@
+using System.Reflection;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Migrations;
 using QQ.Production.Intraday.Infrastructure.PostgreSql;
@@ -75,6 +76,21 @@ public sealed class Arch6fEconomicRefreshTests
             result.SlotFreshnessAndCompleteness.Freshness);
         Assert.Equal(["SLOT_ECONOMIC_PROJECTION_MISSING"],
             result.SlotFreshnessAndCompleteness.Blockers);
+    }
+
+    [Fact]
+    public void PostgreSqlFirstImportHasNoSupersededManifest()
+    {
+        var reader = typeof(EfPmsShadowIntradayEconomicProjectionStore).GetMethod(
+            "ReadOptionalManifestSha", BindingFlags.NonPublic | BindingFlags.Static);
+
+        Assert.NotNull(reader);
+        Assert.Null(reader.Invoke(null, [null]));
+        Assert.Null(reader.Invoke(null, [DBNull.Value]));
+        Assert.Equal(Hash('a'), reader.Invoke(null, [Hash('a')]));
+        var invalid = Assert.Throws<TargetInvocationException>(() => reader.Invoke(null, [42]));
+        Assert.IsType<InvalidDataException>(invalid.InnerException);
+        Assert.Equal("INVALID_SLOT_MANIFEST_SHA", invalid.InnerException.Message);
     }
 
     [Fact]

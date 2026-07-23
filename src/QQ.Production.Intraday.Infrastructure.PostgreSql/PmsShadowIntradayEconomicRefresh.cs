@@ -299,11 +299,18 @@ public sealed class EfPmsShadowIntradayEconomicProjectionStore(
             parameter.ParameterName = "slot_id";
             parameter.Value = slotId;
             command.Parameters.Add(parameter);
-            return await command.ExecuteScalarAsync(cancellationToken) as string
-                ?? throw new InvalidDataException("NONQUALIFYING_SLOT_ATTEMPT_MISSING");
+            return ReadOptionalManifestSha(await command.ExecuteScalarAsync(cancellationToken));
         }
         finally { await connection.CloseAsync(); }
     }
+
+    private static string? ReadOptionalManifestSha(object? value) => value switch
+    {
+        null or DBNull => null,
+        string manifestSha => manifestSha,
+        _ => throw new InvalidDataException("INVALID_SLOT_MANIFEST_SHA")
+    };
+
     public async Task<PmsShadowEconomicSource> LoadSourceAsync(string sourceSessionId,
         CancellationToken cancellationToken = default)
     {
