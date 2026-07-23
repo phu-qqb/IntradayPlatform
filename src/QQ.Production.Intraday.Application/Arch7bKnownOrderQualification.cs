@@ -22,12 +22,14 @@ public static class Arch7bKnownOrderQualificationPolicy
     public const decimal QuantityIncrement = 0.1m;
     public const decimal PriceIncrement = 0.00001m;
     public const decimal CollarPips = 2m;
+    public const decimal MaximumSpreadPips = CollarPips;
     public const int MaximumBboAgeSeconds = 5;
     public const int MaximumLifecycleSeconds = 180;
     public const int MaximumNewOrderSingleCount = 2;
     public const int MaximumCancelCount = 1;
     public const int MaximumReplaceCount = 0;
     public const int MaximumOrderStatusRequestCount = 4;
+    public const int MaximumFlattenBboAcquisitionAttempts = 3;
     public const string OpeningLimitPolicy = "LMAX_CURRENT_BBO_TOUCH_LIMIT";
     public const string FlattenLimitPolicy = "LMAX_CURRENT_BBO_TOUCH_LIMIT_OPPOSITE_SIDE";
     public const string ExternalOrManualOrderCoverage = "UNPROVEN";
@@ -73,7 +75,10 @@ public sealed record Arch7bLmaxBbo(
     decimal Ask,
     DateTimeOffset ObservedAtUtc,
     string Source,
-    string SnapshotSha256)
+    string SnapshotSha256,
+    DateTimeOffset AcquisitionStartedAtUtc = default,
+    bool SequenceIntegrityProven = false,
+    bool PolygonUsed = false)
 {
     public decimal Spread => Ask - Bid;
 }
@@ -238,6 +243,11 @@ public static class Arch7bKnownOrderQualification
         Require(bbo.Source == "LMAX", "ARCH7B_BBO_SOURCE_NOT_LMAX");
         Require(bbo.Symbol == Arch7bKnownOrderQualificationPolicy.Symbol && bbo.SecurityId == Arch7bKnownOrderQualificationPolicy.SecurityId, "ARCH7B_BBO_INSTRUMENT_MISMATCH");
         Require(bbo.Bid > 0m && bbo.Ask >= bbo.Bid, "ARCH7B_BBO_INVALID");
+        Require(bbo.SequenceIntegrityProven, "ARCH7B_BBO_SEQUENCE_INTEGRITY_UNPROVEN");
+        Require(!bbo.PolygonUsed, "ARCH7B_POLYGON_ORDER_PRICE_FORBIDDEN");
+        Require(IsTickAligned(bbo.Bid) && IsTickAligned(bbo.Ask), "ARCH7B_BBO_NOT_TICK_ALIGNED");
+        Require(bbo.Spread <= MaximumSpread(), "ARCH7B_BBO_SPREAD_TOO_WIDE");
+        Require(bbo.AcquisitionStartedAtUtc <= bbo.ObservedAtUtc, "ARCH7B_BBO_TIME_ORDER_INVALID");
         Require(input.EvaluationTimeUtc - bbo.ObservedAtUtc <= TimeSpan.FromSeconds(Arch7bKnownOrderQualificationPolicy.MaximumBboAgeSeconds),
             "ARCH7B_BBO_STALE");
         Require(input.CurrentKnownPosition == 0m, "ARCH7B_INITIAL_POSITION_NOT_FLAT");
@@ -430,6 +440,15 @@ public static class Arch7bKnownOrderQualification
         if (orders.Any(value => !value.Terminal))
             issues.Add("ARCH7B_KNOWN_ORDER_NOT_TERMINAL");
 
+        var openingOrder = orders.SingleOrDefault(value => value.ClOrdId == openingClientOrderId);
+        var flattenOrder = orders.SingleOrDefault(value => value.ClOrdId == flattenClientOrderId);
+        if (openingOrder is not null &&
+            Math.Abs(openingOrder.CumQty - openingQuantity) > 0.00000001m)
+            issues.Add("ARCH7B_OPENING_FILL_CUMQTY_DIVERGENCE_EMERGENCY_STOP");
+        if (flattenOrder is not null &&
+            Math.Abs(flattenOrder.CumQty - flattenQuantity) > 0.00000001m)
+            issues.Add("ARCH7B_FLATTEN_FILL_CUMQTY_DIVERGENCE_EMERGENCY_STOP");
+
         decimal? realized = null;
         if (openingQuantity > 0m && flattenQuantity == openingQuantity)
         {
@@ -514,6 +533,30 @@ public static class Arch7bKnownOrderQualification
         ArgumentNullException.ThrowIfNull(packet);
         return Sha256(JsonSerializer.Serialize(packet));
     }
+
+    public static decimal TouchLimit(Arch7bLmaxBbo bbo, string side)
+    {
+        ArgumentNullException.ThrowIfNull(bbo);
+        if (bbo.Bid <= 0m || bbo.Ask <= 0m || bbo.Bid > bbo.Ask)
+            throw new InvalidOperationException("ARCH7B_BBO_INVALID");
+        if (!IsTickAligned(bbo.Bid) || !IsTickAligned(bbo.Ask))
+            throw new InvalidOperationException("ARCH7B_BBO_NOT_TICK_ALIGNED");
+        if (bbo.Spread > MaximumSpread())
+            throw new InvalidOperationException("ARCH7B_BBO_SPREAD_TOO_WIDE");
+        return side switch
+        {
+            "BUY" => bbo.Ask,
+            "SELL" => bbo.Bid,
+            _ => throw new InvalidOperationException("ARCH7B_ORDER_SIDE_INVALID")
+        };
+    }
+
+    private static decimal MaximumSpread()
+        => Arch7bKnownOrderQualificationPolicy.MaximumSpreadPips *
+           Arch7bKnownOrderQualificationPolicy.PriceIncrement * 10m;
+
+    private static bool IsTickAligned(decimal value)
+        => value % Arch7bKnownOrderQualificationPolicy.PriceIncrement == 0m;
 
     private static void ValidateReport(
         Arch7bExecutionReportEvent report,

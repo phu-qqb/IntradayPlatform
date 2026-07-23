@@ -123,6 +123,92 @@ public sealed class Arch7bKnownOrderQualificationTests
     }
 
     [Fact]
+    public void Partial_fill_then_late_fill_before_cancelled_uses_terminal_cumqty()
+    {
+        const string openingId = "A7BO0000000000000001";
+        const string cancelId = "A7BC0000000000000001";
+        const string flattenId = "A7BF0000000000000001";
+        var cancel = Report(
+            3, "OPEN-1", cancelId, "CANCEL-1", "4", "4", "BUY",
+            0.1m, 0.07m, 0m, 0m, 0m) with
+        {
+            OrigClOrdId = openingId
+        };
+        var reports = new[]
+        {
+            Report(1, "OPEN-1", openingId, "E1", "F", "1", "BUY",
+                0.1m, 0.04m, 0.06m, 0.04m, 1.33703m),
+            Report(2, "OPEN-1", openingId, "E2", "F", "1", "BUY",
+                0.1m, 0.07m, 0.03m, 0.03m, 1.33704m),
+            cancel,
+            Report(4, "FLAT-1", flattenId, "E3", "F", "2", "SELL",
+                0.07m, 0.07m, 0m, 0.07m, 1.33702m)
+        };
+
+        var lifecycle = Arch7bKnownOrderQualification.EvaluateLifecycle(
+            reports,
+            openingId,
+            flattenId,
+            cancelId);
+
+        Assert.True(lifecycle.Qualified, string.Join(";", lifecycle.Issues));
+        Assert.Equal(0.07m, lifecycle.OpeningFilledQuantity);
+        Assert.Equal(0.07m, lifecycle.FlattenFilledQuantity);
+    }
+
+    [Fact]
+    public void Opening_fill_sum_divergence_from_terminal_cumqty_is_emergency_stop()
+    {
+        var reports = CompleteLifecycle().ToArray();
+        reports[0] = reports[0] with
+        {
+            CumQty = 0.1m,
+            LastQty = 0.04m,
+            RawMessageSha256 = Sha("opening-divergence")
+        };
+        reports[1] = reports[1] with
+        {
+            OrderQty = 0.04m,
+            CumQty = 0.04m,
+            LastQty = 0.04m,
+            RawMessageSha256 = Sha("flatten-004")
+        };
+
+        var lifecycle = Arch7bKnownOrderQualification.EvaluateLifecycle(
+            reports,
+            "A7BO0000000000000001",
+            "A7BF0000000000000001");
+
+        Assert.False(lifecycle.Qualified);
+        Assert.Contains(
+            "ARCH7B_OPENING_FILL_CUMQTY_DIVERGENCE_EMERGENCY_STOP",
+            lifecycle.Issues);
+    }
+
+    [Fact]
+    public void Flatten_fill_sum_divergence_or_overfill_is_emergency_stop()
+    {
+        var reports = CompleteLifecycle().ToArray();
+        reports[1] = reports[1] with
+        {
+            OrderQty = 0.1m,
+            CumQty = 0.1m,
+            LastQty = 0.11m,
+            RawMessageSha256 = Sha("flatten-overfill")
+        };
+
+        var lifecycle = Arch7bKnownOrderQualification.EvaluateLifecycle(
+            reports,
+            "A7BO0000000000000001",
+            "A7BF0000000000000001");
+
+        Assert.False(lifecycle.Qualified);
+        Assert.Contains(
+            "ARCH7B_FLATTEN_FILL_CUMQTY_DIVERGENCE_EMERGENCY_STOP",
+            lifecycle.Issues);
+        Assert.Contains("ARCH7B_INTERNAL_POSITION_NOT_FLAT", lifecycle.Issues);
+    }
+    [Fact]
     public void Byte_identical_execution_report_replay_is_idempotent()
     {
         var reports = CompleteLifecycle().ToList();
@@ -295,7 +381,7 @@ public sealed class Arch7bKnownOrderQualificationTests
             true);
 
     private static Arch7bLmaxBbo ValidBbo()
-        => new("GBPUSD", "4002", 1.33701m, 1.33703m, Now.AddSeconds(-1), "LMAX", Sha("bbo"));
+        => new("GBPUSD", "4002", 1.33701m, 1.33703m, Now.AddSeconds(-1), "LMAX", Sha("bbo"), Now.AddSeconds(-2), SequenceIntegrityProven: true, PolygonUsed: false);
 
     private static Arch7bExclusivityDeclaration ValidExclusivity()
         => new(

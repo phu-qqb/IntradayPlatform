@@ -1171,6 +1171,30 @@ public sealed partial class RawLmaxFixSessionClient(
         string? lastMsgType = null;
         Stream? stream = null;
         var sequenceNumber = 1;
+        long? lastInboundSequenceNumber = null;
+
+        void ObserveInboundSequence(string message)
+        {
+            if (!long.TryParse(
+                    LmaxFixMarketDataCodec.GetTag(message, "34"),
+                    NumberStyles.None,
+                    CultureInfo.InvariantCulture,
+                    out var inboundSequenceNumber) || inboundSequenceNumber <= 0)
+                throw new InvalidOperationException("ARCH7B_MARKET_DATA_FIX_SEQUENCE_INVALID");
+            var possDup = LmaxFixMarketDataCodec.GetTag(message, "43") == "Y";
+            if (lastInboundSequenceNumber is { } previous)
+            {
+                if (inboundSequenceNumber > previous + 1)
+                    throw new InvalidOperationException(
+                        $"ARCH7B_MARKET_DATA_FIX_SEQUENCE_GAP_UNRESOLVED:{previous + 1}-{inboundSequenceNumber - 1}");
+                if (inboundSequenceNumber <= previous && !possDup)
+                    throw new InvalidOperationException(
+                        $"ARCH7B_MARKET_DATA_FIX_SEQUENCE_REWIND_WITHOUT_POSSDUP:{inboundSequenceNumber}");
+            }
+            if (lastInboundSequenceNumber is null ||
+                inboundSequenceNumber > lastInboundSequenceNumber)
+                lastInboundSequenceNumber = inboundSequenceNumber;
+        }
 
         try
         {
@@ -1206,6 +1230,7 @@ public sealed partial class RawLmaxFixSessionClient(
                 var logonResponse = await ReadFixResponseAsync(activeStream, logonTimeout.Token);
                 lastMsgType = LmaxFixMarketDataCodec.GetMsgType(logonResponse);
                 messages.Add(logonResponse);
+                ObserveInboundSequence(logonResponse);
                 fixLoggedOn = LmaxFixMarketDataCodec.ContainsTag(logonResponse, "35", "A");
             }
 
@@ -1228,7 +1253,8 @@ public sealed partial class RawLmaxFixSessionClient(
                 marketDataRequestSent = true;
                 while (messages.Count < requestOptions.MaxMessages + 1 && !marketDataTimeout.IsCancellationRequested)
                 {
-                    var readResult = await ReadMarketDataResponseAsync(activeStream, options, target, sequenceNumber, marketDataTimeout.Token);
+                    var readResult = await ReadMarketDataResponseAsync(
+                        activeStream, options, target, sequenceNumber, marketDataTimeout.Token, ObserveInboundSequence);
                     sequenceNumber = readResult.NextSequenceNumber;
                     var message = readResult.Message;
                     if (string.IsNullOrWhiteSpace(message))
@@ -1298,7 +1324,23 @@ public sealed partial class RawLmaxFixSessionClient(
                 : marketDataRejectReceived
                     ? "LMAX rejected the MarketDataRequest."
                     : "No market data snapshot or incremental entries were received before timeout.";
-            return LmaxFixMarketDataSmokeResult.Create(status, text, startedAt, tcpConnected, tlsHandshakeCompleted, fixLogonSent, fixLoggedOn, marketDataRequestSent, marketDataSnapshotReceived, marketDataRejectReceived, logoutSent, rejectReason, rejectText, lastMsgType, LmaxConnectivityLabSafetyValidator.DecisionsForExternalCommand(options), diagnostics, attempts, entries, bestBid, bestAsk, mid, messages.Count);
+            var snapshotSha256 = Sha256(System.Text.Json.JsonSerializer.Serialize(new
+            {
+                source = "LMAX",
+                options.InstrumentSymbol,
+                options.LmaxInstrumentId,
+                options.FixSecurityIdSource,
+                mdReqId,
+                startedAt,
+                lastInboundSequenceNumber,
+                entries
+            }));
+            var result = LmaxFixMarketDataSmokeResult.Create(status, text, startedAt, tcpConnected, tlsHandshakeCompleted, fixLogonSent, fixLoggedOn, marketDataRequestSent, marketDataSnapshotReceived, marketDataRejectReceived, logoutSent, rejectReason, rejectText, lastMsgType, LmaxConnectivityLabSafetyValidator.DecisionsForExternalCommand(options), diagnostics, attempts, entries, bestBid, bestAsk, mid, messages.Count);
+            return result with
+            {
+                InboundSequenceIntegrityProven = status == "Ok" && lastInboundSequenceNumber is not null,
+                SnapshotSha256 = snapshotSha256
+            };
         }
         catch (OperationCanceledException)
         {
@@ -1310,7 +1352,7 @@ public sealed partial class RawLmaxFixSessionClient(
             var phase = !tcpConnected ? "TCP connect" : !tlsHandshakeCompleted && options.UseTls ? "TLS handshake" : !fixLoggedOn ? "FIX logon" : marketDataRequestSent ? "market data response" : "market data request";
             return LmaxFixMarketDataSmokeResult.Create("Failed", $"Market data snapshot smoke timed out during {phase}.", startedAt, tcpConnected, tlsHandshakeCompleted, fixLogonSent, fixLoggedOn, marketDataRequestSent, marketDataSnapshotReceived, marketDataRejectReceived, logoutSent, rejectReason, rejectText, lastMsgType, LmaxConnectivityLabSafetyValidator.DecisionsForExternalCommand(options), diagnostics, attempts, entries, messageCount: messages.Count);
         }
-        catch (Exception ex) when (ex is SocketException or IOException or AuthenticationException)
+        catch (Exception ex) when (ex is SocketException or IOException or AuthenticationException or InvalidOperationException)
         {
             return LmaxFixMarketDataSmokeResult.Create("Failed", $"Market data snapshot smoke failed: {ex.GetType().Name}: {ex.Message}", startedAt, tcpConnected, tlsHandshakeCompleted, fixLogonSent, fixLoggedOn, marketDataRequestSent, marketDataSnapshotReceived, marketDataRejectReceived, logoutSent, rejectReason, rejectText, lastMsgType, LmaxConnectivityLabSafetyValidator.DecisionsForExternalCommand(options), diagnostics, attempts, entries, messageCount: messages.Count);
         }
@@ -1362,11 +1404,13 @@ public sealed partial class RawLmaxFixSessionClient(
         LmaxConnectivityLabOptions options,
         string target,
         int sequenceNumber,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        Action<string>? inboundObserver = null)
     {
         while (!cancellationToken.IsCancellationRequested)
         {
             var message = await ReadAnyFixMessageAsync(stream, cancellationToken);
+            inboundObserver?.Invoke(message);
             var msgType = LmaxFixMarketDataCodec.GetMsgType(message);
             if (msgType == "1")
             {

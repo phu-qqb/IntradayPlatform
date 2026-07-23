@@ -25,7 +25,9 @@ public sealed record LmaxFixArch7bRecoveryState(
     bool OpeningTerminal,
     decimal FlattenCumulativeQuantity,
     decimal FlattenLeavesQuantity,
-    bool FlattenTerminal);
+    bool FlattenTerminal,
+    string? OpeningMarketObservationId = null,
+    string? FlattenMarketObservationId = null);
 
 public interface ILmaxFixArch7bQualificationSession
 {
@@ -35,6 +37,11 @@ public interface ILmaxFixArch7bQualificationSession
 
     Task<LmaxFixArch7bRecoveryState> LoadRecoveryStateAsync(
         LmaxFixArch7bKnownOrderRequest request,
+        CancellationToken cancellationToken);
+
+    Task<decimal> ReadValidatedFillQuantityAsync(
+        LmaxFixArch7bKnownOrderRequest request,
+        string clientOrderId,
         CancellationToken cancellationToken);
 
     Task<Arch7bLifecycleEvaluation> FinalizeReconciliationAsync(

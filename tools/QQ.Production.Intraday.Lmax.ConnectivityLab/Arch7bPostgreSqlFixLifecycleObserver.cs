@@ -57,6 +57,15 @@ public sealed class DeferredArch7bPostgreSqlFixLifecycleObserver(
             report,
             cancellationToken);
 
+    public Task<decimal> ReadValidatedFillQuantityAsync(
+        LmaxFixArch7bKnownOrderRequest request,
+        string clientOrderId,
+        CancellationToken cancellationToken)
+        => inner.Value.ReadValidatedFillQuantityAsync(
+            request,
+            clientOrderId,
+            cancellationToken);
+
     public Task<Arch7bLifecycleEvaluation> FinalizeReconciliationAsync(
         LmaxFixArch7bKnownOrderRequest request,
         CancellationToken cancellationToken)
@@ -133,7 +142,10 @@ public sealed class Arch7bPostgreSqlFixLifecycleObserver(
                         request.BboAsk,
                         request.BboObservedAtUtc,
                         request.BboSource,
-                        request.BboSnapshotSha256),
+                        request.BboSnapshotSha256,
+                        request.BboAcquisitionStartedAtUtc,
+                        request.BboSequenceIntegrityProven,
+                        request.BboPolygonUsed),
                     exclusivity,
                     Arch7bKnownOrderQualificationPolicy.Environment,
                     request.AccountId,
@@ -180,7 +192,9 @@ public sealed class Arch7bPostgreSqlFixLifecycleObserver(
             state.OpeningTerminal,
             state.FlattenCumulativeQuantity,
             state.FlattenLeavesQuantity,
-            state.FlattenTerminal);
+            state.FlattenTerminal,
+            state.OpeningMarketObservationId,
+            state.FlattenMarketObservationId);
     }
 
     public Task RecordSessionEventAsync(
@@ -248,6 +262,15 @@ public sealed class Arch7bPostgreSqlFixLifecycleObserver(
             [LmaxFixArch7bReportMapper.Map(
                 request, report, ActiveFixSessionId())],
             cancellationToken));
+
+    public Task<decimal> ReadValidatedFillQuantityAsync(
+        LmaxFixArch7bKnownOrderRequest request,
+        string clientOrderId,
+        CancellationToken cancellationToken)
+        => store.ReadValidatedFillQuantityAsync(
+            request.QualificationRunId,
+            clientOrderId,
+            cancellationToken);
 
     public async Task<Arch7bLifecycleEvaluation> FinalizeReconciliationAsync(
         LmaxFixArch7bKnownOrderRequest request,
@@ -340,8 +363,7 @@ public sealed class Arch7bPostgreSqlFixLifecycleObserver(
             preflight.MinimumOpeningPrice != request.MinimumOpeningPrice ||
             preflight.MaximumOpeningPrice != request.MaximumOpeningPrice ||
             preflight.PolicySha256 != request.PolicySha256 ||
-            request.OpeningLimitPrice != request.BboAsk ||
-            request.FlattenLimitPrice != request.BboBid)
+            request.OpeningLimitPrice != request.BboAsk)
         {
             throw new InvalidOperationException("ARCH7B_AUTHORIZED_ECONOMICS_BINDING_CONFLICT");
         }

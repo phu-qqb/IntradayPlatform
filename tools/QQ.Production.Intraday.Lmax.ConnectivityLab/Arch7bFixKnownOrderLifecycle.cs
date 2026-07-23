@@ -22,7 +22,6 @@ public sealed record LmaxFixArch7bKnownOrderRequest(
     decimal OpeningLimitPrice,
     decimal MinimumOpeningPrice,
     decimal MaximumOpeningPrice,
-    decimal FlattenLimitPrice,
     decimal BboBid,
     decimal BboAsk,
     DateTimeOffset BboObservedAtUtc,
@@ -38,6 +37,13 @@ public sealed record LmaxFixArch7bKnownOrderRequest(
     bool KillSwitchArmed,
     bool ShowFixMessages)
 {
+    public string OpeningMarketObservationId { get; init; } = string.Empty;
+    public string BboSymbol { get; init; } = string.Empty;
+    public string BboSecurityId { get; init; } = string.Empty;
+    public DateTimeOffset BboAcquisitionStartedAtUtc { get; init; } = DateTimeOffset.MinValue;
+    public bool BboSequenceIntegrityProven { get; init; }
+    public bool BboPolygonUsed { get; init; }
+
     public static LmaxFixArch7bKnownOrderRequest Disabled() =>
         new(
             LmaxFixArch7bActivation.Disabled,
@@ -49,7 +55,6 @@ public sealed record LmaxFixArch7bKnownOrderRequest(
             string.Empty,
             string.Empty,
             string.Empty,
-            0m,
             0m,
             0m,
             0m,
@@ -114,6 +119,12 @@ public sealed record LmaxFixArch7bDryRunPlan(
     string FlattenOrderStatusRequestSanitized,
     Arch7bApplicationMessageBudget MaximumBudget);
 
+public sealed record LmaxFixArch7bMarketObservationDecision(
+    bool Allowed,
+    IReadOnlyList<string> Blockers,
+    Arch7bLmaxBbo? Observation,
+    decimal? LimitPrice);
+
 public static class LmaxFixArch7bKnownOrderContract
 {
     public static IReadOnlyList<string> Validate(
@@ -140,9 +151,31 @@ public static class LmaxFixArch7bKnownOrderContract
         Require(!string.IsNullOrWhiteSpace(options.FixSenderCompId), "ARCH7B_FIX_SENDER_MISSING");
         Require(!string.IsNullOrWhiteSpace(options.FixUsername), "ARCH7B_FIX_USERNAME_MISSING");
         Require(!string.IsNullOrWhiteSpace(options.FixPassword), "ARCH7B_FIX_PASSWORD_MISSING");
-        Require(request.OpeningLimitPrice > 0m && request.FlattenLimitPrice > 0m, "ARCH7B_LIMIT_PRICE_INVALID");
+        Require(request.OpeningLimitPrice > 0m, "ARCH7B_LIMIT_PRICE_INVALID");
         Require(request.BboBid > 0m && request.BboAsk >= request.BboBid, "ARCH7B_BBO_INVALID");
         Require(request.BboSource == "LMAX", "ARCH7B_BBO_SOURCE_NOT_LMAX");
+        Require(request.BboSymbol == Arch7bKnownOrderQualificationPolicy.Symbol &&
+                request.BboSecurityId == Arch7bKnownOrderQualificationPolicy.SecurityId,
+            "ARCH7B_BBO_INSTRUMENT_MISMATCH");
+        Require(options.InstrumentSymbol == Arch7bKnownOrderQualificationPolicy.Symbol &&
+                options.LmaxInstrumentId == Arch7bKnownOrderQualificationPolicy.SecurityId &&
+                options.FixSecurityIdSource == Arch7bKnownOrderQualificationPolicy.SecurityIdSource,
+            "ARCH7B_MARKET_DATA_MAPPING_MISMATCH");
+        Require(options.MarketDataRequestMode == LmaxFixMarketDataRequestMode.SnapshotOnly &&
+                options.MarketDataSymbolEncodingMode != LmaxFixMarketDataSymbolEncodingMode.Auto,
+            "ARCH7B_MARKET_DATA_SESSION_MODE_UNBOUNDED");
+        Require(request.BboSequenceIntegrityProven, "ARCH7B_BBO_SEQUENCE_INTEGRITY_UNPROVEN");
+        Require(!request.BboPolygonUsed, "ARCH7B_POLYGON_ORDER_PRICE_FORBIDDEN");
+        Require(IsSha256(request.OpeningMarketObservationId) &&
+                request.OpeningMarketObservationId.Equals(
+                    request.BboSnapshotSha256, StringComparison.OrdinalIgnoreCase),
+            "ARCH7B_OPENING_MARKET_OBSERVATION_ID_INVALID");
+        Require(request.OpeningLimitPrice == request.BboAsk,
+            "ARCH7B_OPENING_LIMIT_NOT_LMAX_ASK");
+        Require(IsTickAligned(request.BboBid) && IsTickAligned(request.BboAsk),
+            "ARCH7B_BBO_NOT_TICK_ALIGNED");
+        Require(request.BboAsk - request.BboBid <= MaximumSpread(),
+            "ARCH7B_BBO_SPREAD_TOO_WIDE");
         Require(request.MinimumOpeningPrice > 0m &&
                 request.OpeningLimitPrice >= request.MinimumOpeningPrice &&
                 request.OpeningLimitPrice <= request.MaximumOpeningPrice,
@@ -152,11 +185,15 @@ public static class LmaxFixArch7bKnownOrderContract
         Require(request.AuthorizationPacketSha256.Equals(
                 ComputeAuthorizationPacketSha256(request), StringComparison.OrdinalIgnoreCase),
             "ARCH7B_AUTHORIZATION_PACKET_SHA256_MISMATCH");
-        Require(request.BboObservedAtUtc.Offset == TimeSpan.Zero &&
+        Require(request.BboAcquisitionStartedAtUtc.Offset == TimeSpan.Zero &&
+                request.BboObservedAtUtc.Offset == TimeSpan.Zero &&
                 request.RegisteredAtUtc.Offset == TimeSpan.Zero &&
                 request.OpeningCancelAtUtc.Offset == TimeSpan.Zero &&
                 request.DeadlineUtc.Offset == TimeSpan.Zero, "ARCH7B_TIMESTAMPS_NOT_UTC");
         Require(request.RegisteredAtUtc <= nowUtc, "ARCH7B_REGISTERED_TIME_FROM_FUTURE");
+        Require(request.BboAcquisitionStartedAtUtc >= request.RegisteredAtUtc &&
+                request.BboObservedAtUtc >= request.BboAcquisitionStartedAtUtc,
+            "ARCH7B_BBO_NOT_ACQUIRED_IN_AUTHORIZED_WINDOW");
         Require(nowUtc <= request.DeadlineUtc, "ARCH7B_DEADLINE_EXCEEDED");
         Require(request.OpeningCancelAtUtc > nowUtc, "ARCH7B_OPENING_CANCEL_DEADLINE_EXCEEDED");
         Require(request.OpeningCancelAtUtc < request.DeadlineUtc,
@@ -208,12 +245,17 @@ public static class LmaxFixArch7bKnownOrderContract
             request.OpeningLimitPrice,
             request.MinimumOpeningPrice,
             request.MaximumOpeningPrice,
-            request.FlattenLimitPrice,
             request.BboBid,
             request.BboAsk,
             request.BboObservedAtUtc,
+            request.BboAcquisitionStartedAtUtc,
             request.BboSource,
             request.BboSnapshotSha256,
+            request.OpeningMarketObservationId,
+            request.BboSymbol,
+            request.BboSecurityId,
+            request.BboSequenceIntegrityProven,
+            request.BboPolygonUsed,
             request.RegisteredAtUtc,
             request.OpeningCancelAtUtc,
             request.DeadlineUtc,
@@ -247,13 +289,6 @@ public static class LmaxFixArch7bKnownOrderContract
             Arch7bKnownOrderQualificationPolicy.VenueQuantity,
             request.OpeningLimitPrice,
             request.OpeningClientOrderId);
-        var flatten = DemoLimitRequest(
-            request.AccountId,
-            LmaxFixDemoOrderSide.Sell,
-            Arch7bKnownOrderQualificationPolicy.VenueQuantity,
-            request.FlattenLimitPrice,
-            request.FlattenClientOrderId);
-
         var openD = LmaxFixRecoveryCodec.BuildNewOrderSingle(sender!, target, 2, opening, request.OpeningClientOrderId, Arch7bKnownOrderQualificationPolicy.SecurityIdSource);
         var cancelF = LmaxFixRecoveryCodec.BuildOrderCancelRequest(
             sender!,
@@ -266,7 +301,6 @@ public static class LmaxFixArch7bKnownOrderContract
             Arch7bKnownOrderQualificationPolicy.VenueQuantity,
             Arch7bKnownOrderQualificationPolicy.SecurityId,
             Arch7bKnownOrderQualificationPolicy.SecurityIdSource);
-        var flattenD = LmaxFixRecoveryCodec.BuildNewOrderSingle(sender!, target, 4, flatten, request.FlattenClientOrderId, Arch7bKnownOrderQualificationPolicy.SecurityIdSource);
         var openH = LmaxFixRecoveryCodec.BuildOrderStatusRequest(
             sender!,
             target,
@@ -289,7 +323,7 @@ public static class LmaxFixArch7bKnownOrderContract
         return new(
             LmaxFixMarketDataCodec.SanitizeMessage(openD),
             LmaxFixMarketDataCodec.SanitizeMessage(cancelF),
-            LmaxFixMarketDataCodec.SanitizeMessage(flattenD),
+            "ARCH7B_FLATTEN_DYNAMIC_AFTER_TERMINAL_FRESH_LMAX_BBO_NO_MESSAGE_BUILT",
             LmaxFixMarketDataCodec.SanitizeMessage(openH),
             LmaxFixMarketDataCodec.SanitizeMessage(flattenH),
             new(
@@ -322,8 +356,84 @@ public static class LmaxFixArch7bKnownOrderContract
             false,
             false);
 
+    public static LmaxFixArch7bMarketObservationDecision EvaluateFreshFlattenObservation(
+        LmaxConnectivityLabOptions options,
+        LmaxFixMarketDataSmokeResult result,
+        DateTimeOffset notBeforeUtc,
+        DateTimeOffset nowUtc,
+        string openingMarketObservationId)
+    {
+        var blockers = new List<string>();
+        Require(!options.AllowOrderSubmission && !options.AllowLiveTrading,
+            "ARCH7B_FLATTEN_MARKET_DATA_SESSION_NOT_READ_ONLY");
+        Require(options.InstrumentSymbol == Arch7bKnownOrderQualificationPolicy.Symbol &&
+                options.LmaxInstrumentId == Arch7bKnownOrderQualificationPolicy.SecurityId &&
+                options.FixSecurityIdSource == Arch7bKnownOrderQualificationPolicy.SecurityIdSource,
+            "ARCH7B_FLATTEN_BBO_INSTRUMENT_MISMATCH");
+        Require(result.Status == "Ok" && result.FixLoggedOn &&
+                result.MarketDataRequestSent && result.MarketDataSnapshotReceived &&
+                !result.MarketDataRejectReceived,
+            "ARCH7B_FLATTEN_BBO_UNAVAILABLE_KILL_SWITCH");
+        Require(result.InboundSequenceIntegrityProven,
+            "ARCH7B_FLATTEN_BBO_SEQUENCE_INTEGRITY_UNPROVEN");
+        Require(result.StartedAtUtc >= notBeforeUtc &&
+                result.CompletedAtUtc >= result.StartedAtUtc &&
+                result.CompletedAtUtc <= nowUtc,
+            "ARCH7B_FLATTEN_BBO_NOT_POST_OPENING_TERMINAL");
+        Require(nowUtc - result.CompletedAtUtc <=
+                TimeSpan.FromSeconds(Arch7bKnownOrderQualificationPolicy.MaximumBboAgeSeconds),
+            "ARCH7B_FLATTEN_BBO_STALE");
+        Require(IsSha256(result.SnapshotSha256 ?? string.Empty) &&
+                !result.SnapshotSha256!.Equals(
+                    openingMarketObservationId, StringComparison.OrdinalIgnoreCase),
+            "ARCH7B_FLATTEN_MARKET_OBSERVATION_ID_NOT_DISTINCT");
+        Require(result.BestBid is > 0m && result.BestAsk is > 0m &&
+                result.BestBid <= result.BestAsk,
+            "ARCH7B_FLATTEN_BBO_INVALID");
+
+        if (blockers.Count != 0)
+            return new(false, blockers, null, null);
+
+        var observation = new Arch7bLmaxBbo(
+            Arch7bKnownOrderQualificationPolicy.Symbol,
+            Arch7bKnownOrderQualificationPolicy.SecurityId,
+            result.BestBid!.Value,
+            result.BestAsk!.Value,
+            result.CompletedAtUtc,
+            "LMAX",
+            result.SnapshotSha256!,
+            result.StartedAtUtc,
+            result.InboundSequenceIntegrityProven,
+            PolygonUsed: false);
+        try
+        {
+            return new(
+                true,
+                [],
+                observation,
+                Arch7bKnownOrderQualification.TouchLimit(observation, "SELL"));
+        }
+        catch (InvalidOperationException exception)
+        {
+            return new(false, [exception.Message], null, null);
+        }
+
+        void Require(bool condition, string blocker)
+        {
+            if (!condition)
+                blockers.Add(blocker);
+        }
+    }
+
     private static bool IsSha256(string value)
         => value.Length == 64 && value.All(Uri.IsHexDigit);
+
+    private static decimal MaximumSpread()
+        => Arch7bKnownOrderQualificationPolicy.MaximumSpreadPips *
+           Arch7bKnownOrderQualificationPolicy.PriceIncrement * 10m;
+
+    private static bool IsTickAligned(decimal value)
+        => value % Arch7bKnownOrderQualificationPolicy.PriceIncrement == 0m;
 
     private static bool IsDemoOrUatHost(string? host)
         => !string.IsNullOrWhiteSpace(host) &&

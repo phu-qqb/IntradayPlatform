@@ -192,7 +192,9 @@ public sealed record Arch7bPostgreSqlRecoveryState(
     bool OpeningTerminal,
     decimal FlattenCumulativeQuantity,
     decimal FlattenLeavesQuantity,
-    bool FlattenTerminal);
+    bool FlattenTerminal,
+    string? OpeningMarketObservationId,
+    string? FlattenMarketObservationId);
 
 public sealed class EfArch7bKnownOrderLifecycleStore(
     IDbContextFactory<PmsShadowDbContext> contextFactory)
@@ -467,7 +469,13 @@ public sealed class EfArch7bKnownOrderLifecycleStore(
             opening is not null && IsTerminalOrderStatus(opening.OrderStatus),
             flatten?.CumulativeQuantity ?? 0m,
             flatten?.LeavesQuantity ?? 0m,
-            flatten is not null && IsTerminalOrderStatus(flatten.OrderStatus));
+            flatten is not null && IsTerminalOrderStatus(flatten.OrderStatus),
+            sends.SingleOrDefault(value =>
+                value.MessageType == "D" &&
+                value.LifecycleRole == "OPEN")?.BboSnapshotSha256,
+            sends.SingleOrDefault(value =>
+                value.MessageType == "D" &&
+                value.LifecycleRole == "FLATTEN")?.BboSnapshotSha256);
 
         static PmsArch7bExecutionReportRow? LatestRelated(
             IEnumerable<PmsArch7bExecutionReportRow> values,
@@ -479,6 +487,19 @@ public sealed class EfArch7bKnownOrderLifecycleStore(
                 .OrderBy(value => value.TransactTimeUtc)
                 .ThenBy(value => value.FixSequenceNumber)
                 .LastOrDefault();
+    }
+
+    public async Task<decimal> ReadValidatedFillQuantityAsync(
+        Guid qualificationRunId,
+        string clientOrderId,
+        CancellationToken cancellationToken = default)
+    {
+        await using var context = await contextFactory.CreateDbContextAsync(cancellationToken);
+        return await context.Arch7bFills.AsNoTracking()
+            .Where(value =>
+                value.QualificationRunId == qualificationRunId &&
+                value.ClientOrderId == clientOrderId)
+            .SumAsync(value => value.Quantity, cancellationToken);
     }
 
     public async Task<Arch7bLifecycleEvaluation> ReadLifecycleEvaluationAsync(

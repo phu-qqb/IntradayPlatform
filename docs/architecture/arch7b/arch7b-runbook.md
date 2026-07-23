@@ -17,7 +17,7 @@ Status: PREPARED, DISABLED, NOT AUTHORIZED, NOT APPLIED.
 2. Acquire the Demo-account advisory lease.
 3. Read the selected ARCH7A ChildOrder and its TradeIntent/RiskDecision/ParentOrder lineage from PostgreSQL.
 4. Prove latest qualifying ARCH6F revision, fresh slot, LMAX direct market lineage, initial flat position and zero other platform-known working order.
-5. Bind current LMAX BBO bid/ask/time/SHA to opening and flatten limits and deterministic ClOrdIDs.
+5. Bind a sequence-valid, content-addressed LMAX BBO acquired inside the authorized window to the BUY opening limit at ask and deterministic ClOrdIDs.
 6. Persist the qualification run before FIX logon.
 
 ## Lifecycle
@@ -26,16 +26,23 @@ Status: PREPARED, DISABLED, NOT AUTHORIZED, NOT APPLIED.
 2. Persist each D/F/H send intent before writing bytes.
 3. Persist every real `35=8` with raw message SHA, MsgSeqNum and PossDup.
 4. On restart, never resend an existing D or F. Query only the known opening/flatten ClOrdID.
-5. Cancel opening residual once, then flatten exactly cumulative executed opening quantity.
-6. Fail closed on unknown ClOrdID/OrderID, account/instrument mismatch, sequence gap, duplicate conflict, budget breach or deadline.
-7. Build Fill and PositionLedgerEvent only from valid fill/partial-fill ExecutionReports.
-8. Require both known lifecycles terminal, zero known leaves, zero ledger quantity and zero critical break.
-9. Persist final reconciliation with authority `LMAX_FIX_EXECUTION_REPORTS_KNOWN_ORDERS`.
-10. Logout, dispose socket and release lease.
+5. Cancel opening residual once; after the opening is terminal, require final CumQty to equal the durable sum of unique validated opening Fills.
+6. Open a separate SnapshotOnly LMAX market-data session, require a new sequence-valid observation ID, and derive the SELL flatten limit from its fresh bid.
+7. Persist the distinct flatten observation SHA with the FLATTEN send intent, then flatten exactly the durable executed opening quantity.
+8. Fail closed on unknown ClOrdID/OrderID, account/instrument mismatch, sequence gap, duplicate conflict, budget breach or deadline.
+9. Build Fill and PositionLedgerEvent only from valid fill/partial-fill ExecutionReports.
+10. Require both known lifecycles terminal, zero known leaves, zero ledger quantity and zero critical break.
+11. Persist final reconciliation with authority `LMAX_FIX_EXECUTION_REPORTS_KNOWN_ORDERS`.
+12. Logout, dispose socket and release lease.
 
 ## Recovery
 
-Each connection receives a unique persisted FIX-session instance ID. Recovery reuses the qualification run, packet, ClOrdIDs, send ledger and ExecutionReports. A stale source cannot authorize a new opening, while an already-sent opening may be recovered and flattened without resending it.
+Each connection receives a unique persisted FIX-session instance ID. Recovery reuses the qualification run, packet, ClOrdIDs, send ledger, observation IDs, ExecutionReports and durable deduplicated Fills. A stale source cannot authorize a new opening. Existing D/F intents are never resent; only known-order status is queried.
+
+
+## No fresh flatten BBO
+
+The runner keeps the order-entry lifecycle bounded while attempting at most three separate SnapshotOnly LMAX market-data sessions and never passes the global deadline. If no valid new BBO is obtained, it records `KILL_SWITCH_ACTIVATED_FLATTEN_BBO_UNAVAILABLE`, builds no flatten order, never uses Polygon or the opening observation, and exits fail-closed with the non-flat position explicitly unresolved. Operator recovery must use the same known-order run and broker evidence; it must not create a silent second flatten.
 
 ## Current non-actions
 

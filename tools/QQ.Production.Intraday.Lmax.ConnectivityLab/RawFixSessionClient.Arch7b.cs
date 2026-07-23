@@ -85,6 +85,9 @@ public sealed partial class RawLmaxFixSessionClient
                 cancellationToken);
             statusRequestCount = recovery.OrderStatusRequestCount;
             recoveryPlan = LmaxFixArch7bRecoveryPlanner.Build(recovery);
+            var openingMarketObservationId = recovery.OpeningMarketObservationId ??
+                request.OpeningMarketObservationId;
+            string? flattenMarketObservationId = recovery.FlattenMarketObservationId;
             await arch7bObserver!.RecordSessionEventAsync(
                 request,
                 "KILL_SWITCH_ARMED_BEFORE_FIX_LOGON",
@@ -177,6 +180,7 @@ public sealed partial class RawLmaxFixSessionClient
                     "BUY",
                     Arch7bKnownOrderQualificationPolicy.VenueQuantity,
                     request.OpeningLimitPrice,
+                    openingMarketObservationId,
                     opening,
                     sequenceNumber++,
                     cancellationToken);
@@ -227,6 +231,7 @@ public sealed partial class RawLmaxFixSessionClient
                         "BUY",
                         Arch7bKnownOrderQualificationPolicy.VenueQuantity,
                         null,
+                        openingMarketObservationId,
                         cancel,
                         sequenceNumber++,
                         cancellationToken);
@@ -260,8 +265,28 @@ public sealed partial class RawLmaxFixSessionClient
                 openingFilled % Arch7bKnownOrderQualificationPolicy.QuantityIncrement != 0m)
                 return Result("Failed", "ARCH7B_OPENING_FILL_QUANTITY_OUT_OF_BOUNDS");
 
+            var openingFillQuantity =
+                await qualificationSession.ReadValidatedFillQuantityAsync(
+                    request,
+                    request.OpeningClientOrderId,
+                    cancellationToken);
+            if (Math.Abs(openingFillQuantity - openingFilled) > 0.00000001m)
+            {
+                await arch7bObserver.RecordSessionEventAsync(
+                    request,
+                    "KILL_SWITCH_ACTIVATED_OPENING_FILL_CUMQTY_DIVERGENCE",
+                    lastInboundSequenceNumber,
+                    DateTimeOffset.UtcNow,
+                    cancellationToken);
+                return Result(
+                    "Failed",
+                    "ARCH7B_OPENING_FILL_CUMQTY_DIVERGENCE_EMERGENCY_STOP");
+            }
+
             if (!recoveryPlan.MaySendFlattenNewOrderSingle)
             {
+                if (string.IsNullOrWhiteSpace(flattenMarketObservationId))
+                    return Result("Failed", "ARCH7B_RECOVERY_FLATTEN_MARKET_OBSERVATION_MISSING");
                 flattenSent = true;
                 diagnostics.Add("ARCH7B_RECOVERY_FLATTEN_SEND_INTENT_REUSED_NO_RESEND");
                 if (recoveryPlan.QueryFlattenKnownOrder)
@@ -276,11 +301,66 @@ public sealed partial class RawLmaxFixSessionClient
             }
             else
             {
+                var observationNotBeforeUtc = DateTimeOffset.UtcNow;
+                var marketDataOnlyOptions = CopyOptions(options);
+                marketDataOnlyOptions.AllowOrderSubmission = false;
+                marketDataOnlyOptions.AllowLiveTrading = false;
+                LmaxFixArch7bMarketObservationDecision? marketDecision = null;
+                for (var attempt = 1;
+                     attempt <= Arch7bKnownOrderQualificationPolicy.MaximumFlattenBboAcquisitionAttempts &&
+                     DateTimeOffset.UtcNow < request.DeadlineUtc;
+                     attempt++)
+                {
+                    using var acquisitionDeadline =
+                        CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                    acquisitionDeadline.CancelAfter(request.DeadlineUtc - DateTimeOffset.UtcNow);
+                    var marketData = await MarketDataSnapshotSmokeAsync(
+                        marketDataOnlyOptions,
+                        acquisitionDeadline.Token);
+                    marketDecision =
+                        LmaxFixArch7bKnownOrderContract.EvaluateFreshFlattenObservation(
+                            marketDataOnlyOptions,
+                            marketData,
+                            observationNotBeforeUtc,
+                            DateTimeOffset.UtcNow,
+                            openingMarketObservationId);
+                    diagnostics.Add(
+                        $"ARCH7B_FLATTEN_BBO_ATTEMPT_{attempt}:{marketData.Status}");
+                    if (marketDecision.Allowed)
+                        break;
+                }
+
+                if (marketDecision is null || !marketDecision.Allowed ||
+                    marketDecision.Observation is null ||
+                    marketDecision.LimitPrice is null)
+                {
+                    await arch7bObserver.RecordSessionEventAsync(
+                        request,
+                        "KILL_SWITCH_ACTIVATED_FLATTEN_BBO_UNAVAILABLE",
+                        lastInboundSequenceNumber,
+                        DateTimeOffset.UtcNow,
+                        CancellationToken.None);
+                    if (marketDecision is not null)
+                        diagnostics.AddRange(marketDecision.Blockers);
+                    return Result(
+                        "Failed",
+                        marketDecision?.Blockers.FirstOrDefault() ??
+                        "ARCH7B_FLATTEN_BBO_UNAVAILABLE_KILL_SWITCH");
+                }
+
+                flattenMarketObservationId = marketDecision.Observation.SnapshotSha256;
+                var flattenLimitPrice = marketDecision.LimitPrice.Value;
+                await arch7bObserver.RecordSessionEventAsync(
+                    request,
+                    "FLATTEN_MARKET_OBSERVATION_ACCEPTED",
+                    lastInboundSequenceNumber,
+                    DateTimeOffset.UtcNow,
+                    cancellationToken);
                 var flattenRequest = LmaxFixArch7bKnownOrderContract.DemoLimitRequest(
                     request.AccountId,
                     LmaxFixDemoOrderSide.Sell,
                     openingFilled,
-                    request.FlattenLimitPrice,
+                    flattenLimitPrice,
                     request.FlattenClientOrderId);
                 var flatten = LmaxFixRecoveryCodec.BuildNewOrderSingle(
                     options.FixSenderCompId!,
@@ -297,7 +377,8 @@ public sealed partial class RawLmaxFixSessionClient
                     null,
                     "SELL",
                     openingFilled,
-                    request.FlattenLimitPrice,
+                    flattenLimitPrice,
+                    flattenMarketObservationId,
                     flatten,
                     sequenceNumber++,
                     cancellationToken);
@@ -332,6 +413,25 @@ public sealed partial class RawLmaxFixSessionClient
             if (!FlattenTerminal() || FlattenLeavesQuantity() > 0m || FlattenFilledQuantity() != openingFilled)
                 return Result("Failed", "ARCH7B_FLATTEN_NOT_CONFIRMED");
 
+            var flattenFillQuantity =
+                await qualificationSession.ReadValidatedFillQuantityAsync(
+                    request,
+                    request.FlattenClientOrderId,
+                    cancellationToken);
+            if (Math.Abs(flattenFillQuantity - FlattenFilledQuantity()) > 0.00000001m ||
+                flattenFillQuantity > openingFillQuantity)
+            {
+                await arch7bObserver.RecordSessionEventAsync(
+                    request,
+                    "KILL_SWITCH_ACTIVATED_FLATTEN_FILL_CUMQTY_DIVERGENCE",
+                    lastInboundSequenceNumber,
+                    DateTimeOffset.UtcNow,
+                    cancellationToken);
+                return Result(
+                    "Failed",
+                    "ARCH7B_FLATTEN_FILL_CUMQTY_DIVERGENCE_EMERGENCY_STOP");
+            }
+
             await arch7bObserver.RecordSessionEventAsync(
                 request,
                 "FIX_SESSION_SEQUENCE_CONTINUITY_VALIDATED",
@@ -356,6 +456,7 @@ public sealed partial class RawLmaxFixSessionClient
                 string side,
                 decimal quantity,
                 decimal? limitPrice,
+                string marketObservationId,
                 string payload,
                 int fixSequenceNumber,
                 CancellationToken token)
@@ -369,7 +470,7 @@ public sealed partial class RawLmaxFixSessionClient
                     side,
                     quantity,
                     limitPrice,
-                    request.BboSnapshotSha256,
+                    marketObservationId,
                     Sha256(payload),
                     DateTimeOffset.UtcNow);
                 await arch7bObserver.RecordSendIntentAsync(request, intent, token);
@@ -402,6 +503,11 @@ public sealed partial class RawLmaxFixSessionClient
                     Arch7bKnownOrderQualificationPolicy.SecurityId,
                     Arch7bKnownOrderQualificationPolicy.SecurityIdSource,
                     fixSide);
+                var marketObservationId = clientOrderId == request.OpeningClientOrderId
+                    ? openingMarketObservationId
+                    : flattenMarketObservationId ??
+                      throw new InvalidOperationException(
+                          "ARCH7B_FLATTEN_MARKET_OBSERVATION_MISSING");
                 await PersistThenSendAsync(
                     activeStream,
                     clientOrderId == request.OpeningClientOrderId ? "OPEN_STATUS" : "FLATTEN_STATUS",
@@ -411,6 +517,7 @@ public sealed partial class RawLmaxFixSessionClient
                     side,
                     0m,
                     null,
+                    marketObservationId,
                     status,
                     sequenceNumber++,
                     token);
