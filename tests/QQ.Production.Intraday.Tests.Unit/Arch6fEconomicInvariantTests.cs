@@ -31,6 +31,30 @@ public sealed class Arch6fEconomicInvariantTests
     }
 
     [Fact]
+    public void RevisionTwoUsesDistinctAppendOnlyProjectionTargetAndDriftIdentities()
+    {
+        var plan = Arch6cPostgreSqlPmsShadowStateTests.BuildPlan();
+        var source = Source(plan);
+        var slot = PmsShadowIntradayCadenceContract.WindowEnding(
+            PmsShadowIntradayCadenceContract.Floor(plan.Ingestion.CompletedAtUtc!.Value));
+        var capture = Capture(slot, source, 1m, 'a');
+        var builder = new PmsShadowIntradayEconomicProjectionBuilder();
+        var revisionOne = builder.Build(capture, source, null);
+        var revisionTwo = builder.Build(capture, source, Hash('c'));
+
+        Assert.Equal(1, revisionOne.RevisionNumber);
+        Assert.Equal(2, revisionTwo.RevisionNumber);
+        Assert.NotEqual(revisionOne.ProjectionRevisionId, revisionTwo.ProjectionRevisionId);
+        Assert.NotEqual(revisionOne.ManifestSha256, revisionTwo.ManifestSha256);
+        Assert.Empty(revisionOne.TargetPositions.Select(value => value.TargetPositionId)
+            .Intersect(revisionTwo.TargetPositions.Select(value => value.TargetPositionId)));
+        Assert.Empty(revisionOne.PositionOnlyDrifts.Select(value => value.DriftId)
+            .Intersect(revisionTwo.PositionOnlyDrifts.Select(value => value.DriftId)));
+        Assert.Equal(revisionOne.RawCaptureSha256, revisionTwo.RawCaptureSha256);
+        Assert.Equal(revisionOne.MarketDataSnapshotSha256, revisionTwo.MarketDataSnapshotSha256);
+    }
+
+    [Fact]
     public void TargetIdsAndInputFingerprintsDifferBySlot()
     {
         var first = Projection(0, 1m, 'a', 'c');

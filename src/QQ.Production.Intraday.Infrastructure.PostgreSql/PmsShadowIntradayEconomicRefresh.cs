@@ -161,8 +161,11 @@ public sealed class PmsShadowIntradayEconomicProjectionBuilder
             }).ToArray();
         var marketSha = Arch5bHashing.HashCanonical(observations);
         var marketId = Arch5bHashing.GuidFromSha256($"arch6f:slot-market:{capture.SlotId}:{marketSha}");
-        var revisionId = Arch5bHashing.GuidFromSha256(
-            $"{PmsShadowIntradayEconomicContract.TestEnvironment}:{capture.SlotId}:{capture.ArtifactSha256}:{PmsShadowIntradayEconomicContract.Version}");
+        var revisionNumber = supersedesSlotManifestSha256 is null ? 1 : 2;
+        var revisionIdentity =
+            $"{PmsShadowIntradayEconomicContract.TestEnvironment}:{capture.SlotId}:{capture.ArtifactSha256}:{PmsShadowIntradayEconomicContract.Version}";
+        var revisionId = Arch5bHashing.GuidFromSha256(revisionNumber == 1
+            ? revisionIdentity : $"{revisionIdentity}:revision:{revisionNumber}:supersedes:{supersedesSlotManifestSha256}");
         var observationByInstrument = observations.ToDictionary(value => value.InstrumentId);
         var calculator = new TargetPositionCalculator();
         var targets = new List<PmsShadowSlotTargetPosition>(288);
@@ -225,7 +228,7 @@ public sealed class PmsShadowIntradayEconomicProjectionBuilder
         var manifest = Arch5bHashing.HashCanonical(new { RevisionId = revisionId, Input = input,
             Targets = targetSha, Drifts = driftSha, Supersedes = supersedesSlotManifestSha256,
             NoOrder = true, Blocker = PmsShadowStateContract.BrokerAdjustedBlocker });
-        return new(revisionId, supersedesSlotManifestSha256 is null ? 1 : 2, capture.SlotId, capture.SlotStartUtc, capture.SlotEndUtc,
+        return new(revisionId, revisionNumber, capture.SlotId, capture.SlotStartUtc, capture.SlotEndUtc,
             capture.ArtifactSha256, marketId, marketSha, source.IngestionId, source.SourceSessionId,
             source.AccountSnapshotId, source.PositionSnapshotId, source.PositionAsOfUtc,
             source.PositionAuthority, source.Models.Select(value => value.ModelRunId).ToArray(),
