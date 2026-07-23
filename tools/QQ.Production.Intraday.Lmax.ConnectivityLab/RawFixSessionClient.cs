@@ -1170,6 +1170,7 @@ public sealed partial class RawLmaxFixSessionClient(
         string? rejectText = null;
         string? lastMsgType = null;
         Stream? stream = null;
+        TcpClient? tcp = null;
         var sequenceNumber = 1;
         long? lastInboundSequenceNumber = null;
 
@@ -1198,7 +1199,7 @@ public sealed partial class RawLmaxFixSessionClient(
 
         try
         {
-            using var tcp = new TcpClient();
+            tcp = new TcpClient();
             using (var connectTimeout = CreateTimeout(options.ConnectTimeoutSeconds, cancellationToken))
             {
                 await tcp.ConnectAsync(host, port, connectTimeout.Token);
@@ -1208,13 +1209,15 @@ public sealed partial class RawLmaxFixSessionClient(
             Stream rawStream;
             using (var connectTimeout = CreateTimeout(options.ConnectTimeoutSeconds, cancellationToken))
             {
-                rawStream = options.UseTls ? await CreateTlsStreamAsync(tcp, host, connectTimeout.Token) : tcp.GetStream();
+                rawStream = options.UseTls
+                    ? await CreateTlsStreamAsync(tcp!, host, connectTimeout.Token)
+                    : tcp!.GetStream();
                 tlsHandshakeCompleted = options.UseTls || rawStream is not null;
             }
 
-            await using var disposableStream = rawStream;
-            stream = disposableStream;
-            Stream activeStream = disposableStream ?? throw new IOException("FIX stream was not created.");
+            stream = rawStream;
+            Stream activeStream = rawStream ??
+                throw new IOException("FIX market-data stream was not created.");
 
             var logon = LmaxFixMarketDataCodec.BuildMessage("A", sequenceNumber++, options.FixSenderCompId!, target, [
                 ("98", "0"),
@@ -1315,8 +1318,7 @@ public sealed partial class RawLmaxFixSessionClient(
                 attempts.Add($"{attemptLabel}: unsubscribe sent");
             }
 
-            await TrySendLogoutAsync(activeStream, options, target, sequenceNumber, attempts, attemptLabel);
-            logoutSent = true;
+            logoutSent = await TrySendLogoutAsync(activeStream, options, target, sequenceNumber, attempts, attemptLabel);
             var (bestBid, bestAsk, mid) = LmaxFixMarketDataCodec.ComputeTopOfBook(entries);
             var status = entries.Count > 0 ? "Ok" : "Failed";
             var text = entries.Count > 0
@@ -1354,7 +1356,37 @@ public sealed partial class RawLmaxFixSessionClient(
         }
         catch (Exception ex) when (ex is SocketException or IOException or AuthenticationException or InvalidOperationException)
         {
+            if (fixLoggedOn && stream is not null)
+                logoutSent = await TrySendLogoutAsync(
+                    stream,
+                    options,
+                    target,
+                    sequenceNumber,
+                    attempts,
+                    attemptLabel);
             return LmaxFixMarketDataSmokeResult.Create("Failed", $"Market data snapshot smoke failed: {ex.GetType().Name}: {ex.Message}", startedAt, tcpConnected, tlsHandshakeCompleted, fixLogonSent, fixLoggedOn, marketDataRequestSent, marketDataSnapshotReceived, marketDataRejectReceived, logoutSent, rejectReason, rejectText, lastMsgType, LmaxConnectivityLabSafetyValidator.DecisionsForExternalCommand(options), diagnostics, attempts, entries, messageCount: messages.Count);
+        }
+        finally
+        {
+            try
+            {
+                if (stream is not null)
+                    await stream.DisposeAsync();
+            }
+            catch (Exception exception)
+            {
+                attempts.Add(
+                    $"ARCH7B_MARKET_DATA_STREAM_DISPOSE_FAILURE:{exception.GetType().Name}");
+            }
+            try
+            {
+                tcp?.Dispose();
+            }
+            catch (Exception exception)
+            {
+                attempts.Add(
+                    $"ARCH7B_MARKET_DATA_TCP_DISPOSE_FAILURE:{exception.GetType().Name}");
+            }
         }
     }
 

@@ -123,6 +123,18 @@ public sealed class Arch7bLmaxFixKnownOrderContractTests
             "await EnsureOrderEntryLogoutAsync(\"ARCH7B_SCOPE_EXIT_CLEANUP\")",
             source,
             StringComparison.Ordinal);
+
+        var marketDataSource = File.ReadAllText(Path.Combine(
+            RepoRoot(),
+            "tools",
+            "QQ.Production.Intraday.Lmax.ConnectivityLab",
+            "RawFixSessionClient.cs"));
+        Assert.Contains(
+            "logoutSent = await TrySendLogoutAsync(activeStream",
+            marketDataSource,
+            StringComparison.Ordinal);
+        Assert.DoesNotContain("logoutSent = true;", marketDataSource, StringComparison.Ordinal);
+        Assert.Contains("finally", marketDataSource, StringComparison.Ordinal);
     }
 
     [Fact]
