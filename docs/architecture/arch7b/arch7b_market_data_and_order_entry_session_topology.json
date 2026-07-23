@@ -1,0 +1,87 @@
+{
+    "gate":  "ARCH7B_REQUALIFY_EXISTING_LMAX_DEMO_FIX_ORDER_ENTRY_SINGLE_BOUNDED_KNOWN_ORDER_LIFECYCLE_FLATTEN_AND_RECONCILIATION",
+    "status":  "PREPARED_DISABLED_NOT_AUTHORIZED_NOT_EXECUTED",
+    "processes":  [
+                      {
+                          "name":  "QQ.Production.Intraday.Lmax.ConnectivityLab",
+                          "ownership":  "single ARCH7B qualification process",
+                          "clock":  "DateTimeOffset.UtcNow with UTC-only contract"
+                      }
+                  ],
+    "sessions":  [
+                     {
+                         "name":  "opening-market-observation",
+                         "type":  "FIX_4_4_MARKET_DATA_SNAPSHOT_ONLY",
+                         "endpoint_reference":  "QQ_LMAX_FIX_MARKET_DATA_HOST:QQ_LMAX_FIX_MARKET_DATA_PORT",
+                         "lifecycle":  "completed before opening order construction",
+                         "maximum_attempts":  1,
+                         "polygon_allowed":  false,
+                         "allow_order_submission":  false
+                     },
+                     {
+                         "name":  "broker-order-entry",
+                         "type":  "FIX_4_4_ORDER_ENTRY",
+                         "endpoint_reference":  "QQ_LMAX_FIX_ORDER_HOST:QQ_LMAX_FIX_ORDER_PORT",
+                         "target_comp_id":  "LMXBD",
+                         "lifecycle":  "active across opening, residual cancel, fresh flatten observation, flatten and reconciliation",
+                         "maximum_new_order_single":  2,
+                         "allow_order_submission":  true
+                     },
+                     {
+                         "name":  "flatten-market-observation",
+                         "type":  "FIX_4_4_MARKET_DATA_SNAPSHOT_ONLY",
+                         "endpoint_reference":  "QQ_LMAX_FIX_MARKET_DATA_HOST:QQ_LMAX_FIX_MARKET_DATA_PORT",
+                         "lifecycle":  "new clean session after opening terminal CumQty and persisted Fill sum agree",
+                         "maximum_attempts":  3,
+                         "request_mode":  "SnapshotOnly",
+                         "symbol_encoding":  "non-Auto explicit mapping",
+                         "polygon_allowed":  false,
+                         "allow_order_submission":  false
+                     }
+                 ],
+    "symbol_mapping":  {
+                           "symbol":  "GBPUSD",
+                           "slash_symbol":  "GBP/USD",
+                           "security_id":  "4002",
+                           "security_id_source":  "8",
+                           "venue":  "LMAX_DEMO"
+                       },
+    "communication":  {
+                          "market_data_to_execution":  "immutable content-addressed observation decision passed in process",
+                          "opening_market_observation_id":  "persisted in outbound send ledger OPEN row",
+                          "flatten_market_observation_id":  "persisted in outbound send ledger FLATTEN row",
+                          "observation_identity_rule":  "opening and flatten SHA-256 must be distinct even when bid and ask are numerically equal"
+                      },
+    "freshness_guard":  {
+                            "maximum_age_seconds":  5,
+                            "sequence_integrity_required":  true,
+                            "crossed_book_rejected":  true,
+                            "maximum_spread_pips":  2,
+                            "tick_size":  0.00001,
+                            "opening_rule":  "BUY limit equals fresh LMAX ask",
+                            "flatten_rule":  "SELL limit equals newly acquired fresh LMAX bid"
+                        },
+    "restart":  {
+                    "send_intent_authority":  "PostgreSQL arch7b_order_send_ledger",
+                    "fill_quantity_authority":  "sum of deduplicated PostgreSQL arch7b_fills for the known ClOrdID",
+                    "opening_resend":  false,
+                    "cancel_resend":  false,
+                    "flatten_resend_after_persisted_intent":  false,
+                    "known_order_status_only":  true
+                },
+    "no_fresh_flatten_bbo":  {
+                                 "action":  "KILL_SWITCH_ACTIVATED_FLATTEN_BBO_UNAVAILABLE",
+                                 "order_construction":  "blocked",
+                                 "bounded_wait":  "up to three SnapshotOnly attempts and never beyond the global lifecycle deadline",
+                                 "opening_observation_reuse":  false,
+                                 "polygon_fallback":  false,
+                                 "operator_state":  "position remains non-flat and must be treated as unresolved until broker evidence confirms flat"
+                             },
+    "cleanup":  [
+                    "unsubscribe when SnapshotPlusUpdates is ever used outside ARCH7B",
+                    "market-data logout and socket disposal per attempt",
+                    "order-entry logout attempted on every post-logon exit, including fail-closed exits",
+                    "order-entry socket disposal on every exit",
+                    "PostgreSQL advisory lease release on every exit"
+                ]
+}

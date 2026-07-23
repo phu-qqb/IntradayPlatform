@@ -164,6 +164,48 @@ public sealed class LmaxConnectivityLabRunner(
             return orderStatusResult.Status == "Failed" ? 1 : orderStatusResult.Status == "Skipped" ? 2 : 0;
         }
 
+        if (command.Equals("fix-arch7b-known-order-lifecycle", StringComparison.OrdinalIgnoreCase))
+        {
+            var requestPath = GetStringArg(optionArgs, "request-json");
+            if (string.IsNullOrWhiteSpace(requestPath) || !File.Exists(requestPath))
+            {
+                var missing = LmaxFixArch7bKnownOrderResult.Skipped(
+                    "ARCH7B_REQUEST_JSON_MISSING");
+                WriteArch7bKnownOrderResult(missing);
+                return 2;
+            }
+
+            try
+            {
+                var request = JsonSerializer.Deserialize<LmaxFixArch7bKnownOrderRequest>(
+                    File.ReadAllText(requestPath),
+                    new JsonSerializerOptions(JsonSerializerDefaults.Web));
+                if (request is null)
+                {
+                    WriteArch7bKnownOrderResult(
+                        LmaxFixArch7bKnownOrderResult.Skipped("ARCH7B_REQUEST_JSON_INVALID"));
+                    return 2;
+                }
+
+                request = request with
+                {
+                    ExactOperatorAuthorizationPresent =
+                        request.ExactOperatorAuthorizationPresent &&
+                        HasFlag(optionArgs, "confirm-arch7b-known-order")
+                };
+                var arch7bResult = await fixClient.Arch7bKnownOrderLifecycleAsync(
+                    options, request, cancellationToken);
+                WriteArch7bKnownOrderResult(arch7bResult);
+                return arch7bResult.Status == "Failed" ? 1 : arch7bResult.Status == "Skipped" ? 2 : 0;
+            }
+            catch (Exception exception) when (exception is IOException or JsonException)
+            {
+                WriteArch7bKnownOrderResult(
+                    LmaxFixArch7bKnownOrderResult.Skipped($"ARCH7B_REQUEST_JSON_INVALID:{exception.GetType().Name}"));
+                return 2;
+            }
+        }
+
         if (command.Equals("fix-order-mass-status-smoke", StringComparison.OrdinalIgnoreCase) ||
             command.Equals("fix-position-report-smoke", StringComparison.OrdinalIgnoreCase))
         {
@@ -1151,5 +1193,26 @@ public sealed class LmaxConnectivityLabRunner(
         {
             Console.WriteLine($"- {decision}");
         }
+    }
+
+    private static void WriteArch7bKnownOrderResult(LmaxFixArch7bKnownOrderResult result)
+    {
+        Console.WriteLine($"Command: {result.Command}");
+        Console.WriteLine($"Status: {result.Status}");
+        Console.WriteLine($"Connected: {result.Connected}");
+        Console.WriteLine($"LoggedOn: {result.LoggedOn}");
+        Console.WriteLine($"OpeningSent: {result.OpeningSent}");
+        Console.WriteLine($"CancelSent: {result.CancelSent}");
+        Console.WriteLine($"FlattenSent: {result.FlattenSent}");
+        Console.WriteLine($"OrderStatusRequestCount: {result.OrderStatusRequestCount}");
+        Console.WriteLine($"LogoutSent: {result.LogoutSent}");
+        Console.WriteLine($"Blocker: {result.Blocker ?? "(none)"}");
+        Console.WriteLine($"StartedAtUtc: {result.StartedAtUtc:O}");
+        Console.WriteLine($"CompletedAtUtc: {result.CompletedAtUtc:O}");
+        foreach (var report in result.ExecutionReports)
+            Console.WriteLine(
+                $"ExecutionReport: Seq={report.FixSequenceNumber} PossDup={report.PossDup} ExecID={report.ExecId} OrderID={report.OrderId} ClOrdID={report.ClOrdId} OrigClOrdID={report.OrigClOrdId} ExecType={report.ExecTypeRaw} OrdStatus={report.OrdStatusRaw} CumQty={report.CumQty} LeavesQty={report.LeavesQty} LastQty={report.LastQty} LastPx={report.LastPx} RawSHA256={report.RawMessageSha256}");
+        foreach (var diagnostic in result.Diagnostics)
+            Console.WriteLine($"Diagnostic: {diagnostic}");
     }
 }

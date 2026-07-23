@@ -104,6 +104,9 @@ public sealed record LmaxFixMarketDataSmokeResult(
     IReadOnlyList<string> Diagnostics,
     IReadOnlyList<string> Attempts)
 {
+    public bool InboundSequenceIntegrityProven { get; init; }
+    public string? SnapshotSha256 { get; init; }
+
     public static LmaxFixMarketDataSmokeResult Skipped(string message, IReadOnlyList<string> safetyDecisions)
     {
         var now = DateTimeOffset.UtcNow;

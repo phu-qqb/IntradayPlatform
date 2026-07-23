@@ -9,9 +9,14 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="10.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\..\src\QQ.Production.Intraday.Application\QQ.Production.Intraday.Application.csproj" />
     <ProjectReference Include="..\..\src\QQ.Production.Intraday.Domain\QQ.Production.Intraday.Domain.csproj" />
     <ProjectReference Include="..\..\src\QQ.Production.Intraday.Infrastructure.Lmax\QQ.Production.Intraday.Infrastructure.Lmax.csproj" />
+    <ProjectReference Include="..\..\src\QQ.Production.Intraday.Infrastructure.PostgreSql\QQ.Production.Intraday.Infrastructure.PostgreSql.csproj" />
   </ItemGroup>
 
   <ItemGroup>

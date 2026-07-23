@@ -1,0 +1,52 @@
+{
+    "gate":  "ARCH7B_REQUALIFY_EXISTING_LMAX_DEMO_FIX_ORDER_ENTRY_SINGLE_BOUNDED_KNOWN_ORDER_LIFECYCLE_FLATTEN_AND_RECONCILIATION",
+    "status":  "ARCH7B_LOCAL_IMPLEMENTATION_AND_EXPORT_PACKET_READY_AWAITING_PUBLICATION_AUTHORIZATION",
+    "targeted_arch7b_tests":  {
+                                  "passed":  49,
+                                  "failed":  0,
+                                  "skipped":  0
+                              },
+    "coupled_regressions":  {
+                                "filter":  "ARCH6C/D/E/F, ARCH7A, TargetPosition, PositionOnlyDrift, PostgreSQL",
+                                "passed":  319,
+                                "failed":  0,
+                                "skipped":  0
+                            },
+    "release_solution_build":  {
+                                   "errors":  0,
+                                   "warnings":  14,
+                                   "warning_classification":  "PRE_EXISTING_NU1903_SYSTEM_SECURITY_CRYPTOGRAPHY_XML"
+                               },
+    "pending_model_changes":  false,
+    "sql_two_root_byte_identical":  true,
+    "broader_fixture_dependent_campaign":  {
+                                               "status":  "NOT_QUALIFYING_IN_THIS_WORKTREE",
+                                               "reason":  "Historical execution-sim and manual-paper tests require readiness artifacts and fixtures not present in the clean linked worktree.",
+                                               "code_regression_inferred":  false
+                                           },
+    "database_connection_performed":  false,
+    "database_apply_performed":  false,
+    "fix_connection_performed":  false,
+    "secret_read_performed":  false,
+    "order_sent":  false,
+    "real_account_accessed":  false,
+    "production_mutation":  false,
+    "bbo_review":  {
+                       "opening":  "FRESH_LMAX_SEQUENCE_VALID_CONTENT_ADDRESSED_TOUCH_ASK",
+                       "flatten":  "NEW_POST_TERMINAL_LMAX_OBSERVATION_TOUCH_BID",
+                       "opening_and_flatten_observation_ids_distinct":  true,
+                       "polygon_fallback":  false,
+                       "maximum_flatten_bbo_acquisition_attempts":  3,
+                       "no_fresh_bbo":  "KILL_SWITCH_FAIL_CLOSED_NO_ORDER"
+                   },
+    "cleanup_review":  {
+                           "post_logon_logout_attempted_on_every_exit":  true,
+                           "stream_and_socket_disposed_on_every_exit":  true,
+                           "advisory_lease_released_on_every_exit":  true
+                       },
+    "secret_review":  {
+                          "content_value_scan":  "NOT_RUN_NO_SECRET_READ_BOUNDARY",
+                          "new_secret_values_introduced_by_this_change":  false,
+                          "evidence":  "Only secret-reference names are documented; no credential value, connection string value, or endpoint credential was read or written."
+                      }
+}

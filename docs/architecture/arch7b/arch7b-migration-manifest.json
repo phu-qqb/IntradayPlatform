@@ -1,0 +1,22 @@
+{
+  "migration_id": "20260723085240_AddArch7bLmaxDemoKnownOrderLifecycle",
+  "previous_migration_id": "20260723010000_CorrectArch7aSerializationReplayAndChildPriceScale",
+  "status": "GENERATED_NOT_APPLIED",
+  "additive_tables": [
+    "arch7b_qualification_runs",
+    "arch7b_fix_session_events",
+    "arch7b_order_send_ledger",
+    "arch7b_execution_reports",
+    "arch7b_fills",
+    "arch7b_position_ledger_events",
+    "arch7b_final_reconciliations"
+  ],
+  "sql_up_sha256": "8911b660adeca29d8af0d4141fe54b4f5adb429f649019a458554b4072fb20ff",
+  "sql_idempotent_sha256": "39f6911028f3cf2cb69b020f5f0d4dfa2fcb58bab3ba0913caedc128bd817ad0",
+  "sql_down_sha256": "8450c28d7e859589c72a238b78f7e74e009f540472835364633eb714b92a1ba8",
+  "two_root_byte_identical": true,
+  "pending_model_changes": false,
+  "up_modifies_arch6f_or_arch7a_tables": false,
+  "business_dml": false,
+  "database_apply_performed": false
+}

@@ -1,0 +1,62 @@
+{
+  "gate": "ARCH7B_REQUALIFY_EXISTING_LMAX_DEMO_FIX_ORDER_ENTRY_SINGLE_BOUNDED_KNOWN_ORDER_LIFECYCLE_FLATTEN_AND_RECONCILIATION",
+  "inventory_version": "arch7b_existing_lmax_demo_execution_inventory_v1",
+  "base_commit": "81493eeff4ff114ca293f84d57a9c1e079756525",
+  "classification": "LMAX_FIX_KNOWN_ORDER_STATUS_ONLY",
+  "components": [
+    {
+      "component": "LMAX FIX 4.4 order-entry session",
+      "path": "tools/QQ.Production.Intraday.Lmax.ConnectivityLab/RawFixSessionClient.cs",
+      "historical_commit": "c3a9a46212906bcca227f47f306cea32c1c01105",
+      "tests": "LmaxConnectivityLabTests and ARCH7B bounded runner tests",
+      "dependencies": ["LabFixRecovery.cs", "LabModels.cs"],
+      "status": "CURRENT_REUSABLE",
+      "action": "Reused through the partial ARCH7B runner; no gateway replacement."
+    },
+    {
+      "component": "NewOrderSingle, cancel, OrderStatusRequest and ExecutionReport codecs",
+      "path": "tools/QQ.Production.Intraday.Lmax.ConnectivityLab/LabFixRecovery.cs",
+      "historical_commit": "799e82c6471371f8664f7aa6f3e4759c42de1eca",
+      "tests": "Historical R215 tag contract plus ARCH7B normalization tests",
+      "dependencies": ["LmaxFixMarketDataCodec"],
+      "status": "CURRENT_REUSABLE",
+      "action": "Retain raw message SHA-256, MsgSeqNum and PossDup in normalized reports."
+    },
+    {
+      "component": "Historical full Demo lifecycle",
+      "path": "tools/QQ.Production.Intraday.Lmax.ConnectivityLab/RawFixSessionClient.cs",
+      "historical_commit": "54b3ba1c3266882e3df1a48a5d536754b116cac9",
+      "tests": "Historical full lifecycle evidence validation",
+      "dependencies": ["LMAX Broker FIX Trading Demo"],
+      "status": "HISTORICAL_REUSABLE",
+      "action": "Requalified behind exact ARCH7B packet, durable send ledger and exclusivity lease."
+    },
+    {
+      "component": "ARCH7A TradeIntent/RiskDecision/ParentOrder/ChildOrder lineage",
+      "path": "src/QQ.Production.Intraday.Infrastructure.PostgreSql/Arch7aPostgreSqlShadowExecution.cs",
+      "historical_commit": "5b99f52206f0f2bcc08cc2413d643c3285090c45",
+      "tests": "ARCH7A persistence and source-selection regressions",
+      "dependencies": ["ARCH6F latest qualifying economic revision"],
+      "status": "CURRENT_REUSABLE",
+      "action": "Read-only source for one deterministic ChildOrder; no ARCH7A mutation."
+    },
+    {
+      "component": "Known-order recovery",
+      "path": "tools/QQ.Production.Intraday.Lmax.ConnectivityLab/Arch7bFixRecoveryPlanner.cs",
+      "historical_commit": "799e82c6471371f8664f7aa6f3e4759c42de1eca",
+      "tests": "Restart before ack, after partial fill, before flatten and after flatten send",
+      "dependencies": ["ARCH7B send ledger", "persisted ExecutionReports"],
+      "status": "CURRENT_REUSABLE",
+      "action": "Never resend an existing D or F; use H for known ClOrdID only."
+    },
+    {
+      "component": "Mass-status / complete external-order discovery",
+      "path": "docs/architecture/arch7a/lmax_fix_open_order_capability_matrix.json",
+      "historical_commit": "81493eeff4ff114ca293f84d57a9c1e079756525",
+      "tests": "ARCH7A LMAX capability tests",
+      "dependencies": [],
+      "status": "UNSAFE",
+      "action": "Not used; ExternalOrManualOrderCoverage remains UNPROVEN."
+    }
+  ]
+}
