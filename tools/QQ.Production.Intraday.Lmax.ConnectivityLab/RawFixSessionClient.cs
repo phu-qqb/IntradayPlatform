@@ -6,7 +6,9 @@ using System.Net.Sockets;
 using System.Security.Authentication;
 using System.Text;
 
-public sealed class RawLmaxFixSessionClient(LmaxConnectivityLabSafetyValidator safety) : ILmaxFixSessionClient
+public sealed partial class RawLmaxFixSessionClient(
+    LmaxConnectivityLabSafetyValidator safety,
+    ILmaxFixArch7bLifecycleObserver? arch7bObserver = null) : ILmaxFixSessionClient
 {
     public LabCommandResult Validate(LmaxConnectivityLabOptions options, bool marketData)
     {

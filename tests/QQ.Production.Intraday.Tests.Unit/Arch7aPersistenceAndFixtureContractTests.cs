@@ -15,8 +15,10 @@ public sealed class Arch7aPersistenceAndFixtureContractTests
     {
         using var context = Context();
         Assert.False(context.Database.HasPendingModelChanges());
-        Assert.Equal(PmsShadowStateContract.Arch7aCorrectiveMigrationId, context.Database.GetMigrations().Last());
-        Assert.Equal(PmsShadowStateContract.MigrationIds, context.Database.GetMigrations().ToArray());
+        var migrations = context.Database.GetMigrations().ToArray();
+        Assert.Contains(PmsShadowStateContract.Arch7aCorrectiveMigrationId, migrations);
+        Assert.Equal(PmsShadowStateContract.Arch7bMigrationId, migrations.Last());
+        Assert.Equal(PmsShadowStateContract.MigrationIds, migrations);
     }
 
     [Fact]

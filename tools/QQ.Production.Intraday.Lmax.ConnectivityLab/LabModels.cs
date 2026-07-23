@@ -389,6 +389,9 @@ public interface ILmaxFixSessionClient
     Task<LmaxFixTradeCaptureSmokeResult> TradeCaptureSmokeAsync(LmaxConnectivityLabOptions options, LmaxFixTradeCaptureRequestOptions request, CancellationToken cancellationToken);
     Task<LmaxFixDemoOrderLifecycleResult> DemoOrderLifecycleAsync(LmaxConnectivityLabOptions options, LmaxFixDemoOrderRequest request, bool explicitConfirmation, CancellationToken cancellationToken);
     Task<LmaxFixOrderStatusSmokeResult> OrderStatusSmokeAsync(LmaxConnectivityLabOptions options, LmaxFixOrderStatusSmokeRequest request, CancellationToken cancellationToken);
+    Task<LmaxFixArch7bKnownOrderResult> Arch7bKnownOrderLifecycleAsync(LmaxConnectivityLabOptions options, LmaxFixArch7bKnownOrderRequest request, CancellationToken cancellationToken)
+        => Task.FromResult(LmaxFixArch7bKnownOrderResult.Skipped(
+            "ARCH7B_EXECUTION_DISABLED_BY_DEFAULT"));
     Task<LmaxFixLifecycleEvidenceResult> DemoLifecycleEvidenceAsync(LmaxConnectivityLabOptions options, LmaxFixDemoOrderRequest request, LmaxFixTradeCaptureRequestOptions tradeCaptureRequest, bool explicitConfirmation, CancellationToken cancellationToken);
 }
 
@@ -458,6 +461,9 @@ public sealed class PlaceholderLmaxFixSessionClient : ILmaxFixSessionClient
 
     public Task<LmaxFixOrderStatusSmokeResult> OrderStatusSmokeAsync(LmaxConnectivityLabOptions options, LmaxFixOrderStatusSmokeRequest request, CancellationToken cancellationToken)
         => Task.FromResult(LmaxFixOrderStatusSmokeResult.Skipped("Order status smoke is not implemented in this placeholder client.", LmaxConnectivityLabSafetyValidator.DecisionsForExternalCommand(options), request.ClOrdId));
+
+    public Task<LmaxFixArch7bKnownOrderResult> Arch7bKnownOrderLifecycleAsync(LmaxConnectivityLabOptions options, LmaxFixArch7bKnownOrderRequest request, CancellationToken cancellationToken)
+        => Task.FromResult(LmaxFixArch7bKnownOrderResult.Skipped("ARCH7B raw FIX client is not wired into this placeholder client."));
 
     public Task<LmaxFixLifecycleEvidenceResult> DemoLifecycleEvidenceAsync(LmaxConnectivityLabOptions options, LmaxFixDemoOrderRequest request, LmaxFixTradeCaptureRequestOptions tradeCaptureRequest, bool explicitConfirmation, CancellationToken cancellationToken)
     {

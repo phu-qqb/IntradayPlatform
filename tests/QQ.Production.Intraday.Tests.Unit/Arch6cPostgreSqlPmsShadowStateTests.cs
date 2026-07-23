@@ -128,9 +128,10 @@ public sealed class Arch6cPostgreSqlPmsShadowStateTests
         using var context = NewContext();
         var names = context.Model.GetEntityTypes().Select(x => x.ClrType.Name).ToArray();
         var executionNames = names.Where(name =>
-                name.Contains("TradeIntent", StringComparison.OrdinalIgnoreCase) ||
+                name.StartsWith("PmsShadow", StringComparison.Ordinal) &&
+                (name.Contains("TradeIntent", StringComparison.OrdinalIgnoreCase) ||
                 name.Contains("Order", StringComparison.OrdinalIgnoreCase) ||
-                name.Contains("RiskDecision", StringComparison.OrdinalIgnoreCase))
+                name.Contains("RiskDecision", StringComparison.OrdinalIgnoreCase)))
             .Order(StringComparer.Ordinal)
             .ToArray();
 
@@ -140,9 +141,12 @@ public sealed class Arch6cPostgreSqlPmsShadowStateTests
             nameof(PmsShadowRiskDecisionRow),
             nameof(PmsShadowTradeIntentRow)
         ], executionNames);
-        Assert.DoesNotContain(names, name => name.Contains("Fill", StringComparison.OrdinalIgnoreCase));
-        Assert.DoesNotContain(names, name => name.Contains("Ledger", StringComparison.OrdinalIgnoreCase));
-        Assert.DoesNotContain(names, name => name.Contains("ExecutionReport", StringComparison.OrdinalIgnoreCase));
+        var arch6cAndArch7aNames = names
+            .Where(name => name.StartsWith("PmsShadow", StringComparison.Ordinal)).ToArray();
+        Assert.DoesNotContain(arch6cAndArch7aNames, name => name.Contains("Fill", StringComparison.OrdinalIgnoreCase));
+        Assert.DoesNotContain(arch6cAndArch7aNames, name => name.Contains("Ledger", StringComparison.OrdinalIgnoreCase));
+        Assert.DoesNotContain(arch6cAndArch7aNames,
+            name => name.Contains("ExecutionReport", StringComparison.OrdinalIgnoreCase));
     }
     [Fact]
     public void Ef_model_uses_restrict_for_every_foreign_key()

@@ -18,10 +18,12 @@ public static class PmsShadowStateContract
     public const string Arch7aMigrationId = "20260723000000_AddArch7aShadowExecutionAfterArch6fEconomicRevisions";
     public const string Arch7aCorrectiveMigrationId =
         "20260723010000_CorrectArch7aSerializationReplayAndChildPriceScale";
+    public const string Arch7bMigrationId =
+        "20260723085240_AddArch7bLmaxDemoKnownOrderLifecycle";
     public const string MigrationId = InitialMigrationId;
     public static readonly IReadOnlyList<string> MigrationIds = [InitialMigrationId, CorrectiveMigrationId,
         IntradayMigrationId, IntradayEconomicRevisionBaseMigrationId, IntradayEconomicRevisionMigrationId,
-        Arch7aMigrationId, Arch7aCorrectiveMigrationId];
+        Arch7aMigrationId, Arch7aCorrectiveMigrationId, Arch7bMigrationId];
     public const string EvidenceClassification = "EVIDENCE_ONLY_NONACCOUNTING";
     public const string NoOrderClassification = "NO_ORDER";
     public const string TestEnvironment = "LMAX_TEST_EOD_ONLY";

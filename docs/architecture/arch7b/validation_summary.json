@@ -1,0 +1,34 @@
+{
+  "gate": "ARCH7B_REQUALIFY_EXISTING_LMAX_DEMO_FIX_ORDER_ENTRY_SINGLE_BOUNDED_KNOWN_ORDER_LIFECYCLE_FLATTEN_AND_RECONCILIATION",
+  "status": "OFFLINE_IMPLEMENTATION_VALIDATED_LIVE_NOT_AUTHORIZED",
+  "targeted_arch7b_tests": {
+    "passed": 40,
+    "failed": 0,
+    "skipped": 0
+  },
+  "coupled_regressions": {
+    "filter": "ARCH6C/D/E/F, ARCH7A, TargetPosition, PositionOnlyDrift, PostgreSQL",
+    "passed": 319,
+    "failed": 0,
+    "skipped": 0
+  },
+  "release_solution_build": {
+    "errors": 0,
+    "warnings": 14,
+    "warning_classification": "PRE_EXISTING_NU1903_SYSTEM_SECURITY_CRYPTOGRAPHY_XML"
+  },
+  "pending_model_changes": false,
+  "sql_two_root_byte_identical": true,
+  "broader_fixture_dependent_campaign": {
+    "status": "NOT_QUALIFYING_IN_THIS_WORKTREE",
+    "reason": "Historical execution-sim and manual-paper tests require readiness artifacts and fixtures not present in the clean linked worktree.",
+    "code_regression_inferred": false
+  },
+  "database_connection_performed": false,
+  "database_apply_performed": false,
+  "fix_connection_performed": false,
+  "secret_read_performed": false,
+  "order_sent": false,
+  "real_account_accessed": false,
+  "production_mutation": false
+}

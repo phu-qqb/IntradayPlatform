@@ -32,6 +32,19 @@ public sealed class PmsShadowDbContext(DbContextOptions<PmsShadowDbContext> opti
     public DbSet<PmsShadowChildOrderRow> ShadowChildOrders => Set<PmsShadowChildOrderRow>();
     public DbSet<PmsShadowExecutionQualificationRunRow> ShadowExecutionQualificationRuns =>
         Set<PmsShadowExecutionQualificationRunRow>();
+    public DbSet<PmsArch7bQualificationRunRow> Arch7bQualificationRuns =>
+        Set<PmsArch7bQualificationRunRow>();
+    public DbSet<PmsArch7bFixSessionEventRow> Arch7bFixSessionEvents =>
+        Set<PmsArch7bFixSessionEventRow>();
+    public DbSet<PmsArch7bOrderSendLedgerRow> Arch7bOrderSendLedger =>
+        Set<PmsArch7bOrderSendLedgerRow>();
+    public DbSet<PmsArch7bExecutionReportRow> Arch7bExecutionReports =>
+        Set<PmsArch7bExecutionReportRow>();
+    public DbSet<PmsArch7bFillRow> Arch7bFills => Set<PmsArch7bFillRow>();
+    public DbSet<PmsArch7bPositionLedgerEventRow> Arch7bPositionLedgerEvents =>
+        Set<PmsArch7bPositionLedgerEventRow>();
+    public DbSet<PmsArch7bFinalReconciliationRow> Arch7bFinalReconciliations =>
+        Set<PmsArch7bFinalReconciliationRow>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -60,6 +73,13 @@ public sealed class PmsShadowDbContext(DbContextOptions<PmsShadowDbContext> opti
         ConfigureShadowChildOrder(modelBuilder.Entity<PmsShadowChildOrderRow>());
         ConfigureShadowExecutionQualificationRun(
             modelBuilder.Entity<PmsShadowExecutionQualificationRunRow>());
+        ConfigureArch7bQualificationRun(modelBuilder.Entity<PmsArch7bQualificationRunRow>());
+        ConfigureArch7bFixSessionEvent(modelBuilder.Entity<PmsArch7bFixSessionEventRow>());
+        ConfigureArch7bOrderSendLedger(modelBuilder.Entity<PmsArch7bOrderSendLedgerRow>());
+        ConfigureArch7bExecutionReport(modelBuilder.Entity<PmsArch7bExecutionReportRow>());
+        ConfigureArch7bFill(modelBuilder.Entity<PmsArch7bFillRow>());
+        ConfigureArch7bPositionLedgerEvent(modelBuilder.Entity<PmsArch7bPositionLedgerEventRow>());
+        ConfigureArch7bFinalReconciliation(modelBuilder.Entity<PmsArch7bFinalReconciliationRow>());
         ApplySnakeCaseColumns(modelBuilder);
     }
 
@@ -556,6 +576,216 @@ public sealed class PmsShadowDbContext(DbContextOptions<PmsShadowDbContext> opti
         Hash(entity.Property(x => x.NettingSha256));
         Text(entity.Property(x => x.Status), 32);
         Hash(entity.Property(x => x.SourceLineageSha256));
+    }
+    private static void ConfigureArch7bQualificationRun(
+        EntityTypeBuilder<PmsArch7bQualificationRunRow> entity)
+    {
+        entity.ToTable("arch7b_qualification_runs", table =>
+        {
+            table.HasCheckConstraint("ck_arch7b_run_hashes",
+                $"{ShaCheck("policy_sha256")} AND {ShaCheck("authorization_packet_sha256")}");
+            table.HasCheckConstraint("ck_arch7b_run_test_demo",
+                $"environment = '{Arch7bKnownOrderQualificationPolicy.Environment}' AND " +
+                $"account_id = '{Arch7bKnownOrderQualificationPolicy.DemoAccountId}' AND " +
+                $"account_id <> '{Arch7bKnownOrderQualificationPolicy.ForbiddenRealAccountId}'");
+            table.HasCheckConstraint("ck_arch7b_run_scope",
+                $"gate = '{Arch7bKnownOrderQualificationPolicy.Gate}' AND " +
+                $"scope = '{Arch7bKnownOrderQualificationPolicy.Scope}' AND " +
+                $"external_or_manual_order_coverage = '{Arch7bKnownOrderQualificationPolicy.ExternalOrManualOrderCoverage}'");
+            table.HasCheckConstraint("ck_arch7b_run_quantity",
+                "venue_quantity > 0 AND quantity_increment > 0 AND price_increment > 0");
+        });
+        entity.HasKey(x => x.QualificationRunId);
+        entity.HasIndex(x => x.ChildOrderId).IsUnique();
+        entity.HasIndex(x => x.OpeningClientOrderId).IsUnique();
+        entity.HasIndex(x => x.FlattenClientOrderId).IsUnique();
+        entity.HasIndex(x => x.CancelClientOrderId).IsUnique();
+        Restrict<PmsArch7bQualificationRunRow, PmsShadowChildOrderRow>(entity, x => x.ChildOrderId);
+        Text(entity.Property(x => x.Gate), 160);
+        Text(entity.Property(x => x.Scope), 96);
+        Text(entity.Property(x => x.Environment), 16);
+        Text(entity.Property(x => x.AccountId), 32);
+        Text(entity.Property(x => x.Symbol), 16);
+        Text(entity.Property(x => x.SecurityId), 64);
+        Text(entity.Property(x => x.SecurityIdSource), 16);
+        Text(entity.Property(x => x.OpeningSide), 8);
+        Quantity(entity.Property(x => x.VenueQuantity));
+        Quantity(entity.Property(x => x.QuantityIncrement));
+        Price(entity.Property(x => x.PriceIncrement));
+        Text(entity.Property(x => x.OpeningClientOrderId), 32);
+        Text(entity.Property(x => x.FlattenClientOrderId), 32);
+        Text(entity.Property(x => x.CancelClientOrderId), 32);
+        Hash(entity.Property(x => x.PolicySha256));
+        Hash(entity.Property(x => x.AuthorizationPacketSha256));
+        Text(entity.Property(x => x.OwnerId), 128);
+        Text(entity.Property(x => x.ExternalOrManualOrderCoverage), 32);
+    }
+
+    private static void ConfigureArch7bFixSessionEvent(
+        EntityTypeBuilder<PmsArch7bFixSessionEventRow> entity)
+    {
+        entity.ToTable("arch7b_fix_session_events", table =>
+            table.HasCheckConstraint("ck_arch7b_fix_session_event_sha256", ShaCheck("event_sha256")));
+        entity.HasKey(x => x.SessionEventId);
+        entity.HasIndex(x => new { x.QualificationRunId, x.SessionId, x.EventSha256 }).IsUnique();
+        Restrict<PmsArch7bFixSessionEventRow, PmsArch7bQualificationRunRow>(
+            entity, x => x.QualificationRunId);
+        Text(entity.Property(x => x.SessionId), 128);
+        Text(entity.Property(x => x.EventType), 64);
+        Hash(entity.Property(x => x.EventSha256));
+    }
+
+    private static void ConfigureArch7bOrderSendLedger(
+        EntityTypeBuilder<PmsArch7bOrderSendLedgerRow> entity)
+    {
+        entity.ToTable("arch7b_order_send_ledger", table =>
+        {
+            table.HasCheckConstraint("ck_arch7b_send_hashes",
+                $"{ShaCheck("bbo_snapshot_sha256")} AND {ShaCheck("payload_sha256")}");
+            table.HasCheckConstraint("ck_arch7b_send_message_type", "message_type IN ('D', 'F', 'H')");
+            table.HasCheckConstraint("ck_arch7b_send_quantity", "quantity >= 0");
+        });
+        entity.HasKey(x => x.SendLedgerId);
+        entity.HasIndex(x => new { x.QualificationRunId, x.PayloadSha256 }).IsUnique();
+        Restrict<PmsArch7bOrderSendLedgerRow, PmsArch7bQualificationRunRow>(
+            entity, x => x.QualificationRunId);
+        Text(entity.Property(x => x.LifecycleRole), 32);
+        Text(entity.Property(x => x.MessageType), 1);
+        Text(entity.Property(x => x.ClientOrderId), 32);
+        entity.Property(x => x.OriginalClientOrderId).HasMaxLength(32);
+        Text(entity.Property(x => x.Symbol), 16);
+        Text(entity.Property(x => x.SecurityId), 64);
+        Text(entity.Property(x => x.Side), 8);
+        Quantity(entity.Property(x => x.Quantity));
+        entity.Property(x => x.LimitPrice).HasPrecision(38, 28);
+        Hash(entity.Property(x => x.BboSnapshotSha256));
+        Hash(entity.Property(x => x.PayloadSha256));
+    }
+
+    private static void ConfigureArch7bExecutionReport(
+        EntityTypeBuilder<PmsArch7bExecutionReportRow> entity)
+    {
+        entity.ToTable("arch7b_execution_reports", table =>
+        {
+            table.HasCheckConstraint("ck_arch7b_execution_report_sha256", ShaCheck("raw_message_sha256"));
+            table.HasCheckConstraint("ck_arch7b_execution_report_demo",
+                $"account_id = '{Arch7bKnownOrderQualificationPolicy.DemoAccountId}' AND " +
+                $"account_id <> '{Arch7bKnownOrderQualificationPolicy.ForbiddenRealAccountId}'");
+            table.HasCheckConstraint("ck_arch7b_execution_report_quantities",
+                "fix_sequence_number > 0 AND order_quantity >= 0 AND cumulative_quantity >= 0 AND " +
+                "leaves_quantity >= 0 AND last_quantity >= 0 AND last_price >= 0");
+        });
+        entity.HasKey(x => x.ExecutionReportId);
+        entity.HasIndex(x => x.RawMessageSha256).IsUnique();
+        entity.HasIndex(x => new { x.AccountId, x.ExecId }).IsUnique();
+        entity.HasIndex(x => new { x.SessionId, x.FixSequenceNumber }).IsUnique();
+        Restrict<PmsArch7bExecutionReportRow, PmsArch7bQualificationRunRow>(
+            entity, x => x.QualificationRunId);
+        Text(entity.Property(x => x.SessionId), 128);
+        Text(entity.Property(x => x.AccountId), 32);
+        Text(entity.Property(x => x.OrderId), 128);
+        Text(entity.Property(x => x.ClientOrderId), 32);
+        entity.Property(x => x.OriginalClientOrderId).HasMaxLength(32);
+        Text(entity.Property(x => x.ExecId), 128);
+        Text(entity.Property(x => x.ExecType), 8);
+        Text(entity.Property(x => x.OrderStatus), 8);
+        Text(entity.Property(x => x.Symbol), 16);
+        Text(entity.Property(x => x.SecurityId), 64);
+        Text(entity.Property(x => x.Side), 8);
+        Quantity(entity.Property(x => x.OrderQuantity));
+        Quantity(entity.Property(x => x.CumulativeQuantity));
+        Quantity(entity.Property(x => x.LeavesQuantity));
+        Quantity(entity.Property(x => x.LastQuantity));
+        Price(entity.Property(x => x.LastPrice));
+        Price(entity.Property(x => x.AveragePrice));
+        entity.Property(x => x.LimitPrice).HasPrecision(38, 28);
+        Hash(entity.Property(x => x.RawMessageSha256));
+    }
+
+    private static void ConfigureArch7bFill(EntityTypeBuilder<PmsArch7bFillRow> entity)
+    {
+        entity.ToTable("arch7b_fills", table =>
+        {
+            table.HasCheckConstraint("ck_arch7b_fill_sha256", ShaCheck("raw_message_sha256"));
+            table.HasCheckConstraint("ck_arch7b_fill_values", "quantity > 0 AND price > 0");
+            table.HasCheckConstraint("ck_arch7b_fill_fees",
+                "(fee_status = 'BROKER_FEES_UNAVAILABLE_NOT_ASSUMED_ZERO' AND fee_amount IS NULL) OR " +
+                "(fee_status = 'BROKER_FEES_REPORTED' AND fee_amount IS NOT NULL)");
+        });
+        entity.HasKey(x => x.FillId);
+        entity.HasIndex(x => x.ExecutionReportId).IsUnique();
+        entity.HasIndex(x => x.ExecId).IsUnique();
+        entity.HasIndex(x => x.RawMessageSha256).IsUnique();
+        Restrict<PmsArch7bFillRow, PmsArch7bQualificationRunRow>(entity, x => x.QualificationRunId);
+        Restrict<PmsArch7bFillRow, PmsArch7bExecutionReportRow>(entity, x => x.ExecutionReportId);
+        Text(entity.Property(x => x.ExecId), 128);
+        Text(entity.Property(x => x.OrderId), 128);
+        Text(entity.Property(x => x.ClientOrderId), 32);
+        Text(entity.Property(x => x.Symbol), 16);
+        Text(entity.Property(x => x.SecurityId), 64);
+        Text(entity.Property(x => x.Side), 8);
+        Quantity(entity.Property(x => x.Quantity));
+        Price(entity.Property(x => x.Price));
+        Hash(entity.Property(x => x.RawMessageSha256));
+        Text(entity.Property(x => x.FeeStatus), 64);
+        entity.Property(x => x.FeeAmount).HasPrecision(28, 12);
+        entity.Property(x => x.FeeCurrency).HasMaxLength(3);
+    }
+
+    private static void ConfigureArch7bPositionLedgerEvent(
+        EntityTypeBuilder<PmsArch7bPositionLedgerEventRow> entity)
+    {
+        entity.ToTable("arch7b_position_ledger_events", table =>
+            table.HasCheckConstraint("ck_arch7b_position_ledger_hashes",
+                $"{ShaCheck("source_message_sha256")} AND {ShaCheck("event_sha256")}"));
+        entity.HasKey(x => x.PositionLedgerEventId);
+        entity.HasIndex(x => x.FillId).IsUnique();
+        entity.HasIndex(x => x.EventSha256).IsUnique();
+        Restrict<PmsArch7bPositionLedgerEventRow, PmsArch7bQualificationRunRow>(
+            entity, x => x.QualificationRunId);
+        Restrict<PmsArch7bPositionLedgerEventRow, PmsArch7bFillRow>(entity, x => x.FillId);
+        Text(entity.Property(x => x.ExecId), 128);
+        Text(entity.Property(x => x.Symbol), 16);
+        Text(entity.Property(x => x.SecurityId), 64);
+        Text(entity.Property(x => x.InstrumentCurrency), 3);
+        Text(entity.Property(x => x.SettlementCurrency), 3);
+        Quantity(entity.Property(x => x.SignedQuantity));
+        Price(entity.Property(x => x.Price));
+        Hash(entity.Property(x => x.SourceMessageSha256));
+        Hash(entity.Property(x => x.EventSha256));
+    }
+
+    private static void ConfigureArch7bFinalReconciliation(
+        EntityTypeBuilder<PmsArch7bFinalReconciliationRow> entity)
+    {
+        entity.ToTable("arch7b_final_reconciliations", table =>
+        {
+            table.HasCheckConstraint("ck_arch7b_reconciliation_sha256", ShaCheck("evidence_sha256"));
+            table.HasCheckConstraint("ck_arch7b_reconciliation_flat",
+                "status = 'FLAT_RECONCILED' AND known_working_leaves = 0 AND " +
+                "internal_ledger_quantity = 0 AND broker_residual_quantity = 0 AND " +
+                "residual_quantity = 0 AND critical_break_count = 0");
+            table.HasCheckConstraint("ck_arch7b_reconciliation_broker_authority",
+                "broker_evidence_authority <> 'INTERNAL_LEDGER_ONLY'");
+        });
+        entity.HasKey(x => x.ReconciliationId);
+        entity.HasIndex(x => x.QualificationRunId).IsUnique();
+        Restrict<PmsArch7bFinalReconciliationRow, PmsArch7bQualificationRunRow>(
+            entity, x => x.QualificationRunId);
+        Text(entity.Property(x => x.Status), 32);
+        Text(entity.Property(x => x.BrokerEvidenceAuthority), 64);
+        Quantity(entity.Property(x => x.OpeningCumulativeQuantity));
+        Quantity(entity.Property(x => x.OpeningFillQuantity));
+        Quantity(entity.Property(x => x.FlattenCumulativeQuantity));
+        Quantity(entity.Property(x => x.FlattenFillQuantity));
+        Quantity(entity.Property(x => x.KnownWorkingLeaves));
+        Quantity(entity.Property(x => x.InternalLedgerQuantity));
+        Quantity(entity.Property(x => x.BrokerResidualQuantity));
+        Quantity(entity.Property(x => x.ResidualQuantity));
+        entity.Property(x => x.BreaksJson).HasColumnType("jsonb");
+        entity.Property(x => x.RealizedPnlBeforeFees).HasPrecision(38, 28);
+        Text(entity.Property(x => x.FeeStatus), 64);
+        Hash(entity.Property(x => x.EvidenceSha256));
     }
     private static void Restrict<TEntity, TPrincipal>(EntityTypeBuilder<TEntity> entity, System.Linq.Expressions.Expression<Func<TEntity, object?>> foreignKey)
         where TEntity : class where TPrincipal : class =>

@@ -1,6 +1,8 @@
 namespace QQ.Production.Intraday.Lmax.ConnectivityLab;
 
 using System.Globalization;
+using System.Security.Cryptography;
+using System.Text;
 using System.Xml.Linq;
 
 public sealed record LmaxFixCapability(string MessageName, string MsgType, bool Supported, IReadOnlyList<string> RequiredFields, IReadOnlyList<string> OptionalFields);
@@ -86,6 +88,7 @@ public enum LmaxFixDemoOrderType
 
 public enum LmaxFixDemoOrderTimeInForce
 {
+    Day,
     IOC,
     FOK
 }
@@ -343,7 +346,10 @@ public sealed record LmaxFixExecutionReport(
     DateTimeOffset ParsedAtUtc,
     IReadOnlyList<string> Warnings,
     bool CanMapToInternalOrderEvent,
-    IReadOnlyList<string> MissingForInternalOrderEvent);
+    IReadOnlyList<string> MissingForInternalOrderEvent,
+    long? FixSequenceNumber,
+    bool PossDup,
+    string RawMessageSha256);
 
 public sealed record LmaxFixExecutionReportNormalizationResult(
     LmaxFixExecutionReport Report,
@@ -589,7 +595,13 @@ public static class LmaxFixRecoveryCodec
             fields.Add(("44", request.LimitPrice.Value.ToString(CultureInfo.InvariantCulture)));
         }
 
-        fields.Add(("59", request.TimeInForce == LmaxFixDemoOrderTimeInForce.IOC ? "3" : "4"));
+        fields.Add(("59", request.TimeInForce switch
+        {
+            LmaxFixDemoOrderTimeInForce.Day => "0",
+            LmaxFixDemoOrderTimeInForce.IOC => "3",
+            LmaxFixDemoOrderTimeInForce.FOK => "4",
+            _ => throw new ArgumentOutOfRangeException(nameof(request), "Unsupported TimeInForce.")
+        }));
         if (!string.IsNullOrWhiteSpace(request.Account)) fields.Add(("1", request.Account!));
         return LmaxFixMarketDataCodec.BuildMessage("D", sequenceNumber, senderCompId, targetCompId, fields);
     }
@@ -616,6 +628,39 @@ public static class LmaxFixRecoveryCodec
         if (!string.IsNullOrWhiteSpace(side)) fields.Add(("54", side!));
         if (!string.IsNullOrWhiteSpace(ordStatusReqId)) fields.Add(("790", ordStatusReqId!));
         return LmaxFixMarketDataCodec.BuildMessage("H", sequenceNumber, senderCompId, targetCompId, fields);
+    }
+
+    public static string BuildOrderCancelRequest(
+        string senderCompId,
+        string targetCompId,
+        int sequenceNumber,
+        string cancelClOrdId,
+        string originalClOrdId,
+        string symbol,
+        string side,
+        decimal quantity,
+        string securityId,
+        string securityIdSource)
+    {
+        ValidateClientOrderId(cancelClOrdId);
+        ValidateClientOrderId(originalClOrdId);
+        if (side is not ("1" or "2")) throw new ArgumentException("Side must be FIX value 1 or 2.", nameof(side));
+        if (quantity <= 0m) throw new ArgumentOutOfRangeException(nameof(quantity), "OrderQty must be positive.");
+        if (string.IsNullOrWhiteSpace(symbol)) throw new ArgumentException("Symbol is required.", nameof(symbol));
+        if (string.IsNullOrWhiteSpace(securityId)) throw new ArgumentException("SecurityID is required.", nameof(securityId));
+        if (securityIdSource != "8") throw new ArgumentException("SecurityIDSource must be 8 for the bounded LMAX contract.", nameof(securityIdSource));
+
+        return LmaxFixMarketDataCodec.BuildMessage("F", sequenceNumber, senderCompId, targetCompId,
+        [
+            ("11", cancelClOrdId),
+            ("41", originalClOrdId),
+            ("55", symbol),
+            ("54", side),
+            ("38", quantity.ToString(CultureInfo.InvariantCulture)),
+            ("60", FormatFixTime(DateTimeOffset.UtcNow)),
+            ("48", securityId),
+            ("22", securityIdSource)
+        ]);
     }
 
     public static LmaxFixTradeCaptureAck ParseTradeCaptureAck(string message)
@@ -777,7 +822,10 @@ public static class LmaxFixRecoveryCodec
             DateTimeOffset.UtcNow,
             warnings,
             false,
-            missing);
+            missing,
+            ParseLong(LmaxFixMarketDataCodec.GetTag(message, "34")),
+            LmaxFixMarketDataCodec.ContainsTag(message, "43", "Y"),
+            Convert.ToHexString(SHA256.HashData(Encoding.ASCII.GetBytes(message))).ToLowerInvariant());
 
         if (string.IsNullOrWhiteSpace(execId)) missing.Add("Missing ExecID.");
         if (string.IsNullOrWhiteSpace(orderId) && string.IsNullOrWhiteSpace(clOrdId)) missing.Add("Missing both OrderID and ClOrdID.");
@@ -791,6 +839,7 @@ public static class LmaxFixRecoveryCodec
 
     private static decimal? ParseDecimal(string? value) => decimal.TryParse(value, NumberStyles.Any, CultureInfo.InvariantCulture, out var parsed) ? parsed : null;
     private static int? ParseInt(string? value) => int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed) ? parsed : null;
+    private static long? ParseLong(string? value) => long.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed) ? parsed : null;
     private static DateTimeOffset? ParseFixTime(string? value) => DateTimeOffset.TryParseExact(value, "yyyyMMdd-HH:mm:ss.fff", CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out var parsed) ? parsed.ToUniversalTime() : null;
     private static decimal? ParseDecimalWithWarning(string? value, string fieldName, ICollection<string> warnings)
     {
