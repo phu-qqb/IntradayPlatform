@@ -1,0 +1,31 @@
+{
+  "version": "arch7a-corrective-migration-manifest-v1",
+  "migrationId": "20260723010000_CorrectArch7aSerializationReplayAndChildPriceScale",
+  "previousMigrationId": "20260723000000_AddArch7aShadowExecutionAfterArch6fEconomicRevisions",
+  "applied": false,
+  "reasonCodes": [
+    "POSTGRESQL_SERIALIZATION_FAILURE_40001_NOT_REPLAYED",
+    "USDJPY_NUMERIC_38_28_DECIMAL_READBACK_OVERFLOW"
+  ],
+  "serializationRetry": {
+    "sqlState": "40001",
+    "maxRetries": 1,
+    "freshSerializableTransactionRequired": true
+  },
+  "childSimulatedLimitPrice": {
+    "from": "numeric(38,28)",
+    "to": "numeric(28,12)",
+    "supportsThreeIntegerDigits": true
+  },
+  "businessDataMutation": false,
+  "existingRowsPreserved": true,
+  "upSqlSha256": "c1d43c1b9536541fb37a735882674b4bb649979ff395dfe7c533d74c53c397fb",
+  "idempotentSqlSha256": "09d5d22bc31a1efb1167fbd17f2c02ba903567834a767ff8142311bc89e55ab6",
+  "downSqlSha256": "8c54bd578a5ecfacbcb258ac7da5d4b729f8d3f51aee47c9d6120c6951451208",
+  "pendingModelChanges": false,
+  "validation": {
+    "arch7aTestsPassed": 107,
+    "boundedRegressionTestsPassed": 645,
+    "releaseBuildErrors": 0
+  }
+}

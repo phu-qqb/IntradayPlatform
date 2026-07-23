@@ -3,6 +3,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.Migrations;
+using Npgsql;
 using QQ.Production.Intraday.Infrastructure.PostgreSql;
 
 namespace QQ.Production.Intraday.Tests.Unit;
@@ -14,8 +15,49 @@ public sealed class Arch7aPersistenceAndFixtureContractTests
     {
         using var context = Context();
         Assert.False(context.Database.HasPendingModelChanges());
-        Assert.Equal(PmsShadowStateContract.Arch7aMigrationId, context.Database.GetMigrations().Last());
+        Assert.Equal(PmsShadowStateContract.Arch7aCorrectiveMigrationId, context.Database.GetMigrations().Last());
         Assert.Equal(PmsShadowStateContract.MigrationIds, context.Database.GetMigrations().ToArray());
+    }
+
+    [Fact]
+    public void Child_simulated_price_uses_decimal_safe_precision_for_three_integer_digits()
+    {
+        using var context = Context();
+        var property = context.Model.FindEntityType(typeof(PmsShadowChildOrderRow))!
+            .FindProperty(nameof(PmsShadowChildOrderRow.SimulatedLimitPrice))!;
+        Assert.Equal(28, property.GetPrecision());
+        Assert.Equal(12, property.GetScale());
+    }
+
+    [Fact]
+    public async Task Serialization_retry_unwraps_40001_and_retries_exactly_once()
+    {
+        var attempts = 0;
+        var result = await Arch7aPostgreSqlSerializationRetry.ExecuteAsync(() =>
+        {
+            attempts++;
+            if (attempts == 1) throw WrappedSerializationFailure();
+            return Task.FromResult("replayed-identical");
+        });
+
+        Assert.Equal("replayed-identical", result);
+        Assert.Equal(2, attempts);
+        Assert.Equal(1, Arch7aPostgreSqlSerializationRetry.MaxRetries);
+    }
+
+    [Fact]
+    public async Task Serialization_retry_propagates_a_second_40001()
+    {
+        var attempts = 0;
+        Task<int> AlwaysFails()
+        {
+            attempts++;
+            throw WrappedSerializationFailure();
+        }
+
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => Arch7aPostgreSqlSerializationRetry.ExecuteAsync(AlwaysFails));
+        Assert.Equal(2, attempts);
     }
 
     [Theory]
@@ -55,6 +97,19 @@ public sealed class Arch7aPersistenceAndFixtureContractTests
         Assert.Contains("fk_shadow_execution_qualification_runs_economic_revision", sql,
             StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("ALTER TABLE pms_shadow.model_runs", sql, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("UPDATE pms_shadow", sql, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("DELETE FROM pms_shadow", sql, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("INSERT INTO pms_shadow", sql, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("DROP TABLE", sql, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Arch7a_corrective_up_changes_only_child_price_precision()
+    {
+        var sql = Script(PmsShadowStateContract.Arch7aMigrationId,
+            PmsShadowStateContract.Arch7aCorrectiveMigrationId);
+        Assert.Contains("ALTER COLUMN simulated_limit_price TYPE numeric(28,12)", sql,
+            StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("UPDATE pms_shadow", sql, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("DELETE FROM pms_shadow", sql, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("INSERT INTO pms_shadow", sql, StringComparison.OrdinalIgnoreCase);
@@ -127,6 +182,12 @@ public sealed class Arch7aPersistenceAndFixtureContractTests
         foreach (var file in files)
             using (JsonDocument.Parse(File.ReadAllText(file))) { }
     }
+
+    private static InvalidOperationException WrappedSerializationFailure() => new(
+        "transient",
+        new DbUpdateException(
+            "write",
+            new PostgresException("serialization", "ERROR", "ERROR", PostgresErrorCodes.SerializationFailure)));
 
     private static PmsShadowDbContext Context()
         => new PmsShadowDesignTimeDbContextFactory().CreateDbContext([]);

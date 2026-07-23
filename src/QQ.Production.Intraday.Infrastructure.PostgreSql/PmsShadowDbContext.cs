@@ -527,7 +527,7 @@ public sealed class PmsShadowDbContext(DbContextOptions<PmsShadowDbContext> opti
         Text(entity.Property(x => x.Tranche), 64);
         Text(entity.Property(x => x.Side), 8);
         Quantity(entity.Property(x => x.Quantity));
-        entity.Property(x => x.SimulatedLimitPrice).HasPrecision(38, 28);
+        entity.Property(x => x.SimulatedLimitPrice).HasPrecision(28, 12);
         Text(entity.Property(x => x.AlgoPhase), 64);
         Text(entity.Property(x => x.Status), 64);
         Hash(entity.Property(x => x.DeterministicIdentity));

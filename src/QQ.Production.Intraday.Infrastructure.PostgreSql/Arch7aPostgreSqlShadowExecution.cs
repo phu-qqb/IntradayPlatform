@@ -3,6 +3,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
+using Npgsql;
 using QQ.Production.Intraday.Application;
 
 namespace QQ.Production.Intraday.Infrastructure.PostgreSql;
@@ -345,6 +346,14 @@ public sealed class EfArch7aShadowExecutionStore(
                                     value.TradeIntent.EconomicRevisionNumber != 2))
             throw new InvalidOperationException("ARCH7A_QUALIFYING_ECONOMIC_REVISION_REQUIRED");
 
+        return await Arch7aPostgreSqlSerializationRetry.ExecuteAsync(
+            () => PersistOnceAsync(plan, cancellationToken));
+    }
+
+    private async Task<Arch7aShadowStoreResult> PersistOnceAsync(
+        Arch7aShadowExecutionPlan plan,
+        CancellationToken cancellationToken)
+    {
         await using var context = await contextFactory.CreateDbContextAsync(cancellationToken);
         await using var transaction = await context.Database.BeginTransactionAsync(
             IsolationLevel.Serializable, cancellationToken);
@@ -498,5 +507,34 @@ public sealed class EfArch7aShadowExecutionStore(
         await context.SaveChangesAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
         return Arch7aShadowStoreResult.Persisted;
+    }
+}
+
+public static class Arch7aPostgreSqlSerializationRetry
+{
+    public const int MaxRetries = 1;
+
+    public static async Task<T> ExecuteAsync<T>(Func<Task<T>> operation)
+    {
+        ArgumentNullException.ThrowIfNull(operation);
+        for (var attempt = 0; ; attempt++)
+        {
+            try
+            {
+                return await operation();
+            }
+            catch (Exception exception) when (attempt < MaxRetries && IsSerializationFailure(exception))
+            {
+                // PostgreSQL requires a fresh serializable transaction after a concurrent writer commits.
+            }
+        }
+    }
+
+    private static bool IsSerializationFailure(Exception exception)
+    {
+        for (var current = exception; current is not null; current = current.InnerException)
+            if (current is PostgresException { SqlState: PostgresErrorCodes.SerializationFailure })
+                return true;
+        return false;
     }
 }
