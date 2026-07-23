@@ -124,6 +124,7 @@ public sealed class LmaxMarketDataOnlyFixFrameBuffer
         var beginEnd=IndexOfByte(pending,Soh,0);
         if(beginEnd<0)return FrameStatus.Incomplete;
         var bodyLengthStart=beginEnd+1;
+        if(pending.Count<bodyLengthStart+2)return FrameStatus.Incomplete;
         if(!StartsWithAscii(pending,bodyLengthStart,"9="))return Malformed("body_length_missing",out reason);
         var bodyLengthEnd=IndexOfByte(pending,Soh,bodyLengthStart);
         if(bodyLengthEnd<0)return FrameStatus.Incomplete;

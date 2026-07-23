@@ -294,6 +294,29 @@ public sealed class M2C1ALmaxMarketDataOnlyTests
     }
 
     [Fact]
+    public void T19a_inbound_fix_frame_buffer_waits_for_split_body_length_prefix()
+    {
+        var frame = Encoding.ASCII.GetBytes(MarketDataFrame(1, 1.10000m, 1.10020m));
+        var bodyLengthPrefixEnd = Array.IndexOf(frame, (byte)'9') + 1;
+        var buffer = new LmaxMarketDataOnlyFixFrameBuffer();
+
+        var incomplete = buffer.Append(
+            frame.AsSpan(0, bodyLengthPrefixEnd),
+            DateTimeOffset.UtcNow,
+            101);
+        var complete = buffer.Append(
+            frame.AsSpan(bodyLengthPrefixEnd),
+            DateTimeOffset.UtcNow,
+            102);
+
+        Assert.Empty(incomplete.Frames);
+        Assert.False(incomplete.Malformed);
+        Assert.Single(complete.Frames);
+        Assert.False(complete.Malformed);
+        Assert.Equal("W", LmaxFixMarketDataCodec.GetMsgType(complete.Frames[0].RawFixMessage));
+    }
+
+    [Fact]
     public async Task T20_guarded_write_buffers_split_allowed_frame_and_writes_after_completion()
     {
         using var fakeSocket = new MemoryStream();
