@@ -16,7 +16,7 @@ Status: PREPARED, DISABLED, NOT AUTHORIZED, NOT APPLIED.
 1. Validate exact authorization packet SHA, Demo endpoint, account and explicit CLI confirmation.
 2. Acquire the Demo-account advisory lease.
 3. Read the selected ARCH7A ChildOrder and its TradeIntent/RiskDecision/ParentOrder lineage from PostgreSQL.
-4. Prove latest qualifying ARCH6F revision, fresh slot, LMAX direct market lineage, initial flat position and zero other platform-known working order.
+4. Prove the exact ChildOrder-bound ARCH6F revision and its canonical `intraday_market_data_observations` row by revision, slot, ingestion, market SHA, SecurityID and LMAX lineage; never use a global-latest or legacy market snapshot fallback.
 5. Bind a sequence-valid, content-addressed LMAX BBO acquired inside the authorized window to the BUY opening limit at ask and deterministic ClOrdIDs.
 6. Persist the qualification run before FIX logon.
 
@@ -27,7 +27,7 @@ Status: PREPARED, DISABLED, NOT AUTHORIZED, NOT APPLIED.
 3. Persist every real `35=8` with raw message SHA, MsgSeqNum and PossDup.
 4. On restart, never resend an existing D or F. Query only the known opening/flatten ClOrdID.
 5. Cancel opening residual once; after the opening is terminal, require final CumQty to equal the durable sum of unique validated opening Fills.
-6. Open a separate SnapshotOnly LMAX market-data session, require a new sequence-valid observation ID, and derive the SELL flatten limit from its fresh bid.
+6. Open a separate `BOUNDED_SNAPSHOT_PLUS_UPDATES_ONE_BBO_THEN_UNSUBSCRIBE` LMAX market-data session, send `263=1`, aggregate one complete sequence-valid bid/ask with no prior book state, send `263=2` with the same `MDReqID`, log out, and derive the SELL flatten limit from the fresh bid.
 7. Persist the distinct flatten observation SHA with the FLATTEN send intent, then flatten exactly the durable executed opening quantity.
 8. Fail closed on unknown ClOrdID/OrderID, account/instrument mismatch, sequence gap, duplicate conflict, budget breach or deadline.
 9. Build Fill and PositionLedgerEvent only from valid fill/partial-fill ExecutionReports.
@@ -42,7 +42,7 @@ Each connection receives a unique persisted FIX-session instance ID. Recovery re
 
 ## No fresh flatten BBO
 
-The runner keeps the order-entry lifecycle bounded while attempting at most three separate SnapshotOnly LMAX market-data sessions and never passes the global deadline. If no valid new BBO is obtained, it records `KILL_SWITCH_ACTIVATED_FLATTEN_BBO_UNAVAILABLE`, builds no flatten order, never uses Polygon or the opening observation, and exits fail-closed with the non-flat position explicitly unresolved. Operator recovery must use the same known-order run and broker evidence; it must not create a silent second flatten.
+The runner keeps the order-entry lifecycle bounded while attempting at most three separate five-second `SnapshotPlusUpdates` LMAX market-data sessions and never passes the global deadline. Each attempt has a unique `MDReqID`, requires both sides for GBPUSD/4002, unsubscribes with that same ID and logs out. If no valid new BBO is obtained, it records `KILL_SWITCH_ACTIVATED_FLATTEN_BBO_UNAVAILABLE`, builds no flatten order, never uses Polygon or the opening observation, and exits fail-closed with the non-flat position explicitly unresolved. Operator recovery must use the same known-order run and broker evidence; it must not create a silent second flatten.
 
 ## Current non-actions
 

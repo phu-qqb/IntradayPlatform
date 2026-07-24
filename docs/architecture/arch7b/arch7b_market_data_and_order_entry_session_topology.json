@@ -29,11 +29,12 @@
                      },
                      {
                          "name":  "flatten-market-observation",
-                         "type":  "FIX_4_4_MARKET_DATA_SNAPSHOT_ONLY",
+                         "type":  "FIX_4_4_MARKET_DATA_BOUNDED_STREAMING",
                          "endpoint_reference":  "QQ_LMAX_FIX_MARKET_DATA_HOST:QQ_LMAX_FIX_MARKET_DATA_PORT",
                          "lifecycle":  "new clean session after opening terminal CumQty and persisted Fill sum agree",
                          "maximum_attempts":  3,
-                         "request_mode":  "SnapshotOnly",
+                         "request_mode":  "BOUNDED_SNAPSHOT_PLUS_UPDATES_ONE_BBO_THEN_UNSUBSCRIBE",
+                         "subscription_contract":  "263=1 then 263=2 with the same unique MDReqID",
                          "symbol_encoding":  "non-Auto explicit mapping",
                          "polygon_allowed":  false,
                          "allow_order_submission":  false
@@ -72,13 +73,13 @@
     "no_fresh_flatten_bbo":  {
                                  "action":  "KILL_SWITCH_ACTIVATED_FLATTEN_BBO_UNAVAILABLE",
                                  "order_construction":  "blocked",
-                                 "bounded_wait":  "up to three SnapshotOnly attempts and never beyond the global lifecycle deadline",
+                                 "bounded_wait":  "up to three five-second SnapshotPlusUpdates attempts and never beyond the global lifecycle deadline",
                                  "opening_observation_reuse":  false,
                                  "polygon_fallback":  false,
                                  "operator_state":  "position remains non-flat and must be treated as unresolved until broker evidence confirms flat"
                              },
     "cleanup":  [
-                    "unsubscribe when SnapshotPlusUpdates is ever used outside ARCH7B",
+                    "unsubscribe with 263=2 and the same MDReqID after the first complete ARCH7B BBO",
                     "market-data logout and socket disposal per attempt",
                     "order-entry logout attempted on every post-logon exit, including fail-closed exits",
                     "order-entry socket disposal on every exit",

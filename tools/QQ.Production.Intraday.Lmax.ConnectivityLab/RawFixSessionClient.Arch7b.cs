@@ -305,15 +305,24 @@ public sealed partial class RawLmaxFixSessionClient
                 var marketDataOnlyOptions = CopyOptions(options);
                 marketDataOnlyOptions.AllowOrderSubmission = false;
                 marketDataOnlyOptions.AllowLiveTrading = false;
+                marketDataOnlyOptions.MarketDataRequestMode =
+                    LmaxFixMarketDataRequestMode.SnapshotPlusUpdates;
+                marketDataOnlyOptions.MarketDepth = 1;
+                marketDataOnlyOptions.MarketDataMaxWaitSeconds = 5;
                 LmaxFixArch7bMarketObservationDecision? marketDecision = null;
                 for (var attempt = 1;
                      attempt <= Arch7bKnownOrderQualificationPolicy.MaximumFlattenBboAcquisitionAttempts &&
                      DateTimeOffset.UtcNow < request.DeadlineUtc;
                      attempt++)
                 {
+                    var attemptStartedAtUtc = DateTimeOffset.UtcNow;
+                    var remaining = request.DeadlineUtc - attemptStartedAtUtc;
+                    var attemptBudget = TimeSpan.FromSeconds(
+                        Arch7bKnownOrderQualificationPolicy.MaximumBboAgeSeconds);
                     using var acquisitionDeadline =
                         CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-                    acquisitionDeadline.CancelAfter(request.DeadlineUtc - DateTimeOffset.UtcNow);
+                    acquisitionDeadline.CancelAfter(
+                        remaining < attemptBudget ? remaining : attemptBudget);
                     var marketData = await MarketDataSnapshotSmokeAsync(
                         marketDataOnlyOptions,
                         acquisitionDeadline.Token);
