@@ -100,6 +100,30 @@ public sealed class Arch7aPmsShadowExecutionPipelineTests
     }
 
     [Fact]
+    public void Demo_account_and_shadow_classification_remain_canonical_and_deterministic()
+    {
+        var source = Source([Contribution("EURUSD", 0.10m)]) with
+        {
+            AccountScope = Arch7bKnownOrderQualificationPolicy.DemoAccountId
+        };
+
+        var first = Build(source);
+        var replay = Build(source);
+        var firstIntent = Assert.Single(first.Units).TradeIntent;
+        var replayIntent = Assert.Single(replay.Units).TradeIntent;
+
+        Assert.Equal(
+            Arch7bKnownOrderQualificationPolicy.DemoAccountId,
+            firstIntent.AccountScope);
+        Assert.Equal(
+            Arch7aPmsShadowExecutionContract.ShadowTradeIntentClassification,
+            firstIntent.Classification);
+        Assert.Equal(firstIntent.Canonical.Id, replayIntent.Canonical.Id);
+        Assert.Equal(firstIntent.IdempotencyKey, replayIntent.IdempotencyKey);
+        Assert.Equal(first.PlanSha256, replay.PlanSha256);
+    }
+
+    [Fact]
     public void Missing_position_authority_blocks_new_orders()
     {
         var unit = Assert.Single(Build(Source([Contribution("EURUSD", 0.10m)]) with
@@ -293,6 +317,10 @@ public sealed class Arch7aPmsShadowExecutionPipelineTests
         Assert.Equal(Arch7aShadowStoreResult.Persisted, first.StoreResult);
         Assert.Equal(Arch7aShadowStoreResult.AlreadyPersistedIdentical, replay.StoreResult);
         Assert.Equal(first.Plan.PlanSha256, replay.Plan.PlanSha256);
+        Assert.Equal(source.AccountScope, first.Plan.Units[0].TradeIntent.AccountScope);
+        Assert.Equal(
+            Arch7aPmsShadowExecutionContract.ShadowTradeIntentClassification,
+            first.Plan.Units[0].TradeIntent.Classification);
     }
 
     [Fact]

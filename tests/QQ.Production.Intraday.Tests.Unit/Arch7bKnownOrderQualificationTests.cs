@@ -30,6 +30,134 @@ public sealed class Arch7bKnownOrderQualificationTests
         Assert.Equal(64, first.PolicySha256.Length);
     }
 
+    [Theory]
+    [InlineData("TEST_ONLY")]
+    [InlineData("")]
+    [InlineData("1754288006")]
+    public void Noncanonical_child_account_scope_is_fail_closed(string accountScope)
+    {
+        var input = ValidPreflight() with
+        {
+            ChildOrder = ValidChild() with { AccountScope = accountScope }
+        };
+
+        var decision = Arch7bKnownOrderQualification.EvaluatePreflight(input);
+
+        Assert.False(decision.Allowed);
+        Assert.Contains("ARCH7B_CHILD_ACCOUNT_SCOPE_MISMATCH", decision.Blockers);
+        Assert.Contains("ARCH7B_CHILD_CONFIGURED_ACCOUNT_MISMATCH", decision.Blockers);
+    }
+
+    [Fact]
+    public void Real_child_account_scope_is_explicitly_forbidden()
+    {
+        var input = ValidPreflight() with
+        {
+            ChildOrder = ValidChild() with
+            {
+                AccountScope = Arch7bKnownOrderQualificationPolicy.ForbiddenRealAccountId
+            }
+        };
+
+        var decision = Arch7bKnownOrderQualification.EvaluatePreflight(input);
+
+        Assert.False(decision.Allowed);
+        Assert.Contains("ARCH7B_CHILD_ACCOUNT_SCOPE_MISMATCH", decision.Blockers);
+        Assert.Contains("ARCH7B_CHILD_CONFIGURED_ACCOUNT_MISMATCH", decision.Blockers);
+        Assert.Contains("ARCH7B_REAL_ACCOUNT_FORBIDDEN", decision.Blockers);
+    }
+
+    [Theory]
+    [InlineData("TEST_PMS_SHADOW_ONLY")]
+    [InlineData("")]
+    [InlineData("UNKNOWN")]
+    public void Noncanonical_trade_intent_classification_is_fail_closed(string classification)
+    {
+        var input = ValidPreflight() with
+        {
+            ChildOrder = ValidChild() with { TradeIntentClassification = classification }
+        };
+
+        var decision = Arch7bKnownOrderQualification.EvaluatePreflight(input);
+
+        Assert.False(decision.Allowed);
+        Assert.Contains(
+            "ARCH7B_TRADE_INTENT_CLASSIFICATION_MISMATCH",
+            decision.Blockers);
+    }
+
+    [Fact]
+    public void Historical_1030z_contract_passes_scope_but_stays_blocked_when_stale()
+    {
+        var input = ValidPreflight() with
+        {
+            ChildOrder = ValidChild() with
+            {
+                TradeIntentId = Guid.Parse("b17c07ba-5cdb-56f3-bef8-93cf7c113ac0"),
+                ParentOrderId = Guid.Parse("f1c90e85-407f-5564-adea-61626f324454"),
+                ChildOrderId = Guid.Parse("516f9016-404d-5afc-8be0-6ad6f2e1f320"),
+                SlotId = "pms-shadow-15m-20260724T1030Z",
+                EconomicRevisionId = Guid.Parse("91eae733-cd6d-b886-b8f7-d9f3b020f1c4"),
+                MarketDataSnapshotSha256 =
+                    "65769fb842e3dc22bbd26f00adb49b5c1b47a2777c59430b4258bb273184597b",
+                SourceFresh = false
+            }
+        };
+
+        var decision = Arch7bKnownOrderQualification.EvaluatePreflight(input);
+
+        Assert.False(decision.Allowed);
+        Assert.Equal(["ARCH7B_SOURCE_NOT_FRESH"], decision.Blockers);
+    }
+
+    [Fact]
+    public void Economic_and_account_safety_guardrails_remain_fail_closed()
+    {
+        var input = ValidPreflight() with
+        {
+            ConfiguredEnvironment = "PRODUCTION",
+            ChildOrder = ValidChild() with
+            {
+                Environment = "PRODUCTION",
+                Symbol = "EURUSD",
+                SecurityId = "1001",
+                EconomicRevisionNumber = 1,
+                LatestQualifyingRevision = false,
+                SourceCompleted = false,
+                SourceFresh = false,
+                SourceSuperseded = true,
+                LmaxMarketData = false,
+                PolygonOrderPrice = true,
+                LineageComplete = false
+            },
+            Bbo = ValidBbo() with { PolygonUsed = true },
+            CurrentKnownPosition = 0.1m,
+            PlatformKnownWorkingOrderCount = 1
+        };
+
+        var decision = Arch7bKnownOrderQualification.EvaluatePreflight(input);
+
+        Assert.False(decision.Allowed);
+        var expected = new[]
+        {
+            "ARCH7B_ENVIRONMENT_NOT_TEST",
+            "ARCH7B_CHILD_ENVIRONMENT_MISMATCH",
+            "ARCH7B_SELECTED_SYMBOL_MISMATCH",
+            "ARCH7B_SECURITY_ID_MISMATCH",
+            "ARCH7B_SOURCE_NOT_LATEST_QUALIFYING_REVISION",
+            "ARCH7B_ECONOMIC_REVISION_TWO_REQUIRED",
+            "ARCH7B_SOURCE_NOT_COMPLETED",
+            "ARCH7B_SOURCE_NOT_FRESH",
+            "ARCH7B_SOURCE_SUPERSEDED",
+            "ARCH7B_SOURCE_NOT_LMAX_MARKET_DATA",
+            "ARCH7B_POLYGON_ORDER_PRICE_FORBIDDEN",
+            "ARCH7B_SOURCE_LINEAGE_INCOMPLETE",
+            "ARCH7B_INITIAL_POSITION_NOT_FLAT",
+            "ARCH7B_PLATFORM_KNOWN_WORKING_ORDER_PRESENT"
+        };
+        Assert.All(expected, blocker => Assert.Contains(blocker, decision.Blockers));
+    }
+
     [Fact]
     public void Real_account_and_stale_non_lmax_bbo_are_fail_closed()
     {
@@ -360,7 +488,7 @@ public sealed class Arch7bKnownOrderQualificationTests
             Sha("lineage"),
             Sha("plan"),
             "TEST",
-            "TEST_ONLY",
+            Arch7bKnownOrderQualificationPolicy.DemoAccountId,
             "GBPUSD",
             "4002",
             "8",
@@ -369,7 +497,7 @@ public sealed class Arch7bKnownOrderQualificationTests
             Now.AddMinutes(15),
             Now.AddMinutes(-15),
             Now.AddMinutes(30),
-            "TEST_PMS_SHADOW_ONLY",
+            Arch7aPmsShadowExecutionContract.ShadowTradeIntentClassification,
             "SHADOW_PLANNED",
             "SHADOW_ONLY",
             true,
