@@ -108,8 +108,16 @@ public sealed record LmaxFixMarketDataSmokeResult(
     public string? SnapshotSha256 { get; init; }
     public LmaxFixMarketDataRequestMode? RequestMode { get; init; }
     public string? MdReqId { get; init; }
+    public bool UnsubscribeAttempted { get; init; }
     public bool UnsubscribeSent { get; init; }
     public string? UnsubscribeMdReqId { get; init; }
+    public bool LogoutAttempted { get; init; }
+    public bool StreamDisposeAttempted => Cleanup.StreamDisposeAttempted;
+    public bool StreamDisposeSucceeded => Cleanup.StreamDisposeSucceeded;
+    public bool SocketDisposeAttempted => Cleanup.SocketDisposeAttempted;
+    public bool SocketDisposeSucceeded => Cleanup.SocketDisposeSucceeded;
+    public IReadOnlyList<string> CleanupDiagnostics => Cleanup.Diagnostics;
+    public LmaxFixMarketDataCleanupState Cleanup { get; init; } = new();
     public bool CompleteTopOfBook { get; init; }
     public DateTimeOffset? ObservationCompletedAtUtc { get; init; }
     public string? RejectRefTagId { get; init; }
@@ -175,6 +183,34 @@ public sealed record LmaxFixMarketDataSmokeResult(
             safetyDecisions,
             diagnostics,
             attempts);
+}
+
+public sealed class LmaxFixMarketDataCleanupState
+{
+    private readonly List<string> diagnostics = [];
+
+    public LmaxFixMarketDataCleanupState(
+        bool streamDisposeAttempted = false,
+        bool streamDisposeSucceeded = false,
+        bool socketDisposeAttempted = false,
+        bool socketDisposeSucceeded = false,
+        IReadOnlyList<string>? diagnostics = null)
+    {
+        StreamDisposeAttempted = streamDisposeAttempted;
+        StreamDisposeSucceeded = streamDisposeSucceeded;
+        SocketDisposeAttempted = socketDisposeAttempted;
+        SocketDisposeSucceeded = socketDisposeSucceeded;
+        if (diagnostics is not null)
+            this.diagnostics.AddRange(diagnostics);
+    }
+
+    public bool StreamDisposeAttempted { get; internal set; }
+    public bool StreamDisposeSucceeded { get; internal set; }
+    public bool SocketDisposeAttempted { get; internal set; }
+    public bool SocketDisposeSucceeded { get; internal set; }
+    public IReadOnlyList<string> Diagnostics => diagnostics;
+
+    internal void AddDiagnostic(string value) => diagnostics.Add(value);
 }
 
 public static class LmaxFixMarketDataCodec

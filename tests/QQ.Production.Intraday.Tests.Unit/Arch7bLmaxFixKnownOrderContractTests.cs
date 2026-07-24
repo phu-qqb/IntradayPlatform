@@ -130,7 +130,7 @@ public sealed class Arch7bLmaxFixKnownOrderContractTests
             "QQ.Production.Intraday.Lmax.ConnectivityLab",
             "RawFixSessionClient.cs"));
         Assert.Contains(
-            "logoutSent = await TrySendLogoutAsync(activeStream",
+            "await TryLogoutAsync(activeStream)",
             marketDataSource,
             StringComparison.Ordinal);
         Assert.DoesNotContain("logoutSent = true;", marketDataSource, StringComparison.Ordinal);
@@ -323,7 +323,7 @@ public sealed class Arch7bLmaxFixKnownOrderContractTests
     }
 
     [Fact]
-    public void Flatten_refuses_complete_book_when_unsubscribe_or_logout_is_unproven()
+    public void Flatten_accepts_complete_book_when_cleanup_is_imperfect()
     {
         var now = DateTimeOffset.UtcNow;
         var result = FreshSnapshot(
@@ -333,8 +333,21 @@ public sealed class Arch7bLmaxFixKnownOrderContractTests
             1.25000m,
             new string('b', 64)) with
         {
+            UnsubscribeAttempted = true,
             UnsubscribeSent = false,
-            UnsubscribeMdReqId = null
+            UnsubscribeMdReqId = "REQ-1",
+            LogoutAttempted = true,
+            LogoutSent = false,
+            Cleanup = new LmaxFixMarketDataCleanupState(
+                streamDisposeAttempted: true,
+                streamDisposeSucceeded: true,
+                socketDisposeAttempted: true,
+                socketDisposeSucceeded: true,
+                diagnostics:
+                [
+                    "ARCH7B_MARKET_DATA_UNSUBSCRIBE_FAILURE:IOException",
+                    "ARCH7B_MARKET_DATA_LOGOUT_FAILURE:SANITIZED"
+                ])
         };
 
         var decision = LmaxFixArch7bKnownOrderContract.EvaluateFreshFlattenObservation(
@@ -344,10 +357,16 @@ public sealed class Arch7bLmaxFixKnownOrderContractTests
             now,
             new string('a', 64));
 
-        Assert.False(decision.Allowed);
-        Assert.Contains(
-            "ARCH7B_FLATTEN_BBO_UNSUBSCRIBE_OR_LOGOUT_UNPROVEN",
-            decision.Blockers);
+        Assert.True(decision.Allowed, string.Join(";", decision.Blockers));
+        Assert.DoesNotContain("ARCH7B_FLATTEN_BBO_UNAVAILABLE_KILL_SWITCH", decision.Blockers);
+        Assert.Equal(1.24990m, decision.LimitPrice);
+        Assert.True(result.UnsubscribeAttempted);
+        Assert.False(result.UnsubscribeSent);
+        Assert.True(result.LogoutAttempted);
+        Assert.False(result.LogoutSent);
+        Assert.True(result.StreamDisposeSucceeded);
+        Assert.True(result.SocketDisposeSucceeded);
+        Assert.Equal(2, result.CleanupDiagnostics.Count);
     }
 
     [Fact]

@@ -384,18 +384,13 @@ public static class LmaxFixArch7bKnownOrderContract
             "ARCH7B_FLATTEN_BBO_UNAVAILABLE_KILL_SWITCH");
         Require(result.RequestMode ==
                 LmaxFixMarketDataRequestMode.SnapshotPlusUpdates &&
-                result.UnsubscribeSent &&
-                result.LogoutSent &&
-                !string.IsNullOrWhiteSpace(result.MdReqId) &&
-                result.MdReqId == result.UnsubscribeMdReqId,
-            "ARCH7B_FLATTEN_BBO_UNSUBSCRIBE_OR_LOGOUT_UNPROVEN");
+                !string.IsNullOrWhiteSpace(result.MdReqId),
+            "ARCH7B_FLATTEN_BBO_REQUEST_IDENTITY_UNPROVEN");
         Require(result.InboundSequenceIntegrityProven,
             "ARCH7B_FLATTEN_BBO_SEQUENCE_INTEGRITY_UNPROVEN");
         Require(result.StartedAtUtc >= notBeforeUtc &&
                 observedAtUtc >= result.StartedAtUtc &&
-                observedAtUtc <= nowUtc &&
-                observedAtUtc - notBeforeUtc <=
-                TimeSpan.FromSeconds(Arch7bKnownOrderQualificationPolicy.MaximumBboAgeSeconds),
+                observedAtUtc <= nowUtc,
             "ARCH7B_FLATTEN_BBO_NOT_POST_OPENING_TERMINAL");
         Require(nowUtc - observedAtUtc <=
                 TimeSpan.FromSeconds(Arch7bKnownOrderQualificationPolicy.MaximumBboAgeSeconds),

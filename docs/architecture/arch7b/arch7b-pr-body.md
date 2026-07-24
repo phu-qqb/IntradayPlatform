@@ -12,7 +12,9 @@ Requalifies the existing LMAX Demo FIX order-entry path as one bounded, known-or
 
 - Opening is BUY at the ask of a fresh, sequence-valid, content-addressed LMAX observation acquired inside the authorized window.
 - Flatten is constructed only after opening terminal CumQty equals the durable sum of unique validated opening Fills.
-- Flatten opens a separate bounded `SnapshotPlusUpdates` LMAX market-data session, aggregates one complete bid/ask from no prior state, then sends `263=2` with the same `MDReqID` and logs out.
+- Flatten opens a separate bounded `SnapshotPlusUpdates` LMAX market-data session and aggregates one complete bid/ask from no prior state. Freshness is `nowUtc - observedAtUtc <= 5 seconds`; session start and observation must remain post-opening-terminal, so attempts two and three remain usable.
+- After acquisition, unsubscribe with `263=2` and the same `MDReqID`, logout, stream disposal and socket disposal are always attempted and recorded separately.
+- Cleanup failure never invalidates an already complete, fresh, sequence-valid BBO and never masks the primary economic blocker.
 - The bounded streaming contract is `BOUNDED_SNAPSHOT_PLUS_UPDATES_ONE_BBO_THEN_UNSUBSCRIBE`.
 - PostgreSQL preflight reads the ChildOrder-bound revision only from `intraday_projection_revisions` and `intraday_market_data_observations`; the legacy market snapshot tables are not a fallback.
 - Polygon, stale snapshots, crossed books, over-wide spreads, non-tick prices and silent opening-observation reuse are fail-closed.

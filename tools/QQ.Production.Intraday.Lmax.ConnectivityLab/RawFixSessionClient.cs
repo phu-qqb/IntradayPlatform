@@ -1167,6 +1167,9 @@ public sealed partial class RawLmaxFixSessionClient(
         var marketDataRejectReceived = false;
         var logoutSent = false;
         var unsubscribeSent = false;
+        var unsubscribeAttempted = false;
+        var logoutAttempted = false;
+        var cleanup = new LmaxFixMarketDataCleanupState();
         DateTimeOffset? observationCompletedAtUtc = null;
         string? rejectReason = null;
         string? rejectText = null;
@@ -1213,6 +1216,7 @@ public sealed partial class RawLmaxFixSessionClient(
                 !marketDataRequestSent ||
                 unsubscribeSent)
                 return;
+            unsubscribeAttempted = true;
             try
             {
                 var unsubscribe = LmaxFixMarketDataCodec.BuildMarketDataRequest(
@@ -1235,8 +1239,30 @@ public sealed partial class RawLmaxFixSessionClient(
             catch (Exception exception) when (
                 exception is IOException or ObjectDisposedException or SocketException)
             {
-                attempts.Add(
-                    $"{attemptLabel}: unsubscribe failed {exception.GetType().Name}");
+                var diagnostic =
+                    $"ARCH7B_MARKET_DATA_UNSUBSCRIBE_FAILURE:{exception.GetType().Name}";
+                attempts.Add($"{attemptLabel}: {diagnostic}");
+                cleanup.AddDiagnostic(diagnostic);
+            }
+        }
+
+        async Task TryLogoutAsync(Stream activeStream)
+        {
+            if (!fixLoggedOn || logoutAttempted)
+                return;
+            logoutAttempted = true;
+            logoutSent = await TrySendLogoutAsync(
+                activeStream,
+                options,
+                target,
+                sequenceNumber,
+                attempts,
+                attemptLabel);
+            if (!logoutSent)
+            {
+                const string diagnostic =
+                    "ARCH7B_MARKET_DATA_LOGOUT_FAILURE:SANITIZED";
+                cleanup.AddDiagnostic(diagnostic);
             }
         }
 
@@ -1245,8 +1271,11 @@ public sealed partial class RawLmaxFixSessionClient(
         {
             RequestMode = requestOptions.RequestMode,
             MdReqId = mdReqId,
+            UnsubscribeAttempted = unsubscribeAttempted,
             UnsubscribeSent = unsubscribeSent,
-            UnsubscribeMdReqId = unsubscribeSent ? mdReqId : null,
+            UnsubscribeMdReqId = unsubscribeAttempted ? mdReqId : null,
+            LogoutAttempted = logoutAttempted,
+            Cleanup = cleanup,
             CompleteTopOfBook = boundedBook.Complete,
             ObservationCompletedAtUtc = observationCompletedAtUtc,
             RejectRefTagId = rejectRefTagId,
@@ -1297,7 +1326,7 @@ public sealed partial class RawLmaxFixSessionClient(
 
             if (!fixLoggedOn)
             {
-                return LmaxFixMarketDataSmokeResult.Create("Failed", "FIX market data logon was not confirmed; market data request was not sent.", startedAt, tcpConnected, tlsHandshakeCompleted, fixLogonSent, fixLoggedOn, false, false, false, logoutSent, null, null, lastMsgType, LmaxConnectivityLabSafetyValidator.DecisionsForExternalCommand(options), diagnostics, attempts, messageCount: messages.Count);
+                return WithMetadata(LmaxFixMarketDataSmokeResult.Create("Failed", "FIX market data logon was not confirmed; market data request was not sent.", startedAt, tcpConnected, tlsHandshakeCompleted, fixLogonSent, fixLoggedOn, false, false, false, logoutSent, null, null, lastMsgType, LmaxConnectivityLabSafetyValidator.DecisionsForExternalCommand(options), diagnostics, attempts, messageCount: messages.Count));
             }
 
             var request = LmaxFixMarketDataCodec.BuildMarketDataRequest(options.FixSenderCompId!, target, sequenceNumber++, mdReqId, requestOptions);
@@ -1383,13 +1412,15 @@ public sealed partial class RawLmaxFixSessionClient(
             }
 
             await TryUnsubscribeAsync(activeStream);
-            logoutSent = await TrySendLogoutAsync(activeStream, options, target, sequenceNumber, attempts, attemptLabel);
+            await TryLogoutAsync(activeStream);
             boundedBook = LmaxFixMarketDataCodec.ComputeBoundedStreamingTopOfBook(
                 entries, mdReqId, requestOptions);
             var mid = boundedBook.Complete
                 ? (boundedBook.BestBid + boundedBook.BestAsk) / 2m
                 : null;
-            var status = boundedBook.Complete && unsubscribeSent && logoutSent
+            var status = boundedBook.Complete &&
+                         !marketDataRejectReceived &&
+                         lastInboundSequenceNumber is not null
                 ? "Ok"
                 : "Failed";
             var text = status == "Ok"
@@ -1412,7 +1443,10 @@ public sealed partial class RawLmaxFixSessionClient(
             var result = LmaxFixMarketDataSmokeResult.Create(status, text, startedAt, tcpConnected, tlsHandshakeCompleted, fixLogonSent, fixLoggedOn, marketDataRequestSent, marketDataSnapshotReceived, marketDataRejectReceived, logoutSent, rejectReason, rejectText, lastMsgType, LmaxConnectivityLabSafetyValidator.DecisionsForExternalCommand(options), diagnostics, attempts, entries, boundedBook.BestBid, boundedBook.BestAsk, mid, messages.Count);
             return WithMetadata(result with
             {
-                InboundSequenceIntegrityProven = status == "Ok" && lastInboundSequenceNumber is not null,
+                InboundSequenceIntegrityProven =
+                    boundedBook.Complete &&
+                    !marketDataRejectReceived &&
+                    lastInboundSequenceNumber is not null,
                 SnapshotSha256 = snapshotSha256
             });
         }
@@ -1421,7 +1455,7 @@ public sealed partial class RawLmaxFixSessionClient(
             if (fixLoggedOn && stream is not null)
             {
                 await TryUnsubscribeAsync(stream);
-                logoutSent = await TrySendLogoutAsync(stream, options, target, sequenceNumber, attempts, attemptLabel);
+                await TryLogoutAsync(stream);
             }
 
             var phase = !tcpConnected ? "TCP connect" : !tlsHandshakeCompleted && options.UseTls ? "TLS handshake" : !fixLoggedOn ? "FIX logon" : marketDataRequestSent ? "market data response" : "market data request";
@@ -1432,36 +1466,48 @@ public sealed partial class RawLmaxFixSessionClient(
             if (fixLoggedOn && stream is not null)
             {
                 await TryUnsubscribeAsync(stream);
-                logoutSent = await TrySendLogoutAsync(
-                    stream,
-                    options,
-                    target,
-                    sequenceNumber,
-                    attempts,
-                    attemptLabel);
+                await TryLogoutAsync(stream);
             }
             return WithMetadata(LmaxFixMarketDataSmokeResult.Create("Failed", $"Market data snapshot smoke failed: {ex.GetType().Name}: {ex.Message}", startedAt, tcpConnected, tlsHandshakeCompleted, fixLogonSent, fixLoggedOn, marketDataRequestSent, marketDataSnapshotReceived, marketDataRejectReceived, logoutSent, rejectReason, rejectText, lastMsgType, LmaxConnectivityLabSafetyValidator.DecisionsForExternalCommand(options), diagnostics, attempts, entries, messageCount: messages.Count));
         }
         finally
         {
+            if (fixLoggedOn && stream is not null)
+            {
+                await TryUnsubscribeAsync(stream);
+                await TryLogoutAsync(stream);
+            }
             try
             {
                 if (stream is not null)
+                {
+                    cleanup.StreamDisposeAttempted = true;
                     await stream.DisposeAsync();
+                    cleanup.StreamDisposeSucceeded = true;
+                }
             }
             catch (Exception exception)
             {
-                attempts.Add(
-                    $"ARCH7B_MARKET_DATA_STREAM_DISPOSE_FAILURE:{exception.GetType().Name}");
+                var diagnostic =
+                    $"ARCH7B_MARKET_DATA_STREAM_DISPOSE_FAILURE:{exception.GetType().Name}";
+                attempts.Add(diagnostic);
+                cleanup.AddDiagnostic(diagnostic);
             }
             try
             {
-                tcp?.Dispose();
+                if (tcp is not null)
+                {
+                    cleanup.SocketDisposeAttempted = true;
+                    tcp.Dispose();
+                    cleanup.SocketDisposeSucceeded = true;
+                }
             }
             catch (Exception exception)
             {
-                attempts.Add(
-                    $"ARCH7B_MARKET_DATA_TCP_DISPOSE_FAILURE:{exception.GetType().Name}");
+                var diagnostic =
+                    $"ARCH7B_MARKET_DATA_TCP_DISPOSE_FAILURE:{exception.GetType().Name}";
+                attempts.Add(diagnostic);
+                cleanup.AddDiagnostic(diagnostic);
             }
         }
     }

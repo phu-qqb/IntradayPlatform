@@ -35,6 +35,9 @@
                          "maximum_attempts":  3,
                          "request_mode":  "BOUNDED_SNAPSHOT_PLUS_UPDATES_ONE_BBO_THEN_UNSUBSCRIBE",
                          "subscription_contract":  "263=1 then 263=2 with the same unique MDReqID",
+                         "freshness_contract":  "startedAtUtc >= openingTerminalUtc; observedAtUtc >= startedAtUtc; nowUtc - observedAtUtc <= 5 seconds",
+                         "cleanup_contract":  "unsubscribe and logout always attempted; stream and socket always disposed in finally",
+                         "cleanup_failure_effect":  "sanitized diagnostic only after a valid BBO; flatten remains authorized",
                          "symbol_encoding":  "non-Auto explicit mapping",
                          "polygon_allowed":  false,
                          "allow_order_submission":  false
