@@ -50,3 +50,51 @@ The runner keeps the order-entry lifecycle bounded while attempting at most thre
 ## Current non-actions
 
 No PostgreSQL connection or migration apply, no FIX logon, no secret read, no Demo order, no real-account access and no production mutation were performed while preparing this branch.
+
+## Fresh PMS slot handoff
+
+Before any future market-data capture, start the ARCH7B `prearm-and-import`
+mode and require both the per-slot owner lock and `importer.armed.json`. The
+capture starter must call `assert-prearmed`; failure means no capture and no FIX.
+
+The canonical slot finalizer calls `publish-ready` immediately after the raw
+artifact and `slot_manifest.json` are closed and their indispensable SHA-256
+values are available. Publication is temp-file, write-through flush, then
+atomic rename. Reports, ZIPs, tests, history scans and evidence copies occur
+only after import starts.
+
+The prearmed importer uses a filesystem watcher plus a 100 ms fallback poll
+with no initial sleep. Internal SLOs are marker publication within 10 seconds,
+detection within 2 seconds and first import PostgreSQL connection within 30
+seconds of close. The absolute 300-second boundary is unchanged. There is no
+retry and no automatic second capture. A stale, early or conflicting marker
+fails closed.
+
+## PostgreSQL target configuration
+
+The same handoff binary supports one explicitly configured PostgreSQL TEST
+target per run: local loopback or remote TLS. The connection secret remains
+`QQ_PMS_SHADOW_ARCH7B_CONNECTION_STRING`. Required non-secret arguments are
+`--target-profile-id`, `--expected-environment`, `--expected-database`,
+`--expected-postgres-major`, `--allow-loopback`, and `--require-tls`;
+`--expected-schema` defaults to the canonical `pms_shadow`.
+
+Loopback requires `--allow-loopback true`. Remote PostgreSQL requires
+`--require-tls true`, `SslMode=VerifyFull`, and
+`TrustServerCertificate=false`. There is no local fallback, second target,
+dual-write or arbitrary PostgreSQL 16 pin.
+
+`assert-prearmed` and `publish-ready` require the non-secret target profile and
+read the fingerprint directly from the canonical `importer.armed.json`. The
+requested profile must match the armed profile, and the marker is bound to both
+values. Never pass or print the connection string, username, password, token or
+private certificate.
+
+## NEXT REQUIRED OPERATION BEFORE LIVE ARCH7B
+
+Before another fresh slot is consumed: inventory the authoritative local
+database; verify the provisioned RDS server; select an isolated RDS TEST
+database; migrate schema and append-only facts; prove local-to-RDS parity;
+perform a historical read-only/no-order dry run; and declare RDS as the one
+qualification target. This PR does not connect to AWS or PostgreSQL, migrate,
+restore, capture market data, log on to FIX, or send an order.
