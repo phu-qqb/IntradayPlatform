@@ -52,6 +52,8 @@ public static class PmsShadowRealSlotCaptureReader
         if (!File.Exists(artifactPath)) throw new InvalidDataException("RAW_SLOT_ARTIFACT_MISSING");
         var actualSha = Convert.ToHexStringLower(SHA256.HashData(File.ReadAllBytes(artifactPath)));
         if (actualSha != artifactSha) throw new InvalidDataException("RAW_SLOT_ARTIFACT_SHA_MISMATCH");
+        var slotStartUtc = root.GetProperty("slot_start_utc").GetDateTimeOffset();
+        var slotEndUtc = root.GetProperty("slot_end_utc").GetDateTimeOffset();
         if (root.GetProperty("bbo_symbol_count").GetInt32() != 49 ||
             root.GetProperty("missing_required_bbo_symbols").GetArrayLength() != 0)
             throw new InvalidDataException("RAW_SLOT_BBO_COVERAGE_INCOMPLETE");
@@ -68,9 +70,38 @@ public static class PmsShadowRealSlotCaptureReader
                 value.Value.GetProperty("recorded_utc").GetDateTimeOffset())).ToArray();
         if (bbo.Length != 49 || bbo.Select(value => value.Symbol).Distinct(StringComparer.Ordinal).Count() != 49)
             throw new InvalidDataException("RAW_SLOT_BBO_IDENTITY_INCOMPLETE");
+        if (bbo.Any(value =>
+                value.SourceTimestampUtc < slotStartUtc ||
+                value.SourceTimestampUtc > slotEndUtc))
+            throw new InvalidDataException("RAW_SLOT_BBO_SOURCE_TIMESTAMP_OUTSIDE_WINDOW");
+        if (bbo.Any(value => value.SourceTimestampUtc > value.RecordedUtc))
+            throw new InvalidDataException("RAW_SLOT_BBO_SOURCE_TIMESTAMP_AFTER_RECORDED");
+        if (bbo.Any(value => value.Bid <= 0m || value.Ask < value.Bid))
+            throw new InvalidDataException("RAW_SLOT_BBO_PRICE_INVALID");
+        if (root.TryGetProperty("slot_bbo_selection_contract_version", out var selectionVersion))
+        {
+            if (selectionVersion.GetString() != PmsShadowRealSlotBboSelectionContract.Version)
+                throw new InvalidDataException("RAW_SLOT_BBO_SELECTION_VERSION_MISMATCH");
+            var selectionSha = Required(root, "selection_sha256");
+            PmsShadowIntradayCadenceContract.RequireSha(
+                selectionSha, "selection_sha256");
+            if (PmsShadowRealSlotBboSelector.SelectionSha256(
+                    root.GetProperty("last_bbo_by_symbol")) != selectionSha)
+                throw new InvalidDataException("RAW_SLOT_BBO_SELECTION_SHA_MISMATCH");
+            if (root.GetProperty("in_slot_bbo_event_count").GetInt32() < 49)
+                throw new InvalidDataException("RAW_SLOT_IN_WINDOW_BBO_COVERAGE_INCOMPLETE");
+            var excludedPostClose = root.GetProperty("excluded_post_close_by_symbol")
+                .EnumerateObject().Sum(value => value.Value.GetInt32());
+            if (excludedPostClose != root.GetProperty("post_close_bbo_event_count").GetInt32())
+                throw new InvalidDataException("RAW_SLOT_POST_CLOSE_DIAGNOSTIC_MISMATCH");
+            if (root.GetProperty("minimum_selected_source_timestamp_utc").GetDateTimeOffset() !=
+                    bbo.Min(value => value.SourceTimestampUtc) ||
+                root.GetProperty("maximum_selected_source_timestamp_utc").GetDateTimeOffset() !=
+                    bbo.Max(value => value.SourceTimestampUtc))
+                throw new InvalidDataException("RAW_SLOT_BBO_SELECTED_TIMESTAMP_RANGE_MISMATCH");
+        }
         var capture = new PmsShadowRealSlotCapture(Required(root, "slot_id"),
-            root.GetProperty("slot_start_utc").GetDateTimeOffset(),
-            root.GetProperty("slot_end_utc").GetDateTimeOffset(), Required(root, "recorder_run_id"),
+            slotStartUtc, slotEndUtc, Required(root, "recorder_run_id"),
             artifactPath, artifactSha, bbo, root.GetProperty("lmax_primary").GetBoolean(),
             root.GetProperty("polygon_call_count").GetInt32(), root.GetProperty("complete").GetBoolean(),
             root.GetProperty("no_order").GetBoolean());
@@ -222,8 +253,7 @@ public sealed class PmsShadowIntradayEconomicProjectionBuilder
 
         var quotes = capture.Bbo.Select(value => new Arch6aLmaxFxQuote(value.LmaxInstrumentId,
             value.Symbol, value.Symbol[..3], value.Symbol[3..], value.Bid, value.Ask,
-            value.SourceTimestampUtc, value.SourceTimestampUtc > value.RecordedUtc
-                ? value.SourceTimestampUtc : value.RecordedUtc, capture.ArtifactSha256)).ToArray();
+            value.SourceTimestampUtc, value.RecordedUtc, capture.ArtifactSha256)).ToArray();
         var projector = new Arch6aLmaxUsdCrossRateProjector();
         var observations = mappings.Values.OrderBy(value => value.SecurityId, StringComparer.Ordinal)
             .Select(mapping =>

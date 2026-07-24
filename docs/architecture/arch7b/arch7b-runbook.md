@@ -78,6 +78,23 @@ values are available. Publication is temp-file, write-through flush, then
 atomic rename. Reports, ZIPs, tests, history scans and evidence copies occur
 only after import starts.
 
+Before hashing or marker publication, `publish-ready` finalizes the manifest
+from raw `BBO_UPDATED` events. It selects the last valid event per required
+symbol by `SourceTimestampUtc`, then `RecordedUtc`, FIX/source/process sequence,
+and event identity. Source timestamps are bounded inclusively by the slot;
+source timestamps after close are diagnostic only. `RecordedUtc` may be after
+close only inside the existing 300-second finalization boundary and must never
+precede `SourceTimestampUtc`.
+
+The final manifest must prove 49/49 in-slot LMAX BBOs, no Polygon
+contamination, no order, a valid artifact hash, selection SHA-256, selected
+timestamp range, and post-close exclusion counts. The reader repeats the
+source-window and source-before-recorded checks and rejects rather than
+filtering or repairing an invalid manifest. The historical 10:30Z slot remains
+immutable negative evidence: its GBPUSD observation at
+`2026-07-24T10:45:00.125Z` remains rejected by
+`ARCH7B_POSTGRESQL_PREFLIGHT_INTRADAY_MARKET_OBSERVATION_SLOT_MISMATCH`.
+
 The prearmed importer uses a filesystem watcher plus a 100 ms fallback poll
 with no initial sleep. Internal SLOs are marker publication within 10 seconds,
 detection within 2 seconds and first import PostgreSQL connection within 30

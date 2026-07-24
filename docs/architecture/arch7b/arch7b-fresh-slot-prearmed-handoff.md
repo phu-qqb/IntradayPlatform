@@ -47,6 +47,19 @@ ZIP, historical inventory, test run, or full evidence copy is permitted between
 artifact finalization and marker publication. Cleanup that is not required for
 artifact integrity runs after publication and cannot block import.
 
+`publish-ready` is also the canonical manifest finalization boundary. It reads
+the closed raw artifact, verifies its SHA-256 and the 49 approved
+symbol/instrument identities, and writes a deterministic manifest before
+hashing. A source timestamp exactly at close is accepted; one tick after close
+is excluded and diagnosed. An in-slot source event recorded after close is
+accepted only before the already-established 300-second absolute boundary.
+
+The ready marker is not created when any symbol lacks a valid in-window BBO,
+when source time is after recorded time, when LMAX identity or sequence is
+invalid, or when a non-LMAX event contaminates a required symbol. The reader
+then repeats the source-window checks as defense in depth. Neither layer clamps,
+rounds, truncates, retimestamps, or silently filters a selected BBO.
+
 ## Ready marker
 
 Contract version: `pms_shadow_fresh_slot_handoff_v2`.

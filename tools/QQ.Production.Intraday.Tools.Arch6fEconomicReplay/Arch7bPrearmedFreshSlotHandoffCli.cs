@@ -126,8 +126,17 @@ public static class Arch7bPrearmedFreshSlotHandoffCli
         {
             Require(File.Exists(options.ArmedStatePath), "HANDOFF_IMPORTER_NOT_PREARMED");
             Require(File.Exists(options.OwnershipPath), "HANDOFF_ORCHESTRATOR_OWNER_NOT_ACTIVE");
+            var artifactPath = Required("--artifact-path");
+            var manifestPath = Required("--manifest-path");
+            var selection = PmsShadowRealSlotManifestFinalizer.Finalize(
+                manifestPath, artifactPath, slot);
+            Require(selection.Qualifying, "RAW_SLOT_IN_WINDOW_BBO_COVERAGE_INCOMPLETE");
+            var capture = PmsShadowRealSlotCaptureReader.Read(manifestPath);
+            Require(capture.SlotId == options.SlotId &&
+                capture.SlotEndUtc == options.SlotCloseUtc,
+                "HANDOFF_MANIFEST_SLOT_MISMATCH");
             var marker = PmsShadowFreshSlotReadyMarkerStore.Build(options,
-                Required("--artifact-path"), Required("--manifest-path"), timeline: timeline);
+                artifactPath, manifestPath, timeline: timeline);
             var status = PmsShadowFreshSlotReadyMarkerStore.PublishAtomic(options, marker, timeline);
             Write(new
             {
