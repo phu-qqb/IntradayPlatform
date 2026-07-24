@@ -5,7 +5,7 @@ namespace QQ.Production.Intraday.Infrastructure.PostgreSql;
 
 public static class PmsShadowFreshSlotHandoffContract
 {
-    public const string Version = "pms_shadow_fresh_slot_handoff_v1";
+    public const string Version = "pms_shadow_fresh_slot_handoff_v2";
     public const string Environment = "TEST";
     public const int AbsoluteStartDeadlineSeconds = 300;
     public const int ReadyMarkerSloSeconds = 10;
@@ -55,6 +55,8 @@ public sealed record PmsShadowFreshSlotReadyMarker(
     DateTimeOffset CreatedAtUtc,
     int CreatorProcessId,
     string RepositoryCommit,
+    string TargetProfileId,
+    string TargetFingerprint,
     string Environment,
     bool NoOrder);
 
@@ -65,6 +67,8 @@ public sealed record PmsShadowFreshSlotHandoffOptions(
     string SourceSessionId,
     string RunId,
     string RepositoryCommit,
+    string TargetProfileId,
+    string TargetFingerprint,
     TimeSpan FallbackPollInterval)
 {
     public string SlotRoot => Path.Combine(Path.GetFullPath(HandoffRoot), SlotId);
@@ -76,9 +80,15 @@ public sealed record PmsShadowFreshSlotHandoffOptions(
 
     public static PmsShadowFreshSlotHandoffOptions Create(string root,
         PmsShadowIntradaySlotWindow slot, string sourceSessionId, string runId, string commit,
-        TimeSpan? pollInterval = null) =>
-        new(root, slot.SlotId, slot.SlotEndUtc, sourceSessionId, runId, commit,
+        string targetProfileId, string targetFingerprint, TimeSpan? pollInterval = null)
+    {
+        if (string.IsNullOrWhiteSpace(targetProfileId))
+            throw new InvalidDataException("HANDOFF_TARGET_PROFILE_REQUIRED");
+        PmsShadowIntradayCadenceContract.RequireSha(targetFingerprint, nameof(targetFingerprint));
+        return new(root, slot.SlotId, slot.SlotEndUtc, sourceSessionId, runId, commit,
+            targetProfileId, targetFingerprint,
             pollInterval ?? PmsShadowFreshSlotHandoffContract.DefaultFallbackPollInterval);
+    }
 }
 
 public sealed record PmsShadowFreshSlotHandoffTimelineEvent(
@@ -195,7 +205,8 @@ public static class PmsShadowFreshSlotReadyMarkerStore
         return new(PmsShadowFreshSlotHandoffContract.Version, options.SlotId, options.SlotCloseUtc,
             options.SourceSessionId, artifactPath, artifactSha, manifestSha,
             completed, Environment.ProcessId,
-            options.RepositoryCommit, PmsShadowFreshSlotHandoffContract.Environment, true);
+            options.RepositoryCommit, options.TargetProfileId, options.TargetFingerprint,
+            PmsShadowFreshSlotHandoffContract.Environment, true);
     }
 
     public static string PublishAtomic(PmsShadowFreshSlotHandoffOptions options,
@@ -254,8 +265,13 @@ public static class PmsShadowFreshSlotReadyMarkerStore
         if (marker.Environment != PmsShadowFreshSlotHandoffContract.Environment || !marker.NoOrder)
             throw new InvalidDataException("HANDOFF_READY_MARKER_SAFETY_MISMATCH");
         PmsShadowIntradayCadenceContract.RequireUtc(marker.CreatedAtUtc);
+        if (marker.TargetProfileId != options.TargetProfileId ||
+            marker.TargetFingerprint != options.TargetFingerprint)
+            throw new InvalidDataException("HANDOFF_READY_MARKER_TARGET_MISMATCH");
         PmsShadowIntradayCadenceContract.RequireSha(marker.ArtifactSha256, nameof(marker.ArtifactSha256));
         PmsShadowIntradayCadenceContract.RequireSha(marker.ManifestSha256, nameof(marker.ManifestSha256));
+        PmsShadowIntradayCadenceContract.RequireSha(
+            marker.TargetFingerprint, nameof(marker.TargetFingerprint));
         if (marker.CreatedAtUtc < options.SlotCloseUtc)
             throw new InvalidDataException("HANDOFF_READY_MARKER_CREATED_BEFORE_SLOT_CLOSE");
         if (!verifyFiles) return;
@@ -409,6 +425,10 @@ public sealed class PmsShadowFreshSlotHandoffRunner(
 
     private FileStream AcquireOwnership()
     {
+        if (string.IsNullOrWhiteSpace(options.TargetProfileId))
+            throw new InvalidDataException("HANDOFF_TARGET_PROFILE_REQUIRED");
+        PmsShadowIntradayCadenceContract.RequireSha(
+            options.TargetFingerprint, nameof(options.TargetFingerprint));
         try
         {
             var stream = new FileStream(options.OwnershipPath, FileMode.CreateNew, FileAccess.ReadWrite,
@@ -418,6 +438,8 @@ public sealed class PmsShadowFreshSlotHandoffRunner(
                 contract_version = PmsShadowFreshSlotHandoffContract.Version,
                 options.SlotId,
                 options.RunId,
+                options.TargetProfileId,
+                options.TargetFingerprint,
                 owner_process_id = Environment.ProcessId,
                 acquired_at_utc = clock.GetUtcNow(),
                 no_order = true
@@ -447,6 +469,8 @@ public sealed class PmsShadowFreshSlotHandoffRunner(
                 repository_commit = options.RepositoryCommit,
                 environment = PmsShadowFreshSlotHandoffContract.Environment,
                 prearmed_at_utc = clock.GetUtcNow(),
+                options.TargetProfileId,
+                options.TargetFingerprint,
                 no_order = true
             }, PmsShadowFreshSlotHandoffTimeline.JsonOptions));
 

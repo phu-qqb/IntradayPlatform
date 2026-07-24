@@ -279,7 +279,8 @@ public sealed partial class Arch7bFreshSlotHandoffTests : IDisposable
         var close = Utc(2026, 7, 24, 12, 0, 0);
         var slot = PmsShadowIntradayCadenceContract.WindowEnding(close);
         return PmsShadowFreshSlotHandoffOptions.Create(root, slot,
-            "arch6b-daily-tier1-20260721T130346Z-422530a8", "arch7b-handoff-test", Commit);
+            "arch6b-daily-tier1-20260721T130346Z-422530a8", "arch7b-handoff-test", Commit,
+            "ARCH7B_UNIT_TEST", new string('a', 64));
     }
 
     private static PmsShadowFreshSlotReadyMarker Marker(

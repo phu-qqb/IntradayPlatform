@@ -30,10 +30,11 @@ SHA-256
 
 The existing `Arch6fEconomicReplay` tool exposes three explicit ARCH7B modes:
 
-1. `prearm-and-import` validates the loopback TEST database using a connection
-   string resolved only from `QQ_PMS_SHADOW_ARCH7B_CONNECTION_STRING`, acquires
-   the per-slot owner lock, writes `importer.armed.json`, and blocks on a
-   `FileSystemWatcher` with a 100 ms fallback poll.
+1. `prearm-and-import` validates one configured PostgreSQL TEST target, local
+   or remote TLS, using a connection string resolved only from
+   `QQ_PMS_SHADOW_ARCH7B_CONNECTION_STRING`. It acquires the per-slot owner
+   lock, writes `importer.armed.json`, and blocks on a `FileSystemWatcher` with
+   a 100 ms fallback poll.
 2. `assert-prearmed` is called by the capture starter. It rejects capture unless
    the owner lock and matching armed state exist before close and no ready
    marker already exists.
@@ -48,7 +49,7 @@ artifact integrity runs after publication and cannot block import.
 
 ## Ready marker
 
-Contract version: `pms_shadow_fresh_slot_handoff_v1`.
+Contract version: `pms_shadow_fresh_slot_handoff_v2`.
 
 Required fields:
 
@@ -58,13 +59,41 @@ Required fields:
 - artifact and manifest SHA-256;
 - creation UTC and creator PID;
 - full repository commit;
+- non-secret target profile ID and target fingerprint;
 - `environment=TEST`;
 - `no_order=true`.
 
 The marker is slot-specific and validates both files byte-for-byte. An identical
 second publish is idempotent. A conflicting marker, stale marker, pre-close
-marker, SHA mismatch, source mismatch, commit mismatch, or non-TEST/non-no-order
-marker fails closed.
+marker, SHA mismatch, source mismatch, commit mismatch, target mismatch, or
+non-TEST/non-no-order marker fails closed. Version 1 markers have no target
+binding and are therefore not compatible with the version 2 operational path.
+
+## Portable PostgreSQL TEST target
+
+The handoff has one target per run and creates exactly one
+`DbContextFactory`. It never dual-writes, falls back to a local database, or
+retries against a second database. The secret connection string stays in
+`QQ_PMS_SHADOW_ARCH7B_CONNECTION_STRING`; its value, username and password are
+never written to the marker, timeline or CLI output.
+
+The non-secret target contract requires `ExpectedEnvironment=TEST`, an exact
+`ExpectedDatabase`, `ExpectedSchema=pms_shadow`, `ExpectedPostgresMajor`,
+`TargetProfileId`, `RequireTls`, and `AllowLoopback`. Loopback is accepted only when explicitly
+enabled. A non-loopback target requires `RequireTls=true`,
+`SslMode=VerifyFull`, and `TrustServerCertificate=false`.
+
+The target fingerprint is SHA-256 over normalized non-secret identity fields:
+host, port, database, environment, schema, expected major, profile, target kind and TLS policy.
+It contains no connection string, username, password, token or private
+certificate. Armed state and ready marker carry the profile and fingerprint;
+a mismatch fails closed.
+
+The runtime uses `UseNpgsql(connectionString)` without an arbitrary local
+PostgreSQL 16 pin. The future authorized preflight reads `current_database()`,
+compares `server_version_num` to the configured expected major, and verifies
+`TimeZone`, `transaction_read_only`, the expected schema, the ARCH7B migration
+and pending EF model state before writing `IMPORT_WATCHER_PREARMED`.
 
 ## Ownership and deadlines
 
@@ -96,4 +125,19 @@ and transaction start, classification, completion/failure, and cleanup.
 
 This correction adds no migration and changes no entity or economic model. It
 does not open FIX, send an order, create a Fill or PositionLedgerEvent, access a
-real account, use Polygon or Databento, or mutate production.
+real account, use Polygon or Databento, or mutate production. This PR performs
+no PostgreSQL or AWS connection and does not migrate or restore RDS.
+
+## NEXT REQUIRED OPERATION BEFORE LIVE ARCH7B
+
+No new live ARCH7B run may target the local database after the RDS cutover
+decision. A separately authorized operation must:
+
+1. inventory the authoritative local database;
+2. verify the existing RDS PostgreSQL version and configuration;
+3. create or select an isolated RDS TEST database;
+4. migrate schema and append-only facts;
+5. prove local-to-RDS parity;
+6. execute a historical read-only/no-order dry run;
+7. declare RDS as the single PostgreSQL qualification target;
+8. only then consume a new fresh slot.
