@@ -8,6 +8,16 @@ Requalifies the existing LMAX Demo FIX order-entry path as one bounded, known-or
 - broker ExecutionReport authority and final flat reconciliation;
 - no real account and no production mutation.
 
+## Instrument identity contract
+
+- PMS source identity consists of the internal `InstrumentId`, canonical
+  `SecurityId`, and canonical symbol.
+- Execution venue identity consists of the LMAX instrument ID, FIX
+  `SecurityIDSource=8`, and execution symbol.
+- For historical GBPUSD, PMS `SecurityId=68` and LMAX `SecurityID=4002`.
+- PostgreSQL preflight joins the exact source-ingestion `security_mappings`
+  row by internal `InstrumentId`; it never equates or rewrites the two IDs.
+
 ## BBO contract
 
 - Opening is BUY at the ask of a fresh, sequence-valid, content-addressed LMAX observation acquired inside the authorized window.
@@ -17,7 +27,7 @@ Requalifies the existing LMAX Demo FIX order-entry path as one bounded, known-or
 - The unsubscribe slice cannot consume the logout slice. On timeout/error the socket is force-closed before best-effort stream/socket disposal; all started tasks are awaited and the final cleanup snapshot records actual attempted/succeeded states.
 - Cleanup failure is a sanitized diagnostic, never invalidates an already complete, fresh, sequence-valid BBO and never masks the primary economic blocker.
 - The bounded streaming contract is `BOUNDED_SNAPSHOT_PLUS_UPDATES_ONE_BBO_THEN_UNSUBSCRIBE`.
-- PostgreSQL preflight reads the ChildOrder-bound revision only from `intraday_projection_revisions` and `intraday_market_data_observations`; the legacy market snapshot tables are not a fallback.
+- PostgreSQL preflight reads the ChildOrder-bound revision from `intraday_projection_revisions` and `intraday_market_data_observations`, then validates its source identity through the same-ingestion `security_mappings` row; the legacy market snapshot tables are not a fallback.
 - Polygon, stale snapshots, crossed books, over-wide spreads, non-tick prices and silent opening-observation reuse are fail-closed.
 - No fresh flatten BBO activates the kill-switch evidence, creates no flatten order and never exceeds the global lifecycle deadline.
 

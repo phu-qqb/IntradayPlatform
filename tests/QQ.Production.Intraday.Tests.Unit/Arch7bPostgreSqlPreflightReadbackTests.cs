@@ -21,9 +21,13 @@ public sealed class Arch7bPostgreSqlPreflightReadbackTests
 
         Assert.Contains("pms_shadow.intraday_projection_revisions", sql);
         Assert.Contains("pms_shadow.intraday_market_data_observations", sql);
+        Assert.Contains("pms_shadow.security_mappings", sql);
         Assert.Contains("pr.projection_revision_id = @economic_revision_id", sql);
+        Assert.Contains("mapping.ingestion_id = pr.source_ingestion_id", sql);
+        Assert.Contains("mapping.instrument_id = observation.instrument_id", sql);
         Assert.DoesNotContain("pms_shadow.market_data_snapshots", sql);
         Assert.DoesNotContain("pms_shadow.market_data_observations AS", sql);
+        Assert.DoesNotContain("mapping.symbol = observation.symbol", sql);
     }
 
     [Fact]
@@ -35,8 +39,13 @@ public sealed class Arch7bPostgreSqlPreflightReadbackTests
 
         Assert.Equal(EconomicRevisionId, selected.EconomicRevisionId);
         Assert.Equal(SlotId, selected.SlotId);
-        Assert.Equal("4002", selected.SecurityId);
+        Assert.Equal("68", selected.SecurityId);
         Assert.Equal("GBPUSD", selected.Symbol);
+        Assert.Equal("4002", selected.LmaxInstrumentId);
+        Assert.Equal(IngestionId, selected.MappingIngestionId);
+        Assert.Equal(selected.InstrumentId, selected.MappingInstrumentId);
+        Assert.Equal("68", selected.MappingSecurityId);
+        Assert.Equal("4002", selected.MappingLmaxInstrumentId);
         Assert.Equal(MarketSha, selected.MarketDataSnapshotSha256);
         Assert.Equal("LMAX_DIRECT", selected.ProjectionMethod);
     }
@@ -60,16 +69,102 @@ public sealed class Arch7bPostgreSqlPreflightReadbackTests
             "ARCH7B_POSTGRESQL_PREFLIGHT_INTRADAY_MARKET_OBSERVATION_SHA_MISMATCH");
 
     [Fact]
-    public void Wrong_security_id_fails_closed()
+    public void Legacy_fixture_that_conflates_source_and_lmax_security_ids_fails_closed()
         => AssertBlocker(
-            [Valid() with { SecurityId = "4001", Symbol = "EURUSD", LmaxInstrumentId = "4001" }],
+            [Valid() with { SecurityId = "4002" }],
+            "ARCH7B_POSTGRESQL_PREFLIGHT_SOURCE_SECURITY_MAPPING_MISMATCH");
+
+    [Fact]
+    public void Wrong_lmax_instrument_id_fails_closed()
+        => AssertBlocker(
+            [Valid() with
+            {
+                LmaxInstrumentId = "4001",
+                MappingLmaxInstrumentId = "4001"
+            }],
             "ARCH7B_POSTGRESQL_PREFLIGHT_INTRADAY_MARKET_OBSERVATION_INSTRUMENT_MISMATCH");
 
     [Fact]
-    public void Multiple_matching_security_rows_are_ambiguous()
+    public void Wrong_symbol_fails_closed()
         => AssertBlocker(
-            [Valid(), Valid() with { InstrumentId = Guid.NewGuid() }],
+            [Valid() with { Symbol = "EURUSD", MappingSymbol = "EURUSD" }],
+            "ARCH7B_POSTGRESQL_PREFLIGHT_INTRADAY_MARKET_OBSERVATION_INSTRUMENT_MISMATCH");
+
+    [Fact]
+    public void Observation_source_security_id_must_match_the_source_mapping()
+        => AssertBlocker(
+            [Valid() with { SecurityId = "69" }],
+            "ARCH7B_POSTGRESQL_PREFLIGHT_SOURCE_SECURITY_MAPPING_MISMATCH");
+
+    [Fact]
+    public void Missing_source_mapping_fails_closed()
+        => AssertBlocker(
+            [Valid() with
+            {
+                MappingIngestionId = null,
+                MappingInstrumentId = null,
+                MappingSecurityId = null,
+                MappingSymbol = null,
+                MappingLmaxInstrumentId = null
+            }],
+            "ARCH7B_POSTGRESQL_PREFLIGHT_SOURCE_SECURITY_MAPPING_MISSING");
+
+    [Fact]
+    public void Duplicate_source_mapping_rows_fail_closed_as_ambiguous()
+        => AssertBlocker(
+            [Valid(), Valid()],
+            "ARCH7B_POSTGRESQL_PREFLIGHT_SOURCE_SECURITY_MAPPING_AMBIGUOUS");
+
+    [Fact]
+    public void Multiple_matching_observations_are_ambiguous()
+    {
+        var otherInstrumentId = Guid.NewGuid();
+        AssertBlocker(
+            [Valid(), Valid() with
+            {
+                InstrumentId = otherInstrumentId,
+                MappingInstrumentId = otherInstrumentId
+            }],
             "ARCH7B_POSTGRESQL_PREFLIGHT_INTRADAY_MARKET_OBSERVATION_AMBIGUOUS");
+    }
+
+    [Fact]
+    public void Mapping_from_another_ingestion_fails_closed()
+        => AssertBlocker(
+            [Valid() with { MappingIngestionId = Guid.NewGuid() }],
+            "ARCH7B_POSTGRESQL_PREFLIGHT_SOURCE_SECURITY_MAPPING_MISMATCH");
+
+    [Fact]
+    public void Direct_projection_accepts_the_exact_lmax_mapping_identity_as_leg()
+    {
+        var selected = Arch7bIntradayMarketObservationResolver.Resolve(
+            Expected(),
+            [Valid() with { ProjectionLegSecurityIdsJson = "[\"4002\"]" }]);
+
+        Assert.Equal("4002", selected.LmaxInstrumentId);
+    }
+
+    [Fact]
+    public void Direct_projection_accepts_the_historical_source_symbol_leg_via_the_exact_mapping()
+    {
+        var selected = Arch7bIntradayMarketObservationResolver.Resolve(
+            Expected(),
+            [Valid()]);
+
+        Assert.Equal("[\"GBPUSD\"]", selected.ProjectionLegSecurityIdsJson);
+    }
+
+    [Fact]
+    public void Direct_projection_without_a_leg_resolving_to_the_mapping_fails_closed()
+        => AssertBlocker(
+            [Valid() with { ProjectionLegSecurityIdsJson = "[\"EURUSD\"]" }],
+            "ARCH7B_POSTGRESQL_PREFLIGHT_INTRADAY_MARKET_OBSERVATION_LINEAGE_INCOMPLETE");
+
+    [Fact]
+    public void Inverted_projection_does_not_bypass_leg_validation()
+        => AssertBlocker(
+            [Valid() with { ProjectionMethod = "LMAX_DIRECT_INVERTED" }],
+            "ARCH7B_POSTGRESQL_PREFLIGHT_INTRADAY_MARKET_OBSERVATION_LINEAGE_INCOMPLETE");
 
     [Fact]
     public void Polygon_projection_is_never_an_order_price_source()
@@ -105,6 +200,24 @@ public sealed class Arch7bPostgreSqlPreflightReadbackTests
         => AssertBlocker(
             [Valid() with { EventTimeUtc = new DateTimeOffset(2026, 7, 23, 18, 0, 1, TimeSpan.Zero) }],
             "ARCH7B_POSTGRESQL_PREFLIGHT_INTRADAY_MARKET_OBSERVATION_SLOT_MISMATCH");
+
+    [Fact]
+    public void Wrong_revision_fails_closed()
+        => AssertBlocker(
+            [Valid() with { EconomicRevisionId = Guid.NewGuid() }],
+            "ARCH7B_POSTGRESQL_PREFLIGHT_ECONOMIC_REVISION_MISMATCH");
+
+    [Fact]
+    public void Non_completed_source_fails_closed()
+        => AssertBlocker(
+            [Valid() with { RevisionStatus = "FAILED" }],
+            "ARCH7B_POSTGRESQL_PREFLIGHT_INTRADAY_MARKET_OBSERVATION_LINEAGE_INCOMPLETE");
+
+    [Fact]
+    public void Wrong_source_session_fails_closed()
+        => AssertBlocker(
+            [Valid() with { SourceSessionId = "different-source-session" }],
+            "ARCH7B_POSTGRESQL_PREFLIGHT_INTRADAY_MARKET_OBSERVATION_LINEAGE_INCOMPLETE");
 
     private static void AssertBlocker(
         IReadOnlyList<Arch7bIntradayMarketObservationReadRow> rows,
@@ -144,12 +257,17 @@ public sealed class Arch7bPostgreSqlPreflightReadbackTests
             "COMPLETED",
             true,
             Guid.Parse("99999999-8888-7777-6666-555555555555"),
+            "68",
+            "GBPUSD",
             "4002",
+            IngestionId,
+            Guid.Parse("99999999-8888-7777-6666-555555555555"),
+            "68",
             "GBPUSD",
             "4002",
             1.34000m,
             1.34010m,
             new DateTimeOffset(2026, 7, 23, 17, 59, 59, TimeSpan.Zero),
             "LMAX_DIRECT",
-            "[\"4002\"]");
+            "[\"GBPUSD\"]");
 }
