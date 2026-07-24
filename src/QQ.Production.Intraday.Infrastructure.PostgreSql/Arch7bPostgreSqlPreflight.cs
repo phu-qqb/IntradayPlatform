@@ -12,8 +12,8 @@ public sealed record Arch7bIntradayMarketObservationExpectation(
     Guid IngestionId,
     string SourceSessionId,
     string MarketDataSnapshotSha256,
-    string SecurityId,
-    string Symbol);
+    string ExpectedLmaxInstrumentId,
+    string ExpectedSymbol);
 
 public sealed record Arch7bIntradayMarketObservationReadRow(
     Guid EconomicRevisionId,
@@ -34,6 +34,11 @@ public sealed record Arch7bIntradayMarketObservationReadRow(
     string SecurityId,
     string Symbol,
     string LmaxInstrumentId,
+    Guid? MappingIngestionId,
+    Guid? MappingInstrumentId,
+    string? MappingSecurityId,
+    string? MappingSymbol,
+    string? MappingLmaxInstrumentId,
     decimal Bid,
     decimal Ask,
     DateTimeOffset EventTimeUtc,
@@ -79,20 +84,52 @@ public static class Arch7bIntradayMarketObservationResolver
                 "ARCH7B_POSTGRESQL_PREFLIGHT_INTRADAY_MARKET_OBSERVATION_LINEAGE_INCOMPLETE");
 
         var candidates = rows
-            .Where(value => value.SecurityId == expected.SecurityId)
+            .Where(value =>
+                NormalizeSymbol(value.Symbol) ==
+                    NormalizeSymbol(expected.ExpectedSymbol) &&
+                value.LmaxInstrumentId == expected.ExpectedLmaxInstrumentId)
             .ToArray();
         if (candidates.Length == 0)
             throw new InvalidOperationException(
                 "ARCH7B_POSTGRESQL_PREFLIGHT_INTRADAY_MARKET_OBSERVATION_INSTRUMENT_MISMATCH");
-        if (candidates.Length != 1)
+
+        var observationGroups = candidates
+            .GroupBy(value => new
+            {
+                value.InstrumentId,
+                value.SecurityId,
+                Symbol = NormalizeSymbol(value.Symbol),
+                value.LmaxInstrumentId
+            })
+            .ToArray();
+        if (observationGroups.Length != 1)
             throw new InvalidOperationException(
                 "ARCH7B_POSTGRESQL_PREFLIGHT_INTRADAY_MARKET_OBSERVATION_AMBIGUOUS");
 
-        var selected = candidates[0];
-        if (NormalizeSymbol(selected.Symbol) != NormalizeSymbol(expected.Symbol) ||
-            selected.LmaxInstrumentId != expected.SecurityId)
+        var selectedRows = observationGroups[0].ToArray();
+        var selected = selectedRows[0];
+        var mappingRows = selectedRows
+            .Where(value => value.MappingIngestionId.HasValue)
+            .ToArray();
+        if (mappingRows.Length == 0)
             throw new InvalidOperationException(
-                "ARCH7B_POSTGRESQL_PREFLIGHT_INTRADAY_MARKET_OBSERVATION_INSTRUMENT_MISMATCH");
+                "ARCH7B_POSTGRESQL_PREFLIGHT_SOURCE_SECURITY_MAPPING_MISSING");
+        if (mappingRows.Length != 1)
+            throw new InvalidOperationException(
+                "ARCH7B_POSTGRESQL_PREFLIGHT_SOURCE_SECURITY_MAPPING_AMBIGUOUS");
+
+        var mapping = mappingRows[0];
+        if (mapping.MappingIngestionId != expected.IngestionId ||
+            mapping.MappingInstrumentId != selected.InstrumentId ||
+            mapping.MappingSecurityId != selected.SecurityId ||
+            NormalizeSymbol(mapping.MappingSymbol ?? string.Empty) !=
+                NormalizeSymbol(selected.Symbol) ||
+            mapping.MappingLmaxInstrumentId != selected.LmaxInstrumentId ||
+            NormalizeSymbol(mapping.MappingSymbol ?? string.Empty) !=
+                NormalizeSymbol(expected.ExpectedSymbol) ||
+            mapping.MappingLmaxInstrumentId != expected.ExpectedLmaxInstrumentId)
+            throw new InvalidOperationException(
+                "ARCH7B_POSTGRESQL_PREFLIGHT_SOURCE_SECURITY_MAPPING_MISMATCH");
         if (selected.EventTimeUtc < selected.SlotStartUtc ||
             selected.EventTimeUtc > selected.SlotEndUtc)
             throw new InvalidOperationException(
@@ -101,7 +138,7 @@ public static class Arch7bIntradayMarketObservationResolver
             throw new InvalidOperationException(
                 "ARCH7B_POSTGRESQL_PREFLIGHT_INTRADAY_MARKET_OBSERVATION_NON_LMAX");
         if (selected.Bid <= 0m || selected.Ask < selected.Bid ||
-            !HasCompleteLmaxLegLineage(selected))
+            !HasCompleteLmaxLegLineage(selected, mapping))
             throw new InvalidOperationException(
                 "ARCH7B_POSTGRESQL_PREFLIGHT_INTRADAY_MARKET_OBSERVATION_LINEAGE_INCOMPLETE");
 
@@ -109,25 +146,43 @@ public static class Arch7bIntradayMarketObservationResolver
     }
 
     private static bool HasCompleteLmaxLegLineage(
-        Arch7bIntradayMarketObservationReadRow value)
+        Arch7bIntradayMarketObservationReadRow value,
+        Arch7bIntradayMarketObservationReadRow mapping)
     {
         try
         {
             var legs = JsonSerializer.Deserialize<string[]>(
                 value.ProjectionLegSecurityIdsJson);
-            return legs is { Length: > 0 } &&
-                   legs.All(leg =>
-                       !string.IsNullOrWhiteSpace(leg) &&
-                       !leg.Contains("POLYGON", StringComparison.OrdinalIgnoreCase)) &&
-                   (value.ProjectionMethod == "LMAX_DIRECT"
-                       ? legs.Contains(value.LmaxInstrumentId, StringComparer.Ordinal)
-                       : true);
+            if (legs is not { Length: 1 } ||
+                mapping.MappingSecurityId is null ||
+                mapping.MappingSymbol is null ||
+                mapping.MappingLmaxInstrumentId is null ||
+                legs.Any(leg =>
+                    string.IsNullOrWhiteSpace(leg) ||
+                    leg.Contains("POLYGON", StringComparison.OrdinalIgnoreCase)))
+                return false;
+
+            var leg = legs[0];
+            return value.ProjectionMethod switch
+            {
+                "LMAX_DIRECT" =>
+                    leg == mapping.MappingSecurityId ||
+                    leg == mapping.MappingLmaxInstrumentId ||
+                    NormalizeSymbol(leg) == NormalizeSymbol(mapping.MappingSymbol),
+                "LMAX_DIRECT_INVERTED" =>
+                    NormalizeSymbol(leg) ==
+                    ReverseFxSymbol(NormalizeSymbol(mapping.MappingSymbol)),
+                _ => false
+            };
         }
         catch (JsonException)
         {
             return false;
         }
     }
+
+    private static string ReverseFxSymbol(string value)
+        => value.Length == 6 ? value[3..] + value[..3] : string.Empty;
 
     private static string NormalizeSymbol(string value)
         => new(value.Where(char.IsAsciiLetterOrDigit)
@@ -164,6 +219,11 @@ public sealed class EfArch7bPostgreSqlPreflightReader(
                observation.security_id,
                observation.symbol,
                observation.lmax_instrument_id,
+               mapping.ingestion_id,
+               mapping.instrument_id,
+               mapping.security_id,
+               mapping.symbol,
+               mapping.lmax_instrument_id,
                observation.bid,
                observation.ask,
                observation.event_time_utc,
@@ -174,8 +234,11 @@ public sealed class EfArch7bPostgreSqlPreflightReader(
             ON slot.slot_id = pr.slot_id
           JOIN pms_shadow.intraday_market_data_observations AS observation
             ON observation.projection_revision_id = pr.projection_revision_id
+          LEFT JOIN pms_shadow.security_mappings AS mapping
+            ON mapping.ingestion_id = pr.source_ingestion_id
+           AND mapping.instrument_id = observation.instrument_id
          WHERE pr.projection_revision_id = @economic_revision_id
-         ORDER BY observation.instrument_id
+         ORDER BY observation.instrument_id, mapping.instrument_id
         """;
 
     public async Task<Arch7bPostgreSqlPreflightSnapshot> ReadAsync(
@@ -409,11 +472,16 @@ public sealed class EfArch7bPostgreSqlPreflightReader(
                     reader.GetString(15),
                     reader.GetString(16),
                     reader.GetString(17),
-                    reader.GetDecimal(18),
-                    reader.GetDecimal(19),
-                    reader.GetFieldValue<DateTimeOffset>(20),
-                    reader.GetString(21),
-                    reader.GetString(22)));
+                    reader.IsDBNull(18) ? null : reader.GetGuid(18),
+                    reader.IsDBNull(19) ? null : reader.GetGuid(19),
+                    reader.IsDBNull(20) ? null : reader.GetString(20),
+                    reader.IsDBNull(21) ? null : reader.GetString(21),
+                    reader.IsDBNull(22) ? null : reader.GetString(22),
+                    reader.GetDecimal(23),
+                    reader.GetDecimal(24),
+                    reader.GetFieldValue<DateTimeOffset>(25),
+                    reader.GetString(26),
+                    reader.GetString(27)));
             }
             return rows;
         }

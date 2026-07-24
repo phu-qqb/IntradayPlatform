@@ -14,12 +14,27 @@ Status: PREPARED, DISABLED, NOT AUTHORIZED, NOT APPLIED.
 - One residual cancel `35=F`, zero replace `35=G`, at most four known-order `35=H`.
 - `ExternalOrManualOrderCoverage=UNPROVEN`; exclusivity is a bounded operator declaration plus PostgreSQL advisory lease.
 
+## Instrument identity
+
+PMS source identity and execution venue identity are distinct domains:
+
+- PMS source identity is the internal `InstrumentId`, the source/canonical
+  `SecurityId`, and the canonical `Symbol`.
+- Execution venue identity is the LMAX instrument ID, FIX
+  `SecurityIDSource=8`, and the execution symbol.
+
+For the historical GBPUSD source used by ARCH7B, the canonical PMS
+`SecurityId` is `68`, while the LMAX execution `SecurityID` is `4002`.
+Preflight resolves the exact `security_mappings` row by source ingestion and
+internal `InstrumentId`; it never rewrites `68` as `4002` and never selects by
+symbol alone.
+
 ## Preflight order
 
 1. Validate exact authorization packet SHA, Demo endpoint, account and explicit CLI confirmation.
 2. Acquire the Demo-account advisory lease.
 3. Read the selected ARCH7A ChildOrder and its TradeIntent/RiskDecision/ParentOrder lineage from PostgreSQL.
-4. Prove the exact ChildOrder-bound ARCH6F revision and its canonical `intraday_market_data_observations` row by revision, slot, ingestion, market SHA, SecurityID and LMAX lineage; never use a global-latest or legacy market snapshot fallback.
+4. Prove the exact ChildOrder-bound ARCH6F revision and its canonical `intraday_market_data_observations` row by revision, slot, ingestion, market SHA, PMS source identity, exact source mapping and LMAX execution lineage; never use a global-latest or legacy market snapshot fallback.
 5. Bind a sequence-valid, content-addressed LMAX BBO acquired inside the authorized window to the BUY opening limit at ask and deterministic ClOrdIDs.
 6. Persist the qualification run before FIX logon.
 
