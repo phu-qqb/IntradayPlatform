@@ -300,7 +300,7 @@ public sealed class Arch7aPmsShadowExecutionPipeline
             line.CurrentExecutionQuantity,
             source.AccountScope,
             source.Environment,
-            "SHADOW_ONLY",
+            Arch7aPmsShadowExecutionContract.ShadowTradeIntentClassification,
             Actionable: actionable,
             ExecutionAllowed: false,
             BrokerRouteAllowed: false,

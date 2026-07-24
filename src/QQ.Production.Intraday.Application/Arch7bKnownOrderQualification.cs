@@ -224,7 +224,9 @@ public static class Arch7bKnownOrderQualification
         Require(input.ConfiguredAccountId == Arch7bKnownOrderQualificationPolicy.DemoAccountId, "ARCH7B_DEMO_ACCOUNT_IDENTITY_MISMATCH");
         Require(input.ConfiguredAccountId != Arch7bKnownOrderQualificationPolicy.ForbiddenRealAccountId, "ARCH7B_REAL_ACCOUNT_FORBIDDEN");
         Require(child.Environment == Arch7bKnownOrderQualificationPolicy.Environment, "ARCH7B_CHILD_ENVIRONMENT_MISMATCH");
-        Require(child.AccountScope == "TEST_ONLY", "ARCH7B_CHILD_ACCOUNT_SCOPE_MISMATCH");
+        Require(child.AccountScope == Arch7bKnownOrderQualificationPolicy.DemoAccountId, "ARCH7B_CHILD_ACCOUNT_SCOPE_MISMATCH");
+        Require(child.AccountScope == input.ConfiguredAccountId, "ARCH7B_CHILD_CONFIGURED_ACCOUNT_MISMATCH");
+        Require(child.AccountScope != Arch7bKnownOrderQualificationPolicy.ForbiddenRealAccountId, "ARCH7B_REAL_ACCOUNT_FORBIDDEN");
         Require(child.Symbol == Arch7bKnownOrderQualificationPolicy.Symbol, "ARCH7B_SELECTED_SYMBOL_MISMATCH");
         Require(child.SecurityId == Arch7bKnownOrderQualificationPolicy.SecurityId, "ARCH7B_SECURITY_ID_MISMATCH");
         Require(child.SecurityIdSource == Arch7bKnownOrderQualificationPolicy.SecurityIdSource, "ARCH7B_SECURITY_ID_SOURCE_MISMATCH");
@@ -238,7 +240,10 @@ public static class Arch7bKnownOrderQualification
         Require(child.LmaxMarketData, "ARCH7B_SOURCE_NOT_LMAX_MARKET_DATA");
         Require(!child.PolygonOrderPrice, "ARCH7B_POLYGON_ORDER_PRICE_FORBIDDEN");
         Require(child.LineageComplete, "ARCH7B_SOURCE_LINEAGE_INCOMPLETE");
-        Require(child.TradeIntentClassification == "TEST_PMS_SHADOW_ONLY", "ARCH7B_TRADE_INTENT_CLASSIFICATION_MISMATCH");
+        Require(
+            child.TradeIntentClassification ==
+                Arch7aPmsShadowExecutionContract.ShadowTradeIntentClassification,
+            "ARCH7B_TRADE_INTENT_CLASSIFICATION_MISMATCH");
         Require(child.ParentStatus == "SHADOW_PLANNED", "ARCH7B_PARENT_STATUS_MISMATCH");
         Require(child.ChildStatus == "SHADOW_ONLY", "ARCH7B_CHILD_STATUS_MISMATCH");
         Require(bbo.Source == "LMAX", "ARCH7B_BBO_SOURCE_NOT_LMAX");

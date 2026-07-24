@@ -6,6 +6,9 @@ Status: PREPARED, DISABLED, NOT AUTHORIZED, NOT APPLIED.
 
 - TEST and LMAX Demo account `1754288005` only.
 - Real account `921640160` is rejected in code and database constraints.
+- The canonical ARCH7A TradeIntent carries the exact Demo account ID as `AccountScope`
+  and the single classification `SHADOW_ONLY`; `TEST_ONLY` and
+  `TEST_PMS_SHADOW_ONLY` are not accepted aliases.
 - One deterministic GBPUSD ChildOrder (`SecurityID=4002`, `SecurityIDSource=8`).
 - Opening quantity `0.1`, one opening `35=D`, one flatten `35=D` only for executed quantity.
 - One residual cancel `35=F`, zero replace `35=G`, at most four known-order `35=H`.

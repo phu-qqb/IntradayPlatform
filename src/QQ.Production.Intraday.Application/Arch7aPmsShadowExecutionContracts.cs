@@ -7,6 +7,11 @@ public enum Arch7aSourceFreshness { Fresh, Stale, Missing, Incomplete }
 public enum Arch7aWorkingOrderAuthority { AuthoritativeComplete, UnavailableWithCurrentLmaxInterfaces, Incomplete, Stale }
 public enum Arch7aShadowRiskOutcome { APPROVED_SHADOW, BLOCK_NEW_ORDERS, EMERGENCY_STOP }
 
+public static class Arch7aPmsShadowExecutionContract
+{
+    public const string ShadowTradeIntentClassification = "SHADOW_ONLY";
+}
+
 public sealed record Arch7aExecutionSlot(
     string SlotId,
     DateOnly OperationalDate,
