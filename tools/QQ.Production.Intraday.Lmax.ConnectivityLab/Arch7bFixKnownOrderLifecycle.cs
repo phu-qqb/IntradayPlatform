@@ -161,7 +161,7 @@ public static class LmaxFixArch7bKnownOrderContract
                 options.LmaxInstrumentId == Arch7bKnownOrderQualificationPolicy.SecurityId &&
                 options.FixSecurityIdSource == Arch7bKnownOrderQualificationPolicy.SecurityIdSource,
             "ARCH7B_MARKET_DATA_MAPPING_MISMATCH");
-        Require(options.MarketDataRequestMode == LmaxFixMarketDataRequestMode.SnapshotOnly &&
+        Require(options.MarketDataRequestMode == LmaxFixMarketDataRequestMode.SnapshotPlusUpdates &&
                 options.MarketDataSymbolEncodingMode != LmaxFixMarketDataSymbolEncodingMode.Auto,
             "ARCH7B_MARKET_DATA_SESSION_MODE_UNBOUNDED");
         Require(request.BboSequenceIntegrityProven, "ARCH7B_BBO_SEQUENCE_INTEGRITY_UNPROVEN");
@@ -364,23 +364,35 @@ public static class LmaxFixArch7bKnownOrderContract
         string openingMarketObservationId)
     {
         var blockers = new List<string>();
+        var observedAtUtc = result.ObservationCompletedAtUtc ?? result.CompletedAtUtc;
         Require(!options.AllowOrderSubmission && !options.AllowLiveTrading,
             "ARCH7B_FLATTEN_MARKET_DATA_SESSION_NOT_READ_ONLY");
         Require(options.InstrumentSymbol == Arch7bKnownOrderQualificationPolicy.Symbol &&
                 options.LmaxInstrumentId == Arch7bKnownOrderQualificationPolicy.SecurityId &&
                 options.FixSecurityIdSource == Arch7bKnownOrderQualificationPolicy.SecurityIdSource,
             "ARCH7B_FLATTEN_BBO_INSTRUMENT_MISMATCH");
+        Require(options.MarketDataRequestMode ==
+                LmaxFixMarketDataRequestMode.SnapshotPlusUpdates &&
+                options.MarketDataRequestMode != LmaxFixMarketDataRequestMode.Auto &&
+                options.MarketDepth == 1 &&
+                options.MarketDataMaxWaitSeconds <=
+                Arch7bKnownOrderQualificationPolicy.MaximumBboAgeSeconds,
+            "ARCH7B_FLATTEN_BBO_REQUEST_MODE_INVALID");
         Require(result.Status == "Ok" && result.FixLoggedOn &&
                 result.MarketDataRequestSent && result.MarketDataSnapshotReceived &&
-                !result.MarketDataRejectReceived,
+                !result.MarketDataRejectReceived && result.CompleteTopOfBook,
             "ARCH7B_FLATTEN_BBO_UNAVAILABLE_KILL_SWITCH");
+        Require(result.RequestMode ==
+                LmaxFixMarketDataRequestMode.SnapshotPlusUpdates &&
+                !string.IsNullOrWhiteSpace(result.MdReqId),
+            "ARCH7B_FLATTEN_BBO_REQUEST_IDENTITY_UNPROVEN");
         Require(result.InboundSequenceIntegrityProven,
             "ARCH7B_FLATTEN_BBO_SEQUENCE_INTEGRITY_UNPROVEN");
         Require(result.StartedAtUtc >= notBeforeUtc &&
-                result.CompletedAtUtc >= result.StartedAtUtc &&
-                result.CompletedAtUtc <= nowUtc,
+                observedAtUtc >= result.StartedAtUtc &&
+                observedAtUtc <= nowUtc,
             "ARCH7B_FLATTEN_BBO_NOT_POST_OPENING_TERMINAL");
-        Require(nowUtc - result.CompletedAtUtc <=
+        Require(nowUtc - observedAtUtc <=
                 TimeSpan.FromSeconds(Arch7bKnownOrderQualificationPolicy.MaximumBboAgeSeconds),
             "ARCH7B_FLATTEN_BBO_STALE");
         Require(IsSha256(result.SnapshotSha256 ?? string.Empty) &&
@@ -399,7 +411,7 @@ public static class LmaxFixArch7bKnownOrderContract
             Arch7bKnownOrderQualificationPolicy.SecurityId,
             result.BestBid!.Value,
             result.BestAsk!.Value,
-            result.CompletedAtUtc,
+            observedAtUtc,
             "LMAX",
             result.SnapshotSha256!,
             result.StartedAtUtc,

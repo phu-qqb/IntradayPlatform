@@ -12,7 +12,12 @@ Requalifies the existing LMAX Demo FIX order-entry path as one bounded, known-or
 
 - Opening is BUY at the ask of a fresh, sequence-valid, content-addressed LMAX observation acquired inside the authorized window.
 - Flatten is constructed only after opening terminal CumQty equals the durable sum of unique validated opening Fills.
-- Flatten opens a separate SnapshotOnly LMAX market-data session and uses the bid of a new observation whose SHA differs from the opening observation.
+- Flatten opens a separate bounded `SnapshotPlusUpdates` LMAX market-data session and aggregates one complete bid/ask from no prior state. Freshness is `nowUtc - observedAtUtc <= 5 seconds`; session start and observation must remain post-opening-terminal, so attempts two and three remain usable.
+- After acquisition, the economic BBO is frozen before cleanup. Unsubscribe with `263=2` and the same `MDReqID` plus logout share one cancellable budget capped at 1,000 ms and the absolute lifecycle deadline.
+- The unsubscribe slice cannot consume the logout slice. On timeout/error the socket is force-closed before best-effort stream/socket disposal; all started tasks are awaited and the final cleanup snapshot records actual attempted/succeeded states.
+- Cleanup failure is a sanitized diagnostic, never invalidates an already complete, fresh, sequence-valid BBO and never masks the primary economic blocker.
+- The bounded streaming contract is `BOUNDED_SNAPSHOT_PLUS_UPDATES_ONE_BBO_THEN_UNSUBSCRIBE`.
+- PostgreSQL preflight reads the ChildOrder-bound revision only from `intraday_projection_revisions` and `intraday_market_data_observations`; the legacy market snapshot tables are not a fallback.
 - Polygon, stale snapshots, crossed books, over-wide spreads, non-tick prices and silent opening-observation reuse are fail-closed.
 - No fresh flatten BBO activates the kill-switch evidence, creates no flatten order and never exceeds the global lifecycle deadline.
 
@@ -28,8 +33,8 @@ Requalifies the existing LMAX Demo FIX order-entry path as one bounded, known-or
 
 ## Validation
 
-- ARCH7B targeted tests: 49 passed.
-- Coupled ARCH6C-F, ARCH7A, PMS and PostgreSQL regressions: see `docs/architecture/arch7b/validation_summary.json`.
+- Bounded cleanup, BBO retry and known-order contract tests: 47 passed.
+- Relevant ARCH6F, ARCH7A, ARCH7B and ConnectivityLab regressions: 350 passed.
 - Release solution build: zero errors.
 - EF pending model changes: none.
 - Migration: `20260723085240_AddArch7bLmaxDemoKnownOrderLifecycle`.

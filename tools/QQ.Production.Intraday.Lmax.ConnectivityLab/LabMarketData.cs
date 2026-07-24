@@ -106,6 +106,24 @@ public sealed record LmaxFixMarketDataSmokeResult(
 {
     public bool InboundSequenceIntegrityProven { get; init; }
     public string? SnapshotSha256 { get; init; }
+    public LmaxFixMarketDataRequestMode? RequestMode { get; init; }
+    public string? MdReqId { get; init; }
+    public bool UnsubscribeAttempted => Cleanup.UnsubscribeAttempted;
+    public bool UnsubscribeSent => Cleanup.UnsubscribeSent;
+    public string? UnsubscribeMdReqId => Cleanup.UnsubscribeMdReqId;
+    public bool LogoutAttempted => Cleanup.LogoutAttempted;
+    public bool StreamDisposeAttempted => Cleanup.StreamDisposeAttempted;
+    public bool StreamDisposeSucceeded => Cleanup.StreamDisposeSucceeded;
+    public bool SocketDisposeAttempted => Cleanup.SocketDisposeAttempted;
+    public bool SocketDisposeSucceeded => Cleanup.SocketDisposeSucceeded;
+    public IReadOnlyList<string> CleanupDiagnostics => Cleanup.Diagnostics;
+    public LmaxFixMarketDataCleanupSnapshot Cleanup { get; init; } = LmaxFixMarketDataCleanupSnapshot.Empty;
+    public bool CompleteTopOfBook { get; init; }
+    public DateTimeOffset? ObservationCompletedAtUtc { get; init; }
+    public string? RejectRefTagId { get; init; }
+    public string? RejectRefMsgType { get; init; }
+    public string? SessionRejectReason { get; init; }
+    public string? SanitizedRejectSha256 { get; init; }
 
     public static LmaxFixMarketDataSmokeResult Skipped(string message, IReadOnlyList<string> safetyDecisions)
     {
@@ -165,6 +183,61 @@ public sealed record LmaxFixMarketDataSmokeResult(
             safetyDecisions,
             diagnostics,
             attempts);
+}
+
+public sealed record LmaxFixMarketDataCleanupSnapshot
+{
+    public static LmaxFixMarketDataCleanupSnapshot Empty { get; } = new();
+
+    public LmaxFixMarketDataCleanupSnapshot(
+        bool unsubscribeAttempted = false,
+        bool unsubscribeSent = false,
+        string? unsubscribeMdReqId = null,
+        bool logoutAttempted = false,
+        bool logoutSent = false,
+        bool streamDisposeAttempted = false,
+        bool streamDisposeSucceeded = false,
+        bool socketDisposeAttempted = false,
+        bool socketDisposeSucceeded = false,
+        bool forceCloseAttempted = false,
+        bool forceCloseSucceeded = false,
+        DateTimeOffset? startedAtUtc = null,
+        DateTimeOffset? completedAtUtc = null,
+        DateTimeOffset? deadlineUtc = null,
+        IReadOnlyList<string>? diagnostics = null)
+    {
+        UnsubscribeAttempted = unsubscribeAttempted;
+        UnsubscribeSent = unsubscribeSent;
+        UnsubscribeMdReqId = unsubscribeMdReqId;
+        LogoutAttempted = logoutAttempted;
+        LogoutSent = logoutSent;
+        StreamDisposeAttempted = streamDisposeAttempted;
+        StreamDisposeSucceeded = streamDisposeSucceeded;
+        SocketDisposeAttempted = socketDisposeAttempted;
+        SocketDisposeSucceeded = socketDisposeSucceeded;
+        ForceCloseAttempted = forceCloseAttempted;
+        ForceCloseSucceeded = forceCloseSucceeded;
+        StartedAtUtc = startedAtUtc;
+        CompletedAtUtc = completedAtUtc;
+        DeadlineUtc = deadlineUtc;
+        Diagnostics = Array.AsReadOnly((diagnostics ?? []).ToArray());
+    }
+
+    public bool UnsubscribeAttempted { get; }
+    public bool UnsubscribeSent { get; }
+    public string? UnsubscribeMdReqId { get; }
+    public bool LogoutAttempted { get; }
+    public bool LogoutSent { get; }
+    public bool StreamDisposeAttempted { get; }
+    public bool StreamDisposeSucceeded { get; }
+    public bool SocketDisposeAttempted { get; }
+    public bool SocketDisposeSucceeded { get; }
+    public bool ForceCloseAttempted { get; }
+    public bool ForceCloseSucceeded { get; }
+    public DateTimeOffset? StartedAtUtc { get; }
+    public DateTimeOffset? CompletedAtUtc { get; }
+    public DateTimeOffset? DeadlineUtc { get; }
+    public IReadOnlyList<string> Diagnostics { get; }
 }
 
 public static class LmaxFixMarketDataCodec
@@ -296,6 +369,75 @@ public static class LmaxFixMarketDataCodec
         decimal? bid = bestBid == 0m ? null : bestBid;
         decimal? ask = bestAsk == 0m ? null : bestAsk;
         return (bid, ask, bid.HasValue && ask.HasValue ? (bid.Value + ask.Value) / 2m : null);
+    }
+
+    public static (
+        bool Complete,
+        decimal? BestBid,
+        decimal? BestAsk,
+        string? Blocker) ComputeBoundedStreamingTopOfBook(
+            IEnumerable<LmaxFixMarketDataEntry> entries,
+            string mdReqId,
+            LmaxFixMarketDataRequestOptions options)
+    {
+        decimal? bid = null;
+        decimal? ask = null;
+        foreach (var entry in entries)
+        {
+            if (!string.Equals(entry.MdReqId, mdReqId, StringComparison.Ordinal))
+                return (false, null, null,
+                    "ARCH7B_FLATTEN_BBO_MDREQID_MISMATCH");
+            if (!string.IsNullOrWhiteSpace(entry.SecurityId) &&
+                !string.Equals(
+                    entry.SecurityId,
+                    options.LmaxInstrumentId,
+                    StringComparison.Ordinal) ||
+                !MatchesExpectedSymbol(entry.Symbol, options))
+                return (false, null, null,
+                    "ARCH7B_FLATTEN_BBO_INSTRUMENT_MISMATCH");
+            if (entry.EntryType is not ("0" or "1"))
+                continue;
+            if (entry.UpdateAction is not (null or "0" or "1" or "2"))
+                return (false, null, null,
+                    "ARCH7B_FLATTEN_BBO_UPDATE_ACTION_INVALID");
+
+            if (entry.UpdateAction == "2")
+            {
+                if (entry.EntryType == "0")
+                    bid = null;
+                else
+                    ask = null;
+                continue;
+            }
+            if (entry.Price is null or <= 0m)
+                return (false, null, null,
+                    "ARCH7B_FLATTEN_BBO_PRICE_INVALID");
+            if (entry.EntryType == "0")
+                bid = entry.Price;
+            else
+                ask = entry.Price;
+        }
+
+        if (bid is null || ask is null)
+            return (false, bid, ask,
+                "ARCH7B_FLATTEN_BBO_BID_ASK_INCOMPLETE");
+        if (bid > ask)
+            return (false, bid, ask,
+                "ARCH7B_FLATTEN_BBO_CROSSED");
+        return (true, bid, ask, null);
+    }
+
+    private static bool MatchesExpectedSymbol(
+        string? actual,
+        LmaxFixMarketDataRequestOptions options)
+    {
+        if (string.IsNullOrWhiteSpace(actual))
+            return true;
+        var normalized = new string(actual.Where(char.IsAsciiLetterOrDigit)
+            .Select(char.ToUpperInvariant).ToArray());
+        return normalized == new string(options.InstrumentSymbol
+            .Where(char.IsAsciiLetterOrDigit)
+            .Select(char.ToUpperInvariant).ToArray());
     }
 
     public static bool ContainsTag(string message, string tag, string value)

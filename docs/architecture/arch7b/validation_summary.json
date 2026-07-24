@@ -1,14 +1,15 @@
 {
     "gate":  "ARCH7B_REQUALIFY_EXISTING_LMAX_DEMO_FIX_ORDER_ENTRY_SINGLE_BOUNDED_KNOWN_ORDER_LIFECYCLE_FLATTEN_AND_RECONCILIATION",
-    "status":  "ARCH7B_LOCAL_IMPLEMENTATION_AND_EXPORT_PACKET_READY_AWAITING_PUBLICATION_AUTHORIZATION",
+    "status":  "ARCH7B_PR34_DRAFT_BOUNDED_MARKET_DATA_CLEANUP_READY",
     "targeted_arch7b_tests":  {
-                                  "passed":  49,
+                                  "filter":  "Arch7bBoundedMarketDataCleanupTests, Arch7bFlattenBboCleanupAndRetryTests, Arch7bLmaxFixKnownOrderContractTests",
+                                  "passed":  47,
                                   "failed":  0,
                                   "skipped":  0
                               },
     "coupled_regressions":  {
-                                "filter":  "ARCH6C/D/E/F, ARCH7A, TargetPosition, PositionOnlyDrift, PostgreSQL",
-                                "passed":  319,
+                                "filter":  "ARCH6F, ARCH7A, ARCH7B, LmaxConnectivityLabTests",
+                                "passed":  350,
                                 "failed":  0,
                                 "skipped":  0
                             },
@@ -41,11 +42,19 @@
                    },
     "cleanup_review":  {
                            "post_logon_logout_attempted_on_every_exit":  true,
+                           "maximum_market_data_cleanup_milliseconds":  1000,
+                           "cleanup_deadline_capped_by_lifecycle_deadline":  true,
+                           "unsubscribe_and_logout_share_one_budget":  true,
+                           "blocked_write_runtime_tests":  true,
+                           "force_close_before_disposal":  true,
                            "stream_and_socket_disposed_on_every_exit":  true,
+                           "final_cleanup_snapshot_immutable":  true,
+                           "no_cleanup_cancellation_token_none":  true,
+                           "no_fire_and_forget":  true,
                            "advisory_lease_released_on_every_exit":  true
                        },
     "secret_review":  {
-                          "content_value_scan":  "NOT_RUN_NO_SECRET_READ_BOUNDARY",
+                          "content_value_scan":  "DIFF_ONLY_NO_MATCH",
                           "new_secret_values_introduced_by_this_change":  false,
                           "evidence":  "Only secret-reference names are documented; no credential value, connection string value, or endpoint credential was read or written."
                       }

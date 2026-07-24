@@ -77,6 +77,8 @@
                                        "source":  "LMAX",
                                        "sequence_integrity":  "REQUIRED",
                                        "maximum_age_seconds":  5,
+                                       "request_mode":  "BOUNDED_SNAPSHOT_PLUS_UPDATES_ONE_BBO_THEN_UNSUBSCRIBE",
+                                       "subscription_contract":  "263=1_THEN_263=2_SAME_UNIQUE_MDREQID",
                                        "polygon_used":  false,
                                        "limit_rule":  "SELL_AT_NEW_FRESH_BID",
                                        "exact_price":  "UNRESOLVED_UNTIL_POST_OPENING_TERMINAL_BBO"

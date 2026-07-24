@@ -129,12 +129,35 @@ public sealed class Arch7bLmaxFixKnownOrderContractTests
             "tools",
             "QQ.Production.Intraday.Lmax.ConnectivityLab",
             "RawFixSessionClient.cs"));
-        Assert.Contains(
-            "logoutSent = await TrySendLogoutAsync(activeStream",
-            marketDataSource,
-            StringComparison.Ordinal);
         Assert.DoesNotContain("logoutSent = true;", marketDataSource, StringComparison.Ordinal);
         Assert.Contains("finally", marketDataSource, StringComparison.Ordinal);
+        Assert.Contains(
+            "ARCH7B_MARKET_DATA_FIX_SEQUENCE_GAP_UNRESOLVED",
+            marketDataSource,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "Func<CancellationToken, Task<bool>>? unsubscribeAsync",
+            marketDataSource,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "Func<CancellationToken, Task<bool>>? logoutAsync",
+            marketDataSource,
+            StringComparison.Ordinal);
+
+        var lifecycleSource = File.ReadAllText(Path.Combine(
+            RepoRoot(),
+            "tools",
+            "QQ.Production.Intraday.Lmax.ConnectivityLab",
+            "RawFixSessionClient.Arch7b.cs"));
+        Assert.Contains(
+            "request.DeadlineUtc",
+            lifecycleSource,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "MaximumFlattenBboAcquisitionAttempts",
+            lifecycleSource,
+            StringComparison.Ordinal);
+        Assert.Contains("remaining < attemptBudget", lifecycleSource, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -198,6 +221,190 @@ public sealed class Arch7bLmaxFixKnownOrderContractTests
         Assert.Contains("ARCH7B_POLYGON_ORDER_PRICE_FORBIDDEN", blockers);
         Assert.Contains("ARCH7B_OPENING_MARKET_OBSERVATION_ID_INVALID", blockers);
         Assert.Contains("ARCH7B_BBO_NOT_ACQUIRED_IN_AUTHORIZED_WINDOW", blockers);
+    }
+
+    [Theory]
+    [InlineData(LmaxFixMarketDataRequestMode.SnapshotOnly)]
+    [InlineData(LmaxFixMarketDataRequestMode.Auto)]
+    public void Lifecycle_refuses_non_streaming_or_auto_market_data_mode(
+        LmaxFixMarketDataRequestMode mode)
+    {
+        var options = LiveLikeOptions();
+        options.MarketDataRequestMode = mode;
+
+        var blockers = LmaxFixArch7bKnownOrderContract.Validate(
+            options,
+            Request(LmaxFixArch7bActivation.AuthorizedOnce),
+            DateTimeOffset.UtcNow);
+
+        Assert.Contains("ARCH7B_MARKET_DATA_SESSION_MODE_UNBOUNDED", blockers);
+    }
+
+    [Fact]
+    public void Streaming_bbo_aggregates_successive_bid_and_ask_for_one_request()
+    {
+        var entries = new[]
+        {
+            Entry("REQ-1", "0", 1.24990m),
+            Entry("REQ-1", "1", 1.25000m)
+        };
+
+        var top = LmaxFixMarketDataCodec.ComputeBoundedStreamingTopOfBook(
+            entries,
+            "REQ-1",
+            StreamingRequestOptions());
+
+        Assert.True(top.Complete);
+        Assert.Equal(1.24990m, top.BestBid);
+        Assert.Equal(1.25000m, top.BestAsk);
+        Assert.Null(top.Blocker);
+    }
+
+    [Fact]
+    public void Streaming_bbo_uses_unique_request_identity_when_response_omits_redundant_instrument_tags()
+    {
+        var entries = new[]
+        {
+            Entry("REQ-1", "0", 1.24990m) with { Symbol = null, SecurityId = null },
+            Entry("REQ-1", "1", 1.25000m) with { Symbol = null, SecurityId = null }
+        };
+
+        var top = LmaxFixMarketDataCodec.ComputeBoundedStreamingTopOfBook(
+            entries,
+            "REQ-1",
+            StreamingRequestOptions());
+
+        Assert.True(top.Complete);
+        Assert.Equal(1.24990m, top.BestBid);
+        Assert.Equal(1.25000m, top.BestAsk);
+    }
+
+    [Theory]
+    [InlineData("0")]
+    [InlineData("1")]
+    public void Streaming_bbo_refuses_unilateral_book(string entryType)
+    {
+        var top = LmaxFixMarketDataCodec.ComputeBoundedStreamingTopOfBook(
+            [Entry("REQ-1", entryType, 1.25000m)],
+            "REQ-1",
+            StreamingRequestOptions());
+
+        Assert.False(top.Complete);
+        Assert.Equal("ARCH7B_FLATTEN_BBO_BID_ASK_INCOMPLETE", top.Blocker);
+    }
+
+    [Fact]
+    public void Streaming_bbo_refuses_wrong_request_or_instrument()
+    {
+        var wrongRequest = LmaxFixMarketDataCodec.ComputeBoundedStreamingTopOfBook(
+            [Entry("REQ-2", "0", 1.24990m)],
+            "REQ-1",
+            StreamingRequestOptions());
+        var wrongInstrument = LmaxFixMarketDataCodec.ComputeBoundedStreamingTopOfBook(
+            [Entry("REQ-1", "0", 1.24990m) with { SecurityId = "4001" }],
+            "REQ-1",
+            StreamingRequestOptions());
+
+        Assert.Equal("ARCH7B_FLATTEN_BBO_MDREQID_MISMATCH", wrongRequest.Blocker);
+        Assert.Equal("ARCH7B_FLATTEN_BBO_INSTRUMENT_MISMATCH", wrongInstrument.Blocker);
+    }
+
+    [Fact]
+    public void Streaming_request_unsubscribes_with_the_same_mdreqid()
+    {
+        var options = StreamingRequestOptions();
+
+        var subscribe = LmaxFixMarketDataCodec.BuildMarketDataRequest(
+            "SENDER", "LMXBDM", 2, "REQ-1", options);
+        var unsubscribe = LmaxFixMarketDataCodec.BuildMarketDataRequest(
+            "SENDER", "LMXBDM", 3, "REQ-1", options, unsubscribe: true);
+
+        Assert.Equal("1", LmaxFixMarketDataCodec.GetTag(subscribe, "263"));
+        Assert.Equal("2", LmaxFixMarketDataCodec.GetTag(unsubscribe, "263"));
+        Assert.Equal(
+            LmaxFixMarketDataCodec.GetTag(subscribe, "262"),
+            LmaxFixMarketDataCodec.GetTag(unsubscribe, "262"));
+    }
+
+    [Fact]
+    public void Flatten_accepts_complete_book_when_cleanup_is_imperfect()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var result = FreshSnapshot(
+            now.AddSeconds(-2),
+            now.AddSeconds(-1),
+            1.24990m,
+            1.25000m,
+            new string('b', 64)) with
+        {
+            LogoutSent = false,
+            Cleanup = new LmaxFixMarketDataCleanupSnapshot(
+                unsubscribeAttempted: true,
+                unsubscribeSent: false,
+                unsubscribeMdReqId: "REQ-1",
+                logoutAttempted: true,
+                logoutSent: false,
+                streamDisposeAttempted: true,
+                streamDisposeSucceeded: true,
+                socketDisposeAttempted: true,
+                socketDisposeSucceeded: true,
+                diagnostics:
+                [
+                    "ARCH7B_MARKET_DATA_UNSUBSCRIBE_FAILURE:IOException",
+                    "ARCH7B_MARKET_DATA_LOGOUT_FAILURE:SANITIZED"
+                ])
+        };
+
+        var decision = LmaxFixArch7bKnownOrderContract.EvaluateFreshFlattenObservation(
+            MarketDataOnlyOptions(),
+            result,
+            now.AddSeconds(-3),
+            now,
+            new string('a', 64));
+
+        Assert.True(decision.Allowed, string.Join(";", decision.Blockers));
+        Assert.DoesNotContain("ARCH7B_FLATTEN_BBO_UNAVAILABLE_KILL_SWITCH", decision.Blockers);
+        Assert.Equal(1.24990m, decision.LimitPrice);
+        Assert.True(result.UnsubscribeAttempted);
+        Assert.False(result.UnsubscribeSent);
+        Assert.True(result.LogoutAttempted);
+        Assert.False(result.LogoutSent);
+        Assert.True(result.StreamDisposeSucceeded);
+        Assert.True(result.SocketDisposeSucceeded);
+        Assert.Equal(2, result.CleanupDiagnostics.Count);
+    }
+
+    [Fact]
+    public void Session_reject_for_tag_263_is_fail_closed_before_any_order_decision()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var rejected = FreshSnapshot(
+            now.AddSeconds(-2),
+            now.AddSeconds(-1),
+            1.24990m,
+            1.25000m,
+            new string('b', 64)) with
+        {
+            Status = "Failed",
+            MarketDataRejectReceived = true,
+            RejectRefTagId = "263",
+            RejectRefMsgType = "V",
+            SessionRejectReason = "5",
+            SanitizedRejectSha256 = new string('c', 64)
+        };
+
+        var decision = LmaxFixArch7bKnownOrderContract.EvaluateFreshFlattenObservation(
+            MarketDataOnlyOptions(),
+            rejected,
+            now.AddSeconds(-3),
+            now,
+            new string('a', 64));
+
+        Assert.False(decision.Allowed);
+        Assert.Contains(
+            "ARCH7B_FLATTEN_BBO_UNAVAILABLE_KILL_SWITCH",
+            decision.Blockers);
+        Assert.Null(decision.LimitPrice);
     }
 
     [Fact]
@@ -468,9 +675,42 @@ public sealed class Arch7bLmaxFixKnownOrderContractTests
             StartedAtUtc = startedAtUtc,
             CompletedAtUtc = completedAtUtc,
             InboundSequenceIntegrityProven = true,
-            SnapshotSha256 = snapshotSha256
+            SnapshotSha256 = snapshotSha256,
+            RequestMode = LmaxFixMarketDataRequestMode.SnapshotPlusUpdates,
+            MdReqId = "REQ-1",
+            CompleteTopOfBook = true,
+            ObservationCompletedAtUtc = completedAtUtc,
+            Cleanup = new LmaxFixMarketDataCleanupSnapshot(
+                unsubscribeAttempted: true,
+                unsubscribeSent: true,
+                unsubscribeMdReqId: "REQ-1",
+                logoutAttempted: true,
+                logoutSent: true,
+                streamDisposeAttempted: true,
+                streamDisposeSucceeded: true,
+                socketDisposeAttempted: true,
+                socketDisposeSucceeded: true)
         };
     }
+    private static LmaxFixMarketDataEntry Entry(
+        string mdReqId,
+        string entryType,
+        decimal price)
+        => new(
+            mdReqId,
+            LmaxFixMarketDataMessageType.IncrementalRefresh,
+            "GBP/USD",
+            Arch7bKnownOrderQualificationPolicy.SecurityId,
+            entryType,
+            price,
+            1m,
+            null,
+            null,
+            "1");
+
+    private static LmaxFixMarketDataRequestOptions StreamingRequestOptions()
+        => LmaxFixMarketDataRequestOptions.FromLabOptions(LiveLikeOptions());
+
     private static LmaxConnectivityLabOptions MarketDataOnlyOptions()
     {
         var options = LiveLikeOptions();
@@ -492,7 +732,10 @@ public sealed class Arch7bLmaxFixKnownOrderContractTests
             LmaxInstrumentId = Arch7bKnownOrderQualificationPolicy.SecurityId,
             LmaxSlashSymbol = "GBP/USD",
             FixSecurityIdSource = Arch7bKnownOrderQualificationPolicy.SecurityIdSource,
-            MarketDataRequestMode = LmaxFixMarketDataRequestMode.SnapshotOnly,
+            MarketDepth = 1,
+            MarketDataMaxWaitSeconds =
+                Arch7bKnownOrderQualificationPolicy.MaximumBboAgeSeconds,
+            MarketDataRequestMode = LmaxFixMarketDataRequestMode.SnapshotPlusUpdates,
             MarketDataSymbolEncodingMode = LmaxFixMarketDataSymbolEncodingMode.SecurityIdAndSymbol
         };
 

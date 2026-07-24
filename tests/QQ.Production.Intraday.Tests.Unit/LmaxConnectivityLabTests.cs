@@ -376,7 +376,7 @@ public sealed class LmaxConnectivityLabTests
     }
 
     [Fact]
-    public async Task Market_data_snapshot_uses_market_data_fix_config_in_diagnostics()
+    public async Task Market_data_snapshot_uses_market_data_host_and_masks_session_ids_in_diagnostics()
     {
         var fix = new RawLmaxFixSessionClient(new LmaxConnectivityLabSafetyValidator());
         var options = CompleteFixOptions();
@@ -386,9 +386,9 @@ public sealed class LmaxConnectivityLabTests
         var diagnostics = string.Join("|", result.Diagnostics);
         Assert.Contains("Host=fix-marketdata.london-demo.lmax.com", diagnostics, StringComparison.Ordinal);
         Assert.Contains("Port=443", diagnostics, StringComparison.Ordinal);
-        Assert.Contains("TargetCompId=LMXBDM", diagnostics, StringComparison.Ordinal);
+        Assert.Contains("TargetCompId=********", diagnostics, StringComparison.Ordinal);
         Assert.DoesNotContain("fix-order.london-demo.lmax.com", diagnostics, StringComparison.Ordinal);
-        Assert.DoesNotContain("TargetCompId=LMXBD|", diagnostics, StringComparison.Ordinal);
+        Assert.DoesNotContain("LMXBDM", diagnostics, StringComparison.Ordinal);
     }
 
     [Fact]

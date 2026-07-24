@@ -5,6 +5,7 @@ using System.Net.Security;
 using System.Net.Sockets;
 using System.Security.Authentication;
 using System.Text;
+using QQ.Production.Intraday.Application;
 
 public sealed partial class RawLmaxFixSessionClient(
     LmaxConnectivityLabSafetyValidator safety,
@@ -85,7 +86,15 @@ public sealed partial class RawLmaxFixSessionClient(
         }
     }
 
-    public async Task<LmaxFixMarketDataSmokeResult> MarketDataSnapshotSmokeAsync(LmaxConnectivityLabOptions options, CancellationToken cancellationToken)
+    public Task<LmaxFixMarketDataSmokeResult> MarketDataSnapshotSmokeAsync(
+        LmaxConnectivityLabOptions options,
+        CancellationToken cancellationToken)
+        => MarketDataSnapshotSmokeAsync(
+            options,
+            DateTimeOffset.MaxValue,
+            cancellationToken);
+
+    public async Task<LmaxFixMarketDataSmokeResult> MarketDataSnapshotSmokeAsync(LmaxConnectivityLabOptions options, DateTimeOffset cleanupDeadlineUtc, CancellationToken cancellationToken)
     {
         var startedAt = DateTimeOffset.UtcNow;
         var issues = safety.ValidateForFixLogon(options, marketData: true).ToList();
@@ -108,7 +117,7 @@ public sealed partial class RawLmaxFixSessionClient(
                 var attemptOptions = requestOptions.WithRequestMode(requestMode).WithEncoding(encoding);
                 var attemptLabel = $"RequestMode={requestMode};Encoding={encoding}";
                 allAttempts.Add($"{attemptLabel}: started with clean FIX session");
-                var result = await RunSingleMarketDataSnapshotAttemptAsync(options, attemptOptions, attemptLabel, startedAt, diagnostics, cancellationToken);
+                var result = await RunSingleMarketDataSnapshotAttemptAsync(options, attemptOptions, attemptLabel, startedAt, diagnostics, cleanupDeadlineUtc, cancellationToken);
                 allAttempts.AddRange(result.Attempts);
                 lastResult = result with { Attempts = allAttempts.ToList() };
                 if (result.Status == "Ok" || requestOptions.RequestMode != LmaxFixMarketDataRequestMode.Auto && requestOptions.SymbolEncodingMode != LmaxFixMarketDataSymbolEncodingMode.Auto)
@@ -1149,6 +1158,7 @@ public sealed partial class RawLmaxFixSessionClient(
         string attemptLabel,
         DateTimeOffset startedAt,
         IReadOnlyList<string> diagnostics,
+        DateTimeOffset cleanupDeadlineUtc,
         CancellationToken cancellationToken)
     {
         var host = options.FixMarketDataHost!;
@@ -1156,7 +1166,7 @@ public sealed partial class RawLmaxFixSessionClient(
         var target = (options.FixMarketDataTargetCompId ?? options.FixTargetCompId)!;
         var messages = new List<string>();
         var entries = new List<LmaxFixMarketDataEntry>();
-        var mdReqId = $"QQMD-{DateTimeOffset.UtcNow:yyyyMMddHHmmssfff}";
+        var mdReqId = $"QQMD-{Guid.NewGuid():N}";
         var attempts = new List<string> { $"{attemptLabel}: MDReqID={mdReqId}" };
         var tcpConnected = false;
         var tlsHandshakeCompleted = false;
@@ -1166,9 +1176,17 @@ public sealed partial class RawLmaxFixSessionClient(
         var marketDataSnapshotReceived = false;
         var marketDataRejectReceived = false;
         var logoutSent = false;
+        DateTimeOffset? observationCompletedAtUtc = null;
         string? rejectReason = null;
         string? rejectText = null;
+        string? rejectRefTagId = null;
+        string? rejectRefMsgType = null;
+        string? sessionRejectReason = null;
+        string? sanitizedRejectSha256 = null;
         string? lastMsgType = null;
+        var boundedBook = (
+            Complete: false, BestBid: (decimal?)null,
+            BestAsk: (decimal?)null, Blocker: (string?)null);
         Stream? stream = null;
         TcpClient? tcp = null;
         var sequenceNumber = 1;
@@ -1197,6 +1215,54 @@ public sealed partial class RawLmaxFixSessionClient(
                 lastInboundSequenceNumber = inboundSequenceNumber;
         }
 
+        async Task<bool> TryUnsubscribeAsync(CancellationToken cleanupToken)
+        {
+            var unsubscribe = LmaxFixMarketDataCodec.BuildMarketDataRequest(
+                options.FixSenderCompId!,
+                target,
+                sequenceNumber++,
+                mdReqId,
+                requestOptions,
+                unsubscribe: true);
+            if (requestOptions.ShowFixMessages)
+                attempts.Add(
+                    $"{attemptLabel}: OUT {LmaxFixMarketDataCodec.SanitizeMessage(unsubscribe)}");
+            await WriteAsciiAsync(
+                stream!,
+                unsubscribe,
+                cleanupToken);
+            attempts.Add($"{attemptLabel}: unsubscribe sent");
+            return true;
+        }
+
+        async Task<bool> TryLogoutAsync(CancellationToken cleanupToken)
+            => logoutSent = await TrySendLogoutAsync(
+                stream!,
+                options,
+                target,
+                sequenceNumber,
+                attempts,
+                attemptLabel,
+                cleanupToken);
+
+        LmaxFixMarketDataSmokeResult WithMetadata(
+            LmaxFixMarketDataSmokeResult value,
+            LmaxFixMarketDataCleanupSnapshot cleanup) => value with
+        {
+            LogoutSent = cleanup.LogoutSent,
+            RequestMode = requestOptions.RequestMode,
+            MdReqId = mdReqId,
+            Cleanup = cleanup,
+            CompleteTopOfBook = boundedBook.Complete,
+            ObservationCompletedAtUtc = observationCompletedAtUtc,
+            RejectRefTagId = rejectRefTagId,
+            RejectRefMsgType = rejectRefMsgType,
+            SessionRejectReason = sessionRejectReason,
+            SanitizedRejectSha256 = sanitizedRejectSha256
+        };
+
+        async Task<LmaxFixMarketDataSmokeResult> AcquireEconomicResultAsync()
+        {
         try
         {
             tcp = new TcpClient();
@@ -1275,9 +1341,21 @@ public sealed partial class RawLmaxFixSessionClient(
 
                     if (LmaxFixMarketDataCodec.ContainsTag(message, "35", "W") || LmaxFixMarketDataCodec.ContainsTag(message, "35", "X"))
                     {
-                        entries.AddRange(LmaxFixMarketDataCodec.ParseMarketDataEntries(message));
+                        entries.AddRange(
+                            LmaxFixMarketDataCodec.ParseMarketDataEntries(message));
                         marketDataSnapshotReceived = true;
-                        break;
+                        boundedBook =
+                            LmaxFixMarketDataCodec.ComputeBoundedStreamingTopOfBook(
+                                entries, mdReqId, requestOptions);
+                        if (boundedBook.Complete)
+                        {
+                            observationCompletedAtUtc = DateTimeOffset.UtcNow;
+                            break;
+                        }
+                        if (boundedBook.Blocker !=
+                            "ARCH7B_FLATTEN_BBO_BID_ASK_INCOMPLETE")
+                            break;
+                        continue;
                     }
 
                     if (LmaxFixMarketDataCodec.ContainsTag(message, "35", "Y"))
@@ -1292,7 +1370,13 @@ public sealed partial class RawLmaxFixSessionClient(
 
                     if (LmaxFixMarketDataCodec.ContainsTag(message, "35", "3"))
                     {
+                        marketDataRejectReceived = true;
                         rejectText = LmaxFixMarketDataCodec.GetTag(message, "58");
+                        rejectRefTagId = LmaxFixMarketDataCodec.GetTag(message, "371");
+                        rejectRefMsgType = LmaxFixMarketDataCodec.GetTag(message, "372");
+                        sessionRejectReason = LmaxFixMarketDataCodec.GetTag(message, "373");
+                        sanitizedRejectSha256 = Sha256(
+                            LmaxFixMarketDataCodec.SanitizeMessage(message));
                         attempts.Add($"{attemptLabel}: session-level reject text={rejectText}");
                         break;
                     }
@@ -1306,26 +1390,22 @@ public sealed partial class RawLmaxFixSessionClient(
                 }
             }
 
-            if (requestOptions.RequestMode == LmaxFixMarketDataRequestMode.SnapshotPlusUpdates)
-            {
-                var unsubscribe = LmaxFixMarketDataCodec.BuildMarketDataRequest(options.FixSenderCompId!, target, sequenceNumber++, mdReqId, requestOptions, unsubscribe: true);
-                if (requestOptions.ShowFixMessages)
-                {
-                    attempts.Add($"{attemptLabel}: OUT {LmaxFixMarketDataCodec.SanitizeMessage(unsubscribe)}");
-                }
-
-                await WriteAsciiAsync(activeStream, unsubscribe, CancellationToken.None);
-                attempts.Add($"{attemptLabel}: unsubscribe sent");
-            }
-
-            logoutSent = await TrySendLogoutAsync(activeStream, options, target, sequenceNumber, attempts, attemptLabel);
-            var (bestBid, bestAsk, mid) = LmaxFixMarketDataCodec.ComputeTopOfBook(entries);
-            var status = entries.Count > 0 ? "Ok" : "Failed";
-            var text = entries.Count > 0
+            boundedBook = LmaxFixMarketDataCodec.ComputeBoundedStreamingTopOfBook(
+                entries, mdReqId, requestOptions);
+            var mid = boundedBook.Complete
+                ? (boundedBook.BestBid + boundedBook.BestAsk) / 2m
+                : null;
+            var status = boundedBook.Complete &&
+                         !marketDataRejectReceived &&
+                         lastInboundSequenceNumber is not null
+                ? "Ok"
+                : "Failed";
+            var text = status == "Ok"
                 ? "Received market data entries. No data was persisted."
                 : marketDataRejectReceived
                     ? "LMAX rejected the MarketDataRequest."
-                    : "No market data snapshot or incremental entries were received before timeout.";
+                    : boundedBook.Blocker ??
+                      "No market data snapshot or incremental entries were received before timeout.";
             var snapshotSha256 = Sha256(System.Text.Json.JsonSerializer.Serialize(new
             {
                 source = "LMAX",
@@ -1337,57 +1417,67 @@ public sealed partial class RawLmaxFixSessionClient(
                 lastInboundSequenceNumber,
                 entries
             }));
-            var result = LmaxFixMarketDataSmokeResult.Create(status, text, startedAt, tcpConnected, tlsHandshakeCompleted, fixLogonSent, fixLoggedOn, marketDataRequestSent, marketDataSnapshotReceived, marketDataRejectReceived, logoutSent, rejectReason, rejectText, lastMsgType, LmaxConnectivityLabSafetyValidator.DecisionsForExternalCommand(options), diagnostics, attempts, entries, bestBid, bestAsk, mid, messages.Count);
+            var result = LmaxFixMarketDataSmokeResult.Create(status, text, startedAt, tcpConnected, tlsHandshakeCompleted, fixLogonSent, fixLoggedOn, marketDataRequestSent, marketDataSnapshotReceived, marketDataRejectReceived, logoutSent, rejectReason, rejectText, lastMsgType, LmaxConnectivityLabSafetyValidator.DecisionsForExternalCommand(options), diagnostics, attempts, entries, boundedBook.BestBid, boundedBook.BestAsk, mid, messages.Count);
             return result with
             {
-                InboundSequenceIntegrityProven = status == "Ok" && lastInboundSequenceNumber is not null,
+                InboundSequenceIntegrityProven =
+                    boundedBook.Complete &&
+                    !marketDataRejectReceived &&
+                    lastInboundSequenceNumber is not null,
                 SnapshotSha256 = snapshotSha256
             };
         }
         catch (OperationCanceledException)
         {
-            if (fixLoggedOn && stream is not null)
-            {
-                logoutSent = await TrySendLogoutAsync(stream, options, target, sequenceNumber, attempts, attemptLabel);
-            }
-
             var phase = !tcpConnected ? "TCP connect" : !tlsHandshakeCompleted && options.UseTls ? "TLS handshake" : !fixLoggedOn ? "FIX logon" : marketDataRequestSent ? "market data response" : "market data request";
             return LmaxFixMarketDataSmokeResult.Create("Failed", $"Market data snapshot smoke timed out during {phase}.", startedAt, tcpConnected, tlsHandshakeCompleted, fixLogonSent, fixLoggedOn, marketDataRequestSent, marketDataSnapshotReceived, marketDataRejectReceived, logoutSent, rejectReason, rejectText, lastMsgType, LmaxConnectivityLabSafetyValidator.DecisionsForExternalCommand(options), diagnostics, attempts, entries, messageCount: messages.Count);
         }
         catch (Exception ex) when (ex is SocketException or IOException or AuthenticationException or InvalidOperationException)
         {
-            if (fixLoggedOn && stream is not null)
-                logoutSent = await TrySendLogoutAsync(
-                    stream,
-                    options,
-                    target,
-                    sequenceNumber,
-                    attempts,
-                    attemptLabel);
             return LmaxFixMarketDataSmokeResult.Create("Failed", $"Market data snapshot smoke failed: {ex.GetType().Name}: {ex.Message}", startedAt, tcpConnected, tlsHandshakeCompleted, fixLogonSent, fixLoggedOn, marketDataRequestSent, marketDataSnapshotReceived, marketDataRejectReceived, logoutSent, rejectReason, rejectText, lastMsgType, LmaxConnectivityLabSafetyValidator.DecisionsForExternalCommand(options), diagnostics, attempts, entries, messageCount: messages.Count);
+        }
+        }
+
+        LmaxFixMarketDataSmokeResult economicResult = null!;
+        var cleanup = LmaxFixMarketDataCleanupSnapshot.Empty;
+        try
+        {
+            economicResult = await AcquireEconomicResultAsync();
         }
         finally
         {
-            try
-            {
-                if (stream is not null)
-                    await stream.DisposeAsync();
-            }
-            catch (Exception exception)
-            {
-                attempts.Add(
-                    $"ARCH7B_MARKET_DATA_STREAM_DISPOSE_FAILURE:{exception.GetType().Name}");
-            }
-            try
-            {
-                tcp?.Dispose();
-            }
-            catch (Exception exception)
-            {
-                attempts.Add(
-                    $"ARCH7B_MARKET_DATA_TCP_DISPOSE_FAILURE:{exception.GetType().Name}");
-            }
+            Func<CancellationToken, Task<bool>>? unsubscribeAsync =
+                requestOptions.RequestMode == LmaxFixMarketDataRequestMode.SnapshotPlusUpdates &&
+                marketDataRequestSent &&
+                stream is not null
+                    ? TryUnsubscribeAsync
+                    : null;
+            Func<CancellationToken, Task<bool>>? logoutAsync = fixLoggedOn && stream is not null
+                ? TryLogoutAsync
+                : null;
+            cleanup = await LmaxFixMarketDataCleanup.RunAsync(
+                cleanupDeadlineUtc,
+                TimeSpan.FromMilliseconds(
+                    Arch7bKnownOrderQualificationPolicy.MaximumMarketDataCleanupMilliseconds),
+                mdReqId,
+                unsubscribeAsync,
+                logoutAsync,
+                tcp is not null ? () => tcp.Client.Close(0) : null,
+                stream is not null ? stream.Dispose : null,
+                tcp is not null ? tcp.Dispose : null,
+                cancellationToken);
+            attempts.AddRange(
+                cleanup.Diagnostics.Select(
+                    value => $"{attemptLabel}: {value}"));
         }
+
+        return WithMetadata(
+            economicResult with
+            {
+                Attempts = attempts.ToList(),
+                CompletedAtUtc = DateTimeOffset.UtcNow
+            },
+            cleanup);
     }
 
     private static async Task<Stream> CreateTlsStreamAsync(TcpClient tcp, string host, CancellationToken cancellationToken)
@@ -1489,7 +1579,17 @@ public sealed partial class RawLmaxFixSessionClient(
         return builder.ToString();
     }
 
-    private static async Task<bool> TrySendLogoutAsync(Stream stream, LmaxConnectivityLabOptions options, string target, int sequenceNumber, ICollection<string> attempts, string attemptLabel)
+    private static Task<bool> TrySendLogoutAsync(Stream stream, LmaxConnectivityLabOptions options, string target, int sequenceNumber, ICollection<string> attempts, string attemptLabel)
+        => TrySendLogoutAsync(
+            stream,
+            options,
+            target,
+            sequenceNumber,
+            attempts,
+            attemptLabel,
+            CancellationToken.None);
+
+    private static async Task<bool> TrySendLogoutAsync(Stream stream, LmaxConnectivityLabOptions options, string target, int sequenceNumber, ICollection<string> attempts, string attemptLabel, CancellationToken cancellationToken)
     {
         try
         {
@@ -1499,7 +1599,7 @@ public sealed partial class RawLmaxFixSessionClient(
                 attempts.Add($"{attemptLabel}: OUT {LmaxFixMarketDataCodec.SanitizeMessage(logout)}");
             }
 
-            await WriteAsciiAsync(stream, logout, CancellationToken.None);
+            await WriteAsciiAsync(stream, logout, cancellationToken);
             attempts.Add($"{attemptLabel}: logout sent");
             return true;
         }
@@ -1508,19 +1608,6 @@ public sealed partial class RawLmaxFixSessionClient(
             attempts.Add($"{attemptLabel}: logout attempt failed {ex.GetType().Name}");
             return false;
         }
-    }
-
-    private static async Task SendMarketDataCleanupAsync(Stream stream, LmaxConnectivityLabOptions options, string target, string mdReqId, int sequenceNumber, LmaxFixMarketDataRequestOptions requestOptions, bool unsubscribe)
-    {
-        if (unsubscribe)
-        {
-            var unsubscribeMessage = LmaxFixMarketDataCodec.BuildMarketDataRequest(options.FixSenderCompId!, target, sequenceNumber, mdReqId, requestOptions, unsubscribe: true);
-            await WriteAsciiAsync(stream, unsubscribeMessage, CancellationToken.None);
-            sequenceNumber++;
-        }
-
-        var logout = LmaxFixMarketDataCodec.BuildMessage("5", sequenceNumber, options.FixSenderCompId!, target, [("58", "Connectivity lab market data logoff")]);
-        await WriteAsciiAsync(stream, logout, CancellationToken.None);
     }
 
     private static CancellationTokenSource CreateTimeout(int seconds, CancellationToken cancellationToken)
