@@ -24,6 +24,7 @@ public static class Arch7bKnownOrderQualificationPolicy
     public const decimal CollarPips = 2m;
     public const decimal MaximumSpreadPips = CollarPips;
     public const int MaximumBboAgeSeconds = 5;
+    public const int MaximumMarketDataCleanupMilliseconds = 1000;
     public const int MaximumLifecycleSeconds = 180;
     public const int MaximumNewOrderSingleCount = 2;
     public const int MaximumCancelCount = 1;

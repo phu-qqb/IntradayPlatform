@@ -36,8 +36,11 @@
                          "request_mode":  "BOUNDED_SNAPSHOT_PLUS_UPDATES_ONE_BBO_THEN_UNSUBSCRIBE",
                          "subscription_contract":  "263=1 then 263=2 with the same unique MDReqID",
                          "freshness_contract":  "startedAtUtc >= openingTerminalUtc; observedAtUtc >= startedAtUtc; nowUtc - observedAtUtc <= 5 seconds",
-                         "cleanup_contract":  "unsubscribe and logout always attempted; stream and socket always disposed in finally",
-                         "cleanup_failure_effect":  "sanitized diagnostic only after a valid BBO; flatten remains authorized",
+                         "cleanup_contract":  "economic BBO frozen first; unsubscribe and logout share one cancellable budget; force-close then stream/socket disposal in finally",
+                         "cleanup_budget_milliseconds":  1000,
+                         "cleanup_deadline_contract":  "cleanupDeadlineUtc <= lifecycle DeadlineUtc; no write starts when no time remains",
+                         "cleanup_task_contract":  "every started cleanup task is awaited; no fire-and-forget",
+                         "cleanup_failure_effect":  "immutable sanitized diagnostics after a valid BBO; flatten remains authorized",
                          "symbol_encoding":  "non-Auto explicit mapping",
                          "polygon_allowed":  false,
                          "allow_order_submission":  false
@@ -83,7 +86,8 @@
                              },
     "cleanup":  [
                     "unsubscribe with 263=2 and the same MDReqID after the first complete ARCH7B BBO",
-                    "market-data logout and socket disposal per attempt",
+                    "unsubscribe and logout share a maximum 1000 ms budget capped by the lifecycle deadline",
+                    "market-data socket force-close, stream disposal and socket disposal per attempt",
                     "order-entry logout attempted on every post-logon exit, including fail-closed exits",
                     "order-entry socket disposal on every exit",
                     "PostgreSQL advisory lease release on every exit"

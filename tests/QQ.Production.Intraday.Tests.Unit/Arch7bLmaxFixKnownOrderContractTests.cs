@@ -129,10 +129,6 @@ public sealed class Arch7bLmaxFixKnownOrderContractTests
             "tools",
             "QQ.Production.Intraday.Lmax.ConnectivityLab",
             "RawFixSessionClient.cs"));
-        Assert.Contains(
-            "await TryLogoutAsync(activeStream)",
-            marketDataSource,
-            StringComparison.Ordinal);
         Assert.DoesNotContain("logoutSent = true;", marketDataSource, StringComparison.Ordinal);
         Assert.Contains("finally", marketDataSource, StringComparison.Ordinal);
         Assert.Contains(
@@ -140,7 +136,11 @@ public sealed class Arch7bLmaxFixKnownOrderContractTests
             marketDataSource,
             StringComparison.Ordinal);
         Assert.Contains(
-            "await TryUnsubscribeAsync(stream)",
+            "Func<CancellationToken, Task<bool>>? unsubscribeAsync",
+            marketDataSource,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "Func<CancellationToken, Task<bool>>? logoutAsync",
             marketDataSource,
             StringComparison.Ordinal);
 
@@ -149,6 +149,10 @@ public sealed class Arch7bLmaxFixKnownOrderContractTests
             "tools",
             "QQ.Production.Intraday.Lmax.ConnectivityLab",
             "RawFixSessionClient.Arch7b.cs"));
+        Assert.Contains(
+            "request.DeadlineUtc",
+            lifecycleSource,
+            StringComparison.Ordinal);
         Assert.Contains(
             "MaximumFlattenBboAcquisitionAttempts",
             lifecycleSource,
@@ -333,12 +337,13 @@ public sealed class Arch7bLmaxFixKnownOrderContractTests
             1.25000m,
             new string('b', 64)) with
         {
-            UnsubscribeAttempted = true,
-            UnsubscribeSent = false,
-            UnsubscribeMdReqId = "REQ-1",
-            LogoutAttempted = true,
             LogoutSent = false,
-            Cleanup = new LmaxFixMarketDataCleanupState(
+            Cleanup = new LmaxFixMarketDataCleanupSnapshot(
+                unsubscribeAttempted: true,
+                unsubscribeSent: false,
+                unsubscribeMdReqId: "REQ-1",
+                logoutAttempted: true,
+                logoutSent: false,
                 streamDisposeAttempted: true,
                 streamDisposeSucceeded: true,
                 socketDisposeAttempted: true,
@@ -673,10 +678,18 @@ public sealed class Arch7bLmaxFixKnownOrderContractTests
             SnapshotSha256 = snapshotSha256,
             RequestMode = LmaxFixMarketDataRequestMode.SnapshotPlusUpdates,
             MdReqId = "REQ-1",
-            UnsubscribeSent = true,
-            UnsubscribeMdReqId = "REQ-1",
             CompleteTopOfBook = true,
-            ObservationCompletedAtUtc = completedAtUtc
+            ObservationCompletedAtUtc = completedAtUtc,
+            Cleanup = new LmaxFixMarketDataCleanupSnapshot(
+                unsubscribeAttempted: true,
+                unsubscribeSent: true,
+                unsubscribeMdReqId: "REQ-1",
+                logoutAttempted: true,
+                logoutSent: true,
+                streamDisposeAttempted: true,
+                streamDisposeSucceeded: true,
+                socketDisposeAttempted: true,
+                socketDisposeSucceeded: true)
         };
     }
     private static LmaxFixMarketDataEntry Entry(

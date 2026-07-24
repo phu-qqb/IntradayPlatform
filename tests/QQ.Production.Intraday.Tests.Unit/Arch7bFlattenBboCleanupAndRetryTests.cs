@@ -202,21 +202,32 @@ public sealed class Arch7bFlattenBboCleanupAndRetryTests
     }
 
     [Fact]
-    public void Market_data_cleanup_is_best_effort_and_disposes_stream_and_socket_in_finally()
+    public void Market_data_cleanup_uses_one_bounded_deadline_and_disposes_in_finally()
     {
         var source = File.ReadAllText(Path.Combine(
             RepoRoot(),
             "tools",
             "QQ.Production.Intraday.Lmax.ConnectivityLab",
             "RawFixSessionClient.cs"));
+        var cleanupSource = File.ReadAllText(Path.Combine(
+            RepoRoot(),
+            "tools",
+            "QQ.Production.Intraday.Lmax.ConnectivityLab",
+            "LmaxFixMarketDataCleanup.cs"));
 
         Assert.Contains("finally", source, StringComparison.Ordinal);
-        Assert.Contains("await TryUnsubscribeAsync(stream)", source, StringComparison.Ordinal);
-        Assert.Contains("await TryLogoutAsync(stream)", source, StringComparison.Ordinal);
-        Assert.Contains("cleanup.StreamDisposeAttempted = true", source, StringComparison.Ordinal);
-        Assert.Contains("cleanup.StreamDisposeSucceeded = true", source, StringComparison.Ordinal);
-        Assert.Contains("cleanup.SocketDisposeAttempted = true", source, StringComparison.Ordinal);
-        Assert.Contains("cleanup.SocketDisposeSucceeded = true", source, StringComparison.Ordinal);
+        Assert.Contains("LmaxFixMarketDataCleanup.RunAsync", source, StringComparison.Ordinal);
+        Assert.Contains("cleanupDeadlineUtc", source, StringComparison.Ordinal);
+        Assert.Contains(
+            "MaximumMarketDataCleanupMilliseconds",
+            source,
+            StringComparison.Ordinal);
+        Assert.Contains("tcp.Client.Close(0)", source, StringComparison.Ordinal);
+        Assert.Contains("stream.Dispose", source, StringComparison.Ordinal);
+        Assert.Contains("CreateLinkedTokenSource", cleanupSource, StringComparison.Ordinal);
+        Assert.Contains("unsubscribeSlice", cleanupSource, StringComparison.Ordinal);
+        Assert.DoesNotContain("CancellationToken.None", cleanupSource, StringComparison.Ordinal);
+        Assert.DoesNotContain("Task.Run", cleanupSource, StringComparison.Ordinal);
         Assert.DoesNotContain(
             "boundedBook.Complete && unsubscribeSent && logoutSent",
             source,
@@ -274,16 +285,22 @@ public sealed class Arch7bFlattenBboCleanupAndRetryTests
             SnapshotSha256 = new string('b', 64),
             RequestMode = LmaxFixMarketDataRequestMode.SnapshotPlusUpdates,
             MdReqId = "REQ-1",
-            UnsubscribeAttempted = true,
-            UnsubscribeSent = unsubscribeSent,
-            UnsubscribeMdReqId = "REQ-1",
-            LogoutAttempted = true,
             CompleteTopOfBook = true,
-            Cleanup = new LmaxFixMarketDataCleanupState(
+            Cleanup = new LmaxFixMarketDataCleanupSnapshot(
+                unsubscribeAttempted: true,
+                unsubscribeSent: unsubscribeSent,
+                unsubscribeMdReqId: "REQ-1",
+                logoutAttempted: true,
+                logoutSent: logoutSent,
                 streamDisposeAttempted: true,
                 streamDisposeSucceeded: true,
                 socketDisposeAttempted: true,
                 socketDisposeSucceeded: true,
+                forceCloseAttempted: true,
+                forceCloseSucceeded: true,
+                startedAtUtc: startedAtUtc,
+                completedAtUtc: observedAtUtc,
+                deadlineUtc: observedAtUtc.AddSeconds(1),
                 diagnostics: cleanupDiagnostics)
         };
     }

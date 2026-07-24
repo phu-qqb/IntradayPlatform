@@ -325,6 +325,7 @@ public sealed partial class RawLmaxFixSessionClient
                         remaining < attemptBudget ? remaining : attemptBudget);
                     var marketData = await MarketDataSnapshotSmokeAsync(
                         marketDataOnlyOptions,
+                        request.DeadlineUtc,
                         acquisitionDeadline.Token);
                     marketDecision =
                         LmaxFixArch7bKnownOrderContract.EvaluateFreshFlattenObservation(

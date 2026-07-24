@@ -108,16 +108,16 @@ public sealed record LmaxFixMarketDataSmokeResult(
     public string? SnapshotSha256 { get; init; }
     public LmaxFixMarketDataRequestMode? RequestMode { get; init; }
     public string? MdReqId { get; init; }
-    public bool UnsubscribeAttempted { get; init; }
-    public bool UnsubscribeSent { get; init; }
-    public string? UnsubscribeMdReqId { get; init; }
-    public bool LogoutAttempted { get; init; }
+    public bool UnsubscribeAttempted => Cleanup.UnsubscribeAttempted;
+    public bool UnsubscribeSent => Cleanup.UnsubscribeSent;
+    public string? UnsubscribeMdReqId => Cleanup.UnsubscribeMdReqId;
+    public bool LogoutAttempted => Cleanup.LogoutAttempted;
     public bool StreamDisposeAttempted => Cleanup.StreamDisposeAttempted;
     public bool StreamDisposeSucceeded => Cleanup.StreamDisposeSucceeded;
     public bool SocketDisposeAttempted => Cleanup.SocketDisposeAttempted;
     public bool SocketDisposeSucceeded => Cleanup.SocketDisposeSucceeded;
     public IReadOnlyList<string> CleanupDiagnostics => Cleanup.Diagnostics;
-    public LmaxFixMarketDataCleanupState Cleanup { get; init; } = new();
+    public LmaxFixMarketDataCleanupSnapshot Cleanup { get; init; } = LmaxFixMarketDataCleanupSnapshot.Empty;
     public bool CompleteTopOfBook { get; init; }
     public DateTimeOffset? ObservationCompletedAtUtc { get; init; }
     public string? RejectRefTagId { get; init; }
@@ -185,32 +185,59 @@ public sealed record LmaxFixMarketDataSmokeResult(
             attempts);
 }
 
-public sealed class LmaxFixMarketDataCleanupState
+public sealed record LmaxFixMarketDataCleanupSnapshot
 {
-    private readonly List<string> diagnostics = [];
+    public static LmaxFixMarketDataCleanupSnapshot Empty { get; } = new();
 
-    public LmaxFixMarketDataCleanupState(
+    public LmaxFixMarketDataCleanupSnapshot(
+        bool unsubscribeAttempted = false,
+        bool unsubscribeSent = false,
+        string? unsubscribeMdReqId = null,
+        bool logoutAttempted = false,
+        bool logoutSent = false,
         bool streamDisposeAttempted = false,
         bool streamDisposeSucceeded = false,
         bool socketDisposeAttempted = false,
         bool socketDisposeSucceeded = false,
+        bool forceCloseAttempted = false,
+        bool forceCloseSucceeded = false,
+        DateTimeOffset? startedAtUtc = null,
+        DateTimeOffset? completedAtUtc = null,
+        DateTimeOffset? deadlineUtc = null,
         IReadOnlyList<string>? diagnostics = null)
     {
+        UnsubscribeAttempted = unsubscribeAttempted;
+        UnsubscribeSent = unsubscribeSent;
+        UnsubscribeMdReqId = unsubscribeMdReqId;
+        LogoutAttempted = logoutAttempted;
+        LogoutSent = logoutSent;
         StreamDisposeAttempted = streamDisposeAttempted;
         StreamDisposeSucceeded = streamDisposeSucceeded;
         SocketDisposeAttempted = socketDisposeAttempted;
         SocketDisposeSucceeded = socketDisposeSucceeded;
-        if (diagnostics is not null)
-            this.diagnostics.AddRange(diagnostics);
+        ForceCloseAttempted = forceCloseAttempted;
+        ForceCloseSucceeded = forceCloseSucceeded;
+        StartedAtUtc = startedAtUtc;
+        CompletedAtUtc = completedAtUtc;
+        DeadlineUtc = deadlineUtc;
+        Diagnostics = Array.AsReadOnly((diagnostics ?? []).ToArray());
     }
 
-    public bool StreamDisposeAttempted { get; internal set; }
-    public bool StreamDisposeSucceeded { get; internal set; }
-    public bool SocketDisposeAttempted { get; internal set; }
-    public bool SocketDisposeSucceeded { get; internal set; }
-    public IReadOnlyList<string> Diagnostics => diagnostics;
-
-    internal void AddDiagnostic(string value) => diagnostics.Add(value);
+    public bool UnsubscribeAttempted { get; }
+    public bool UnsubscribeSent { get; }
+    public string? UnsubscribeMdReqId { get; }
+    public bool LogoutAttempted { get; }
+    public bool LogoutSent { get; }
+    public bool StreamDisposeAttempted { get; }
+    public bool StreamDisposeSucceeded { get; }
+    public bool SocketDisposeAttempted { get; }
+    public bool SocketDisposeSucceeded { get; }
+    public bool ForceCloseAttempted { get; }
+    public bool ForceCloseSucceeded { get; }
+    public DateTimeOffset? StartedAtUtc { get; }
+    public DateTimeOffset? CompletedAtUtc { get; }
+    public DateTimeOffset? DeadlineUtc { get; }
+    public IReadOnlyList<string> Diagnostics { get; }
 }
 
 public static class LmaxFixMarketDataCodec
