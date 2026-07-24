@@ -3,6 +3,12 @@ using Microsoft.EntityFrameworkCore;
 using QQ.Production.Intraday.Infrastructure.PostgreSql;
 
 const string ConnectionEnvironmentVariable = "QQ_PMS_SHADOW_ARCH6F_CONNECTION_STRING";
+if (Arch7bPrearmedFreshSlotHandoffCli.Handles(args))
+{
+    Environment.ExitCode = await Arch7bPrearmedFreshSlotHandoffCli.RunAsync(args);
+    return;
+}
+
 var values = args.Chunk(2).ToDictionary(value => value[0], value =>
     value.Length == 2 ? value[1] : throw new InvalidOperationException($"ARGUMENT_VALUE_MISSING:{value[0]}"),
     StringComparer.Ordinal);

@@ -50,3 +50,21 @@ The runner keeps the order-entry lifecycle bounded while attempting at most thre
 ## Current non-actions
 
 No PostgreSQL connection or migration apply, no FIX logon, no secret read, no Demo order, no real-account access and no production mutation were performed while preparing this branch.
+
+## Fresh PMS slot handoff
+
+Before any future market-data capture, start the ARCH7B `prearm-and-import`
+mode and require both the per-slot owner lock and `importer.armed.json`. The
+capture starter must call `assert-prearmed`; failure means no capture and no FIX.
+
+The canonical slot finalizer calls `publish-ready` immediately after the raw
+artifact and `slot_manifest.json` are closed and their indispensable SHA-256
+values are available. Publication is temp-file, write-through flush, then
+atomic rename. Reports, ZIPs, tests, history scans and evidence copies occur
+only after import starts.
+
+The prearmed importer uses a filesystem watcher plus a 100 ms fallback poll
+with no initial sleep. Internal SLOs are marker publication within 10 seconds,
+detection within 2 seconds and first import PostgreSQL connection within 30
+seconds of close. The absolute 300-second boundary is unchanged. There is no
+retry and no automatic second capture. A stale, early or conflicting marker

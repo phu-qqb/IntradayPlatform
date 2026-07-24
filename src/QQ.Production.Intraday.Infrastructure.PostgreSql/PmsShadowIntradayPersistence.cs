@@ -7,9 +7,21 @@ using Microsoft.EntityFrameworkCore;
 
 namespace QQ.Production.Intraday.Infrastructure.PostgreSql;
 
-public sealed class EfPmsShadowIntradaySlotStore(
-    IDbContextFactory<PmsShadowDbContext> contextFactory) : IPmsShadowIntradaySlotStore
+public sealed class EfPmsShadowIntradaySlotStore : IPmsShadowIntradaySlotStore
 {
+    private readonly IDbContextFactory<PmsShadowDbContext> contextFactory;
+    private readonly IPmsShadowIntradayImportObserver observer;
+
+    public EfPmsShadowIntradaySlotStore(IDbContextFactory<PmsShadowDbContext> contextFactory)
+        : this(contextFactory, NullPmsShadowIntradayImportObserver.Instance) { }
+
+    public EfPmsShadowIntradaySlotStore(IDbContextFactory<PmsShadowDbContext> contextFactory,
+        IPmsShadowIntradayImportObserver observer)
+    {
+        this.contextFactory = contextFactory;
+        this.observer = observer;
+    }
+
     public async Task<PmsShadowIntradayClaim> ClaimAsync(PmsShadowIntradaySlotWindow slot,
         string coordinatorId, DateTimeOffset nowUtc, CancellationToken cancellationToken = default)
     {
@@ -141,8 +153,10 @@ public sealed class EfPmsShadowIntradaySlotStore(
     {
         await using var context = await contextFactory.CreateDbContextAsync(cancellationToken);
         var connection = context.Database.GetDbConnection();
+        observer.Record(PmsShadowFreshSlotHandoffEvents.PostgreSqlConnectionStarted, slotId);
         await connection.OpenAsync(cancellationToken);
         var lockKey = BitConverter.ToInt64(SHA256.HashData(Encoding.UTF8.GetBytes(slotId)), 0);
+        observer.Record(PmsShadowFreshSlotHandoffEvents.PostgreSqlTransactionStarted, slotId);
         await using var transaction = await connection.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken);
         try
         {
