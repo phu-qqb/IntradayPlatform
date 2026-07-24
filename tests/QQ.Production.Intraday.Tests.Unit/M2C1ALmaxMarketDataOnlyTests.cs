@@ -68,6 +68,50 @@ public sealed class M2C1ALmaxMarketDataOnlyTests
     }
 
     [Theory]
+    [InlineData("W")]
+    [InlineData("X")]
+    public void T04a_source_timestamp_is_external_fix_sending_time_for_snapshot_and_updates(
+        string msgType)
+    {
+        var mapper = new LmaxMarketDataOnlyObservationMapper(Instruments);
+        var sendingTime = new DateTimeOffset(
+            2026, 6, 25, 8, 0, 0, 123, TimeSpan.Zero);
+        var frame = Frame(Fix($"35={msgType}", "34=1",
+            "52=20260625-08:00:00.123",
+            "55=EUR/USD", "48=4001", "268=2",
+            "269=0", "270=1.10000", "271=100",
+            "272=20260625", "273=07:59:59.999",
+            "269=1", "270=1.10020", "271=200"));
+
+        var observation = mapper.Map(frame,
+            new HashSet<string>(["EURUSD"], StringComparer.OrdinalIgnoreCase));
+
+        Assert.Equal("52", LmaxMarketDataOnlyObservationMapper.SourceTimestampFixTag);
+        Assert.Equal("SendingTime",
+            LmaxMarketDataOnlyObservationMapper.SourceTimestampFixName);
+        Assert.Equal("LMAX_FIX_UTC_MESSAGE_TRANSMISSION_TIME",
+            LmaxMarketDataOnlyObservationMapper.SourceTimestampSemantics);
+        Assert.Equal(sendingTime, observation.SourceTimestampUtc);
+        Assert.NotEqual(frame.SocketReceiveUtc, observation.SourceTimestampUtc);
+    }
+
+    [Fact]
+    public void T04b_missing_or_invalid_sending_time_fails_closed_without_socket_retimestamping()
+    {
+        var mapper = new LmaxMarketDataOnlyObservationMapper(Instruments);
+        var missing = Frame(Fix("35=W", "34=1", "55=EUR/USD", "48=4001",
+            "268=2", "269=0", "270=1.10000", "271=100",
+            "269=1", "270=1.10020", "271=200"));
+
+        var error = Assert.Throws<InvalidDataException>(() => mapper.Map(
+            missing,
+            new HashSet<string>(["EURUSD"], StringComparer.OrdinalIgnoreCase)));
+
+        Assert.Equal("LMAX_MARKET_DATA_SENDING_TIME_MISSING_OR_INVALID",
+            error.Message);
+    }
+
+    [Theory]
     [InlineData("35=W|34=2|52=20260625-08:00:00.001|55=EUR/USD|48=4001|268=1|269=1|270=1.10020|271=200")]
     [InlineData("35=W|34=3|52=20260625-08:00:00.001|55=EUR/USD|48=4001|268=2|269=0|270=1.10030|271=100|269=1|270=1.10020|271=200")]
     [InlineData("35=W|34=4|52=20260625-08:00:00.001|55=NOPE|48=9999|268=2|269=0|270=1.1|271=100|269=1|270=1.2|271=100")]

@@ -5,7 +5,7 @@ namespace QQ.Production.Intraday.Infrastructure.PostgreSql;
 
 public static class PmsShadowFreshSlotHandoffContract
 {
-    public const string Version = "pms_shadow_fresh_slot_handoff_v2";
+    public const string Version = "pms_shadow_fresh_slot_handoff_v3";
     public const string Environment = "TEST";
     public const int AbsoluteStartDeadlineSeconds = 300;
     public const int ReadyMarkerSloSeconds = 10;
@@ -52,6 +52,8 @@ public sealed record PmsShadowFreshSlotReadyMarker(
     string LogicalArtifactPath,
     string ArtifactSha256,
     string ManifestSha256,
+    string ClockAuthoritySnapshotSha256,
+    string ClockPostCloseSnapshotSha256,
     DateTimeOffset CreatedAtUtc,
     int CreatorProcessId,
     string RepositoryCommit,
@@ -197,6 +199,16 @@ public static class PmsShadowFreshSlotReadyMarkerStore
         var manifestSha = hashFile(manifestPath);
         var completed = clock.GetUtcNow();
         var elapsed = completed - started;
+        using var document = JsonDocument.Parse(File.ReadAllBytes(manifestPath));
+        var manifest = document.RootElement;
+        var clockAuthoritySnapshotSha = RequiredManifestString(
+            manifest, "clock_authority_snapshot_sha256");
+        var clockPostCloseSnapshotSha = RequiredManifestString(
+            manifest, "clock_post_close_snapshot_sha256");
+        PmsShadowIntradayCadenceContract.RequireSha(
+            clockAuthoritySnapshotSha, nameof(clockAuthoritySnapshotSha));
+        PmsShadowIntradayCadenceContract.RequireSha(
+            clockPostCloseSnapshotSha, nameof(clockPostCloseSnapshotSha));
         timeline?.Record(PmsShadowFreshSlotHandoffEvents.IndispensableHashingCompleted,
             artifactSha, $"elapsed_ms={elapsed.TotalMilliseconds:F3};files=2");
         if (elapsed > TimeSpan.FromSeconds(PmsShadowFreshSlotHandoffContract.IndispensableHashingSloSeconds))
@@ -204,6 +216,7 @@ public static class PmsShadowFreshSlotReadyMarkerStore
                 artifactSha, $"phase=ARTIFACT_AND_MANIFEST_SHA256;elapsed_ms={elapsed.TotalMilliseconds:F3}");
         return new(PmsShadowFreshSlotHandoffContract.Version, options.SlotId, options.SlotCloseUtc,
             options.SourceSessionId, artifactPath, artifactSha, manifestSha,
+            clockAuthoritySnapshotSha, clockPostCloseSnapshotSha,
             completed, Environment.ProcessId,
             options.RepositoryCommit, options.TargetProfileId, options.TargetFingerprint,
             PmsShadowFreshSlotHandoffContract.Environment, true);
@@ -271,6 +284,10 @@ public static class PmsShadowFreshSlotReadyMarkerStore
         PmsShadowIntradayCadenceContract.RequireSha(marker.ArtifactSha256, nameof(marker.ArtifactSha256));
         PmsShadowIntradayCadenceContract.RequireSha(marker.ManifestSha256, nameof(marker.ManifestSha256));
         PmsShadowIntradayCadenceContract.RequireSha(
+            marker.ClockAuthoritySnapshotSha256, nameof(marker.ClockAuthoritySnapshotSha256));
+        PmsShadowIntradayCadenceContract.RequireSha(
+            marker.ClockPostCloseSnapshotSha256, nameof(marker.ClockPostCloseSnapshotSha256));
+        PmsShadowIntradayCadenceContract.RequireSha(
             marker.TargetFingerprint, nameof(marker.TargetFingerprint));
         if (marker.CreatedAtUtc < options.SlotCloseUtc)
             throw new InvalidDataException("HANDOFF_READY_MARKER_CREATED_BEFORE_SLOT_CLOSE");
@@ -281,6 +298,24 @@ public static class PmsShadowFreshSlotReadyMarkerStore
         var manifest = Path.Combine(Path.GetDirectoryName(marker.LogicalArtifactPath)!, "slot_manifest.json");
         if (!File.Exists(manifest) || Sha256(manifest) != marker.ManifestSha256)
             throw new InvalidDataException("HANDOFF_READY_MARKER_MANIFEST_INVALID");
+        using var document = JsonDocument.Parse(File.ReadAllBytes(manifest));
+        if (RequiredManifestString(document.RootElement,
+                "clock_authority_snapshot_sha256") !=
+                marker.ClockAuthoritySnapshotSha256 ||
+            RequiredManifestString(document.RootElement,
+                "clock_post_close_snapshot_sha256") !=
+                marker.ClockPostCloseSnapshotSha256)
+            throw new InvalidDataException(
+                "HANDOFF_READY_MARKER_CLOCK_AUTHORITY_MISMATCH");
+    }
+
+    private static string RequiredManifestString(JsonElement value, string name)
+    {
+        if (value.TryGetProperty(name, out var property) &&
+            property.ValueKind == JsonValueKind.String &&
+            property.GetString() is { } result)
+            return result;
+        throw new InvalidDataException($"HANDOFF_MANIFEST_FIELD_MISSING:{name}");
     }
 
     private static string Sha256(string path)

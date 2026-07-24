@@ -13,8 +13,10 @@ The inspected source is the closed 10:30Z LMAX Demo market-data-only run
 The raw chunks contain 668 GBPUSD `BBO_UPDATED` events: 410 have a source
 timestamp in the slot and 47 are post-close. The legacy manifest selected 49
 symbols, of which 34 have a post-close source timestamp. All 49 selected rows
-also have `SourceTimestampUtc > RecordedUtc`, exposing a separate local/source
-clock-provenance violation that must remain fail-closed.
+also have `SourceTimestampUtc > RecordedUtc` by a consistent approximately
+1.11-second lead. This is an unqualified cross-clock comparison, not 49
+independent causality violations. The slot has no contemporary clock-authority
+snapshot and remains fail-closed.
 
 ## GBPUSD close timeline
 
@@ -47,9 +49,10 @@ the current book state without bounding it by source timestamp.
 
 The legacy selection used the post-close `10:45:00.125Z` event. A
 source-window-only cutoff would instead identify `10:44:58.637Z` as the last
-GBPUSD event in the slot. The full authoritative contract additionally requires
-`SourceTimestampUtc <= RecordedUtc`; therefore neither historical event is
-qualifying and the immutable 10:30Z slot remains negative evidence.
+GBPUSD event in the slot. The full authoritative contract additionally
+requires contemporary pre-capture and post-close clock snapshots. Those
+snapshots do not exist, and 34/49 legacy selections are source post-close, so
+the immutable 10:30Z slot remains negative evidence.
 
 The PostgreSQL dry-run must continue to fail with
 `ARCH7B_POSTGRESQL_PREFLIGHT_INTRADAY_MARKET_OBSERVATION_SLOT_MISMATCH`. No
@@ -60,9 +63,10 @@ revision rewrite is permitted.
 
 Future finalization selects only valid LMAX events in the inclusive source
 window. Ordering is source timestamp, recorded timestamp, FIX sequence, source
-receive sequence, process sequence, and event ID. The existing 300-second
-handoff boundary is reused only as a receipt/finalization deadline. It does not
-extend the economic slot.
+receive sequence, process sequence, and event ID. Cross-clock causality uses
+only a measured envelope from fresh snapshots. Receipt is limited to two
+seconds after close. The 300-second handoff boundary remains solely the
+absolute import-start deadline.
 
 Post-close source events are counted and excluded from selection. A required
 symbol with no valid in-window event makes the capture non-qualifying and

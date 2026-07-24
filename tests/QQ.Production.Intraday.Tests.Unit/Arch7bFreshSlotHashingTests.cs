@@ -1,4 +1,5 @@
 using System.Security.Cryptography;
+using System.Text.Json;
 using QQ.Production.Intraday.Infrastructure.PostgreSql;
 
 namespace QQ.Production.Intraday.Tests.Unit;
@@ -14,7 +15,12 @@ public sealed partial class Arch7bFreshSlotHandoffTests
         var artifact = Path.Combine(options.SlotRoot, "slot.jsonl");
         var manifest = Path.Combine(options.SlotRoot, "slot_manifest.json");
         File.WriteAllText(artifact, "{\"no_order\":true}\n");
-        File.WriteAllText(manifest, "{\"complete\":true}\n");
+        File.WriteAllText(manifest, JsonSerializer.Serialize(new
+        {
+            complete = true,
+            clock_authority_snapshot_sha256 = new string('1', 64),
+            clock_post_close_snapshot_sha256 = new string('2', 64)
+        }));
         var calls = 0;
         string SlowHash(string path)
         {

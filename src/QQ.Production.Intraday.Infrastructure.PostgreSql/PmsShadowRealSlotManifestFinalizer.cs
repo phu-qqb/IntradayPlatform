@@ -8,10 +8,10 @@ namespace QQ.Production.Intraday.Infrastructure.PostgreSql;
 
 public static class PmsShadowRealSlotBboSelectionContract
 {
-    public const string Version = "slot_bbo_selection_source_timestamp_v1";
+    public const string Version = "slot_bbo_selection_source_timestamp_clock_authority_v2";
     public const int RequiredSymbolCount = 49;
-    public static TimeSpan FinalizationPeriod =>
-        TimeSpan.FromSeconds(PmsShadowFreshSlotHandoffContract.AbsoluteStartDeadlineSeconds);
+    public static TimeSpan MaximumLateReceiptAfterSlotClose =>
+        PmsShadowCaptureClockAuthorityContract.MaximumLateReceiptAfterSlotClose;
 }
 
 public sealed record PmsShadowRawSlotBboEvent(
@@ -38,6 +38,7 @@ public sealed record PmsShadowSlotBboSelection(
     int PostCloseBboEventCount,
     IReadOnlyDictionary<string, int> ExcludedPostCloseBySymbol,
     int SourceAfterRecordedEventCount,
+    int CrossClockLeadExceededEventCount,
     int RecordedAfterFinalizationEventCount,
     IReadOnlyList<string> MissingRequiredSymbols,
     DateTimeOffset? MinimumSelectedSourceTimestampUtc,
@@ -54,7 +55,8 @@ public static class PmsShadowRealSlotBboSelector
     public static PmsShadowSlotBboSelection Select(
         PmsShadowIntradaySlotWindow slot,
         IReadOnlyDictionary<string, string> requiredInstrumentBySymbol,
-        IEnumerable<PmsShadowRawSlotBboEvent> events)
+        IEnumerable<PmsShadowRawSlotBboEvent> events,
+        PmsShadowCaptureClockAuthorityEvidence clockAuthority)
     {
         if (requiredInstrumentBySymbol.Count !=
             PmsShadowRealSlotBboSelectionContract.RequiredSymbolCount)
@@ -66,9 +68,8 @@ public static class PmsShadowRealSlotBboSelector
         var inSlotCount = 0;
         var postCloseCount = 0;
         var sourceAfterRecordedCount = 0;
+        var crossClockLeadExceededCount = 0;
         var afterFinalizationCount = 0;
-        var finalizationDeadline = slot.SlotEndUtc +
-            PmsShadowRealSlotBboSelectionContract.FinalizationPeriod;
 
         foreach (var value in events)
         {
@@ -90,11 +91,15 @@ public static class PmsShadowRealSlotBboSelector
             if (value.SourceTimestampUtc < slot.SlotStartUtc)
                 continue;
             if (value.SourceTimestampUtc > value.RecordedUtc)
-            {
                 sourceAfterRecordedCount++;
+            if (!PmsShadowCaptureClockAuthorityValidator.IsCrossClockCausalityValid(
+                    value.SourceTimestampUtc, value.RecordedUtc, clockAuthority))
+            {
+                crossClockLeadExceededCount++;
                 continue;
             }
-            if (value.RecordedUtc > finalizationDeadline)
+            if (!PmsShadowCaptureClockAuthorityValidator.IsWithinLateReceiptBound(
+                    value.RecordedUtc, slot.SlotEndUtc, clockAuthority))
             {
                 afterFinalizationCount++;
                 continue;
@@ -138,6 +143,7 @@ public static class PmsShadowRealSlotBboSelector
             postClose.OrderBy(value => value.Key, StringComparer.Ordinal)
                 .ToDictionary(value => value.Key, value => value.Value, StringComparer.Ordinal),
             sourceAfterRecordedCount,
+            crossClockLeadExceededCount,
             afterFinalizationCount,
             missing,
             ordered.Length == 0 ? null : ordered.Min(value => value.SourceTimestampUtc),
@@ -200,10 +206,15 @@ public static class PmsShadowRealSlotManifestFinalizer
     public static PmsShadowSlotBboSelection Finalize(
         string manifestPath,
         string artifactPath,
-        PmsShadowIntradaySlotWindow expectedSlot)
+        PmsShadowIntradaySlotWindow expectedSlot,
+        PmsShadowCaptureClockAuthorityEvidence clockAuthority,
+        string expectedHostIdentity,
+        string expectedRepositoryCommit)
     {
         manifestPath = Path.GetFullPath(manifestPath);
         artifactPath = Path.GetFullPath(artifactPath);
+        PmsShadowCaptureClockAuthorityValidator.RequireQualifiedForSlot(
+            clockAuthority, expectedSlot, expectedHostIdentity, expectedRepositoryCommit);
         var root = JsonNode.Parse(File.ReadAllText(manifestPath))?.AsObject()
             ?? throw new InvalidDataException("RAW_SLOT_MANIFEST_INVALID");
         var slot = ReadSlot(root);
@@ -236,7 +247,7 @@ public static class PmsShadowRealSlotManifestFinalizer
                     ?? throw new InvalidDataException("RAW_SLOT_BBO_INVALID"), "instrument_id"),
                 StringComparer.Ordinal);
         var selection = PmsShadowRealSlotBboSelector.Select(
-            slot, required, ReadBboEvents(artifactPath));
+            slot, required, ReadBboEvents(artifactPath), clockAuthority);
         if (!selection.Qualifying)
             throw new InvalidDataException(
                 $"RAW_SLOT_IN_WINDOW_BBO_COVERAGE_INCOMPLETE:{string.Join(",", selection.MissingRequiredSymbols)}");
@@ -246,11 +257,43 @@ public static class PmsShadowRealSlotManifestFinalizer
         root["in_slot_bbo_event_count"] = selection.InSlotBboEventCount;
         root["post_close_bbo_event_count"] = selection.PostCloseBboEventCount;
         root["source_after_recorded_bbo_event_count"] = selection.SourceAfterRecordedEventCount;
+        root["cross_clock_lead_exceeded_bbo_event_count"] =
+            selection.CrossClockLeadExceededEventCount;
         root["recorded_after_finalization_bbo_event_count"] =
             selection.RecordedAfterFinalizationEventCount;
         root["finalization_deadline_utc"] =
-            (slot.SlotEndUtc + PmsShadowRealSlotBboSelectionContract.FinalizationPeriod)
+            (slot.SlotEndUtc +
+             PmsShadowRealSlotBboSelectionContract.MaximumLateReceiptAfterSlotClose)
             .ToUniversalTime().ToString("O", CultureInfo.InvariantCulture);
+        root["clock_authority_contract_version"] =
+            PmsShadowCaptureClockAuthorityContract.Version;
+        root["clock_authority_snapshot_file"] = "clock_authority_capture.json";
+        root["clock_authority_snapshot_sha256"] =
+            clockAuthority.PreCapture.SnapshotSha256;
+        root["clock_post_close_snapshot_file"] =
+            "clock_authority_post_close.json";
+        root["clock_post_close_snapshot_sha256"] =
+            clockAuthority.PostClose.SnapshotSha256;
+        root["clock_reference_source"] =
+            clockAuthority.PreCapture.ReferenceClockSource;
+        root["clock_offset_ms"] =
+            clockAuthority.PreCapture.MeasuredOffsetMilliseconds;
+        root["clock_uncertainty_ms"] =
+            clockAuthority.MaximumClockUncertaintyMilliseconds;
+        root["clock_snapshot_captured_at_utc"] =
+            clockAuthority.PreCapture.CapturedAtUtc.ToUniversalTime()
+                .ToString("O", CultureInfo.InvariantCulture);
+        root["clock_preflight_status"] =
+            PmsShadowCaptureClockAuthorityContract.QualifiedStatus;
+        root["clock_host_identity"] = expectedHostIdentity;
+        root["repository_commit"] = expectedRepositoryCommit;
+        root["maximum_late_receipt_after_close_ms"] =
+            PmsShadowCaptureClockAuthorityContract
+                .MaximumLateReceiptAfterSlotCloseMilliseconds;
+        root["maximum_cross_clock_lead_ms"] =
+            clockAuthority.MaximumCrossClockLeadMilliseconds;
+        root["cross_clock_comparison"] =
+            PmsShadowCaptureClockAuthorityContract.CrossClockComparison;
         root["minimum_selected_source_timestamp_utc"] =
             selection.MinimumSelectedSourceTimestampUtc!.Value.ToUniversalTime()
                 .ToString("O", CultureInfo.InvariantCulture);
@@ -264,10 +307,18 @@ public static class PmsShadowRealSlotManifestFinalizer
         root["last_bbo_by_symbol"] = new JsonObject(selection.SelectedBySymbol
             .OrderBy(value => value.Key, StringComparer.Ordinal)
             .Select(value => KeyValuePair.Create<string, JsonNode?>(
-                value.Key, ToJson(value.Value))));
+                value.Key, ToJson(value.Value, clockAuthority))));
         root["bbo_symbol_count"] = selection.SelectedBySymbol.Count;
         root["missing_required_bbo_symbols"] = new JsonArray();
         root["complete"] = true;
+
+        var manifestRoot = Path.GetDirectoryName(manifestPath)!;
+        PmsShadowCaptureClockAuthorityStore.WriteAtomic(
+            Path.Combine(manifestRoot, "clock_authority_capture.json"),
+            clockAuthority.PreCapture);
+        PmsShadowCaptureClockAuthorityStore.WriteAtomic(
+            Path.Combine(manifestRoot, "clock_authority_post_close.json"),
+            clockAuthority.PostClose);
 
         var temporary = manifestPath + $".{Environment.ProcessId}.{Guid.NewGuid():N}.tmp";
         try
@@ -319,7 +370,8 @@ public static class PmsShadowRealSlotManifestFinalizer
         }
     }
 
-    private static JsonObject ToJson(PmsShadowRawSlotBboEvent value) => new()
+    private static JsonObject ToJson(PmsShadowRawSlotBboEvent value,
+        PmsShadowCaptureClockAuthorityEvidence clockAuthority) => new()
     {
         ["event_id"] = value.EventId,
         ["symbol"] = value.Symbol,
@@ -328,6 +380,14 @@ public static class PmsShadowRealSlotManifestFinalizer
             .ToString("O", CultureInfo.InvariantCulture),
         ["source_timestamp_utc"] = value.SourceTimestampUtc.ToUniversalTime()
             .ToString("O", CultureInfo.InvariantCulture),
+        ["corrected_recorded_utc_for_validation"] =
+            PmsShadowCaptureClockAuthorityValidator.CorrectedRecordedUtcForValidation(
+                value.RecordedUtc, clockAuthority).ToUniversalTime()
+                .ToString("O", CultureInfo.InvariantCulture),
+        ["applied_clock_offset_ms"] =
+            clockAuthority.PreCapture.MeasuredOffsetMilliseconds,
+        ["clock_uncertainty_ms"] = clockAuthority.MaximumClockUncertaintyMilliseconds,
+        ["clock_snapshot_sha256"] = clockAuthority.PreCapture.SnapshotSha256,
         ["fix_msg_seq_num"] = value.FixMsgSeqNum,
         ["source_receive_sequence"] = value.SourceReceiveSequence,
         ["process_event_sequence"] = value.ProcessEventSequence,

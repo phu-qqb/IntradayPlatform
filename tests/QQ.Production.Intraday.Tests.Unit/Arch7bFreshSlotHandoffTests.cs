@@ -95,6 +95,42 @@ public sealed partial class Arch7bFreshSlotHandoffTests : IDisposable
     }
 
     [Fact]
+    public void Marker_clock_snapshot_contradiction_prevents_publication()
+    {
+        var clock = new MutableTimeProvider(Utc(2026, 7, 24, 12, 0, 1));
+        var options = Options(clock);
+        var marker = Marker(options, clock) with
+        {
+            ClockAuthoritySnapshotSha256 = new string('f', 64)
+        };
+
+        var error = Assert.Throws<InvalidDataException>(() =>
+            PmsShadowFreshSlotReadyMarkerStore.PublishAtomic(options, marker,
+                new PmsShadowFreshSlotHandoffTimeline(options, clock)));
+        Assert.Equal("HANDOFF_READY_MARKER_CLOCK_AUTHORITY_MISMATCH", error.Message);
+    }
+
+    [Fact]
+    public void Marker_without_clock_snapshot_binding_is_not_built_or_published()
+    {
+        var clock = new MutableTimeProvider(Utc(2026, 7, 24, 12, 0, 1));
+        var options = Options(clock);
+        Directory.CreateDirectory(options.SlotRoot);
+        var artifact = Path.Combine(options.SlotRoot, "slot.jsonl");
+        var manifest = Path.Combine(options.SlotRoot, "slot_manifest.json");
+        File.WriteAllText(artifact, "{\"no_order\":true}\n");
+        File.WriteAllText(manifest, "{\"complete\":true,\"no_order\":true}\n");
+
+        var error = Assert.ThrowsAny<Exception>(() =>
+            PmsShadowFreshSlotReadyMarkerStore.Build(
+                options, artifact, manifest, clock));
+
+        Assert.Contains("clock_authority_snapshot_sha256",
+            error.Message, StringComparison.Ordinal);
+        Assert.False(File.Exists(options.ReadyMarkerPath));
+    }
+
+    [Fact]
     public async Task Two_workers_for_one_slot_have_single_ownership()
     {
         var clock = new MutableTimeProvider(Utc(2026, 7, 24, 11, 59, 59));
@@ -291,7 +327,13 @@ public sealed partial class Arch7bFreshSlotHandoffTests : IDisposable
         var artifact = Path.Combine(options.SlotRoot, "slot.jsonl");
         var manifest = Path.Combine(options.SlotRoot, "slot_manifest.json");
         File.WriteAllText(artifact, "{\"symbol\":\"GBPUSD\",\"no_order\":true}\n");
-        File.WriteAllText(manifest, "{\"complete\":true,\"no_order\":true}\n");
+        File.WriteAllText(manifest, JsonSerializer.Serialize(new
+        {
+            complete = true,
+            no_order = true,
+            clock_authority_snapshot_sha256 = new string('1', 64),
+            clock_post_close_snapshot_sha256 = new string('2', 64)
+        }));
         var marker = PmsShadowFreshSlotReadyMarkerStore.Build(options, artifact, manifest, clock);
         return createdAt is null ? marker : marker with { CreatedAtUtc = createdAt.Value };
     }

@@ -127,8 +127,9 @@ public sealed class Arch7bPostgreSqlTargetContractTests
             "source", "run", new string('c', 40), TestProfile, new string('a', 64));
         var marker = new PmsShadowFreshSlotReadyMarker(
             PmsShadowFreshSlotHandoffContract.Version, options.SlotId, close, options.SourceSessionId,
-            "artifact.jsonl", new string('d', 64), new string('e', 64), close,
-            1, options.RepositoryCommit, options.TargetProfileId, new string('b', 64),
+            "artifact.jsonl", new string('d', 64), new string('e', 64),
+            new string('1', 64), new string('2', 64), close, 1,
+            options.RepositoryCommit, options.TargetProfileId, new string('b', 64),
             PmsShadowFreshSlotHandoffContract.Environment, true);
 
         var error = Assert.Throws<InvalidDataException>(() =>

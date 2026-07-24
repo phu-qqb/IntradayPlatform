@@ -9,6 +9,8 @@ public sealed class Arch7bSlotBoundedBboSelectionTests : IDisposable
 {
     private readonly string root = Path.Combine(Path.GetTempPath(),
         $"arch7b-slot-bbo-{Guid.NewGuid():N}");
+    private const string Commit = "e74f984bf3320142617b9016fcb91610d36b5741";
+    private static readonly string Host = Environment.MachineName;
     private static readonly DateTimeOffset Close = new(2026, 7, 24, 10, 45, 0, TimeSpan.Zero);
     private static readonly PmsShadowIntradaySlotWindow Slot =
         PmsShadowIntradayCadenceContract.WindowEnding(Close);
@@ -87,10 +89,10 @@ public sealed class Arch7bSlotBoundedBboSelectionTests : IDisposable
     }
 
     [Fact]
-    public void Arrival_after_existing_finalization_bound_is_rejected()
+    public void Arrival_after_short_late_receipt_bound_is_rejected()
     {
         var tooLate = Event("GBPUSD", Close.AddMilliseconds(-50),
-            Close + PmsShadowRealSlotBboSelectionContract.FinalizationPeriod +
+            Close + PmsShadowRealSlotBboSelectionContract.MaximumLateReceiptAfterSlotClose +
             TimeSpan.FromTicks(1), 100);
 
         var result = Select(CompleteEvents()
@@ -103,7 +105,7 @@ public sealed class Arch7bSlotBoundedBboSelectionTests : IDisposable
     }
 
     [Fact]
-    public void Source_timestamp_after_recorded_time_is_rejected_without_retimestamping()
+    public void Source_ahead_beyond_measured_clock_envelope_is_rejected_without_retimestamping()
     {
         var invalid = Event("GBPUSD", Close.AddMilliseconds(-50), Close.AddMilliseconds(-100), 100);
 
@@ -113,7 +115,27 @@ public sealed class Arch7bSlotBoundedBboSelectionTests : IDisposable
 
         Assert.False(result.Qualifying);
         Assert.Equal(1, result.SourceAfterRecordedEventCount);
+        Assert.Equal(1, result.CrossClockLeadExceededEventCount);
         Assert.Equal(["GBPUSD"], result.MissingRequiredSymbols);
+    }
+
+    [Fact]
+    public void Source_slightly_ahead_is_accepted_by_measured_envelope_with_raw_times_preserved()
+    {
+        var source = Close.AddMilliseconds(-50);
+        var recorded = source.AddMilliseconds(-25);
+        var valid = Event("GBPUSD", source, recorded, 100);
+
+        var result = Select(CompleteEvents()
+            .Where(value => value.Symbol != "GBPUSD")
+            .Append(valid));
+
+        Assert.True(result.Qualifying);
+        Assert.Equal(source, result.SelectedBySymbol["GBPUSD"].SourceTimestampUtc);
+        Assert.Equal(recorded, result.SelectedBySymbol["GBPUSD"].RecordedUtc);
+        Assert.Equal(1, result.SourceAfterRecordedEventCount);
+        Assert.Equal(0, result.CrossClockLeadExceededEventCount);
+        Assert.Empty(result.MissingRequiredSymbols);
     }
 
     [Fact]
@@ -149,11 +171,9 @@ public sealed class Arch7bSlotBoundedBboSelectionTests : IDisposable
     {
         var fixture = WriteFixture(CompleteEvents());
 
-        var selection = PmsShadowRealSlotManifestFinalizer.Finalize(
-            fixture.ManifestPath, fixture.ArtifactPath, Slot);
+        var selection = Finalize(fixture);
         var first = File.ReadAllBytes(fixture.ManifestPath);
-        var secondSelection = PmsShadowRealSlotManifestFinalizer.Finalize(
-            fixture.ManifestPath, fixture.ArtifactPath, Slot);
+        var secondSelection = Finalize(fixture);
         var second = File.ReadAllBytes(fixture.ManifestPath);
         using var document = JsonDocument.Parse(second);
         var manifest = document.RootElement;
@@ -170,6 +190,18 @@ public sealed class Arch7bSlotBoundedBboSelectionTests : IDisposable
         Assert.Equal(0, manifest.GetProperty("missing_required_bbo_symbols").GetArrayLength());
         Assert.True(manifest.GetProperty("complete").GetBoolean());
         Assert.Empty(manifest.GetProperty("excluded_post_close_by_symbol").EnumerateObject());
+        Assert.Equal(PmsShadowCaptureClockAuthorityContract.Version,
+            manifest.GetProperty("clock_authority_contract_version").GetString());
+        Assert.Equal(Clock.PreCapture.SnapshotSha256,
+            manifest.GetProperty("clock_authority_snapshot_sha256").GetString());
+        Assert.Equal(Clock.PostClose.SnapshotSha256,
+            manifest.GetProperty("clock_post_close_snapshot_sha256").GetString());
+        Assert.Equal(31m,
+            manifest.GetProperty("maximum_cross_clock_lead_ms").GetDecimal());
+        Assert.Equal(2_000,
+            manifest.GetProperty("maximum_late_receipt_after_close_ms").GetInt32());
+        Assert.NotEqual(PmsShadowFreshSlotHandoffContract.AbsoluteStartDeadlineSeconds * 1000,
+            manifest.GetProperty("maximum_late_receipt_after_close_ms").GetInt32());
         Assert.Equal(49, PmsShadowRealSlotCaptureReader.Read(fixture.ManifestPath).Bbo.Count);
     }
 
@@ -177,8 +209,7 @@ public sealed class Arch7bSlotBoundedBboSelectionTests : IDisposable
     public void Reader_rejects_post_close_manifest_without_filtering_or_clamping()
     {
         var fixture = WriteFixture(CompleteEvents());
-        PmsShadowRealSlotManifestFinalizer.Finalize(
-            fixture.ManifestPath, fixture.ArtifactPath, Slot);
+        Finalize(fixture);
         var manifest = JsonNode.Parse(File.ReadAllText(fixture.ManifestPath))!.AsObject();
         manifest["last_bbo_by_symbol"]!["GBPUSD"]!["source_timestamp_utc"] =
             Close.AddTicks(1).ToString("O");
@@ -198,8 +229,7 @@ public sealed class Arch7bSlotBoundedBboSelectionTests : IDisposable
         var before = File.ReadAllBytes(fixture.ManifestPath);
 
         var error = Assert.Throws<InvalidDataException>(() =>
-            PmsShadowRealSlotManifestFinalizer.Finalize(
-                fixture.ManifestPath, fixture.ArtifactPath, Slot));
+            Finalize(fixture));
 
         Assert.StartsWith("RAW_SLOT_IN_WINDOW_BBO_COVERAGE_INCOMPLETE:GBPUSD", error.Message);
         Assert.Equal(before, File.ReadAllBytes(fixture.ManifestPath));
@@ -207,7 +237,7 @@ public sealed class Arch7bSlotBoundedBboSelectionTests : IDisposable
 
     private static PmsShadowSlotBboSelection Select(
         IEnumerable<PmsShadowRawSlotBboEvent> values) =>
-        PmsShadowRealSlotBboSelector.Select(Slot, Required, values);
+        PmsShadowRealSlotBboSelector.Select(Slot, Required, values, Clock);
 
     private static PmsShadowRawSlotBboEvent[] CompleteEvents() =>
         Required.Select((value, index) => Event(
@@ -235,6 +265,34 @@ public sealed class Arch7bSlotBoundedBboSelectionTests : IDisposable
             "LMAX_MARKET_DATA_CAPTURE_ONLY",
             "LMAX_DEMO_READ_ONLY");
     }
+
+    private static PmsShadowCaptureClockAuthorityEvidence Clock => new(
+        Snapshot(Slot.SlotStartUtc.AddSeconds(-1), 20m),
+        Snapshot(Slot.SlotEndUtc.AddSeconds(1), 18m));
+
+    private static PmsShadowCaptureClockAuthoritySnapshot Snapshot(
+        DateTimeOffset capturedAtUtc, decimal offset) =>
+        PmsShadowCaptureClockAuthoritySnapshot.Create(
+            capturedAtUtc,
+            "Windows Time",
+            "time.windows.com",
+            offset,
+            10m,
+            20m,
+            5,
+            "PASS",
+            Host,
+            1234,
+            Commit,
+            true,
+            0,
+            capturedAtUtc.AddMinutes(-1));
+
+    private static PmsShadowSlotBboSelection Finalize(
+        (string ManifestPath, string ArtifactPath) fixture) =>
+        PmsShadowRealSlotManifestFinalizer.Finalize(
+            fixture.ManifestPath, fixture.ArtifactPath, Slot,
+            Clock, Host, Commit);
 
     private (string ManifestPath, string ArtifactPath) WriteFixture(
         IEnumerable<PmsShadowRawSlotBboEvent> values)

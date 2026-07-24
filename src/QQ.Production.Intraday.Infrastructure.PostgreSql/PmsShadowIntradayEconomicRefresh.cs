@@ -74,14 +74,65 @@ public static class PmsShadowRealSlotCaptureReader
                 value.SourceTimestampUtc < slotStartUtc ||
                 value.SourceTimestampUtc > slotEndUtc))
             throw new InvalidDataException("RAW_SLOT_BBO_SOURCE_TIMESTAMP_OUTSIDE_WINDOW");
-        if (bbo.Any(value => value.SourceTimestampUtc > value.RecordedUtc))
-            throw new InvalidDataException("RAW_SLOT_BBO_SOURCE_TIMESTAMP_AFTER_RECORDED");
         if (bbo.Any(value => value.Bid <= 0m || value.Ask < value.Bid))
             throw new InvalidDataException("RAW_SLOT_BBO_PRICE_INVALID");
+        if (!root.TryGetProperty("slot_bbo_selection_contract_version", out _))
+            throw new InvalidDataException(
+                PmsShadowCaptureClockAuthorityContract.Blocker);
         if (root.TryGetProperty("slot_bbo_selection_contract_version", out var selectionVersion))
         {
             if (selectionVersion.GetString() != PmsShadowRealSlotBboSelectionContract.Version)
                 throw new InvalidDataException("RAW_SLOT_BBO_SELECTION_VERSION_MISMATCH");
+            var clockHost = Required(root, "clock_host_identity");
+            var repositoryCommit = Required(root, "repository_commit");
+            if (!string.Equals(clockHost, Environment.MachineName,
+                    StringComparison.OrdinalIgnoreCase))
+                throw new InvalidDataException(
+                    PmsShadowCaptureClockAuthorityContract.Blocker);
+            var clockSnapshot = ReadClockSnapshot(root, manifestPath,
+                "clock_authority_snapshot_file",
+                "clock_authority_snapshot_sha256");
+            var postCloseSnapshot = ReadClockSnapshot(root, manifestPath,
+                "clock_post_close_snapshot_file",
+                "clock_post_close_snapshot_sha256");
+            var clockAuthority = new PmsShadowCaptureClockAuthorityEvidence(
+                clockSnapshot, postCloseSnapshot);
+            PmsShadowCaptureClockAuthorityValidator.RequireQualifiedForSlot(
+                clockAuthority,
+                new PmsShadowIntradaySlotWindow(
+                    Required(root, "slot_id"), slotStartUtc, slotEndUtc,
+                    DateOnly.Parse(Required(root, "operational_date"),
+                        System.Globalization.CultureInfo.InvariantCulture)),
+                clockHost, repositoryCommit);
+            if (root.GetProperty("clock_authority_contract_version").GetString() !=
+                    PmsShadowCaptureClockAuthorityContract.Version ||
+                root.GetProperty("clock_preflight_status").GetString() !=
+                    PmsShadowCaptureClockAuthorityContract.QualifiedStatus ||
+                root.GetProperty("maximum_late_receipt_after_close_ms").GetInt32() !=
+                    PmsShadowCaptureClockAuthorityContract
+                        .MaximumLateReceiptAfterSlotCloseMilliseconds ||
+                root.GetProperty("maximum_cross_clock_lead_ms").GetDecimal() !=
+                    clockAuthority.MaximumCrossClockLeadMilliseconds ||
+                root.GetProperty("clock_reference_source").GetString() !=
+                    clockAuthority.PreCapture.ReferenceClockSource ||
+                root.GetProperty("clock_offset_ms").GetDecimal() !=
+                    clockAuthority.PreCapture.MeasuredOffsetMilliseconds ||
+                root.GetProperty("clock_uncertainty_ms").GetDecimal() !=
+                    clockAuthority.MaximumClockUncertaintyMilliseconds ||
+                root.GetProperty("clock_snapshot_captured_at_utc").GetDateTimeOffset() !=
+                    clockAuthority.PreCapture.CapturedAtUtc ||
+                root.GetProperty("cross_clock_comparison").GetString() !=
+                    PmsShadowCaptureClockAuthorityContract.CrossClockComparison ||
+                clockHost != clockAuthority.PreCapture.HostIdentity ||
+                repositoryCommit != clockAuthority.PreCapture.RepositoryCommit)
+                throw new InvalidDataException("RAW_SLOT_CLOCK_AUTHORITY_MANIFEST_MISMATCH");
+            ValidateSelectedClockFields(root.GetProperty("last_bbo_by_symbol"), clockAuthority);
+            if (bbo.Any(value =>
+                    !PmsShadowCaptureClockAuthorityValidator.IsCrossClockCausalityValid(
+                        value.SourceTimestampUtc, value.RecordedUtc, clockAuthority) ||
+                    !PmsShadowCaptureClockAuthorityValidator.IsWithinLateReceiptBound(
+                        value.RecordedUtc, slotEndUtc, clockAuthority)))
+                throw new InvalidDataException("RAW_SLOT_BBO_CLOCK_ENVELOPE_VIOLATION");
             var selectionSha = Required(root, "selection_sha256");
             PmsShadowIntradayCadenceContract.RequireSha(
                 selectionSha, "selection_sha256");
@@ -111,6 +162,49 @@ public static class PmsShadowRealSlotCaptureReader
         if (!capture.LmaxPrimary || capture.PolygonCallCount != 0 || !capture.Complete || !capture.NoOrder)
             throw new InvalidDataException("RAW_SLOT_SAFETY_CONTRACT_VIOLATION");
         return capture;
+    }
+
+    private static void ValidateSelectedClockFields(
+        JsonElement selected,
+        PmsShadowCaptureClockAuthorityEvidence clockAuthority)
+    {
+        foreach (var property in selected.EnumerateObject())
+        {
+            var value = property.Value;
+            var recordedUtc = value.GetProperty("recorded_utc").GetDateTimeOffset();
+            if (value.GetProperty("corrected_recorded_utc_for_validation")
+                    .GetDateTimeOffset() !=
+                    PmsShadowCaptureClockAuthorityValidator
+                        .CorrectedRecordedUtcForValidation(recordedUtc, clockAuthority) ||
+                value.GetProperty("applied_clock_offset_ms").GetDecimal() !=
+                    clockAuthority.PreCapture.MeasuredOffsetMilliseconds ||
+                value.GetProperty("clock_uncertainty_ms").GetDecimal() !=
+                    clockAuthority.MaximumClockUncertaintyMilliseconds ||
+                value.GetProperty("clock_snapshot_sha256").GetString() !=
+                    clockAuthority.PreCapture.SnapshotSha256)
+                throw new InvalidDataException(
+                    "RAW_SLOT_BBO_CLOCK_AUTHORITY_FIELDS_MISMATCH");
+        }
+    }
+
+    private static PmsShadowCaptureClockAuthoritySnapshot ReadClockSnapshot(
+        JsonElement root,
+        string manifestPath,
+        string fileProperty,
+        string shaProperty)
+    {
+        var fileName = Required(root, fileProperty);
+        if (Path.GetFileName(fileName) != fileName)
+            throw new InvalidDataException("RAW_SLOT_CLOCK_AUTHORITY_PATH_INVALID");
+        var path = Path.Combine(Path.GetDirectoryName(Path.GetFullPath(manifestPath))!,
+            fileName);
+        if (!File.Exists(path))
+            throw new InvalidDataException(
+                PmsShadowCaptureClockAuthorityContract.Blocker);
+        var snapshot = PmsShadowCaptureClockAuthorityStore.Read(path);
+        if (snapshot.SnapshotSha256 != Required(root, shaProperty))
+            throw new InvalidDataException("RAW_SLOT_CLOCK_AUTHORITY_SHA_MISMATCH");
+        return snapshot;
     }
 
     private static string Required(JsonElement value, string name) =>
