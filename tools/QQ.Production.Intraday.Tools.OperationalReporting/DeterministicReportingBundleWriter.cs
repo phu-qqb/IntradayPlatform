@@ -30,6 +30,7 @@ public static class DeterministicReportingBundleWriter
         Directory.CreateDirectory(root);
 
         WriteJson(root, "operational-summary.json", report.Summary);
+        WriteJson(root, "operational-calendar.json", report.OperationalExpectation);
         WriteJson(root, "breaks.json", report.Breaks);
         WriteJson(root, "status-code-catalog.json", new
         {
@@ -38,6 +39,9 @@ public static class DeterministicReportingBundleWriter
             codes = report.StatusCodeCatalog
         });
         WriteJson(root, "reconciliation.json", report.Reconciliation);
+        var sourceCodeInventory = OperationalStatusCodeScanner.ScanAuthoritativeSource();
+        OperationalStatusCodeScanner.RequireComplete(sourceCodeInventory);
+        WriteJson(root, "source-code-inventory.json", sourceCodeInventory);
         WriteCsv(root, "breaks.csv", BreakHeaders,
             report.Breaks.Select(BreakRow));
         WriteCsv(root, "infx-model-runs.csv", ModelHeaders,
@@ -46,8 +50,14 @@ public static class DeterministicReportingBundleWriter
             report.Slots.Select(SlotRow));
         WriteCsv(root, "economic-revisions.csv", RevisionHeaders,
             report.EconomicRevisions.Select(RevisionRow));
-        WriteCsv(root, "fx-lines.csv", FxHeaders,
-            report.FxLines.Select(FxRow));
+        WriteCsv(root, "fx-net-lines.csv", FxNetHeaders,
+            report.FxNetLines.Select(FxNetRow));
+        WriteCsv(root, "fx-strategy-contributions.csv", FxContributionHeaders,
+            report.FxStrategyContributions.Select(FxContributionRow));
+        WriteCsv(root, "observed-code-facts.csv", ObservedFactHeaders,
+            report.ObservedCodeFacts.Select(ObservedFactRow));
+        WriteCsv(root, "ready-markers.csv", ReadyMarkerHeaders,
+            report.Slots.Select(value => ReadyMarkerRow(value.ReadyMarker)));
         WriteCsv(root, "arch7a.csv", Arch7aHeaders,
             report.Arch7a.Select(Arch7aRow));
         WriteCsv(root, "arch7b-lifecycle.csv", Arch7bHeaders,
@@ -81,9 +91,10 @@ public static class DeterministicReportingBundleWriter
 
     private static readonly string[] BreakHeaders =
     [
-        "BreakId", "ExactCode", "Category", "Severity", "Status", "Component",
-        "ScopeType", "ScopeId", "SlotId", "StrategyId", "EconomicRevisionId",
-        "InstrumentId", "Symbol", "TradeIntentId", "QualificationRunId", "OrderId",
+        "BreakId", "ExactCode", "SourceExactCode", "FactKind", "Category", "Severity",
+        "Status", "Component", "ScopeType", "ScopeId", "SlotId", "StrategyId",
+        "EconomicRevisionId", "InstrumentId", "Symbol", "TradeIntentId",
+        "RiskDecisionId", "QualificationRunId", "OrderId",
         "FirstObservedAtUtc", "LastObservedAtUtc", "EvidenceSha256", "AuthorityStatus",
         "BlocksTrading", "BlocksAccounting", "OperatorMeaning", "SuggestedInvestigation",
         "SourceTable", "SourceContractVersion"
@@ -91,9 +102,10 @@ public static class DeterministicReportingBundleWriter
 
     private static object?[] BreakRow(OperationalBreak value) =>
     [
-        value.BreakId, value.ExactCode, value.Category, value.Severity, value.Status,
-        value.Component, value.ScopeType, value.ScopeId, value.SlotId, value.StrategyId,
-        value.EconomicRevisionId, value.InstrumentId, value.Symbol, value.TradeIntentId,
+        value.BreakId, value.ExactCode, value.SourceExactCode, value.FactKind,
+        value.Category, value.Severity, value.Status, value.Component, value.ScopeType,
+        value.ScopeId, value.SlotId, value.StrategyId, value.EconomicRevisionId,
+        value.InstrumentId, value.Symbol, value.TradeIntentId, value.RiskDecisionId,
         value.QualificationRunId, value.OrderId, value.FirstObservedAtUtc,
         value.LastObservedAtUtc, value.EvidenceSha256, value.AuthorityStatus,
         value.BlocksTrading, value.BlocksAccounting, value.OperatorMeaning,
@@ -105,7 +117,7 @@ public static class DeterministicReportingBundleWriter
         "StrategyId", "ModelRunId", "QubesInputSnapshotId", "TargetCloseUtc", "AsOfUtc",
         "OutputSha256", "CoreCommitId", "Classification", "FreshOrReusedStatus",
         "ScheduleStatus", "WeightCount", "TargetCount", "DriftCount", "LineageComplete",
-        "SourceContractVersion"
+        "SourceContractVersion", "ExpectedTargetCloseUtc"
     ];
 
     private static object?[] ModelRow(ReportingModelRunFact value) =>
@@ -113,7 +125,8 @@ public static class DeterministicReportingBundleWriter
         value.StrategyId, value.ModelRunId, value.QubesInputSnapshotId, value.TargetCloseUtc,
         value.AsOfUtc, value.OutputSha256, value.CoreCommitId, value.Classification,
         value.FreshOrReusedStatus, value.ScheduleStatus, value.WeightCount, value.TargetCount,
-        value.DriftCount, value.LineageComplete, value.SourceContractVersion
+        value.DriftCount, value.LineageComplete, value.SourceContractVersion,
+        value.ExpectedTargetCloseUtc
     ];
 
     private static readonly string[] SlotHeaders =
@@ -154,23 +167,76 @@ public static class DeterministicReportingBundleWriter
         value.TargetSha256, value.DriftSha256, value.ManifestSha256, value.CompletedAtUtc
     ];
 
-    private static readonly string[] FxHeaders =
+    private static readonly string[] FxNetHeaders =
     [
-        "EconomicRevisionId", "InstrumentId", "PmsSecurityId", "CanonicalSymbol",
-        "LmaxInstrumentId", "SecurityIdSource", "StrategyId", "TargetBaseQuantity",
-        "TargetVenueQuantity", "CurrentBaseQuantity", "PositionOnlyDrift", "NetTarget",
-        "NetDrift", "MappingAuthority", "Bid", "Ask", "PriceAsOfUtc", "Freshness"
+        "EconomicRevisionId", "TradeIntentId", "InstrumentId", "PmsSecurityId",
+        "CanonicalSymbol", "LmaxInstrumentId", "SecurityIdSource", "CurrentQuantity",
+        "TargetQuantity", "SignedDesiredDelta", "MappingAuthority", "Bid", "Ask",
+        "PriceAsOfUtc", "Freshness", "PlanSha256", "SourceContractVersion"
     ];
 
-    private static object?[] FxRow(ReportingFxLineFact value) =>
+    private static object?[] FxNetRow(ReportingFxNetLineFact value) =>
     [
-        value.EconomicRevisionId, value.InstrumentId, value.PmsSecurityId,
-        value.CanonicalSymbol, value.LmaxInstrumentId, value.SecurityIdSource,
-        value.StrategyId, value.TargetBaseQuantity, value.TargetVenueQuantity,
-        value.CurrentBaseQuantity, value.PositionOnlyDrift, value.NetTarget, value.NetDrift,
-        value.MappingAuthority, value.Bid, value.Ask, value.PriceAsOfUtc, value.Freshness
+        value.EconomicRevisionId, value.TradeIntentId, value.InstrumentId,
+        value.PmsSecurityId, value.CanonicalSymbol, value.LmaxInstrumentId,
+        value.SecurityIdSource, value.CurrentQuantity, value.TargetQuantity,
+        value.SignedDesiredDelta, value.MappingAuthority, value.Bid, value.Ask,
+        value.PriceAsOfUtc, value.Freshness, value.PlanSha256,
+        value.SourceContractVersion
     ];
 
+    private static readonly string[] FxContributionHeaders =
+    [
+        "EconomicRevisionId", "TradeIntentId", "CanonicalSymbol", "StrategyId",
+        "SourceTargetPositionCount", "SourceTargetPositionIds",
+        "SourceTargetNotionalUsd", "CurrencyExposureContributionUsd",
+        "SourceTargetBaseQuantity", "SourceTargetVenueQuantity",
+        "SourcePositionOnlyDrift", "AllocatedExecutionQuantity",
+        "AttributionMethod", "AttributionAuthority", "EvidenceSha256"
+    ];
+
+    private static object?[] FxContributionRow(
+        ReportingFxStrategyContributionFact value) =>
+    [
+        value.EconomicRevisionId, value.TradeIntentId, value.CanonicalSymbol,
+        value.StrategyId, value.SourceTargetPositionCount,
+        string.Join(';', value.SourceTargetPositionIds.Select(id => id.ToString("D"))),
+        value.SourceTargetNotionalUsd, value.CurrencyExposureContributionUsd,
+        value.SourceTargetBaseQuantity, value.SourceTargetVenueQuantity,
+        value.SourcePositionOnlyDrift, value.AllocatedExecutionQuantity,
+        value.AttributionMethod, value.AttributionAuthority, value.EvidenceSha256
+    ];
+
+    private static readonly string[] ObservedFactHeaders =
+    [
+        "SourceExactCode", "FactKind", "SourceComponent", "SourceTable",
+        "SourceContractVersion", "ScopeType", "ScopeId", "SlotId", "StrategyId",
+        "EconomicRevisionId", "TradeIntentId", "RiskDecisionId", "QualificationRunId",
+        "OrderId", "FirstObservedAtUtc", "LastObservedAtUtc", "EvidenceSha256",
+        "AuthorityStatus", "SourceStatus", "IsBlockingSourceFact"
+    ];
+
+    private static object?[] ObservedFactRow(ObservedOperationalCodeFact value) =>
+    [
+        value.SourceExactCode, value.FactKind, value.SourceComponent, value.SourceTable,
+        value.SourceContractVersion, value.ScopeType, value.ScopeId, value.SlotId,
+        value.StrategyId, value.EconomicRevisionId, value.TradeIntentId,
+        value.RiskDecisionId, value.QualificationRunId, value.OrderId,
+        value.FirstObservedAtUtc, value.LastObservedAtUtc, value.EvidenceSha256,
+        value.AuthorityStatus, value.SourceStatus, value.IsBlockingSourceFact
+    ];
+
+    private static readonly string[] ReadyMarkerHeaders =
+    [
+        "SlotId", "Status", "AuthorityStatus", "ArtifactSha256", "ObservedAtUtc",
+        "SourceContractVersion"
+    ];
+
+    private static object?[] ReadyMarkerRow(ReportingReadyMarkerFact value) =>
+    [
+        value.SlotId, value.Status, value.AuthorityStatus, value.ArtifactSha256,
+        value.ObservedAtUtc, value.SourceContractVersion
+    ];
     private static readonly string[] Arch7aHeaders =
     [
         "EconomicRevisionId", "TradeIntentId", "RiskDecisionId", "ParentOrderId",
@@ -250,10 +316,10 @@ public static class DeterministicReportingBundleWriter
                 .fact{background:#fff;border:1px solid #d7dde5;border-radius:6px;padding:14px}
                 .label{font-size:12px;color:#52606d;text-transform:uppercase}
                 .value{font-size:18px;font-weight:650;margin-top:5px;overflow-wrap:anywhere}
-                table{width:100%;border-collapse:collapse;background:#fff;font-size:13px}
+                table{width:100%;border-collapse:collapse;background:#fff;font-size:13px;margin-bottom:24px}
                 th,td{text-align:left;padding:9px;border-bottom:1px solid #e3e8ee;vertical-align:top}
-                th{background:#e9eef5;position:sticky;top:0}
-                .critical{color:#9b1c1c;font-weight:700}.error{color:#b54708}.warning{color:#7a5d00}
+                th{background:#e9eef5}.critical{color:#9b1c1c;font-weight:700}
+                .error{color:#b54708}.warning{color:#7a5d00}
               </style>
             </head>
             <body>
@@ -263,30 +329,95 @@ public static class DeterministicReportingBundleWriter
         html.Append("<section class=\"facts\">");
         Fact(html, "As of UTC", FormatCsv(report.Summary.GeneratedAtUtc));
         Fact(html, "Database", report.Summary.Database);
+        Fact(html, "Operational calendar", report.OperationalExpectation.MarketCalendarStatus);
+        Fact(html, "Slot due status", report.OperationalExpectation.SlotDueStatus);
         Fact(html, "Latest slot", report.Summary.LatestSlot ?? ReportingAuthority.Absent);
+        Fact(html, "Economic revision",
+            report.Summary.LatestQualifyingEconomicRevision?.ToString("D") ?? ReportingAuthority.Absent);
         Fact(html, "Operational status", report.Summary.GlobalOperationalStatus);
         Fact(html, "Trading readiness", report.Summary.GlobalTradingReadiness);
         Fact(html, "Reconciliation", report.Summary.GlobalReconciliationStatus);
-        html.Append("</section><h2>Breaks</h2><table><thead><tr>");
-        foreach (var header in new[] { "Severity", "Status", "Code", "Scope", "Authority", "Operator meaning" })
-            html.Append("<th>").Append(HtmlEncoder.Default.Encode(header)).Append("</th>");
-        html.Append("</tr></thead><tbody>");
-        foreach (var item in report.Breaks)
+        html.Append("</section>");
+        WriteModelHtml(html, report.ModelRuns);
+        WriteFxHtml(html, report.FxNetLines);
+        WriteBreakHtml(html, "Active and unknown breaks", report.Breaks.Where(value =>
+            value.Status is OperationalBreakStatus.Active or OperationalBreakStatus.Unknown));
+        WriteBreakHtml(html, "Historical and resolved breaks", report.Breaks.Where(value =>
+            value.Status is OperationalBreakStatus.Historical or OperationalBreakStatus.ResolvedByLaterFact));
+        WriteLifecycleHtml(html, report);
+        html.Append("</main></body></html>\n");
+        WriteBytes(root, "report.html", new UTF8Encoding(false).GetBytes(html.ToString()));
+    }
+
+    private static void WriteModelHtml(StringBuilder html, IEnumerable<ReportingModelRunFact> rows)
+    {
+        html.Append("<h2>Selected INFX model runs</h2><table><thead><tr>")
+            .Append("<th>Strategy</th><th>ModelRun</th><th>Expected close</th>")
+            .Append("<th>Actual close</th><th>Schedule</th><th>W/T/D</th></tr></thead><tbody>");
+        foreach (var row in rows)
+            html.Append("<tr><td>").Append(HtmlEncoder.Default.Encode(row.StrategyId))
+                .Append("</td><td>").Append(row.ModelRunId.ToString("D"))
+                .Append("</td><td>").Append(FormatCsv(row.ExpectedTargetCloseUtc))
+                .Append("</td><td>").Append(FormatCsv(row.TargetCloseUtc))
+                .Append("</td><td>").Append(HtmlEncoder.Default.Encode(row.ScheduleStatus))
+                .Append("</td><td>").Append($"{row.WeightCount}/{row.TargetCount}/{row.DriftCount}")
+                .Append("</td></tr>");
+        html.Append("</tbody></table>");
+    }
+
+    private static void WriteFxHtml(StringBuilder html, IEnumerable<ReportingFxNetLineFact> rows)
+    {
+        html.Append("<h2>Net FX execution facts</h2><table><thead><tr>")
+            .Append("<th>Symbol</th><th>PMS ID</th><th>LMAX ID</th><th>Current</th>")
+            .Append("<th>Target</th><th>Delta</th><th>Authority</th></tr></thead><tbody>");
+        foreach (var row in rows)
+            html.Append("<tr><td>").Append(HtmlEncoder.Default.Encode(row.CanonicalSymbol))
+                .Append("</td><td>").Append(HtmlEncoder.Default.Encode(row.PmsSecurityId))
+                .Append("</td><td>").Append(HtmlEncoder.Default.Encode(row.LmaxInstrumentId))
+                .Append("</td><td>").Append(FormatCsv(row.CurrentQuantity))
+                .Append("</td><td>").Append(FormatCsv(row.TargetQuantity))
+                .Append("</td><td>").Append(FormatCsv(row.SignedDesiredDelta))
+                .Append("</td><td>").Append(HtmlEncoder.Default.Encode(row.MappingAuthority))
+                .Append("</td></tr>");
+        html.Append("</tbody></table>");
+    }
+
+    private static void WriteBreakHtml(
+        StringBuilder html,
+        string title,
+        IEnumerable<OperationalBreak> rows)
+    {
+        html.Append("<h2>").Append(HtmlEncoder.Default.Encode(title))
+            .Append("</h2><table><thead><tr><th>Severity</th><th>Status</th>")
+            .Append("<th>Source code</th><th>Reporting code</th><th>Fact kind</th>")
+            .Append("<th>Scope</th><th>Authority</th><th>Why</th></tr></thead><tbody>");
+        foreach (var item in rows)
         {
             var severity = item.Severity.ToString().ToLowerInvariant();
             html.Append("<tr><td class=\"").Append(severity).Append("\">")
                 .Append(HtmlEncoder.Default.Encode(item.Severity.ToString().ToUpperInvariant()))
                 .Append("</td><td>").Append(HtmlEncoder.Default.Encode(item.Status.ToString()))
+                .Append("</td><td>").Append(HtmlEncoder.Default.Encode(
+                    item.SourceExactCode ?? OperationalReportingContract.NullCsvValue))
                 .Append("</td><td>").Append(HtmlEncoder.Default.Encode(item.ExactCode))
+                .Append("</td><td>").Append(HtmlEncoder.Default.Encode(item.FactKind))
                 .Append("</td><td>").Append(HtmlEncoder.Default.Encode($"{item.ScopeType}:{item.ScopeId}"))
                 .Append("</td><td>").Append(HtmlEncoder.Default.Encode(item.AuthorityStatus))
                 .Append("</td><td>").Append(HtmlEncoder.Default.Encode(item.OperatorMeaning))
                 .Append("</td></tr>");
         }
-        html.Append("</tbody></table></main></body></html>\n");
-        WriteBytes(root, "report.html", new UTF8Encoding(false).GetBytes(html.ToString()));
+        html.Append("</tbody></table>");
     }
 
+    private static void WriteLifecycleHtml(StringBuilder html, OperationalReportSet report)
+    {
+        html.Append("<h2>ARCH7A / ARCH7B / reconciliation</h2><section class=\"facts\">");
+        Fact(html, "ARCH7A intents", report.Arch7a.Count.ToString(CultureInfo.InvariantCulture));
+        Fact(html, "ARCH7B qualifications", report.Arch7b.Count.ToString(CultureInfo.InvariantCulture));
+        Fact(html, "Reconciliation authority", report.Reconciliation.AuthorityStatus);
+        Fact(html, "Final gate", report.Reconciliation.FinalGate);
+        html.Append("</section>");
+    }
     private static void Fact(StringBuilder html, string label, string value)
         => html.Append("<div class=\"fact\"><div class=\"label\">")
             .Append(HtmlEncoder.Default.Encode(label))

@@ -83,12 +83,12 @@ public sealed class PmsShadowReadOnlyReportingReader(
                 revisions.Where(value => value.SlotId == row.SlotId)
                     .OrderByDescending(value => value.RevisionNumber).FirstOrDefault())).ToArray();
             var reportingModels = ProjectModelRuns(revisions, modelRows, weights, qubes, asOfUtc);
-            var reportingFxLines = ProjectFxLines(revisions, mappings, intents, asOfUtc);
+            var reportingFx = ProjectFxLines(revisions, mappings, intents, asOfUtc);
             var reportingArch7a = ProjectArch7a(
                 intents, risks, parents, children, mappings, arch7aRuns);
             var reportingArch7b = ProjectArch7b(
                 qualificationRuns, fixEvents, sends, executionReports, fills, ledger, reconciliations);
-            var observedCodes = CollectObservedCodes(slotRows, risks, reconciliations);
+            var observedFacts = CollectObservedFacts(slotRows, risks, reconciliations);
 
             await transaction.CommitAsync(cancellationToken);
             return new(
@@ -98,10 +98,11 @@ public sealed class PmsShadowReadOnlyReportingReader(
                 reportingSlots,
                 reportingModels,
                 reportingRevisions,
-                reportingFxLines,
+                reportingFx.Net,
+                reportingFx.Contributions,
                 reportingArch7a,
                 reportingArch7b,
-                observedCodes);
+                observedFacts);
         }
         catch
         {
@@ -242,18 +243,22 @@ public sealed class PmsShadowReadOnlyReportingReader(
         PmsShadowIntradaySlotRow row,
         PmsShadowIntradayEconomicProjection? revision)
     {
-        JsonElement? manifest = null;
+        JsonElement? rawManifest = null;
         if (!string.IsNullOrWhiteSpace(row.ManifestJson))
         {
             using var document = JsonDocument.Parse(row.ManifestJson);
-            manifest = document.RootElement.Clone();
+            rawManifest = document.RootElement.Clone();
         }
-
-        var artifactSha = JsonString(manifest, "LmaxCaptureSha256", "lmax_capture_sha256");
-        var clock = JsonString(manifest, "ClockPreflightStatus", "clock_preflight_status");
-        var polygon = JsonInt(manifest, "PolygonCallCount", "polygon_call_count");
-        var finalizedAt = JsonDate(manifest, "FinalizedAtUtc", "finalized_at_utc");
-        var handoffSha = JsonString(manifest, "HandoffSha256", "handoff_sha256");
+        var manifest = ReportingSlotManifestReader.Read(row.ManifestJson);
+        var polygon = JsonInt(rawManifest, "PolygonCallCount", "polygon_call_count");
+        var finalizedAt = JsonDate(rawManifest, "FinalizedAtUtc", "finalized_at_utc");
+        var readyMarker = new ReportingReadyMarkerFact(
+            row.SlotId,
+            ReportingAuthority.Absent,
+            ReportingAuthority.Absent,
+            null,
+            null,
+            "pms_shadow_ready_marker_external_evidence_v1");
         return new(
             row.SlotId,
             row.SlotStartUtc,
@@ -262,14 +267,13 @@ public sealed class PmsShadowReadOnlyReportingReader(
             row.ClaimedAtUtc,
             row.CompletedAtUtc,
             row.SourceSessionId,
-            artifactSha,
-            clock is null ? ReportingAuthority.Absent :
-                clock == "PASS" ? ReportingAuthority.Proven : ReportingAuthority.Unknown,
-            JsonInt(manifest, "BboCoverageCount", "bbo_coverage_count"),
-            JsonInt(manifest, "InSlotEventCount", "in_slot_event_count"),
-            JsonInt(manifest, "PostCloseExclusionCount", "post_close_exclusion_count"),
+            manifest.ArtifactSha256,
+            manifest.AuthorityStatus,
+            manifest.BboSymbolCount,
+            manifest.InSlotBboEventCount,
+            manifest.PostCloseBboEventCount,
             polygon,
-            handoffSha is null ? ReportingAuthority.Absent : ReportingAuthority.Proven,
+            readyMarker.Status,
             null,
             row.CompletedAtUtc.HasValue
                 ? (row.CompletedAtUtc.Value - row.SlotEndUtc).TotalSeconds
@@ -281,9 +285,10 @@ public sealed class PmsShadowReadOnlyReportingReader(
             row.NoOrder,
             row.ManifestSha256,
             row.FailureCode,
-            row.ContractVersion);
+            row.ContractVersion,
+            manifest,
+            readyMarker);
     }
-
     private static IReadOnlyList<ReportingModelRunFact> ProjectModelRuns(
         IReadOnlyList<PmsShadowIntradayEconomicProjection> revisions,
         IReadOnlyList<PmsShadowModelRunRow> modelRows,
@@ -295,45 +300,60 @@ public sealed class PmsShadowReadOnlyReportingReader(
             .OrderByDescending(value => value.CompletedAtUtc)
             .ThenByDescending(value => value.ProjectionRevisionId)
             .FirstOrDefault();
-        var targetCountByModel = latest?.TargetPositions
+        if (latest is null) return [];
+        var targetCountByModel = latest.TargetPositions
             .GroupBy(value => value.ModelRunId)
-            .ToDictionary(group => group.Key, group => group.Count()) ?? [];
-        var driftCountByModel = latest?.PositionOnlyDrifts
+            .ToDictionary(group => group.Key, group => group.Count());
+        var driftCountByModel = latest.PositionOnlyDrifts
             .GroupBy(value => value.ModelRunId)
-            .ToDictionary(group => group.Key, group => group.Count()) ?? [];
-        var selectedById = latest?.SelectedModelRuns.ToDictionary(value => value.ModelRunId) ?? [];
+            .ToDictionary(group => group.Key, group => group.Count());
         var qubesIds = qubes.Select(value => value.SnapshotId).ToHashSet();
-        return modelRows
-            .Where(value => OperationalReportingContract.Strategies.Contains(
-                value.StrategyId, StringComparer.Ordinal))
-            .Select(value =>
+        var modelById = modelRows.ToDictionary(value => value.ModelRunId);
+        return latest.SelectedModelRuns
+            .OrderBy(value => Array.IndexOf(OperationalReportingContract.Strategies, value.StrategyId))
+            .ThenBy(value => value.ModelRunId)
+            .Select(selected =>
             {
-                var selected = selectedById.GetValueOrDefault(value.ModelRunId);
-                var weightCount = weights.Count(item => item.ModelRunId == value.ModelRunId);
-                var lineage = IsSha(value.OutputSha256) &&
-                              IsGitCommit(value.CoreMasterCommitId) &&
-                              qubesIds.Contains(value.QubesInputSnapshotId);
+                var value = modelById.GetValueOrDefault(selected.ModelRunId);
+                var weightCount = weights.Count(item => item.ModelRunId == selected.ModelRunId);
+                var coreCommit = value?.CoreMasterCommitId ?? selected.CoreCommitId;
+                var outputSha = value?.OutputSha256 ?? selected.OutputSha256;
+                var lineage = IsSha(outputSha) &&
+                              IsGitCommit(coreCommit) &&
+                              qubesIds.Contains(selected.QubesInputSnapshotId) &&
+                              value?.QubesInputSnapshotId == selected.QubesInputSnapshotId &&
+                              !string.IsNullOrWhiteSpace(selected.Classification);
+                var expected = ReportingInfxSchedules.ExpectedTargetClose(
+                    selected.StrategyId,
+                    DateOnly.FromDateTime(asOfUtc.UtcDateTime));
                 return new ReportingModelRunFact(
-                    value.StrategyId,
-                    value.ModelRunId,
-                    value.QubesInputSnapshotId,
-                    value.TargetCloseUtc,
-                    value.AsOfUtc,
-                    value.OutputSha256,
-                    value.CoreMasterCommitId,
-                    selected?.Classification ?? value.Classification,
-                    selected is null ? "FINALIZED_NOT_SELECTED" : selected.Classification,
-                    value.TargetCloseUtc > asOfUtc ? "NOT_DUE" : "DUE_OR_FINALIZED",
+                    selected.StrategyId,
+                    selected.ModelRunId,
+                    selected.QubesInputSnapshotId,
+                    selected.TargetCloseUtc,
+                    selected.AsOfUtc,
+                    outputSha,
+                    coreCommit,
+                    selected.Classification,
+                    selected.Classification,
+                    ReportingInfxSchedules.Status(
+                        selected.StrategyId,
+                        asOfUtc,
+                        selected.TargetCloseUtc,
+                        true,
+                        selected.Classification),
                     weightCount,
-                    targetCountByModel.GetValueOrDefault(value.ModelRunId),
-                    driftCountByModel.GetValueOrDefault(value.ModelRunId),
+                    targetCountByModel.GetValueOrDefault(selected.ModelRunId),
+                    driftCountByModel.GetValueOrDefault(selected.ModelRunId),
                     lineage,
-                    value.ContractVersion);
+                    value?.ContractVersion ?? PmsShadowStateContract.ContractVersion,
+                    expected);
             })
             .ToArray();
     }
-
-    private static IReadOnlyList<ReportingFxLineFact> ProjectFxLines(
+    private static (
+        IReadOnlyList<ReportingFxNetLineFact> Net,
+        IReadOnlyList<ReportingFxStrategyContributionFact> Contributions) ProjectFxLines(
         IReadOnlyList<PmsShadowIntradayEconomicProjection> revisions,
         IReadOnlyList<PmsShadowSecurityMappingRow> mappings,
         IReadOnlyList<PmsShadowTradeIntentRow> intents,
@@ -343,7 +363,7 @@ public sealed class PmsShadowReadOnlyReportingReader(
             .OrderByDescending(value => value.CompletedAtUtc)
             .ThenByDescending(value => value.ProjectionRevisionId)
             .FirstOrDefault();
-        if (latest is null) return [];
+        if (latest is null) return ([], []);
         var sourceMappings = mappings
             .Where(value => value.IngestionId == latest.SourceIngestionId)
             .ToArray();
@@ -356,7 +376,8 @@ public sealed class PmsShadowReadOnlyReportingReader(
             .Where(value => value.EconomicRevisionId == latest.ProjectionRevisionId)
             .OrderBy(value => value.ExecutionTradableSymbol, StringComparer.Ordinal)
             .ToArray();
-        var result = new List<ReportingFxLineFact>(
+        var net = new List<ReportingFxNetLineFact>(executionIntents.Length);
+        var contributions = new List<ReportingFxStrategyContributionFact>(
             executionIntents.Length * OperationalReportingContract.Strategies.Length);
         foreach (var intent in executionIntents)
         {
@@ -372,51 +393,89 @@ public sealed class PmsShadowReadOnlyReportingReader(
             var portfolioSymbol = NormalizeSymbol(intent.NormalizedPortfolioSymbol);
             Require(portfolioSymbol.Length == 6, "ARCH7A_PORTFOLIO_SYMBOL_INVALID");
             var portfolioCurrency = portfolioSymbol[..3];
-            var contributionByStrategy = sourceTargets
+            var sourceByStrategy = sourceTargets
                 .GroupBy(value => value.StrategyId, StringComparer.Ordinal)
-                .ToDictionary(
-                    group => group.Key,
-                    group => group.Sum(value => CurrencyContributionUsd(
-                        value, portfolioCurrency, mappingByInstrument)),
-                    StringComparer.Ordinal);
+                .ToDictionary(group => group.Key, group => group.ToArray(), StringComparer.Ordinal);
+            var contributionByStrategy = sourceByStrategy.ToDictionary(
+                pair => pair.Key,
+                pair => pair.Value.Sum(value => CurrencyContributionUsd(
+                    value, portfolioCurrency, mappingByInstrument)),
+                StringComparer.Ordinal);
             var contributionTotal = contributionByStrategy.Values.Sum();
-            Require(contributionTotal != 0m, "ARCH7A_EXECUTION_CONTRIBUTION_TOTAL_ZERO");
+            net.Add(new(
+                latest.ProjectionRevisionId,
+                intent.TradeIntentId,
+                mapping?.InstrumentId ?? Guid.Empty,
+                mapping?.SecurityId ?? string.Empty,
+                NormalizeSymbol(intent.ExecutionTradableSymbol),
+                intent.SecurityId,
+                intent.SecurityIdSource,
+                intent.CurrentQuantity,
+                intent.TargetQuantity,
+                intent.SignedDesiredDelta,
+                mapping is null ? ReportingAuthority.Absent : ReportingAuthority.Proven,
+                observation?.Bid,
+                observation?.Ask,
+                observation?.EventTimeUtc,
+                observation is null ? ReportingAuthority.Absent :
+                    asOfUtc - observation.EventTimeUtc >
+                    TimeSpan.FromMinutes(PmsShadowIntradayCadenceContract.StaleMinutes)
+                        ? ReportingAuthority.Stale : ReportingAuthority.Proven,
+                intent.PlanSha256,
+                "arch7a_shadow_execution_v1"));
             var allocated = 0m;
             for (var index = 0; index < OperationalReportingContract.Strategies.Length; index++)
             {
                 var strategy = OperationalReportingContract.Strategies[index];
-                var target = index == OperationalReportingContract.Strategies.Length - 1
-                    ? intent.TargetQuantity - allocated
-                    : intent.TargetQuantity *
-                      contributionByStrategy.GetValueOrDefault(strategy) / contributionTotal;
-                allocated += target;
-                result.Add(new(
-                    latest.ProjectionRevisionId,
-                    mapping?.InstrumentId ?? Guid.Empty,
-                    mapping?.SecurityId ?? string.Empty,
-                    NormalizeSymbol(intent.ExecutionTradableSymbol),
-                    intent.SecurityId,
-                    intent.SecurityIdSource,
+                var strategyTargets = sourceByStrategy.GetValueOrDefault(strategy) ?? [];
+                var targetIdsForStrategy = strategyTargets
+                    .Select(value => value.TargetPositionId).Order().ToArray();
+                var strategyDrifts = latest.PositionOnlyDrifts.Where(value =>
+                    value.StrategyId == strategy &&
+                    strategyTargets.Any(target => target.ModelRunId == value.ModelRunId &&
+                                                   target.InstrumentId == value.InstrumentId)).ToArray();
+                decimal? allocation = null;
+                if (contributionTotal != 0m)
+                {
+                    allocation = index == OperationalReportingContract.Strategies.Length - 1
+                        ? intent.TargetQuantity - allocated
+                        : intent.TargetQuantity *
+                          contributionByStrategy.GetValueOrDefault(strategy) / contributionTotal;
+                    allocated += allocation.Value;
+                }
+                var evidence = ReportingEvidenceHash.Canonical(
+                    latest.ProjectionRevisionId.ToString("D"),
+                    intent.TradeIntentId.ToString("D"),
                     strategy,
-                    target,
-                    target,
-                    intent.CurrentQuantity,
-                    intent.CurrentQuantity == 0m ? target : null,
-                    intent.TargetQuantity,
-                    intent.SignedDesiredDelta,
-                    mapping is null ? ReportingAuthority.Absent : ReportingAuthority.Proven,
-                    observation?.Bid,
-                    observation?.Ask,
-                    observation?.EventTimeUtc,
-                    observation is null ? ReportingAuthority.Absent :
-                        asOfUtc - observation.EventTimeUtc >
-                        TimeSpan.FromMinutes(PmsShadowIntradayCadenceContract.StaleMinutes)
-                            ? ReportingAuthority.Stale : ReportingAuthority.Proven));
+                    string.Join(',', targetIdsForStrategy.Select(value => value.ToString("D"))),
+                    contributionByStrategy.GetValueOrDefault(strategy)
+                        .ToString(CultureInfo.InvariantCulture),
+                    allocation?.ToString(CultureInfo.InvariantCulture));
+                contributions.Add(new(
+                    latest.ProjectionRevisionId,
+                    intent.TradeIntentId,
+                    NormalizeSymbol(intent.ExecutionTradableSymbol),
+                    strategy,
+                    strategyTargets.Length,
+                    targetIdsForStrategy,
+                    strategyTargets.Length == 0 ? null :
+                        strategyTargets.Sum(value => value.TargetNotionalUsd),
+                    strategyTargets.Length == 0 ? null :
+                        contributionByStrategy.GetValueOrDefault(strategy),
+                    strategyTargets.Length == 0 ? null :
+                        strategyTargets.Sum(value => value.TargetBaseQuantity),
+                    strategyTargets.Length == 0 ? null :
+                        strategyTargets.Sum(value => value.TargetVenueQuantity),
+                    strategyDrifts.Length == 0 ? null :
+                        strategyDrifts.Sum(value => value.Delta),
+                    allocation,
+                    "PROPORTIONAL_NET_ATTRIBUTION_V1",
+                    allocation.HasValue ? ReportingAuthority.Probable : ReportingAuthority.Unknown,
+                    evidence));
             }
         }
-        return result;
+        return (net, contributions);
     }
-
     private static IReadOnlyList<Guid> DeserializeGuids(string json)
         => JsonSerializer.Deserialize<Guid[]>(json, ProjectionJson)
            ?? throw new InvalidDataException("REPORTING_ID_LIST_JSON_INVALID");
@@ -528,24 +587,71 @@ public sealed class PmsShadowReadOnlyReportingReader(
         }).ToArray();
     }
 
-    private static IReadOnlyList<string> CollectObservedCodes(
+    private static IReadOnlyList<ObservedOperationalCodeFact> CollectObservedFacts(
         IReadOnlyList<PmsShadowIntradaySlotRow> slots,
         IReadOnlyList<PmsShadowRiskDecisionRow> risks,
         IReadOnlyList<PmsArch7bFinalReconciliationRow> reconciliations)
     {
-        var result = new SortedSet<string>(StringComparer.Ordinal);
-        foreach (var value in slots.Select(value => value.FailureCode))
-            AddCode(result, value);
-        foreach (var value in risks.SelectMany(value =>
-                     new[] { value.ReasonCodesJson, value.BlockingBreaksJson }))
-            AddJsonCodes(result, value);
-        foreach (var value in reconciliations.Select(value => value.BreaksJson))
-            AddJsonCodes(result, value);
-        return result.ToArray();
+        var result = new List<ObservedOperationalCodeFact>();
+        var latestSlot = slots.OrderByDescending(value => value.SlotEndUtc).FirstOrDefault();
+        foreach (var slot in slots.Where(value => !string.IsNullOrWhiteSpace(value.FailureCode)))
+            result.Add(Fact(slot.FailureCode!, OperationalFactKinds.SlotFailureCode,
+                "ARCH6F_SLOT", "pms_shadow.intraday_slots", "Slot", slot.SlotId,
+                slot.SlotEndUtc, slot.CompletedAtUtc ?? slot.SlotEndUtc, true,
+                latestSlot?.SlotId == slot.SlotId ? slot.Status : "HISTORICAL",
+                slot.ManifestSha256, slotId: slot.SlotId));
+        foreach (var risk in risks)
+        {
+            foreach (var code in JsonCodes(risk.ReasonCodesJson))
+                result.Add(Fact(code, OperationalFactKinds.RiskReasonCode, "ARCH7A_RISK",
+                    "pms_shadow.shadow_risk_decisions", "RiskDecision",
+                    risk.RiskDecisionId.ToString("D"), risk.CreatedAtUtc, risk.CreatedAtUtc,
+                    false, risk.Outcome, risk.PlanSha256, tradeIntentId: risk.TradeIntentId,
+                    riskDecisionId: risk.RiskDecisionId));
+            foreach (var code in JsonCodes(risk.BlockingBreaksJson))
+                result.Add(Fact(code, OperationalFactKinds.RiskBlockingBreak, "ARCH7A_RISK",
+                    "pms_shadow.shadow_risk_decisions", "RiskDecision",
+                    risk.RiskDecisionId.ToString("D"), risk.CreatedAtUtc, risk.CreatedAtUtc,
+                    true, risk.Outcome, risk.PlanSha256, tradeIntentId: risk.TradeIntentId,
+                    riskDecisionId: risk.RiskDecisionId));
+        }
+        foreach (var reconciliation in reconciliations)
+            foreach (var code in JsonCodes(reconciliation.BreaksJson))
+                result.Add(Fact(code, OperationalFactKinds.ReconciliationBreak,
+                    "ARCH7B_RECONCILIATION", "pms_shadow.arch7b_final_reconciliations",
+                    "QualificationRun", reconciliation.QualificationRunId.ToString("D"),
+                    reconciliation.CompletedAtUtc, reconciliation.CompletedAtUtc, true,
+                    reconciliation.Status, reconciliation.EvidenceSha256,
+                    qualificationRunId: reconciliation.QualificationRunId));
+        return result.OrderBy(value => value.SourceTable, StringComparer.Ordinal)
+            .ThenBy(value => value.ScopeId, StringComparer.Ordinal)
+            .ThenBy(value => value.SourceExactCode, StringComparer.Ordinal).ToArray();
     }
 
-    private static void AddJsonCodes(ISet<string> result, string value)
+    private static ObservedOperationalCodeFact Fact(
+        string code,
+        string factKind,
+        string component,
+        string sourceTable,
+        string scopeType,
+        string scopeId,
+        DateTimeOffset first,
+        DateTimeOffset last,
+        bool blocking,
+        string sourceStatus,
+        string? evidenceSha,
+        string? slotId = null,
+        Guid? tradeIntentId = null,
+        Guid? riskDecisionId = null,
+        Guid? qualificationRunId = null)
+        => new(code, factKind, component, sourceTable,
+            OperationalReportingContract.Version, scopeType, scopeId, slotId, null,
+            null, tradeIntentId, riskDecisionId, qualificationRunId, null, first, last,
+            evidenceSha, ReportingAuthority.Proven, sourceStatus, blocking);
+
+    private static IReadOnlyList<string> JsonCodes(string value)
     {
+        var result = new SortedSet<string>(StringComparer.Ordinal);
         try
         {
             using var document = JsonDocument.Parse(value);
@@ -556,6 +662,7 @@ public sealed class PmsShadowReadOnlyReportingReader(
         {
             AddCode(result, value);
         }
+        return result.ToArray();
     }
 
     private static IEnumerable<string> EnumerateStrings(JsonElement value)
@@ -582,7 +689,6 @@ public sealed class PmsShadowReadOnlyReportingReader(
                 character is '_' or ':' or '-'))
             result.Add(normalized.TrimEnd(':'));
     }
-
     private static string? JsonString(JsonElement? root, params string[] names)
     {
         var property = JsonProperty(root, names);

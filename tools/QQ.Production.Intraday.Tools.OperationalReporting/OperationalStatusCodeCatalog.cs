@@ -5,6 +5,7 @@ public static class OperationalStatusCodeCatalog
     public static IReadOnlyList<OperationalStatusCodeDefinition> All { get; } =
         Build()
             .Concat(OperationalStatusCodeInventory.Additional)
+            .Concat(OperationalReportingStatusExtensions.All)
             .OrderBy(value => value.ExactCode, StringComparer.Ordinal).ToArray();
 
     public static OperationalStatusCodeDefinition Get(string exactCode)

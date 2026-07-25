@@ -4,8 +4,8 @@ namespace QQ.Production.Intraday.Tools.OperationalReporting;
 
 public static class OperationalReportingContract
 {
-    public const string Version = "anubis_infx_operational_reporting_v1";
-    public const string BreakVersion = "anubis_infx_operational_break_v1";
+    public const string Version = "anubis_infx_operational_reporting_v2";
+    public const string BreakVersion = "anubis_infx_operational_break_v2";
     public const string NullCsvValue = "NULL";
     public const string TestEnvironment = "TEST";
     public const string RequiredAccountScope = "1754288005";
@@ -19,15 +19,35 @@ public static class OperationalReportingContract
     public static readonly string[] Strategies = ["INFX7", "INFX8", "INFX9", "INFX10"];
     public static readonly string[] FxSymbols =
         ["AUDUSD", "EURUSD", "GBPUSD", "NZDUSD", "USDCAD", "USDCHF", "USDJPY"];
+    public static readonly IReadOnlyDictionary<string, int> ExpectedPerModelCounts =
+        new Dictionary<string, int>(StringComparer.Ordinal)
+        {
+            ["INFX7"] = 66,
+            ["INFX8"] = 66,
+            ["INFX9"] = 78,
+            ["INFX10"] = 78
+        };
 }
 
 public static class ReportingAuthority
 {
-    public const string Proven = "PROUVÉ";
+    public const string Proven = "PROUV\u00c9";
     public const string Probable = "PROBABLE";
     public const string Unknown = "INCONNU";
     public const string Absent = "ABSENT";
-    public const string Stale = "OBSOLÈTE";
+    public const string Stale = "OBSOL\u00c8TE";
+}
+
+public static class OperationalFactKinds
+{
+    public const string SlotFailureCode = "SLOT_FAILURE_CODE";
+    public const string OperationalAlert = "OPERATIONAL_ALERT";
+    public const string RiskReasonCode = "RISK_REASON_CODE";
+    public const string RiskBlockingBreak = "RISK_BLOCKING_BREAK";
+    public const string ReconciliationBreak = "RECONCILIATION_BREAK";
+    public const string LifecycleBreak = "LIFECYCLE_BREAK";
+    public const string StatusCode = "STATUS_CODE";
+    public const string UnknownSourceCode = "UNKNOWN_SOURCE_CODE";
 }
 
 public enum OperationalBreakSeverity
@@ -64,6 +84,8 @@ public sealed record OperationalStatusCodeDefinition(
 public sealed record OperationalBreak(
     string BreakId,
     string ExactCode,
+    string? SourceExactCode,
+    string FactKind,
     string Category,
     OperationalBreakSeverity Severity,
     OperationalBreakStatus Status,
@@ -76,6 +98,7 @@ public sealed record OperationalBreak(
     Guid? InstrumentId,
     string? Symbol,
     Guid? TradeIntentId,
+    Guid? RiskDecisionId,
     Guid? QualificationRunId,
     string? OrderId,
     DateTimeOffset FirstObservedAtUtc,
@@ -126,7 +149,9 @@ public sealed record ReportingSlotFact(
     bool NoOrder,
     string? ManifestSha256,
     string? FailureCode,
-    string ContractVersion);
+    string ContractVersion,
+    ReportingSlotManifestProjection Manifest,
+    ReportingReadyMarkerFact ReadyMarker);
 
 public sealed record ReportingModelRunFact(
     string StrategyId,
@@ -143,7 +168,8 @@ public sealed record ReportingModelRunFact(
     int TargetCount,
     int DriftCount,
     bool LineageComplete,
-    string SourceContractVersion);
+    string SourceContractVersion,
+    DateTimeOffset ExpectedTargetCloseUtc);
 
 public sealed record ReportingEconomicRevisionFact(
     Guid EconomicRevisionId,
@@ -165,25 +191,41 @@ public sealed record ReportingEconomicRevisionFact(
     string ManifestSha256,
     DateTimeOffset CompletedAtUtc);
 
-public sealed record ReportingFxLineFact(
+public sealed record ReportingFxNetLineFact(
     Guid EconomicRevisionId,
+    Guid TradeIntentId,
     Guid InstrumentId,
     string PmsSecurityId,
     string CanonicalSymbol,
     string LmaxInstrumentId,
     string SecurityIdSource,
-    string StrategyId,
-    decimal TargetBaseQuantity,
-    decimal TargetVenueQuantity,
-    decimal? CurrentBaseQuantity,
-    decimal? PositionOnlyDrift,
-    decimal NetTarget,
-    decimal NetDrift,
+    decimal CurrentQuantity,
+    decimal TargetQuantity,
+    decimal SignedDesiredDelta,
     string MappingAuthority,
     decimal? Bid,
     decimal? Ask,
     DateTimeOffset? PriceAsOfUtc,
-    string Freshness);
+    string Freshness,
+    string PlanSha256,
+    string SourceContractVersion);
+
+public sealed record ReportingFxStrategyContributionFact(
+    Guid EconomicRevisionId,
+    Guid TradeIntentId,
+    string CanonicalSymbol,
+    string StrategyId,
+    int SourceTargetPositionCount,
+    IReadOnlyList<Guid> SourceTargetPositionIds,
+    decimal? SourceTargetNotionalUsd,
+    decimal? CurrencyExposureContributionUsd,
+    decimal? SourceTargetBaseQuantity,
+    decimal? SourceTargetVenueQuantity,
+    decimal? SourcePositionOnlyDrift,
+    decimal? AllocatedExecutionQuantity,
+    string AttributionMethod,
+    string AttributionAuthority,
+    string EvidenceSha256);
 
 public sealed record ReportingArch7aFact(
     Guid EconomicRevisionId,
@@ -224,6 +266,28 @@ public sealed record ReportingArch7bFact(
     string FinalGate,
     DateTimeOffset? CompletedAtUtc);
 
+public sealed record ObservedOperationalCodeFact(
+    string SourceExactCode,
+    string FactKind,
+    string SourceComponent,
+    string SourceTable,
+    string SourceContractVersion,
+    string ScopeType,
+    string ScopeId,
+    string? SlotId,
+    string? StrategyId,
+    Guid? EconomicRevisionId,
+    Guid? TradeIntentId,
+    Guid? RiskDecisionId,
+    Guid? QualificationRunId,
+    string? OrderId,
+    DateTimeOffset FirstObservedAtUtc,
+    DateTimeOffset LastObservedAtUtc,
+    string? EvidenceSha256,
+    string AuthorityStatus,
+    string SourceStatus,
+    bool IsBlockingSourceFact);
+
 public sealed record OperationalReportingSnapshot(
     DateTimeOffset AsOfUtc,
     string RepositoryCommit,
@@ -231,10 +295,11 @@ public sealed record OperationalReportingSnapshot(
     IReadOnlyList<ReportingSlotFact> Slots,
     IReadOnlyList<ReportingModelRunFact> ModelRuns,
     IReadOnlyList<ReportingEconomicRevisionFact> EconomicRevisions,
-    IReadOnlyList<ReportingFxLineFact> FxLines,
+    IReadOnlyList<ReportingFxNetLineFact> FxNetLines,
+    IReadOnlyList<ReportingFxStrategyContributionFact> FxStrategyContributions,
     IReadOnlyList<ReportingArch7aFact> Arch7a,
     IReadOnlyList<ReportingArch7bFact> Arch7b,
-    IReadOnlyList<string> ObservedCodes);
+    IReadOnlyList<ObservedOperationalCodeFact> ObservedCodeFacts);
 
 public sealed record OperationalSummary(
     DateTimeOffset GeneratedAtUtc,
@@ -271,13 +336,16 @@ public sealed record OperationalReportSet(
     OperationalSummary Summary,
     IReadOnlyList<OperationalStatusCodeDefinition> StatusCodeCatalog,
     IReadOnlyList<OperationalBreak> Breaks,
+    ReportingOperationalExpectation OperationalExpectation,
     IReadOnlyList<ReportingModelRunFact> ModelRuns,
     IReadOnlyList<ReportingSlotFact> Slots,
     IReadOnlyList<ReportingEconomicRevisionFact> EconomicRevisions,
-    IReadOnlyList<ReportingFxLineFact> FxLines,
+    IReadOnlyList<ReportingFxNetLineFact> FxNetLines,
+    IReadOnlyList<ReportingFxStrategyContributionFact> FxStrategyContributions,
     IReadOnlyList<ReportingArch7aFact> Arch7a,
     IReadOnlyList<ReportingArch7bFact> Arch7b,
-    ReconciliationReport Reconciliation);
+    ReconciliationReport Reconciliation,
+    IReadOnlyList<ObservedOperationalCodeFact> ObservedCodeFacts);
 
 public sealed record ReportingBundleFile(string Path, long SizeBytes, string Sha256);
 
