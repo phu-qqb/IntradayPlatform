@@ -213,7 +213,9 @@ public static class DeterministicReportingBundleWriter
         "SourceContractVersion", "ScopeType", "ScopeId", "SlotId", "StrategyId",
         "EconomicRevisionId", "TradeIntentId", "RiskDecisionId", "QualificationRunId",
         "OrderId", "FirstObservedAtUtc", "LastObservedAtUtc", "EvidenceSha256",
-        "AuthorityStatus", "SourceStatus", "IsBlockingSourceFact"
+        "AuthorityStatus", "SourceStatus", "IsBlockingSourceFact",
+        "SourceRevisionCompletedAtUtc", "IsLatestQualifyingEconomicRevision",
+        "IsLatestArch7aQualificationForRevision", "DerivedOperationalStatus"
     ];
 
     private static object?[] ObservedFactRow(ObservedOperationalCodeFact value) =>
@@ -223,7 +225,9 @@ public static class DeterministicReportingBundleWriter
         value.StrategyId, value.EconomicRevisionId, value.TradeIntentId,
         value.RiskDecisionId, value.QualificationRunId, value.OrderId,
         value.FirstObservedAtUtc, value.LastObservedAtUtc, value.EvidenceSha256,
-        value.AuthorityStatus, value.SourceStatus, value.IsBlockingSourceFact
+        value.AuthorityStatus, value.SourceStatus, value.IsBlockingSourceFact,
+        value.SourceRevisionCompletedAtUtc, value.IsLatestQualifyingEconomicRevision,
+        value.IsLatestArch7aQualificationForRevision, value.DerivedOperationalStatus
     ];
 
     private static readonly string[] ReadyMarkerHeaders =
@@ -242,7 +246,9 @@ public static class DeterministicReportingBundleWriter
         "EconomicRevisionId", "TradeIntentId", "RiskDecisionId", "ParentOrderId",
         "ChildOrderId", "AccountScope", "Environment", "Classification", "ParentStatus",
         "ChildStatus", "Actionable", "ExecutionAllowed", "BrokerRouteAllowed",
-        "BrokerSendAllowed", "PlanSha256", "ReplayResult", "Symbol", "InstrumentId"
+        "BrokerSendAllowed", "PlanSha256", "ReplayResult", "Symbol", "InstrumentId",
+        "QualificationRunId", "QualificationRunStatus", "QualificationCompletedAtUtc",
+        "IsAuthoritativeForEconomicRevision"
     ];
 
     private static object?[] Arch7aRow(ReportingArch7aFact value) =>
@@ -251,7 +257,9 @@ public static class DeterministicReportingBundleWriter
         value.ParentOrderId, value.ChildOrderId, value.AccountScope, value.Environment,
         value.Classification, value.ParentStatus, value.ChildStatus, value.Actionable,
         value.ExecutionAllowed, value.BrokerRouteAllowed, value.BrokerSendAllowed,
-        value.PlanSha256, value.ReplayResult, value.Symbol, value.InstrumentId
+        value.PlanSha256, value.ReplayResult, value.Symbol, value.InstrumentId,
+        value.QualificationRunId, value.QualificationRunStatus,
+        value.QualificationCompletedAtUtc, value.IsAuthoritativeForEconomicRevision
     ];
 
     private static readonly string[] Arch7bHeaders =
@@ -333,7 +341,11 @@ public static class DeterministicReportingBundleWriter
         Fact(html, "Slot due status", report.OperationalExpectation.SlotDueStatus);
         Fact(html, "Latest slot", report.Summary.LatestSlot ?? ReportingAuthority.Absent);
         Fact(html, "Economic revision",
-            report.Summary.LatestQualifyingEconomicRevision?.ToString("D") ?? ReportingAuthority.Absent);
+            report.Summary.LatestQualifyingEconomicRevisionId?.ToString("D") ??
+            ReportingAuthority.Absent);
+        Fact(html, "ARCH7A qualification",
+            report.Summary.LatestArch7aQualificationRunId?.ToString("D") ??
+            ReportingAuthority.Absent);
         Fact(html, "Operational status", report.Summary.GlobalOperationalStatus);
         Fact(html, "Trading readiness", report.Summary.GlobalTradingReadiness);
         Fact(html, "Reconciliation", report.Summary.GlobalReconciliationStatus);

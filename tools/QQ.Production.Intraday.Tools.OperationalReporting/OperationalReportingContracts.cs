@@ -4,8 +4,8 @@ namespace QQ.Production.Intraday.Tools.OperationalReporting;
 
 public static class OperationalReportingContract
 {
-    public const string Version = "anubis_infx_operational_reporting_v2";
-    public const string BreakVersion = "anubis_infx_operational_break_v2";
+    public const string Version = "anubis_infx_operational_reporting_v3";
+    public const string BreakVersion = "anubis_infx_operational_break_v3";
     public const string NullCsvValue = "NULL";
     public const string TestEnvironment = "TEST";
     public const string RequiredAccountScope = "1754288005";
@@ -245,7 +245,13 @@ public sealed record ReportingArch7aFact(
     string PlanSha256,
     string ReplayResult,
     string Symbol,
-    Guid InstrumentId);
+    Guid InstrumentId)
+{
+    public Guid? QualificationRunId { get; init; }
+    public string QualificationRunStatus { get; init; } = ReportingAuthority.Unknown;
+    public DateTimeOffset? QualificationCompletedAtUtc { get; init; }
+    public bool IsAuthoritativeForEconomicRevision { get; init; }
+}
 
 public sealed record ReportingArch7bFact(
     Guid? QualificationRunId,
@@ -286,7 +292,13 @@ public sealed record ObservedOperationalCodeFact(
     string? EvidenceSha256,
     string AuthorityStatus,
     string SourceStatus,
-    bool IsBlockingSourceFact);
+    bool IsBlockingSourceFact)
+{
+    public DateTimeOffset? SourceRevisionCompletedAtUtc { get; init; }
+    public bool? IsLatestQualifyingEconomicRevision { get; init; }
+    public bool? IsLatestArch7aQualificationForRevision { get; init; }
+    public string DerivedOperationalStatus { get; init; } = "UNKNOWN";
+}
 
 public sealed record OperationalReportingSnapshot(
     DateTimeOffset AsOfUtc,
@@ -309,16 +321,21 @@ public sealed record OperationalSummary(
     string Database,
     string SchemaMigrationIdentity,
     string? LatestSlot,
-    Guid? LatestQualifyingEconomicRevision,
+    Guid? LatestQualifyingEconomicRevisionId,
     IReadOnlyList<string> LatestAnubisInfxModelSet,
-    Guid? LatestArch7aQualification,
+    Guid? LatestArch7aQualificationRunId,
     Guid? LatestArch7bQualification,
     IReadOnlyDictionary<string, int> ActiveBreaksBySeverity,
     string GlobalOperationalStatus,
     string GlobalTradingReadiness,
     string GlobalReconciliationStatus,
     string SourceFreshness,
-    IReadOnlyList<string> AuthorityGaps);
+    IReadOnlyList<string> AuthorityGaps)
+{
+    public DateTimeOffset? LatestArch7aQualificationCompletedAtUtc { get; init; }
+    public string LatestArch7aQualificationStatus { get; init; } = ReportingAuthority.Absent;
+    public Guid? LatestArch7aEconomicRevisionId { get; init; }
+}
 
 public sealed record ReconciliationReport(
     string Status,

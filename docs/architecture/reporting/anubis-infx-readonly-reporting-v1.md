@@ -86,6 +86,23 @@ Read-only break states are `ACTIVE`, `HISTORICAL`,
 affect active counts or readiness. A later fact resolves an earlier fact only
 when the append-only source explicitly provides that authority.
 
+
+## ARCH7A Temporal Authority
+
+An ARCH7A risk fact is joined read-only to its TradeIntent, economic revision
+and completed qualification run. `SourceStatus` remains the raw persisted risk
+outcome; it is never interpreted as temporal authority. The separate
+`DerivedOperationalStatus` is `ACTIVE` only for the latest qualifying economic
+revision selected by `CompletedAtUtc` and its authoritative completed ARCH7A
+qualification selected by `CompletedAtUtc` with matching `PlanSha256`.
+
+Older qualifying revisions are `HISTORICAL`. A missing TradeIntent, missing
+economic revision, missing matching qualification, or exact timestamp tie
+between candidate qualifications is fail-closed `UNKNOWN`; GUID ordering never
+breaks an authority tie. `observed-code-facts.csv` retains the revision time,
+latest-revision flag, qualification-run identity and authority flag.
+`operational-summary.json` exposes the latest economic revision ID separately
+from the true latest ARCH7A `QualificationRunId`, completion time and status.
 `BreakId` is a lowercase SHA-256 of the versioned canonical identity fields.
 No random GUID participates in break identity.
 

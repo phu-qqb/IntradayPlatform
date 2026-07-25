@@ -88,7 +88,8 @@ public sealed class PmsShadowReadOnlyReportingReader(
                 intents, risks, parents, children, mappings, arch7aRuns);
             var reportingArch7b = ProjectArch7b(
                 qualificationRuns, fixEvents, sends, executionReports, fills, ledger, reconciliations);
-            var observedFacts = CollectObservedFacts(slotRows, risks, reconciliations);
+            var observedFacts = CollectObservedFacts(
+                slotRows, revisions, intents, risks, arch7aRuns, reconciliations);
 
             await transaction.CommitAsync(cancellationToken);
             return new(
@@ -510,7 +511,6 @@ public sealed class PmsShadowReadOnlyReportingReader(
         var childByParent = children.ToDictionary(value => value.ParentOrderId);
         var mappingBySource = mappings.GroupBy(value => (value.IngestionId, value.LmaxInstrumentId))
             .ToDictionary(group => group.Key, group => group.First());
-        var runIds = runs.Select(value => value.EconomicRevisionId).ToHashSet();
         return intents.Select(intent =>
         {
             var risk = riskByIntent.GetValueOrDefault(intent.TradeIntentId)
@@ -520,6 +520,8 @@ public sealed class PmsShadowReadOnlyReportingReader(
             var child = childByParent.GetValueOrDefault(parent.ParentOrderId)
                 ?? throw new InvalidDataException("ARCH7A_QUALIFYING_REVISION_FACTS_INCOMPLETE");
             var mapping = mappingBySource.GetValueOrDefault((intent.IngestionId, intent.SecurityId));
+            var qualification = SelectAuthoritativeQualification(
+                runs, intent.EconomicRevisionId, intent.PlanSha256);
             return new ReportingArch7aFact(
                 intent.EconomicRevisionId,
                 intent.TradeIntentId,
@@ -536,10 +538,17 @@ public sealed class PmsShadowReadOnlyReportingReader(
                 parent.RouteAllowed,
                 child.BrokerSendAllowed,
                 intent.PlanSha256,
-                runIds.Contains(intent.EconomicRevisionId)
+                qualification.Run is not null
                     ? "QUALIFICATION_RUN_PRESENT" : "QUALIFICATION_RUN_ABSENT",
                 NormalizeSymbol(parent.Symbol),
-                mapping?.InstrumentId ?? Guid.Empty);
+                mapping?.InstrumentId ?? Guid.Empty)
+            {
+                QualificationRunId = qualification.Run?.QualificationRunId,
+                QualificationRunStatus = qualification.Run?.Status ?? ReportingAuthority.Unknown,
+                QualificationCompletedAtUtc = qualification.Run?.CompletedAtUtc,
+                IsAuthoritativeForEconomicRevision = qualification.Run is not null &&
+                                                    !qualification.Ambiguous
+            };
         }).ToArray();
     }
 
@@ -589,31 +598,86 @@ public sealed class PmsShadowReadOnlyReportingReader(
 
     private static IReadOnlyList<ObservedOperationalCodeFact> CollectObservedFacts(
         IReadOnlyList<PmsShadowIntradaySlotRow> slots,
+        IReadOnlyList<PmsShadowIntradayEconomicProjection> revisions,
+        IReadOnlyList<PmsShadowTradeIntentRow> intents,
         IReadOnlyList<PmsShadowRiskDecisionRow> risks,
+        IReadOnlyList<PmsShadowExecutionQualificationRunRow> qualificationRuns,
         IReadOnlyList<PmsArch7bFinalReconciliationRow> reconciliations)
     {
         var result = new List<ObservedOperationalCodeFact>();
         var latestSlot = slots.OrderByDescending(value => value.SlotEndUtc).FirstOrDefault();
+        var latestRevision = revisions
+            .Where(value => value.Qualifying && value.Status == "COMPLETED")
+            .OrderByDescending(value => value.CompletedAtUtc)
+            .ThenByDescending(value => value.ProjectionRevisionId)
+            .FirstOrDefault();
+        var intentById = intents
+            .GroupBy(value => value.TradeIntentId)
+            .ToDictionary(group => group.Key, group => group.Single());
+        var revisionById = revisions
+            .GroupBy(value => value.ProjectionRevisionId)
+            .ToDictionary(group => group.Key, group => group.Single());
         foreach (var slot in slots.Where(value => !string.IsNullOrWhiteSpace(value.FailureCode)))
             result.Add(Fact(slot.FailureCode!, OperationalFactKinds.SlotFailureCode,
                 "ARCH6F_SLOT", "pms_shadow.intraday_slots", "Slot", slot.SlotId,
                 slot.SlotEndUtc, slot.CompletedAtUtc ?? slot.SlotEndUtc, true,
-                latestSlot?.SlotId == slot.SlotId ? slot.Status : "HISTORICAL",
-                slot.ManifestSha256, slotId: slot.SlotId));
+                slot.Status,
+                slot.ManifestSha256,
+                latestSlot?.SlotId == slot.SlotId ? "ACTIVE" : "HISTORICAL",
+                slotId: slot.SlotId));
         foreach (var risk in risks)
         {
+            var intent = intentById.GetValueOrDefault(risk.TradeIntentId);
+            var revision = intent is null
+                ? null
+                : revisionById.GetValueOrDefault(intent.EconomicRevisionId);
+            var qualification = intent is null
+                ? new QualificationSelection(null, false)
+                : SelectAuthoritativeQualification(
+                    qualificationRuns, intent.EconomicRevisionId, intent.PlanSha256);
+            var derivedStatus = DeriveRiskOperationalStatus(
+                intent is not null,
+                revision is not null,
+                revision?.Qualifying == true,
+                revision?.Status,
+                qualification.Run is not null,
+                qualification.Ambiguous,
+                revision is not null && latestRevision is not null &&
+                revision.ProjectionRevisionId == latestRevision.ProjectionRevisionId);
             foreach (var code in JsonCodes(risk.ReasonCodesJson))
                 result.Add(Fact(code, OperationalFactKinds.RiskReasonCode, "ARCH7A_RISK",
                     "pms_shadow.shadow_risk_decisions", "RiskDecision",
                     risk.RiskDecisionId.ToString("D"), risk.CreatedAtUtc, risk.CreatedAtUtc,
-                    false, risk.Outcome, risk.PlanSha256, tradeIntentId: risk.TradeIntentId,
-                    riskDecisionId: risk.RiskDecisionId));
+                    false, risk.Outcome, risk.PlanSha256, derivedStatus,
+                    slotId: intent?.SlotId,
+                    economicRevisionId: intent?.EconomicRevisionId,
+                    tradeIntentId: risk.TradeIntentId,
+                    riskDecisionId: risk.RiskDecisionId,
+                    qualificationRunId: qualification.Run?.QualificationRunId,
+                    sourceRevisionCompletedAtUtc: revision?.CompletedAtUtc,
+                    isLatestQualifyingEconomicRevision:
+                        revision is null || latestRevision is null
+                            ? null
+                            : revision.ProjectionRevisionId == latestRevision.ProjectionRevisionId,
+                    isLatestArch7aQualificationForRevision:
+                        qualification.Ambiguous || qualification.Run is null ? null : true));
             foreach (var code in JsonCodes(risk.BlockingBreaksJson))
                 result.Add(Fact(code, OperationalFactKinds.RiskBlockingBreak, "ARCH7A_RISK",
                     "pms_shadow.shadow_risk_decisions", "RiskDecision",
                     risk.RiskDecisionId.ToString("D"), risk.CreatedAtUtc, risk.CreatedAtUtc,
-                    true, risk.Outcome, risk.PlanSha256, tradeIntentId: risk.TradeIntentId,
-                    riskDecisionId: risk.RiskDecisionId));
+                    true, risk.Outcome, risk.PlanSha256, derivedStatus,
+                    slotId: intent?.SlotId,
+                    economicRevisionId: intent?.EconomicRevisionId,
+                    tradeIntentId: risk.TradeIntentId,
+                    riskDecisionId: risk.RiskDecisionId,
+                    qualificationRunId: qualification.Run?.QualificationRunId,
+                    sourceRevisionCompletedAtUtc: revision?.CompletedAtUtc,
+                    isLatestQualifyingEconomicRevision:
+                        revision is null || latestRevision is null
+                            ? null
+                            : revision.ProjectionRevisionId == latestRevision.ProjectionRevisionId,
+                    isLatestArch7aQualificationForRevision:
+                        qualification.Ambiguous || qualification.Run is null ? null : true));
         }
         foreach (var reconciliation in reconciliations)
             foreach (var code in JsonCodes(reconciliation.BreaksJson))
@@ -621,7 +685,7 @@ public sealed class PmsShadowReadOnlyReportingReader(
                     "ARCH7B_RECONCILIATION", "pms_shadow.arch7b_final_reconciliations",
                     "QualificationRun", reconciliation.QualificationRunId.ToString("D"),
                     reconciliation.CompletedAtUtc, reconciliation.CompletedAtUtc, true,
-                    reconciliation.Status, reconciliation.EvidenceSha256,
+                    reconciliation.Status, reconciliation.EvidenceSha256, "ACTIVE",
                     qualificationRunId: reconciliation.QualificationRunId));
         return result.OrderBy(value => value.SourceTable, StringComparer.Ordinal)
             .ThenBy(value => value.ScopeId, StringComparer.Ordinal)
@@ -640,14 +704,75 @@ public sealed class PmsShadowReadOnlyReportingReader(
         bool blocking,
         string sourceStatus,
         string? evidenceSha,
+        string derivedOperationalStatus,
         string? slotId = null,
+        Guid? economicRevisionId = null,
         Guid? tradeIntentId = null,
         Guid? riskDecisionId = null,
-        Guid? qualificationRunId = null)
+        Guid? qualificationRunId = null,
+        DateTimeOffset? sourceRevisionCompletedAtUtc = null,
+        bool? isLatestQualifyingEconomicRevision = null,
+        bool? isLatestArch7aQualificationForRevision = null)
         => new(code, factKind, component, sourceTable,
             OperationalReportingContract.Version, scopeType, scopeId, slotId, null,
-            null, tradeIntentId, riskDecisionId, qualificationRunId, null, first, last,
-            evidenceSha, ReportingAuthority.Proven, sourceStatus, blocking);
+            economicRevisionId, tradeIntentId, riskDecisionId, qualificationRunId, null, first, last,
+            evidenceSha, ReportingAuthority.Proven, sourceStatus, blocking)
+        {
+            SourceRevisionCompletedAtUtc = sourceRevisionCompletedAtUtc,
+            IsLatestQualifyingEconomicRevision = isLatestQualifyingEconomicRevision,
+            IsLatestArch7aQualificationForRevision = isLatestArch7aQualificationForRevision,
+            DerivedOperationalStatus = derivedOperationalStatus
+        };
+
+    public static QualificationSelection SelectAuthoritativeQualification(
+        IReadOnlyList<PmsShadowExecutionQualificationRunRow> runs,
+        Guid economicRevisionId,
+        string planSha256)
+    {
+        var candidates = runs
+            .Where(value =>
+                value.EconomicRevisionId == economicRevisionId &&
+                value.Status == "COMPLETED")
+            .OrderByDescending(value => value.CompletedAtUtc)
+            .ToArray();
+        if (candidates.Length == 0)
+            return new(null, false);
+        var latestCompletedAtUtc = candidates[0].CompletedAtUtc;
+        var latest = candidates
+            .Where(value => value.CompletedAtUtc == latestCompletedAtUtc)
+            .ToArray();
+        if (latest.Length != 1)
+            return new(null, true);
+        var authoritative = latest[0];
+        return authoritative.PlanSha256 == planSha256
+            ? new(authoritative, false)
+            : new(null, false);
+    }
+
+    public static string DeriveRiskOperationalStatus(
+        bool tradeIntentResolved,
+        bool economicRevisionResolved,
+        bool revisionQualifying,
+        string? revisionStatus,
+        bool qualificationResolved,
+        bool qualificationAmbiguous,
+        bool isLatestQualifyingRevision)
+    {
+        if (!tradeIntentResolved ||
+            !economicRevisionResolved ||
+            !qualificationResolved ||
+            qualificationAmbiguous)
+            return "UNKNOWN";
+        if (!revisionQualifying || revisionStatus != "COMPLETED")
+            return "UNKNOWN";
+        return isLatestQualifyingRevision
+            ? "ACTIVE"
+            : "HISTORICAL";
+    }
+
+    public sealed record QualificationSelection(
+        PmsShadowExecutionQualificationRunRow? Run,
+        bool Ambiguous);
 
     private static IReadOnlyList<string> JsonCodes(string value)
     {

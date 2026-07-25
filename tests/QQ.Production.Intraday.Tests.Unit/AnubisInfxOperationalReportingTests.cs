@@ -108,7 +108,7 @@ public sealed class AnubisInfxOperationalReportingTests
     public void T09_later_authoritative_fact_can_mark_source_resolved()
     {
         var fact = Observed("INGESTION_FAILED", OperationalFactKinds.OperationalAlert, true)
-            with { SourceStatus = "RESOLVED_BY_LATER_FACT" };
+            with { DerivedOperationalStatus = "RESOLVED_BY_LATER_FACT" };
         var item = Assert.Single(Build(Healthy() with
         {
             ObservedCodeFacts = [fact]
@@ -309,7 +309,7 @@ public sealed class AnubisInfxOperationalReportingTests
     public void T29_global_status_ignores_historical_breaks()
     {
         var fact = Observed("INGESTION_FAILED", OperationalFactKinds.OperationalAlert, true)
-            with { SourceStatus = "HISTORICAL" };
+            with { DerivedOperationalStatus = "HISTORICAL" };
         var report = Build(Healthy() with { ObservedCodeFacts = [fact] });
         Assert.Equal(OperationalBreakStatus.Historical,
             Assert.Single(report.Breaks, value => value.SourceExactCode == "INGESTION_FAILED").Status);
@@ -368,6 +368,110 @@ public sealed class AnubisInfxOperationalReportingTests
         Assert.Contains("SHOW transaction_read_only", source, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void T34_summary_exposes_true_arch7a_qualification_run_id()
+    {
+        var report = Build();
+        Assert.Equal(GuidFrom(900), report.Summary.LatestArch7aQualificationRunId);
+        Assert.Equal(RevisionId, report.Summary.LatestArch7aEconomicRevisionId);
+        Assert.Equal("COMPLETED", report.Summary.LatestArch7aQualificationStatus);
+        Assert.Equal(SlotEnd.AddMinutes(2),
+            report.Summary.LatestArch7aQualificationCompletedAtUtc);
+    }
+
+    [Fact]
+    public void T35_latest_arch7a_authority_uses_completed_time_not_guid_order()
+    {
+        var snapshot = Healthy();
+        var currentRevision = snapshot.EconomicRevisions.Single();
+        var olderRevisionId = Guid.Parse("ffffffff-ffff-ffff-ffff-ffffffffffff");
+        var olderQualificationId = Guid.Parse("eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee");
+        var olderRevision = currentRevision with
+        {
+            EconomicRevisionId = olderRevisionId,
+            CompletedAtUtc = SlotEnd
+        };
+        var historical = snapshot.Arch7a.Select(value => value with
+        {
+            EconomicRevisionId = olderRevisionId,
+            QualificationRunId = olderQualificationId,
+            QualificationCompletedAtUtc = SlotEnd
+        }).ToArray();
+        var report = Build(snapshot with
+        {
+            EconomicRevisions = [olderRevision, currentRevision],
+            Arch7a = [.. historical, .. snapshot.Arch7a]
+        });
+        Assert.Equal(RevisionId, report.Summary.LatestQualifyingEconomicRevisionId);
+        Assert.Equal(GuidFrom(900), report.Summary.LatestArch7aQualificationRunId);
+    }
+
+    [Fact]
+    public void T36_qualification_authority_uses_time_and_rejects_ties()
+    {
+        var older = Qualification(
+            Guid.Parse("ffffffff-ffff-ffff-ffff-ffffffffffff"), SlotEnd);
+        var newer = Qualification(GuidFrom(1), SlotEnd.AddMinutes(1));
+        var selected = PmsShadowReadOnlyReportingReader.SelectAuthoritativeQualification(
+            [older, newer], RevisionId, Sha);
+        Assert.False(selected.Ambiguous);
+        Assert.Equal(newer.QualificationRunId, selected.Run?.QualificationRunId);
+        var ambiguous = PmsShadowReadOnlyReportingReader.SelectAuthoritativeQualification(
+            [newer, newer with { QualificationRunId = GuidFrom(2) }], RevisionId, Sha);
+        Assert.True(ambiguous.Ambiguous);
+        Assert.Null(ambiguous.Run);
+        var mismatched = PmsShadowReadOnlyReportingReader.SelectAuthoritativeQualification(
+            [newer with { PlanSha256 = new string('b', 64) }], RevisionId, Sha);
+        Assert.False(mismatched.Ambiguous);
+        Assert.Null(mismatched.Run);
+    }
+
+    [Fact]
+    public void T37_missing_lineage_is_unknown_and_raw_status_is_not_authority()
+    {
+        Assert.Equal("UNKNOWN", PmsShadowReadOnlyReportingReader.DeriveRiskOperationalStatus(
+            false, true, true, "COMPLETED", true, false, true));
+        Assert.Equal("UNKNOWN", PmsShadowReadOnlyReportingReader.DeriveRiskOperationalStatus(
+            true, false, true, "COMPLETED", true, false, true));
+        Assert.Equal("UNKNOWN", PmsShadowReadOnlyReportingReader.DeriveRiskOperationalStatus(
+            true, true, true, "COMPLETED", false, false, true));
+        Assert.Equal("UNKNOWN", PmsShadowReadOnlyReportingReader.DeriveRiskOperationalStatus(
+            true, true, true, "COMPLETED", true, true, true));
+        Assert.Equal("HISTORICAL", PmsShadowReadOnlyReportingReader.DeriveRiskOperationalStatus(
+            true, true, true, "COMPLETED", true, false, false));
+        Assert.Equal("ACTIVE", PmsShadowReadOnlyReportingReader.DeriveRiskOperationalStatus(
+            true, true, true, "COMPLETED", true, false, true));
+        var fact = Observed("INGESTION_FAILED", OperationalFactKinds.OperationalAlert, true)
+            with { SourceStatus = "HISTORICAL", DerivedOperationalStatus = "ACTIVE" };
+        var item = Assert.Single(Build(Healthy() with { ObservedCodeFacts = [fact] }).Breaks,
+            value => value.SourceExactCode == "INGESTION_FAILED");
+        Assert.Equal(OperationalBreakStatus.Active, item.Status);
+    }
+
+    [Fact]
+    public void T38_three_revisions_keep_only_latest_seven_risk_breaks_active()
+    {
+        var facts = Enumerable.Range(0, 3).SelectMany(revisionIndex =>
+            Enumerable.Range(0, 7).Select(riskIndex =>
+                Observed("BROKER_WORKING_LEAVES_UNOBSERVABLE",
+                    OperationalFactKinds.RiskBlockingBreak, true) with
+                {
+                    ScopeId = GuidFrom(1000 + revisionIndex * 7 + riskIndex).ToString("D"),
+                    RiskDecisionId = GuidFrom(1000 + revisionIndex * 7 + riskIndex),
+                    TradeIntentId = GuidFrom(1100 + revisionIndex * 7 + riskIndex),
+                    EconomicRevisionId = GuidFrom(1200 + revisionIndex),
+                    SourceStatus = "ACTIVE",
+                    DerivedOperationalStatus = revisionIndex == 2 ? "ACTIVE" : "HISTORICAL"
+                })).ToArray();
+        var report = Build(Healthy() with { ObservedCodeFacts = facts });
+        var rows = report.Breaks.Where(value =>
+            value.SourceExactCode == "BROKER_WORKING_LEAVES_UNOBSERVABLE").ToArray();
+        Assert.Equal(21, rows.Length);
+        Assert.Equal(7, rows.Count(value => value.Status == OperationalBreakStatus.Active));
+        Assert.Equal(14, rows.Count(value => value.Status == OperationalBreakStatus.Historical));
+        Assert.Equal(21, rows.Select(value => value.BreakId).Distinct().Count());
+    }
+
     private static OperationalReportSet Build(OperationalReportingSnapshot? snapshot = null) =>
         OperationalReportProjector.Build(snapshot ?? Healthy());
 
@@ -408,7 +512,13 @@ public sealed class AnubisInfxOperationalReportingTests
             GuidFrom(500 + index), GuidFrom(600 + index), "1754288005", "TEST",
             "SHADOW_ONLY", "SHADOW_PLANNED", "SHADOW_PLANNED", true, false,
             false, false, Sha, "QUALIFICATION_RUN_PRESENT", item.Item1,
-            GuidFrom(200 + index))).ToArray();
+            GuidFrom(200 + index))
+        {
+            QualificationRunId = GuidFrom(900),
+            QualificationRunStatus = "COMPLETED",
+            QualificationCompletedAtUtc = SlotEnd.AddMinutes(2),
+            IsAuthoritativeForEconomicRevision = true
+        }).ToArray();
         return new(
             AsOf, new string('c', 40), Database(), [Slot()], models,
             [new(RevisionId, 2, "slot-1", GuidFrom(2), "session-1", Sha,
@@ -446,7 +556,17 @@ public sealed class AnubisInfxOperationalReportingTests
         code, kind, "TEST_SOURCE", "pms_shadow.test",
         OperationalReportingContract.Version, "RiskDecision", GuidFrom(700).ToString("D"),
         null, null, RevisionId, GuidFrom(701), GuidFrom(700), null, null,
-        AsOf, AsOf, Sha, ReportingAuthority.Proven, "ACTIVE", blocking);
+        AsOf, AsOf, Sha, ReportingAuthority.Proven, "ACTIVE", blocking)
+    {
+        DerivedOperationalStatus = "ACTIVE"
+    };
+
+    private static PmsShadowExecutionQualificationRunRow Qualification(
+        Guid qualificationRunId,
+        DateTimeOffset completedAtUtc) => new(
+        qualificationRunId, RevisionId, "session-1", "slot-1", completedAtUtc,
+        Sha, Sha, 7, 7, 7, 7, "COMPLETED", Sha, true, true, true, true,
+        completedAtUtc);
 
     private static ReportingArch7bFact Lifecycle() => new(
         GuidFrom(800), "LIFECYCLE_REGISTERED", ReportingAuthority.Proven, Sha,

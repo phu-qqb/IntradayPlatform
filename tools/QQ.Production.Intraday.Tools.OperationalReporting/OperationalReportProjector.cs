@@ -28,8 +28,13 @@ public static class OperationalReportProjector
             value.Status is OperationalBreakStatus.Active or OperationalBreakStatus.Unknown).ToArray();
         var latestRevision = LatestRevision(snapshot);
         var latestArch7a = snapshot.Arch7a
-            .OrderByDescending(value => value.EconomicRevisionId)
-            .ThenByDescending(value => value.TradeIntentId)
+            .Where(value =>
+                value.EconomicRevisionId == latestRevision?.EconomicRevisionId &&
+                value.IsAuthoritativeForEconomicRevision &&
+                value.QualificationRunId.HasValue)
+            .OrderByDescending(value => value.QualificationCompletedAtUtc)
+            .ThenBy(value => value.QualificationRunId)
+            .ThenBy(value => value.TradeIntentId)
             .FirstOrDefault();
         var latestArch7b = snapshot.Arch7b
             .Where(value => value.QualificationRunId.HasValue)
@@ -93,14 +98,21 @@ public static class OperationalReportProjector
             latestSlot?.SlotId,
             latestRevision?.EconomicRevisionId,
             latestModels,
-            latestArch7a?.EconomicRevisionId,
+            latestArch7a?.QualificationRunId,
             latestArch7b?.QualificationRunId,
             activeBySeverity,
             globalStatus,
             tradingReadiness,
             reconciliation.Status,
             freshness,
-            authorityGaps);
+            authorityGaps)
+        {
+            LatestArch7aQualificationCompletedAtUtc =
+                latestArch7a?.QualificationCompletedAtUtc,
+            LatestArch7aQualificationStatus =
+                latestArch7a?.QualificationRunStatus ?? ReportingAuthority.Absent,
+            LatestArch7aEconomicRevisionId = latestArch7a?.EconomicRevisionId
+        };
         return new(
             summary,
             OperationalStatusCodeCatalog.All,
@@ -349,7 +361,7 @@ public static class OperationalReportProjector
                 item => item.ExactCode == fact.SourceExactCode);
             var exact = cataloged
                 ? fact.SourceExactCode : "REPORTING_UNCATALOGUED_SOURCE_CODE";
-            var status = fact.SourceStatus switch
+            var status = fact.DerivedOperationalStatus switch
             {
                 "HISTORICAL" => OperationalBreakStatus.Historical,
                 "RESOLVED_BY_LATER_FACT" => OperationalBreakStatus.ResolvedByLaterFact,
