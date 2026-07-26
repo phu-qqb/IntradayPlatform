@@ -3,6 +3,7 @@ using System.Data.Common;
 using System.Globalization;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
+using QQ.Production.Intraday.Application;
 using QQ.Production.Intraday.Infrastructure.PostgreSql;
 
 namespace QQ.Production.Intraday.Tools.OperationalReporting;
@@ -57,6 +58,21 @@ public sealed class PmsShadowReadOnlyReportingReader(
             var revisions = (await ReadEconomicRevisionsAsync(
                     context.Database.GetDbConnection(), transaction.GetDbTransaction(), cancellationToken))
                 .Where(value => includedSlotIds.Contains(value.SlotId)).ToArray();
+            var includedPositionSnapshotIds = revisions.Select(value => value.PositionSnapshotId)
+                .Distinct().ToArray();
+            var positionSnapshots = await context.PositionSnapshots.AsNoTracking()
+                .Where(value => includedPositionSnapshotIds.Contains(value.PositionSnapshotId))
+                .ToArrayAsync(cancellationToken);
+            var positionSnapshotById = positionSnapshots.ToDictionary(
+                value => value.PositionSnapshotId);
+            var positionLines = await context.PositionSnapshotLines.AsNoTracking()
+                .Where(value => includedPositionSnapshotIds.Contains(value.PositionSnapshotId))
+                .OrderBy(value => value.PositionSnapshotId)
+                .ThenBy(value => value.InstrumentId)
+                .ToArrayAsync(cancellationToken);
+            var reportingPositionLines = positionLines.Select(value =>
+                ProjectPositionLine(value, positionSnapshotById[value.PositionSnapshotId]))
+                .ToArray();
             var intents = await context.ShadowTradeIntents.AsNoTracking().ToArrayAsync(cancellationToken);
             var risks = await context.ShadowRiskDecisions.AsNoTracking().ToArrayAsync(cancellationToken);
             var parents = await context.ShadowParentOrders.AsNoTracking().ToArrayAsync(cancellationToken);
@@ -103,7 +119,14 @@ public sealed class PmsShadowReadOnlyReportingReader(
                 reportingFx.Contributions,
                 reportingArch7a,
                 reportingArch7b,
-                observedFacts);
+                observedFacts)
+            {
+                SlotManifestSha256BySlotId = slotRows.ToDictionary(
+                    value => value.SlotId, value => value.ManifestSha256, StringComparer.Ordinal),
+                EconomicProjectionSources = revisions,
+                SecurityMappingSources = mappings,
+                PositionSnapshotLineSources = reportingPositionLines
+            };
         }
         catch
         {
@@ -216,6 +239,34 @@ public sealed class PmsShadowReadOnlyReportingReader(
             result.Add(projection);
         }
         return result;
+    }
+
+    private static ReportingPositionSnapshotLineFact ProjectPositionLine(
+        PmsShadowPositionSnapshotLineRow line,
+        PmsShadowPositionSnapshotRow snapshot)
+    {
+        var rowIdentity = $"{line.PositionSnapshotId:D}:{line.InstrumentId:D}";
+        var evidenceSha = Arch5bHashing.HashCanonical(new
+        {
+            line.PositionSnapshotId,
+            line.InstrumentId,
+            line.SecurityId,
+            line.Symbol,
+            line.CurrentBaseQuantity,
+            SourceIngestionId = snapshot.IngestionId,
+            RowIdentity = rowIdentity,
+            SourceAsOfUtc = snapshot.AsOfUtc
+        });
+        return new(
+            line.PositionSnapshotId,
+            line.InstrumentId,
+            line.SecurityId,
+            line.Symbol,
+            line.CurrentBaseQuantity,
+            snapshot.IngestionId,
+            rowIdentity,
+            snapshot.AsOfUtc,
+            evidenceSha);
     }
 
     private static ReportingEconomicRevisionFact ProjectRevision(

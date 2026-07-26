@@ -263,6 +263,36 @@ public sealed class Arch6fEconomicInvariantTests
 
         Assert.Equal("ARCH7A_SOURCE_NOT_LATEST_QUALIFYING_REVISION", error.Message);
     }
+    [Fact]
+    public void MissingRequiredCurrentPositionFailsClosedBeforeProjection()
+    {
+        var plan = Arch6cPostgreSqlPmsShadowStateTests.BuildPlan();
+        var source = Source(plan);
+        var positions = source.CurrentPositions.ToDictionary(value => value.Key, value => value.Value);
+        positions.Remove(source.Models.SelectMany(value => value.Weights)
+            .Select(value => value.InstrumentId).First());
+        var incomplete = source with { CurrentPositions = positions };
+        var slot = PmsShadowIntradayCadenceContract.WindowEnding(
+            PmsShadowIntradayCadenceContract.Floor(plan.Ingestion.CompletedAtUtc!.Value));
+        var error = Assert.Throws<InvalidDataException>(() =>
+            new PmsShadowIntradayEconomicProjectionBuilder().Build(
+                Capture(slot, incomplete, 1m, 'a'), incomplete, null));
+        Assert.Equal("SOURCE_POSITION_SNAPSHOT_COVERAGE_INCOMPLETE", error.Message);
+    }
+
+    [Fact]
+    public void RequiredCurrentPositionsUseExplicitIndexerWithoutDefaultZero()
+    {
+        var source = File.ReadAllText(Path.Combine(RepositoryRoot(), "src",
+            "QQ.Production.Intraday.Infrastructure.PostgreSql",
+            "PmsShadowIntradayEconomicRefresh.cs"));
+        Assert.DoesNotContain(
+            "source.CurrentPositions.GetValueOrDefault(weight.InstrumentId)",
+            source, StringComparison.Ordinal);
+        Assert.Contains("source.CurrentPositions[weight.InstrumentId]",
+            source, StringComparison.Ordinal);
+    }
+
     private static PmsShadowIntradayEconomicProjection Projection(int slotOffset,
         decimal multiplier, char captureHash, char supersededHash)
     {
@@ -280,11 +310,15 @@ public sealed class Arch6fEconomicInvariantTests
         var weights = plan.TargetWeights.GroupBy(value => value.ModelRunId)
             .ToDictionary(group => group.Key, group => group.Select(value =>
                 new PmsShadowEconomicWeight(value.InstrumentId, value.SecurityId, value.Weight)).ToArray());
+        var persistedPositions = plan.PositionSnapshotLines.ToDictionary(
+            value => value.InstrumentId, value => value.CurrentBaseQuantity);
+        var explicitPositions = plan.TargetWeights.Select(value => value.InstrumentId)
+            .Distinct().ToDictionary(value => value,
+                value => persistedPositions.GetValueOrDefault(value));
         return new(plan.Ingestion.IngestionId, plan.Ingestion.SourceSessionId,
             plan.AccountSnapshot.AccountSnapshotId, plan.AccountSnapshot.NavOrEquity,
             plan.PositionSnapshot.PositionSnapshotId, plan.PositionSnapshot.AsOfUtc,
-            plan.AccountSnapshot.Authority, plan.PositionSnapshotLines.ToDictionary(
-                value => value.InstrumentId, value => value.CurrentBaseQuantity),
+            plan.AccountSnapshot.Authority, explicitPositions,
             plan.SecurityMappings.OrderBy(value => value.SecurityId, StringComparer.Ordinal)
                 .Select((value, index) => new PmsShadowEconomicMapping(value.InstrumentId,
                     value.VenueId, value.VenueInstrumentId, value.SecurityId, TestPair(index),
@@ -320,6 +354,18 @@ public sealed class Arch6fEconomicInvariantTests
     }
 
     private static (string Base, string Quote) Pair(string symbol) => (symbol[..3], symbol[3..]);
+    private static string RepositoryRoot()
+    {
+        var directory = new DirectoryInfo(Environment.CurrentDirectory);
+        while (directory is not null)
+        {
+            if (File.Exists(Path.Combine(directory.FullName, "QQ.Production.Intraday.sln")))
+                return directory.FullName;
+            directory = directory.Parent;
+        }
+        throw new DirectoryNotFoundException("test repository root not found");
+    }
+
     private static string Hash(char value) => new(value, 64);
 
     private static string RepositoryFile(params string[] parts)

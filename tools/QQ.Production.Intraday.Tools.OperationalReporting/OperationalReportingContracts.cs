@@ -300,6 +300,17 @@ public sealed record ObservedOperationalCodeFact(
     public string DerivedOperationalStatus { get; init; } = "UNKNOWN";
 }
 
+public sealed record ReportingPositionSnapshotLineFact(
+    Guid PositionSnapshotId,
+    Guid InstrumentId,
+    string SecurityId,
+    string Symbol,
+    decimal CurrentBaseQuantity,
+    Guid SourceIngestionId,
+    string RowIdentity,
+    DateTimeOffset SourceAsOfUtc,
+    string EvidenceSha256);
+
 public sealed record OperationalReportingSnapshot(
     DateTimeOffset AsOfUtc,
     string RepositoryCommit,
@@ -311,7 +322,15 @@ public sealed record OperationalReportingSnapshot(
     IReadOnlyList<ReportingFxStrategyContributionFact> FxStrategyContributions,
     IReadOnlyList<ReportingArch7aFact> Arch7a,
     IReadOnlyList<ReportingArch7bFact> Arch7b,
-    IReadOnlyList<ObservedOperationalCodeFact> ObservedCodeFacts);
+    IReadOnlyList<ObservedOperationalCodeFact> ObservedCodeFacts)
+{
+    public IReadOnlyDictionary<string, string?> SlotManifestSha256BySlotId { get; init; } =
+        new Dictionary<string, string?>(StringComparer.Ordinal);
+    public IReadOnlyList<PmsShadowIntradayEconomicProjection> EconomicProjectionSources { get; init; } = [];
+    public IReadOnlyList<PmsShadowSecurityMappingRow> SecurityMappingSources { get; init; } = [];
+    public IReadOnlyList<ReportingPositionSnapshotLineFact> PositionSnapshotLineSources { get; init; } = [];
+    public InstitutionalRepositoryStateAuthorityResult? RepositoryAuthority { get; init; }
+}
 
 public sealed record OperationalSummary(
     DateTimeOffset GeneratedAtUtc,

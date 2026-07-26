@@ -1,0 +1,405 @@
+# Hedge Fund Institutional Reporting Roadmap
+
+## 1. Document Identity
+
+| Field | Value |
+| --- | --- |
+| Title | Hedge Fund Institutional Reporting Roadmap |
+| ManifestId | `hedge_fund_institutional_reporting_roadmap` |
+| ManifestVersion | `v1` |
+| Status | `AUTHORITATIVE_REPORTING_ROADMAP` |
+| Repository | `phu-qqb/IntradayPlatform` |
+| CreatedAtUtc | `2026-07-26T00:00:00Z` |
+| CurrentMasterAtCreation | `60c79bfbd5827919eaf1299e045ef9918baef720` |
+| ReportingScope | Anubis, INFX7-INFX10, PMS PostgreSQL, execution and institutional reporting |
+| AuthorityRelationship | Reporting implementation authority constrained by the general QQ Fund Platform coverage authority |
+
+The general roadmap `QQ_Fund_Platform_Objectifs_Restants.md` was supplied by
+program leadership as the global coverage and non-regression authority. It was
+not versioned in this repository when this manifest was created. Its absence
+from Git does not weaken its requirements and does not authorize a substitute
+or reconstructed copy.
+
+## 2. Relationship With The General Manifest
+
+The general manifest defines global coverage, safety constraints and
+non-regressions. This precise manifest defines the reporting architecture,
+phases, data contracts, deliverables and implementation order.
+
+This manifest cannot weaken the general safeguards. When the general manifest
+does not specify an implementation detail, this manifest governs reporting.
+When rules conflict on safety, authority or evidence, the most restrictive
+rule prevails.
+
+## 3. Reporting Objectives
+
+The reporting system serves trading, portfolio management, risk management,
+operations, control, management, the investment committee, investors,
+institutional partners including JPM, audit and future execution calibration.
+
+Reporting is not merely a presentation layer. Every result preserves:
+
+- lineage and source authority;
+- as-of time and reporting period;
+- formula and contract version;
+- evidence and content SHA-256;
+- availability and data-quality status;
+- breaks and caveats;
+- deterministic reproducibility.
+
+## 4. Non-Negotiable Principles
+
+- There is no second economic truth, second PMS or second OMS.
+- No ModelRun, Fill, position or ledger event may be invented.
+- Missing, absent or unknown data is never converted to zero.
+- A position is zero only when an explicit position-snapshot line records zero
+  under a proven full-universe coverage contract.
+- Performance is never reconstructed without a complete versioned contract.
+- Real TCA requires real authoritative Fills and benchmarks.
+- A broker position is never inferred from UI evidence.
+- AUM and NAV are unusable until a versioned authority exists.
+- `TargetCloseUtc` remains a first-class field.
+- Unknown working leaves remain unknown.
+- Corrections are append-only.
+- Timestamps are UTC and decimals use invariant culture.
+- Outputs are deterministic and content-addressed with SHA-256.
+- Reports contain no secrets.
+- No Databento API request is permitted.
+- No new Databento download is permitted.
+- Existing Databento data already stored on `D:` may be used only when an
+  explicitly authorized work packet requires it and its local lineage is proven.
+
+## 5. Four-Layer Architecture
+
+### 5.1 `reporting_source`
+
+`reporting_source` exposes canonical facts read-only with identity, lineage,
+authority, timestamps and evidence SHA. It performs no silent economic
+transformation.
+
+Current and planned sources include Ingestions, QubesInputSnapshots,
+ModelRuns, TargetWeights, TargetPositions, PositionSnapshotLines,
+PositionOnlyDrifts, market
+observations, economic revisions, TradeIntents, RiskDecisions, ParentOrders,
+ChildOrders, ARCH7B lifecycle facts, ExecutionReports, Fills,
+PositionLedgerEvents, reconciliations, breaks and future versioned
+NAV/AUM/cash/cost authorities.
+
+### 5.2 `reporting_mart`
+
+`reporting_mart` produces versioned institutional metrics with explicit
+grains, formulas, controlled aggregations, stable dimensions and reproducible
+as-of semantics. The mart is never a source authority, and a derived metric
+never replaces its source fact.
+
+### 5.3 `reporting_control`
+
+`reporting_control` owns data quality, completeness, freshness, metric
+availability, breaks, formula validation, reconciliations, thresholds,
+publication status, supersession and deterministic evidence.
+
+### 5.4 `reporting_publication`
+
+`reporting_publication` creates versioned publications with audience, period,
+as-of, status, file inventory, SHA-256, repository commit, source snapshot,
+manifest identity and immutable published artifacts.
+
+Publication statuses are `DRAFT`, `REVIEWED`, `APPROVED`, `PUBLISHED` and
+`SUPERSEDED`.
+
+## 6. Delivery Phases
+
+### RPT1 - Operational Reporting And Breaks
+
+Status: `COMPLETED`.
+
+Evidence:
+
+- PR `#39`;
+- merge commit `60c79bfbd5827919eaf1299e045ef9918baef720`;
+- master bundle `e3b8f026a1978463e9aaac24e8a7a751e6d5d475ebf775bdfa16f5659b9a37f2`.
+
+RPT1 covers the operational calendar, selected INFX7-INFX10 models, source
+lineage, slots, economic revisions, FX net lines, strategy contributions,
+ARCH7A, ARCH7B, reconciliation, breaks, code inventory, deterministic bundles
+and RDS read-only access.
+
+### RPT2 - Performance And Risk Mart
+
+Status: `IN PROGRESS`.
+
+RPT2 builds institutional PMS, portfolio, risk, performance, attribution,
+cost and TCA metrics with explicit availability and authority:
+
+- A: metrics immediately provable from current facts;
+- B: metrics derivable under versioned formulas and explicit caveats;
+- C: metrics blocked until new source authorities exist.
+
+Planned metrics include target and current exposures, gross/net, notionals,
+concentration, target and executed turnover, leverage, attribution by INFX,
+pair and session, PnL, gross and net performance, volatility, Sharpe, Sortino,
+drawdown, recovery, hit rate, profit factor, costs, slippage, implementation
+shortfall, TCA, capacity, live versus backtest, live versus expectation and
+actual execution versus cost model.
+
+An unavailable metric is never presented as available and never receives a
+fabricated numeric value.
+
+### RPT3 - Daily Management Pack
+
+Status: `NOT STARTED`.
+
+The Daily Management Pack will include an executive summary, operational
+status, calendar, INFX models, exposure, risk, available performance,
+available execution and TCA, breaks, incidents, reconciliation,
+infrastructure, decisions and actions.
+
+Target formats are HTML, PDF, Excel/CSV, Power BI data and a versioned
+publication.
+
+### RPT4 - Monthly Investment Committee Pack
+
+Status: `NOT STARTED`.
+
+The Monthly Investment Committee Pack will cover performance, attribution,
+risk, drawdowns, stability, exposure, turnover, costs, TCA, capacity, live
+versus backtest, live versus expectation, management commentary, material
+events, data quality, material breaks, decisions and auditable appendices.
+
+### Institutional Publications
+
+Status: `NOT STARTED`.
+
+Planned publications include investor reporting, JPM reporting, other
+partner reports, audit exports, PDF, PPTX, XLSX and machine-readable JSON/CSV.
+Every publication is immutable, versioned, content-addressed and explicitly
+superseded when replaced.
+
+## 7. Metric Authority Contract
+
+Every metric carries:
+
+| Field | Contract |
+| --- | --- |
+| MetricCode | Stable uppercase identifier |
+| MetricVersion | Version of the metric contract |
+| Category | Portfolio, risk, performance, cost, TCA or control |
+| Grain | Exact dimensional grain |
+| AsOfUtc | Reproducible observation time |
+| PeriodStartUtc / PeriodEndUtc | Explicit period or NULL |
+| Value | Decimal value or explicit NULL |
+| Unit / Currency | Explicit unit and currency, or NULL |
+| FormulaVersion | Versioned formula identity |
+| SourceFacts / SourceIds / SourceTables | Complete source lineage |
+| EvidenceSha256 | Content evidence or NULL with caveat |
+| AuthorityStatus | Source authority assessment |
+| AvailabilityStatus | Metric availability assessment |
+| DataQualityStatus | Quality assessment |
+| Caveats | Explicit limitations |
+
+`AuthorityStatus` is one of `PROUVÉ`, `PROBABLE`, `INCONNU`, `ABSENT`,
+`OBSOLÈTE`.
+
+`AvailabilityStatus` is one of `SOURCE_PROVEN`, `DERIVABLE_PROVEN`,
+`DERIVABLE_PROBABLE`, `BLOCKED_MISSING_SOURCE`,
+`BLOCKED_AUTHORITY_UNPROVEN`, `NOT_APPLICABLE`, `UNKNOWN`.
+
+`SOURCE_PROVEN` is reserved for a directly persisted fact published at its
+source grain. A formula, sum, ratio, concentration, HHI or turnover result is
+`DERIVABLE_PROVEN` even when all of its inputs are source-proven. Source facts
+and derived metrics are published separately and a derived row never assumes
+the authority status of its inputs without evaluating the formula contract.
+The corrected RPT2 catalog contains 44 metrics: 2 source-proven facts,
+14 derivable-proven formulas and 28 metrics blocked for missing source
+authority. The expanded cardinality is explicit because gross and net
+concentrations are separate metrics and cross-pair strategy/model drift in USD
+has two separate blocked contracts.
+
+For each slot, RPT2 retains only `COMPLETED`, qualifying, no-order revisions
+with complete manifest, target, drift and selected-model lineage. The selected
+set is exactly INFX7, INFX8, INFX9 and INFX10, with one unique ModelRun and
+Qubes input per strategy, exact target/drift counts 66/66/78/78, complete
+target-close, output SHA-256 and Core commit lineage, and no unexpected model.
+The maximum revision number is determined first among rows that are
+`COMPLETED`, qualifying and no-order. Exactly that maximum row is then
+validated for model set, counts, lineage, supersession and projection content
+integrity. If it is invalid, RPT2 fails closed and never falls back silently to
+a lower revision. A higher `FAILED` or nonqualifying row does not displace
+the last completed qualifying row.
+An identity conflict or multiple candidates at the same authoritative rank fails closed.
+
+The economic timeline is ordered by `SlotEndUtc`, `SlotStartUtc`,
+`CompletedAtUtc`, `SlotId` and projection revision identity. Completion
+time is audit metadata and never reorders economic periods. Turnover records
+both endpoint slot identities, both slot ends, the operational 15-minute gap
+count and whether the period is consecutive or spans authoritative gaps. A
+superseded revision does not enter the timeline and two revisions of the same
+slot never form a turnover period.
+
+Metric currentness reuses the RPT1 operational calendar. It distinguishes
+calendar state, slot-due state, the latest expected closed slot, latest
+persisted slot and latest qualifying economic revision. Outside the weekday
+calendar, the last required persisted slot remains the authority: a completed
+Friday slot is current through the weekend, while a MISSED last required slot
+remains explicitly obsolete. Civil age alone is not a freshness contract.
+
+Gross and net concentration are distinct metric families. Gross shares divide
+dimension gross notional by portfolio gross notional. Net shares divide the
+absolute dimension net notional by the sum of absolute dimension net
+notionals. HHI and top-N are calculated independently over each normalized
+share set. Gross/net ratio is a portfolio summary and is not concentration.
+
+Base quantities from different instruments or currencies are not additive.
+Position-only drift is published at pair, strategy/pair and model/pair grains.
+A cross-pair USD drift is unavailable until qualified marks and a versioned
+conversion contract provide observation time, freshness, inversion and
+evidence authority.
+
+Every RPT2 bundle contains a canonical `source-snapshot.json`. Its file
+SHA-256 covers all authoritative revisions, target and drift source timestamps,
+account and position snapshot identities, the complete sorted position-line
+set and coverage decision for each revision, selected ModelRuns, Qubes inputs,
+outputs and Core commits, recalculated projection-content SHA identities,
+mapping-set identity, typed active or unknown break facts, currentness,
+database identity, roadmap SHA, repository-state evidence and the explicitly
+supplied institutional as-of time.
+
+Position coverage follows
+`institutional_position_snapshot_coverage_v1`: every required instrument
+must have exactly one explicit line, duplicate lines fail closed, and each
+PositionOnlyDrift current quantity must equal its position line. Sparse
+non-zero snapshots remain `INCONNU`; a missing line is never interpreted as
+zero. Historical projection JSON, drifts and stored SHA values are not
+rewritten.
+
+Projection integrity is recomputed from exact producer canonicalization for
+market observations, target positions, drifts, projection input, manifest and
+projection identity. A syntactically valid 64-character SHA is insufficient
+when it does not match content.
+Projection identity is versioned: `arch6f_economic_projection_identity_v1`
+recognizes the exact pre-versioning producer formula, while
+`arch6f_economic_projection_identity_v2` recognizes revision and supersession
+identity. No other stored identity is accepted and historical rows are not
+rewritten.
+
+Repository authority follows `institutional_repository_state_authority_v1`.
+The actual Git root and HEAD are derived from `--repository-root`, the index
+and worktree must be clean, the roadmap must match the HEAD blob, and any
+supplied repository commit must equal the actual HEAD. The roadmap itself is
+accepted only from the canonical path rooted at that repository. Institutional
+RPT2 always requires an explicit `--as-of-utc`; it never falls back to wall
+clock time.
+
+TargetPosition facts retain `CalculatedAtUtc`, revision completion time,
+decision price, Core commit ID and input/output SHA-256. PositionOnlyDrift
+facts retain current quantity, target quantity, exact arithmetic delta, source
+time, account and position snapshot IDs, position snapshot time, versioned
+authority code and input/output SHA-256. The versioned position authority code is `BROKER_PORTAL_EOD`; unknown authority text is not proven.
+That code alone is insufficient: authority is
+proven only when full required-instrument line coverage and exact current
+quantities are also proven. Unknown authority text, sparse snapshots and
+missing lines are not proven.
+Positive Fill or PositionLedgerEvent counts do not prove execution or
+accounting authority without their complete versioned contracts. When
+portfolio gross target notional is zero, GrossWeight is NULL with explicit
+data-quality status and caveat.
+
+## 8. Dependency Matrix
+
+| Metric | Required source | Current availability | Activation phase | Current blocker | Required authority |
+| --- | --- | --- | --- | --- | --- |
+| Target exposure | TargetPositions and qualified revision | SOURCE_PROVEN | RPT2 | None for target-only exposure | PMS economic revision |
+| Target turnover | Successive qualified revisions | DERIVABLE_PROVEN | RPT2 | Requires two revisions | PMS economic revisions |
+| Current broker position | Broker position fact | BLOCKED_MISSING_SOURCE | RPT2+ | No authoritative broker position | Broker position authority |
+| Realized PnL | Fills and accounting ledger | BLOCKED_MISSING_SOURCE | RPT2+ | No authoritative Fills/ledger | Execution and accounting authority |
+| Unrealized PnL | Authoritative position and qualified marks | BLOCKED_MISSING_SOURCE | RPT2+ | Qualified mark authority absent | Position and mark authority |
+| Net performance | NAV/AUM and fees | BLOCKED_MISSING_SOURCE | RPT2+ | NAV/AUM/fee authority absent | Fund accounting authority |
+| Live TCA | Real Fills and versioned benchmarks | BLOCKED_MISSING_SOURCE | RPT2+ | No real Fill authority | Broker execution authority |
+| Leverage | Exposure and authoritative NAV/AUM | BLOCKED_MISSING_SOURCE | RPT2+ | NAV/AUM absent | Fund accounting authority |
+| Capacity used | AUM and capacity contract | BLOCKED_MISSING_SOURCE | RPT2+ | AUM and capacity contract absent | Capacity authority |
+| Live versus backtest | Live performance and comparison contract | BLOCKED_MISSING_SOURCE | RPT2+ | Live performance absent | Performance authority |
+
+## 9. Power BI And Grains
+
+Dimensions include date/time, economic revision, slot, strategy, ModelRun,
+instrument, canonical pair, currency, account scope, metric, authority,
+availability and publication.
+
+Fact tables use explicit grains and logical keys. Account-level facts are not
+repeated on strategy-level rows. Additive metrics may be summed only across
+their allowed dimensions. Semi-additive metrics preserve their as-of
+dimension. Ratios, concentrations, Sharpe, Sortino and drawdown are
+non-additive.
+
+All times are UTC. Missing values use explicit `NULL`. Decimals use invariant
+culture. CSV grains, keys, relations, units, currencies, null policy and
+as-of behavior are versioned with each output contract.
+
+## 10. Publication And Immutability
+
+This RPT2 packet makes no Databento API request, performs no Databento
+download and uses no Databento data or path. The conditional local `D:` rule
+above does not grant use without a separate explicit work packet.
+
+Every publication records:
+
+- deterministic `PublicationId`;
+- `ReportType`, `Audience`, `Period` and `AsOfUtc`;
+- `SourceSnapshotId` and `RepositoryCommit`;
+- `ManifestVersion` and all `FormulaVersions`;
+- publication `Status`;
+- `Files`, per-file `FileSha256` and `BundleSha256`;
+- `CreatedAtUtc`, optional `ApprovedAtUtc`;
+- optional `SupersedesPublicationId`;
+- `NoSecrets=true`;
+- `ImmutableAfterPublished=true`.
+
+## 11. General Manifest Traceability
+
+| General coverage | Reporting materialization |
+| --- | --- |
+| General reporting | RPT1, RPT2, RPT3, RPT4 |
+| Trading and execution | RPT1, RPT2, RPT3 |
+| TCA | RPT2, RPT3, RPT4 |
+| PMS and portfolio | RPT2, RPT3 |
+| Risk | RPT2, RPT3, RPT4 |
+| Operations | RPT1, RPT3 |
+| Fund, management and investors | RPT2, RPT3, RPT4, institutional publications |
+| Dashboard | RPT1/RPT3 and Power BI consumption |
+| Reconciliation | RPT1, RPT2, RPT3 |
+| Audit | All phases and `reporting_publication` |
+
+The traceability matrix preserves reporting, trading/execution, TCA,
+PMS/portfolio, risk, operations, fund/management/investor, dashboard,
+reconciliation and audit coverage from the unversioned general authority.
+
+## 12. Phase Completion Criteria
+
+RPT2 is complete only when the metric catalog is complete,
+authority/availability statuses are exact, formulas are versioned, marts are
+deterministic, Power BI grains are documented, unavailable metrics are not
+invented, tests and double qualification are green, data-quality breaks are
+reported and the technical publication is reproducible.
+
+RPT3 is complete only when the daily pack is deterministic, current data and
+caveats are explicit, prior-day comparison, breaks and reconciliation are
+included, and publication is versioned.
+
+RPT4 is complete only when the monthly pack is deterministic, periods are
+locked, performance/risk/attribution and appendices are complete, commentary
+is versioned, review/approval is recorded and publication is immutable.
+
+## 13. Current State And Next Action
+
+| Phase | Status |
+| --- | --- |
+| RPT1 | COMPLETED |
+| RPT2 | IN PROGRESS |
+| RPT3 | NOT STARTED |
+| RPT4 | NOT STARTED |
+| Institutional publications | NOT STARTED |
+
+Next action: `RPT2_CURRENTNESS_LINEAGE_AND_AUDIT_FACT_AUTHORITY_FOUNDATION`.
+
+Current integrity pass:
+`RPT2_POSITION_COVERAGE_PROJECTION_INTEGRITY_AND_REPOSITORY_AUTHORITY_FOUNDATION`.
