@@ -125,11 +125,15 @@ public sealed class Arch6fEconomicRefreshTests
         var weights = plan.TargetWeights.GroupBy(value => value.ModelRunId)
             .ToDictionary(group => group.Key, group => group.Select(value =>
                 new PmsShadowEconomicWeight(value.InstrumentId, value.SecurityId, value.Weight)).ToArray());
+        var persistedPositions = plan.PositionSnapshotLines.ToDictionary(
+            value => value.InstrumentId, value => value.CurrentBaseQuantity);
+        var explicitPositions = plan.TargetWeights.Select(value => value.InstrumentId)
+            .Distinct().ToDictionary(value => value,
+                value => persistedPositions.GetValueOrDefault(value));
         return new(plan.Ingestion.IngestionId, plan.Ingestion.SourceSessionId,
             plan.AccountSnapshot.AccountSnapshotId, plan.AccountSnapshot.NavOrEquity,
             plan.PositionSnapshot.PositionSnapshotId, plan.PositionSnapshot.AsOfUtc,
-            plan.AccountSnapshot.Authority, plan.PositionSnapshotLines.ToDictionary(
-                value => value.InstrumentId, value => value.CurrentBaseQuantity),
+            plan.AccountSnapshot.Authority, explicitPositions,
             plan.SecurityMappings.OrderBy(value => value.SecurityId, StringComparer.Ordinal)
                 .Select((value, index) => new PmsShadowEconomicMapping(value.InstrumentId,
                     value.VenueId, value.VenueInstrumentId, value.SecurityId, TestPair(index),

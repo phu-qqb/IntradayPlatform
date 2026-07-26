@@ -24,9 +24,15 @@ var options = new DbContextOptionsBuilder<PmsShadowDbContext>()
         npgsql.SetPostgresVersion(arguments.ExpectedPostgreSqlMajor, 0))
     .UseQueryTrackingBehavior(QueryTrackingBehavior.NoTracking)
     .Options;
+var repositoryAuthority = arguments.Mode == "report-institutional-metric-foundation"
+    ? InstitutionalRepositoryStateAuthority.Resolve(
+        arguments.RepositoryRoot, arguments.RepositoryCommit)
+    : null;
+var repositoryCommit = repositoryAuthority?.ActualHead ?? arguments.RepositoryCommit;
 var snapshot = await new PmsShadowReadOnlyReportingReader(options, target)
-    .ReadAsync(arguments.AsOfUtc, arguments.RepositoryCommit,
-        arguments.IncludeHistory);
+    .ReadAsync(arguments.AsOfUtc, repositoryCommit, arguments.IncludeHistory);
+if (repositoryAuthority is not null)
+    snapshot = snapshot with { RepositoryAuthority = repositoryAuthority };
 Require(snapshot.Database.TransactionReadOnly, "REPORTING_TRANSACTION_NOT_READ_ONLY");
 Require(!snapshot.Database.PendingModelChanges, "REPORTING_PENDING_MODEL_CHANGES");
 Require(snapshot.Database.Database == arguments.ExpectedDatabase,
@@ -77,6 +83,10 @@ else
         roadmap_sha256 = roadmap.Sha256,
         roadmap_authority_contract = roadmap.ContractVersion,
         source_snapshot_sha256 = bundle.SourceSnapshotSha256,
+        repository_authority_contract = repositoryAuthority!.ContractVersion,
+        actual_repository_head = repositoryAuthority.ActualHead,
+        repository_worktree_clean = repositoryAuthority.WorktreeClean,
+        repository_evidence_sha256 = repositoryAuthority.EvidenceSha256,
         superseded_bundle_sha256 = InstitutionalMetricContract.SupersededBundleSha256,
         no_order = true
     });
@@ -94,7 +104,7 @@ static void Require(bool condition, string code)
     if (!condition) throw new InvalidDataException(code);
 }
 
-internal sealed class ReportingArguments
+public sealed class ReportingArguments
 {
     private readonly IReadOnlyDictionary<string, string> values;
 
@@ -121,10 +131,18 @@ internal sealed class ReportingArguments
     public int IncludeHistory => values.TryGetValue("--include-history", out var value)
         ? int.Parse(value, CultureInfo.InvariantCulture)
         : 64;
-    public DateTimeOffset AsOfUtc => values.TryGetValue("--as-of-utc", out var value)
-        ? DateTimeOffset.Parse(value, CultureInfo.InvariantCulture,
-            DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal)
-        : DateTimeOffset.UtcNow;
+    public DateTimeOffset AsOfUtc
+    {
+        get
+        {
+            if (values.TryGetValue("--as-of-utc", out var value))
+                return DateTimeOffset.Parse(value, CultureInfo.InvariantCulture,
+                    DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal);
+            if (Mode == "report-institutional-metric-foundation")
+                throw new InvalidDataException("RPT2_EXPLICIT_AS_OF_REQUIRED");
+            return DateTimeOffset.UtcNow;
+        }
+    }
 
     public static ReportingArguments Parse(string[] args)
     {

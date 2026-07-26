@@ -52,6 +52,8 @@ Reporting is not merely a presentation layer. Every result preserves:
 - There is no second economic truth, second PMS or second OMS.
 - No ModelRun, Fill, position or ledger event may be invented.
 - Missing, absent or unknown data is never converted to zero.
+- A position is zero only when an explicit position-snapshot line records zero
+  under a proven full-universe coverage contract.
 - Performance is never reconstructed without a complete versioned contract.
 - Real TCA requires real authoritative Fills and benchmarks.
 - A broker position is never inferred from UI evidence.
@@ -76,7 +78,8 @@ authority, timestamps and evidence SHA. It performs no silent economic
 transformation.
 
 Current and planned sources include Ingestions, QubesInputSnapshots,
-ModelRuns, TargetWeights, TargetPositions, PositionOnlyDrifts, market
+ModelRuns, TargetWeights, TargetPositions, PositionSnapshotLines,
+PositionOnlyDrifts, market
 observations, economic revisions, TradeIntents, RiskDecisions, ParentOrders,
 ChildOrders, ARCH7B lifecycle facts, ExecutionReports, Fills,
 PositionLedgerEvents, reconciliations, breaks and future versioned
@@ -217,9 +220,13 @@ with complete manifest, target, drift and selected-model lineage. The selected
 set is exactly INFX7, INFX8, INFX9 and INFX10, with one unique ModelRun and
 Qubes input per strategy, exact target/drift counts 66/66/78/78, complete
 target-close, output SHA-256 and Core commit lineage, and no unexpected model.
-Exactly one authoritative revision is selected using the maximum revision
-number and coherent supersession lineage. An identity conflict or multiple
-candidates at the same authoritative rank fails closed.
+The maximum revision number is determined first among rows that are
+`COMPLETED`, qualifying and no-order. Exactly that maximum row is then
+validated for model set, counts, lineage, supersession and projection content
+integrity. If it is invalid, RPT2 fails closed and never falls back silently to
+a lower revision. A higher `FAILED` or nonqualifying row does not displace
+the last completed qualifying row.
+An identity conflict or multiple candidates at the same authoritative rank fails closed.
 
 The economic timeline is ordered by `SlotEndUtc`, `SlotStartUtc`,
 `CompletedAtUtc`, `SlotId` and projection revision identity. Completion
@@ -250,17 +257,48 @@ evidence authority.
 
 Every RPT2 bundle contains a canonical `source-snapshot.json`. Its file
 SHA-256 covers all authoritative revisions, target and drift source timestamps,
-account and position snapshot identities, selected ModelRuns, Qubes inputs,
-outputs and Core commits, mapping-set identity, typed active or unknown break
-facts, currentness, database identity, roadmap SHA, repository commit and fixed
-as-of time. The roadmap itself is accepted only from the canonical path rooted
-at the explicit repository root.
+account and position snapshot identities, the complete sorted position-line
+set and coverage decision for each revision, selected ModelRuns, Qubes inputs,
+outputs and Core commits, recalculated projection-content SHA identities,
+mapping-set identity, typed active or unknown break facts, currentness,
+database identity, roadmap SHA, repository-state evidence and the explicitly
+supplied institutional as-of time.
+
+Position coverage follows
+`institutional_position_snapshot_coverage_v1`: every required instrument
+must have exactly one explicit line, duplicate lines fail closed, and each
+PositionOnlyDrift current quantity must equal its position line. Sparse
+non-zero snapshots remain `INCONNU`; a missing line is never interpreted as
+zero. Historical projection JSON, drifts and stored SHA values are not
+rewritten.
+
+Projection integrity is recomputed from exact producer canonicalization for
+market observations, target positions, drifts, projection input, manifest and
+projection identity. A syntactically valid 64-character SHA is insufficient
+when it does not match content.
+Projection identity is versioned: `arch6f_economic_projection_identity_v1`
+recognizes the exact pre-versioning producer formula, while
+`arch6f_economic_projection_identity_v2` recognizes revision and supersession
+identity. No other stored identity is accepted and historical rows are not
+rewritten.
+
+Repository authority follows `institutional_repository_state_authority_v1`.
+The actual Git root and HEAD are derived from `--repository-root`, the index
+and worktree must be clean, the roadmap must match the HEAD blob, and any
+supplied repository commit must equal the actual HEAD. The roadmap itself is
+accepted only from the canonical path rooted at that repository. Institutional
+RPT2 always requires an explicit `--as-of-utc`; it never falls back to wall
+clock time.
 
 TargetPosition facts retain `CalculatedAtUtc`, revision completion time,
 decision price, Core commit ID and input/output SHA-256. PositionOnlyDrift
 facts retain current quantity, target quantity, exact arithmetic delta, source
 time, account and position snapshot IDs, position snapshot time, versioned
 authority code and input/output SHA-256. The versioned position authority code is `BROKER_PORTAL_EOD`; unknown authority text is not proven.
+That code alone is insufficient: authority is
+proven only when full required-instrument line coverage and exact current
+quantities are also proven. Unknown authority text, sparse snapshots and
+missing lines are not proven.
 Positive Fill or PositionLedgerEvent counts do not prove execution or
 accounting authority without their complete versioned contracts. When
 portfolio gross target notional is zero, GrossWeight is NULL with explicit
@@ -362,3 +400,6 @@ is versioned, review/approval is recorded and publication is immutable.
 | Institutional publications | NOT STARTED |
 
 Next action: `RPT2_CURRENTNESS_LINEAGE_AND_AUDIT_FACT_AUTHORITY_FOUNDATION`.
+
+Current integrity pass:
+`RPT2_POSITION_COVERAGE_PROJECTION_INTEGRITY_AND_REPOSITORY_AUTHORITY_FOUNDATION`.

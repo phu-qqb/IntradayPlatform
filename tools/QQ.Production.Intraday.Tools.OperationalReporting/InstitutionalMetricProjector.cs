@@ -148,6 +148,7 @@ public static class InstitutionalAuthoritativeRevisionResolver
     public const string ModelSetUnexpected = "RPT2_SELECTED_MODEL_SET_UNEXPECTED";
     public const string ModelLineageMismatch = "RPT2_SELECTED_MODEL_LINEAGE_MISMATCH";
     public const string ModelCountsMismatch = "RPT2_SELECTED_MODEL_COUNTS_MISMATCH";
+    public const string LatestQualifyingInvalid = "RPT2_LATEST_QUALIFYING_REVISION_INVALID";
 
     public static IReadOnlyList<PmsShadowIntradayEconomicProjection> Resolve(
         IEnumerable<PmsShadowIntradayEconomicProjection> source,
@@ -162,7 +163,7 @@ public static class InstitutionalAuthoritativeRevisionResolver
         var result = new List<PmsShadowIntradayEconomicProjection>();
         foreach (var slot in all.GroupBy(value => value.SlotId, StringComparer.Ordinal))
         {
-            var candidates = slot.Where(IsCandidate).ToArray();
+            var candidates = slot.Where(IsCompletedQualifyingNoOrder).ToArray();
             if (candidates.Length == 0)
                 continue;
             var maxRevision = candidates.Max(value => value.RevisionNumber);
@@ -170,16 +171,21 @@ public static class InstitutionalAuthoritativeRevisionResolver
             if (top.Length != 1)
                 throw new InvalidDataException(AmbiguousCode);
             var selected = top[0];
+            var blocker = CandidateBlocker(selected);
+            if (blocker is not null)
+                throw new InvalidDataException($"{LatestQualifyingInvalid}:{blocker}");
             if (selected.RevisionNumber == 1 &&
                 selected.SupersedesSlotManifestSha256 is not null)
-                throw new InvalidDataException("RPT2_SUPERSESSION_LINEAGE_INCOHERENT");
+                throw new InvalidDataException(
+                    $"{LatestQualifyingInvalid}:RPT2_SUPERSESSION_LINEAGE_INCOHERENT");
             if (selected.RevisionNumber > 1 &&
                 (!slotManifestSha256BySlotId.TryGetValue(slot.Key, out var slotManifestSha256) ||
                  slotManifestSha256 is null ||
                  !IsSha(slotManifestSha256) ||
                  !string.Equals(selected.SupersedesSlotManifestSha256,
                      slotManifestSha256, StringComparison.OrdinalIgnoreCase)))
-                throw new InvalidDataException("RPT2_SUPERSESSION_LINEAGE_INCOHERENT");
+                throw new InvalidDataException(
+                    $"{LatestQualifyingInvalid}:RPT2_SUPERSESSION_LINEAGE_INCOHERENT");
             result.Add(selected);
         }
 
@@ -191,13 +197,17 @@ public static class InstitutionalAuthoritativeRevisionResolver
             .ToArray();
     }
 
+    internal static bool IsCompletedQualifyingNoOrder(
+        PmsShadowIntradayEconomicProjection value) =>
+        string.Equals(value.Status, "COMPLETED", StringComparison.Ordinal) &&
+        value.Qualifying && value.NoOrder;
+
     internal static bool IsCandidate(PmsShadowIntradayEconomicProjection value) =>
-        CandidateBlocker(value) is null;
+        IsCompletedQualifyingNoOrder(value) && CandidateBlocker(value) is null;
 
     internal static string? CandidateBlocker(PmsShadowIntradayEconomicProjection value)
     {
-        if (!string.Equals(value.Status, "COMPLETED", StringComparison.Ordinal) ||
-            !value.Qualifying || !value.NoOrder ||
+        if (!IsCompletedQualifyingNoOrder(value) ||
             !IsSha(value.ManifestSha256) ||
             !IsSha(value.TargetPositionsSha256) ||
             !IsSha(value.DriftsSha256) ||
@@ -261,7 +271,8 @@ public static class InstitutionalAuthoritativeRevisionResolver
                 targetCount != driftCount)
                 return ModelCountsMismatch;
         }
-        return null;
+        var integrity = PmsShadowEconomicProjectionIntegrityVerifier.Verify(value);
+        return integrity.Blockers.FirstOrDefault();
     }
 
     internal static bool IsSha(string value) =>
@@ -285,10 +296,17 @@ public static class InstitutionalMetricProjector
             snapshot.SlotManifestSha256BySlotId);
         var mappings = snapshot.SecurityMappingSources.ToDictionary(
             value => (value.IngestionId, value.InstrumentId));
+        var positionCoverage = revisions.Select(value =>
+                InstitutionalPositionSnapshotCoveragePolicy.Evaluate(
+                    value, snapshot.PositionSnapshotLineSources))
+            .ToDictionary(value => value.EconomicRevisionId);
+        var projectionIntegrity = revisions.Select(
+                PmsShadowEconomicProjectionIntegrityVerifier.Verify)
+            .ToDictionary(value => value.ProjectionRevisionId);
         var targets = BuildTargetSources(revisions, mappings);
         var drifts = BuildDriftSources(revisions, mappings);
         var targetFacts = BuildTargetFacts(targets);
-        var driftFacts = BuildDriftFacts(drifts);
+        var driftFacts = BuildDriftFacts(drifts, positionCoverage);
         var byRevision = BuildExposure(targets, "REVISION", _ => "ALL");
         var byStrategy = BuildExposure(targets, "STRATEGY", value => value.Target.StrategyId);
         var byModel = BuildExposure(targets, "MODEL",
@@ -298,25 +316,26 @@ public static class InstitutionalMetricProjector
         var (grossConcentrations, netConcentrations, concentrationSummaries) =
             BuildConcentrations(byRevision, byStrategy, byPair);
         var turnover = BuildTurnover(revisions, mappings);
-        var driftByPair = BuildDrift(drifts, "PAIR",
+        var driftByPair = BuildDrift(drifts, positionCoverage, "PAIR",
             value => value.CanonicalSymbol);
-        var driftByStrategyPair = BuildDrift(drifts, "STRATEGY_PAIR",
+        var driftByStrategyPair = BuildDrift(drifts, positionCoverage, "STRATEGY_PAIR",
             value => $"{value.Drift.StrategyId}|{value.CanonicalSymbol}");
-        var driftByModelPair = BuildDrift(drifts, "MODEL_PAIR",
+        var driftByModelPair = BuildDrift(drifts, positionCoverage, "MODEL_PAIR",
             value => $"{value.Drift.ModelRunId:D}|{value.CanonicalSymbol}");
         var operational = OperationalReportProjector.Build(snapshot);
         var activeBreaks = operational.Breaks.Where(value =>
             value.Status is OperationalBreakStatus.Active or OperationalBreakStatus.Unknown)
             .OrderBy(value => value.BreakId, StringComparer.Ordinal).ToArray();
-        var quality = BuildQuality(snapshot, revisions, mappings, activeBreaks);
+        var quality = BuildQuality(
+            snapshot, revisions, mappings, activeBreaks, positionCoverage);
         var risk = BuildRisk(snapshot.AsOfUtc, revisions, byRevision, grossConcentrations,
-            netConcentrations, concentrationSummaries, turnover, driftByPair);
+            netConcentrations, concentrationSummaries, turnover, driftByPair, quality);
         var catalog = InstitutionalMetricCatalog.Build();
         var availability = BuildAvailability(catalog, revisions, targetFacts, driftFacts,
             byCurrency, grossConcentrations, netConcentrations, concentrationSummaries,
             turnover, driftByPair, risk, quality);
         var sourceSnapshot = BuildSourceSnapshot(snapshot, roadmapSha256, revisions,
-            mappings, activeBreaks, quality);
+            mappings, activeBreaks, quality, positionCoverage, projectionIntegrity);
         var sourceSnapshotSha = InstitutionalCanonicalJson.FileSha256(sourceSnapshot);
         return new(snapshot.AsOfUtc, snapshot.RepositoryCommit, snapshot.Database, roadmapSha256,
             catalog, availability, targetFacts, driftFacts, byRevision, byStrategy, byModel,
@@ -389,13 +408,15 @@ public static class InstitutionalMetricProjector
             .ThenBy(value => value.TargetPositionId).ToArray();
 
     private static IReadOnlyList<PositionOnlyDriftFact> BuildDriftFacts(
-        IReadOnlyList<InstitutionalDriftSource> sources) =>
+        IReadOnlyList<InstitutionalDriftSource> sources,
+        IReadOnlyDictionary<Guid, InstitutionalPositionSnapshotCoverageDecision> coverage) =>
         sources.Select(value =>
         {
             Require(value.Drift.Delta ==
                     value.Drift.TargetBaseQuantity - value.Drift.CurrentBaseQuantity,
                 "RPT2_POSITION_ONLY_DRIFT_ARITHMETIC_MISMATCH");
-            var authority = InstitutionalPositionAuthorityPolicy.Evaluate(value.Revision);
+            var authority = InstitutionalPositionAuthorityPolicy.Evaluate(
+                value.Revision, coverage[value.Revision.ProjectionRevisionId]);
             return new PositionOnlyDriftFact(
                 value.Revision.ProjectionRevisionId,
                 value.Drift.DriftId,
@@ -797,6 +818,7 @@ public static class InstitutionalMetricProjector
 
     private static IReadOnlyList<DriftSummaryRow> BuildDrift(
         IReadOnlyList<InstitutionalDriftSource> sources,
+        IReadOnlyDictionary<Guid, InstitutionalPositionSnapshotCoverageDecision> coverage,
         string dimensionType,
         Func<InstitutionalDriftSource, string> dimension) =>
         sources.GroupBy(value => new
@@ -812,7 +834,8 @@ public static class InstitutionalMetricProjector
                 var signed = ordered.Sum(value => value.Drift.Delta);
                 var absolute = ordered.Sum(value => Math.Abs(value.Drift.Delta));
                 var positionAuthority =
-                    InstitutionalPositionAuthorityPolicy.Evaluate(first.Revision);
+                    InstitutionalPositionAuthorityPolicy.Evaluate(
+                        first.Revision, coverage[first.Revision.ProjectionRevisionId]);
                 return new DriftSummaryRow(first.Revision.ProjectionRevisionId,
                     dimensionType, group.Key.DimensionId, group.Key.CanonicalSymbol,
                     group.Key.CanonicalSymbol[..3], signed, absolute, ordered.Length,
@@ -834,7 +857,8 @@ public static class InstitutionalMetricProjector
         OperationalReportingSnapshot snapshot,
         IReadOnlyList<PmsShadowIntradayEconomicProjection> revisions,
         IReadOnlyDictionary<(Guid, Guid), PmsShadowSecurityMappingRow> mappings,
-        IReadOnlyList<OperationalBreak> breaks)
+        IReadOnlyList<OperationalBreak> breaks,
+        IReadOnlyDictionary<Guid, InstitutionalPositionSnapshotCoverageDecision> coverage)
     {
         var currentness = InstitutionalMetricCurrentnessPolicy.Evaluate(snapshot, revisions);
         var latest = revisions.LastOrDefault();
@@ -865,7 +889,8 @@ public static class InstitutionalMetricProjector
             snapshot.Arch7b.Sum(value => value.PositionLedgerEventCount), fill);
         var position = latest is null
             ? ReportingAuthority.Absent
-            : InstitutionalPositionAuthorityPolicy.Evaluate(latest).AuthorityStatus;
+            : InstitutionalPositionAuthorityPolicy.Evaluate(
+                latest, coverage[latest.ProjectionRevisionId]).AuthorityStatus;
         var overall = latest is not null && complete && mappingComplete && lineage
             ? "PROVEN_WITH_EXPLICIT_AUTHORITY_GAPS" : "INCOMPLETE";
         return new(snapshot.AsOfUtc, overall, latest?.ProjectionRevisionId,
@@ -896,7 +921,8 @@ public static class InstitutionalMetricProjector
         IReadOnlyList<TargetConcentrationRow> netConcentrations,
         IReadOnlyList<TargetConcentrationSummaryRow> summaries,
         IReadOnlyList<TargetTurnoverRow> turnover,
-        IReadOnlyList<DriftSummaryRow> driftByPair)
+        IReadOnlyList<DriftSummaryRow> driftByPair,
+        InstitutionalDataQuality quality)
     {
         var latest = revisions.LastOrDefault();
         if (latest is null)
@@ -918,10 +944,13 @@ public static class InstitutionalMetricProjector
         var ratio = summaries.Single(value =>
             value.EconomicRevisionId == latest.ProjectionRevisionId &&
             value.DimensionType == "PORTFOLIO").GrossNetRatio;
-        var pairDrift = driftByPair.Where(value =>
-                value.EconomicRevisionId == latest.ProjectionRevisionId)
-            .ToDictionary(value => value.CanonicalSymbol, value => value.AbsoluteDrift,
-                StringComparer.Ordinal);
+        IReadOnlyDictionary<string, decimal>? pairDrift =
+            quality.PositionAuthority == ReportingAuthority.Proven
+                ? driftByPair.Where(value =>
+                        value.EconomicRevisionId == latest.ProjectionRevisionId)
+                    .ToDictionary(value => value.CanonicalSymbol,
+                        value => value.AbsoluteDrift, StringComparer.Ordinal)
+                : null;
         return new(asOfUtc, latest.ProjectionRevisionId, exposure.GrossTargetNotionalUsd,
             exposure.NetTargetNotionalUsd, exposure.LongTargetNotionalUsd,
             exposure.ShortTargetNotionalUsd,
@@ -935,7 +964,9 @@ public static class InstitutionalMetricProjector
                 .Select(value => (decimal?)value.TargetTurnoverUsd).SingleOrDefault(),
             MetricAvailabilityStatus.BlockedMissingSource,
             "Leverage is unavailable without authoritative AUM/NAV.",
-            ReportingAuthority.Proven);
+            quality.PositionAuthority == ReportingAuthority.Proven
+                ? ReportingAuthority.Proven
+                : ReportingAuthority.Unknown);
     }
 
     private static IReadOnlyList<InstitutionalMetricAvailability> BuildAvailability(
@@ -1103,7 +1134,9 @@ public static class InstitutionalMetricProjector
         IReadOnlyList<PmsShadowIntradayEconomicProjection> revisions,
         IReadOnlyDictionary<(Guid, Guid), PmsShadowSecurityMappingRow> mappings,
         IReadOnlyList<OperationalBreak> breaks,
-        InstitutionalDataQuality quality)
+        InstitutionalDataQuality quality,
+        IReadOnlyDictionary<Guid, InstitutionalPositionSnapshotCoverageDecision> positionCoverage,
+        IReadOnlyDictionary<Guid, PmsShadowEconomicProjectionIntegrityResult> projectionIntegrity)
     {
         var includedIngestions = revisions.Select(value => value.SourceIngestionId).ToHashSet();
         var includedMappings = mappings.Values.Where(value =>
@@ -1146,10 +1179,16 @@ public static class InstitutionalMetricProjector
             .ThenBy(value => value.ScopeType, StringComparer.Ordinal)
             .ThenBy(value => value.ScopeId, StringComparer.Ordinal)
             .ToArray();
+        var repositoryAuthority = snapshot.RepositoryAuthority ??
+            throw new InvalidDataException("RPT2_REPOSITORY_AUTHORITY_REQUIRED");
         return new(InstitutionalMetricContract.SourceSnapshotVersion,
             snapshot.RepositoryCommit, roadmapSha, snapshot.Database.TargetProfileId,
             snapshot.Database.TargetFingerprint, snapshot.Database, snapshot.AsOfUtc,
-            sourceRevisions, MappingSetSha(includedMappings), currentness, breakFacts,
+            sourceRevisions,
+            positionCoverage.Values.OrderBy(value => value.EconomicRevisionId).ToArray(),
+            projectionIntegrity.Values.OrderBy(value => value.ProjectionRevisionId).ToArray(),
+            repositoryAuthority,
+            MappingSetSha(includedMappings), currentness, breakFacts,
             InstitutionalPositionAuthorityPolicy.ContractVersion,
             InstitutionalMetricContract.EconomicTimelineContractVersion,
             InstitutionalRoadmapAuthority.ContractVersion,

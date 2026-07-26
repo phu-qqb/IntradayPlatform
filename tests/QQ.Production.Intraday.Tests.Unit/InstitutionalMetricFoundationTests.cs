@@ -1,4 +1,5 @@
 using System.Text.Json;
+using QQ.Production.Intraday.Application;
 using QQ.Production.Intraday.Infrastructure.PostgreSql;
 using QQ.Production.Intraday.Tools.OperationalReporting;
 
@@ -60,10 +61,10 @@ public sealed class InstitutionalMetricFoundationTests
     public void SupersededRevisionOfSameSlotIsExcluded()
     {
         var first = Projection(1, "same-slot", InstitutionalPositionAuthorityPolicy.CanonicalAuthorityCode);
-        var second = Projection(2, "same-slot", InstitutionalPositionAuthorityPolicy.CanonicalAuthorityCode) with
+        var second = Rehash(Projection(2, "same-slot", InstitutionalPositionAuthorityPolicy.CanonicalAuthorityCode) with
         {
             SupersedesSlotManifestSha256 = Sha
-        };
+        });
         var selected = InstitutionalAuthoritativeRevisionResolver.Resolve(
             [first, second], SlotManifests(first, second));
         Assert.Single(selected);
@@ -81,7 +82,6 @@ public sealed class InstitutionalMetricFoundationTests
         };
         var later = Projection(1, "slot-b", InstitutionalPositionAuthorityPolicy.CanonicalAuthorityCode) with
         {
-            ProjectionRevisionId = Id(99999),
             SlotStartUtc = AsOf.AddMinutes(-20),
             SlotEndUtc = AsOf.AddMinutes(-5),
             CompletedAtUtc = AsOf.AddMinutes(-4)
@@ -106,10 +106,10 @@ public sealed class InstitutionalMetricFoundationTests
     [Fact]
     public void RevisionTwoMayBeAuthoritativeWithoutPersistedRevisionOne()
     {
-        var revision = Projection(2, "same-slot", InstitutionalPositionAuthorityPolicy.CanonicalAuthorityCode) with
+        var revision = Rehash(Projection(2, "same-slot", InstitutionalPositionAuthorityPolicy.CanonicalAuthorityCode) with
         {
             SupersedesSlotManifestSha256 = Sha
-        };
+        });
         Assert.Equal(revision.ProjectionRevisionId,
             InstitutionalAuthoritativeRevisionResolver.Resolve(
                 [revision], SlotManifests(revision))
@@ -120,11 +120,12 @@ public sealed class InstitutionalMetricFoundationTests
     public void IncoherentSupersessionFailsClosed()
     {
         var first = Projection(1, "same-slot", InstitutionalPositionAuthorityPolicy.CanonicalAuthorityCode);
-        var second = Projection(2, "same-slot", InstitutionalPositionAuthorityPolicy.CanonicalAuthorityCode) with
+        var second = Rehash(Projection(2, "same-slot", InstitutionalPositionAuthorityPolicy.CanonicalAuthorityCode) with
         {
             SupersedesSlotManifestSha256 = new string('b', 64)
-        };
-        Assert.Equal("RPT2_SUPERSESSION_LINEAGE_INCOHERENT",
+        });
+        Assert.Equal(
+            "RPT2_LATEST_QUALIFYING_REVISION_INVALID:RPT2_SUPERSESSION_LINEAGE_INCOHERENT",
             Assert.Throws<InvalidDataException>(() =>
                 InstitutionalAuthoritativeRevisionResolver.Resolve(
                     [first, second], SlotManifests(first, second))).Message);
@@ -134,10 +135,10 @@ public sealed class InstitutionalMetricFoundationTests
     public void TurnoverNeverUsesTwoRevisionsOfSameSlot()
     {
         var first = Projection(1, "same-slot", InstitutionalPositionAuthorityPolicy.CanonicalAuthorityCode);
-        var second = Projection(2, "same-slot", InstitutionalPositionAuthorityPolicy.CanonicalAuthorityCode) with
+        var second = Rehash(Projection(2, "same-slot", InstitutionalPositionAuthorityPolicy.CanonicalAuthorityCode) with
         {
-            SupersedesSlotManifestSha256 = first.ManifestSha256
-        };
+            SupersedesSlotManifestSha256 = Sha
+        });
         var report = Build([first, second], Mappings());
         Assert.Empty(report.Turnover);
     }
@@ -471,23 +472,25 @@ public sealed class InstitutionalMetricFoundationTests
     }
 
     [Fact]
-    public void SourceSnapshotChangesWhenTargetShaChanges()
+    public void ChangedTargetShaIsRejectedBeforeSourceSnapshotPublication()
     {
         var projection = Projection(1, "slot-a", InstitutionalPositionAuthorityPolicy.CanonicalAuthorityCode);
         var changed = projection with { TargetPositionsSha256 = new string('b', 64) };
-        Assert.NotEqual(Build([projection], Mappings()).SourceSnapshotSha256,
-            Build([changed], Mappings()).SourceSnapshotSha256);
+        var error = Assert.Throws<InvalidDataException>(() => Build([changed], Mappings()));
+        Assert.Contains(PmsShadowEconomicProjectionIntegrityVerifier.TargetPositionMismatch,
+            error.Message, StringComparison.Ordinal);
     }
 
     [Fact]
-    public void SourceSnapshotChangesWhenSelectedModelRunChanges()
+    public void ChangedSelectedModelRunIsRejectedBeforeSourceSnapshotPublication()
     {
         var projection = Projection(1, "slot-a", InstitutionalPositionAuthorityPolicy.CanonicalAuthorityCode);
         var models = projection.SelectedModelRuns.ToArray();
         models[0] = models[0] with { OutputSha256 = new string('b', 64) };
         var changed = projection with { SelectedModelRuns = models };
-        Assert.NotEqual(Build([projection], Mappings()).SourceSnapshotSha256,
-            Build([changed], Mappings()).SourceSnapshotSha256);
+        var error = Assert.Throws<InvalidDataException>(() => Build([changed], Mappings()));
+        Assert.Contains(PmsShadowEconomicProjectionIntegrityVerifier.InputMismatch,
+            error.Message, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -648,8 +651,10 @@ public sealed class InstitutionalMetricFoundationTests
         var models = projection.SelectedModelRuns.ToArray();
         models[1] = models[1] with { ModelRunId = models[0].ModelRunId };
         var invalid = projection with { SelectedModelRuns = models };
-        Assert.Empty(InstitutionalAuthoritativeRevisionResolver.Resolve(
-            [invalid], SlotManifests(invalid)));
+        var error = Assert.Throws<InvalidDataException>(() =>
+            InstitutionalAuthoritativeRevisionResolver.Resolve(
+                [invalid], SlotManifests(invalid)));
+        Assert.Contains("RPT2_SELECTED_MODEL_SET_DUPLICATED", error.Message, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -659,8 +664,10 @@ public sealed class InstitutionalMetricFoundationTests
         var models = projection.SelectedModelRuns.ToArray();
         models[0] = models[0] with { StrategyId = "INFX11" };
         var invalid = projection with { SelectedModelRuns = models };
-        Assert.Empty(InstitutionalAuthoritativeRevisionResolver.Resolve(
-            [invalid], SlotManifests(invalid)));
+        var error = Assert.Throws<InvalidDataException>(() =>
+            InstitutionalAuthoritativeRevisionResolver.Resolve(
+                [invalid], SlotManifests(invalid)));
+        Assert.Contains("RPT2_SELECTED_MODEL_SET_UNEXPECTED", error.Message, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -671,8 +678,10 @@ public sealed class InstitutionalMetricFoundationTests
         {
             TargetPositions = projection.TargetPositions.Skip(1).ToArray()
         };
-        Assert.Empty(InstitutionalAuthoritativeRevisionResolver.Resolve(
-            [invalid], SlotManifests(invalid)));
+        var error = Assert.Throws<InvalidDataException>(() =>
+            InstitutionalAuthoritativeRevisionResolver.Resolve(
+                [invalid], SlotManifests(invalid)));
+        Assert.Contains("RPT2_SELECTED_MODEL_COUNTS_MISMATCH", error.Message, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -682,8 +691,10 @@ public sealed class InstitutionalMetricFoundationTests
         var targets = projection.TargetPositions.ToArray();
         targets[0] = targets[0] with { StrategyId = "INFX8" };
         var invalid = projection with { TargetPositions = targets };
-        Assert.Empty(InstitutionalAuthoritativeRevisionResolver.Resolve(
-            [invalid], SlotManifests(invalid)));
+        var error = Assert.Throws<InvalidDataException>(() =>
+            InstitutionalAuthoritativeRevisionResolver.Resolve(
+                [invalid], SlotManifests(invalid)));
+        Assert.Contains("RPT2_SELECTED_MODEL_LINEAGE_MISMATCH", error.Message, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -713,17 +724,21 @@ public sealed class InstitutionalMetricFoundationTests
         var projection = Projection(1, "slot-1", InstitutionalPositionAuthorityPolicy.CanonicalAuthorityCode);
         var drifts = projection.PositionOnlyDrifts.ToArray();
         drifts[0] = drifts[0] with { Delta = drifts[0].Delta + 1m };
-        Assert.Equal("RPT2_POSITION_ONLY_DRIFT_ARITHMETIC_MISMATCH",
-            Assert.Throws<InvalidDataException>(() => Build(
-                [projection with { PositionOnlyDrifts = drifts }], Mappings())).Message);
+        var error = Assert.Throws<InvalidDataException>(() => Build(
+            [projection with { PositionOnlyDrifts = drifts }], Mappings()));
+        Assert.Contains(PmsShadowEconomicProjectionIntegrityVerifier.DriftMismatch,
+            error.Message, StringComparison.Ordinal);
     }
 
     [Fact]
     public void BrokerPortalEodPositionAuthorityIsProvenWithCompleteLineage()
     {
+        var projection = Projection(1, "slot-1",
+            InstitutionalPositionAuthorityPolicy.CanonicalAuthorityCode);
+        var coverage = InstitutionalPositionSnapshotCoveragePolicy.Evaluate(
+            projection, PositionLines([projection]));
         var decision = InstitutionalPositionAuthorityPolicy.Evaluate(
-            Projection(1, "slot-1",
-                InstitutionalPositionAuthorityPolicy.CanonicalAuthorityCode));
+            projection, coverage);
         Assert.Equal(ReportingAuthority.Proven, decision.AuthorityStatus);
         Assert.Equal(MetricAvailabilityStatus.SourceProven,
             decision.AvailabilityStatus);
@@ -732,8 +747,11 @@ public sealed class InstitutionalMetricFoundationTests
     [Fact]
     public void UnknownPositionAuthorityTextIsNotProven()
     {
+        var projection = Projection(1, "slot-1", "UNVERSIONED_TEXT");
+        var coverage = InstitutionalPositionSnapshotCoveragePolicy.Evaluate(
+            projection, PositionLines([projection]));
         var decision = InstitutionalPositionAuthorityPolicy.Evaluate(
-            Projection(1, "slot-1", "UNVERSIONED_TEXT"));
+            projection, coverage);
         Assert.Equal(ReportingAuthority.Unknown, decision.AuthorityStatus);
         Assert.Equal(MetricAvailabilityStatus.BlockedAuthorityUnproven,
             decision.AvailabilityStatus);
@@ -818,6 +836,344 @@ public sealed class InstitutionalMetricFoundationTests
         }
     }
 
+
+    [Fact]
+    public void ExplicitZeroLineProvesCompletePositionCoverage()
+    {
+        var projection = Projection(1, "slot-coverage", InstitutionalPositionAuthorityPolicy.CanonicalAuthorityCode);
+        var decision = InstitutionalPositionSnapshotCoveragePolicy.Evaluate(
+            projection, PositionLines([projection]));
+        Assert.Equal(ReportingAuthority.Proven, decision.CurrentPositionAuthorityDecision);
+        Assert.Equal(InstitutionalPositionSnapshotCoveragePolicy.FullUniverseExplicitZero,
+            decision.CoverageMode);
+        Assert.Equal(0, decision.MissingCount);
+        Assert.Contains(PositionLines([projection]), value =>
+            value.CurrentBaseQuantity == 0m);
+    }
+
+    [Fact]
+    public void MissingPositionLineIsSparseUnknownAndNeverZero()
+    {
+        var projection = Projection(1, "slot-coverage", InstitutionalPositionAuthorityPolicy.CanonicalAuthorityCode);
+        var lines = PositionLines([projection]).Where(value =>
+            value.CurrentBaseQuantity != 0m).ToArray();
+        var decision = InstitutionalPositionSnapshotCoveragePolicy.Evaluate(projection, lines);
+        Assert.Equal(InstitutionalPositionSnapshotCoveragePolicy.SparseNonzero,
+            decision.CoverageMode);
+        Assert.Equal(1, decision.MissingCount);
+        Assert.Equal(ReportingAuthority.Unknown, decision.CurrentPositionAuthorityDecision);
+    }
+
+    [Fact]
+    public void DuplicatePositionInstrumentLineFailsClosed()
+    {
+        var projection = Projection(1, "slot-coverage", InstitutionalPositionAuthorityPolicy.CanonicalAuthorityCode);
+        var lines = PositionLines([projection]).ToList();
+        lines.Add(lines[0] with { RowIdentity = lines[0].RowIdentity + ":duplicate" });
+        var decision = InstitutionalPositionSnapshotCoveragePolicy.Evaluate(projection, lines);
+        Assert.Equal(1, decision.DuplicateCount);
+        Assert.Equal(ReportingAuthority.Unknown, decision.CurrentPositionAuthorityDecision);
+    }
+
+    [Fact]
+    public void PositionCurrentQuantityMismatchFailsClosed()
+    {
+        var projection = Projection(1, "slot-coverage", InstitutionalPositionAuthorityPolicy.CanonicalAuthorityCode);
+        var lines = PositionLines([projection]).ToArray();
+        lines[0] = lines[0] with { CurrentBaseQuantity = 1m };
+        var decision = InstitutionalPositionSnapshotCoveragePolicy.Evaluate(projection, lines);
+        Assert.Equal(1, decision.MismatchCount);
+        Assert.Equal(ReportingAuthority.Unknown, decision.CurrentPositionAuthorityDecision);
+    }
+
+    [Fact]
+    public void ExtraPositionLineIsCountedWithoutDoubleCountingRequiredCoverage()
+    {
+        var projection = Projection(1, "slot-coverage", InstitutionalPositionAuthorityPolicy.CanonicalAuthorityCode);
+        var lines = PositionLines([projection]).ToList();
+        lines.Add(new(projection.PositionSnapshotId, Id(999001), "EXTRA", "EXTRA",
+            7m, projection.SourceIngestionId,
+            $"{projection.PositionSnapshotId:D}:{Id(999001):D}",
+            projection.PositionSnapshotAsOfUtc, Sha));
+        var decision = InstitutionalPositionSnapshotCoveragePolicy.Evaluate(projection, lines);
+        Assert.Equal(1, decision.ExtraCount);
+        Assert.Equal(decision.RequiredInstrumentCount, decision.CoveredInstrumentCount);
+        Assert.Equal(ReportingAuthority.Proven, decision.CurrentPositionAuthorityDecision);
+    }
+
+    [Fact]
+    public void NoPositionLinesProducesAbsentAuthority()
+    {
+        var projection = Projection(1, "slot-coverage", InstitutionalPositionAuthorityPolicy.CanonicalAuthorityCode);
+        var decision = InstitutionalPositionSnapshotCoveragePolicy.Evaluate(projection, []);
+        Assert.Equal(ReportingAuthority.Absent, decision.CurrentPositionAuthorityDecision);
+        Assert.Equal(decision.RequiredInstrumentCount, decision.MissingCount);
+    }
+
+    [Fact]
+    public void LatestCompletedQualifyingInvalidRevisionBlocksWithoutFallback()
+    {
+        var first = Projection(1, "same-slot", InstitutionalPositionAuthorityPolicy.CanonicalAuthorityCode);
+        var second = Projection(2, "same-slot", InstitutionalPositionAuthorityPolicy.CanonicalAuthorityCode)
+            with { TargetPositionsSha256 = new string('b', 64) };
+        var error = Assert.Throws<InvalidDataException>(() =>
+            InstitutionalAuthoritativeRevisionResolver.Resolve(
+                [first, second], SlotManifests(first, second)));
+        Assert.Contains(InstitutionalAuthoritativeRevisionResolver.LatestQualifyingInvalid,
+            error.Message, StringComparison.Ordinal);
+        Assert.Contains(PmsShadowEconomicProjectionIntegrityVerifier.TargetPositionMismatch,
+            error.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void HigherFailedRevisionDoesNotSupersedeLowerQualifyingRevision()
+    {
+        var first = Projection(1, "same-slot", InstitutionalPositionAuthorityPolicy.CanonicalAuthorityCode);
+        var failed = Projection(2, "same-slot", InstitutionalPositionAuthorityPolicy.CanonicalAuthorityCode)
+            with { Status = "FAILED" };
+        Assert.Equal(first.ProjectionRevisionId,
+            InstitutionalAuthoritativeRevisionResolver.Resolve(
+                [first, failed], SlotManifests(first, failed)).Single().ProjectionRevisionId);
+    }
+
+    [Fact]
+    public void HigherNonqualifyingRevisionDoesNotSupersedeLowerQualifyingRevision()
+    {
+        var first = Projection(1, "same-slot", InstitutionalPositionAuthorityPolicy.CanonicalAuthorityCode);
+        var nonqualifying = Projection(2, "same-slot", InstitutionalPositionAuthorityPolicy.CanonicalAuthorityCode)
+            with { Qualifying = false };
+        Assert.Equal(first.ProjectionRevisionId,
+            InstitutionalAuthoritativeRevisionResolver.Resolve(
+                [first, nonqualifying], SlotManifests(first, nonqualifying))
+                .Single().ProjectionRevisionId);
+    }
+
+    [Fact]
+    public void ProjectionIntegrityRejectsEveryContentAndIdentityMutation()
+    {
+        var projection = Projection(1, "slot-integrity", InstitutionalPositionAuthorityPolicy.CanonicalAuthorityCode);
+        Assert.Equal(PmsShadowEconomicProjectionIntegrityVerifier.Proven,
+            PmsShadowEconomicProjectionIntegrityVerifier.Verify(projection).Status);
+
+        var market = projection.MarketData.ToArray();
+        market[0] = market[0] with { Bid = market[0].Bid + 0.0001m };
+        Assert.Contains(PmsShadowEconomicProjectionIntegrityVerifier.MarketDataMismatch,
+            PmsShadowEconomicProjectionIntegrityVerifier.Verify(
+                projection with { MarketData = market }).Blockers);
+
+        var targets = projection.TargetPositions.ToArray();
+        targets[0] = targets[0] with
+        {
+            TargetBaseQuantity = targets[0].TargetBaseQuantity + 1m
+        };
+        Assert.Contains(PmsShadowEconomicProjectionIntegrityVerifier.TargetPositionMismatch,
+            PmsShadowEconomicProjectionIntegrityVerifier.Verify(
+                projection with { TargetPositions = targets }).Blockers);
+
+        var drifts = projection.PositionOnlyDrifts.ToArray();
+        drifts[0] = drifts[0] with { Delta = drifts[0].Delta + 1m };
+        Assert.Contains(PmsShadowEconomicProjectionIntegrityVerifier.DriftMismatch,
+            PmsShadowEconomicProjectionIntegrityVerifier.Verify(
+                projection with { PositionOnlyDrifts = drifts }).Blockers);
+
+        var models = projection.SelectedModelRuns.ToArray();
+        models[0] = models[0] with { OutputSha256 = new string('b', 64) };
+        Assert.Contains(PmsShadowEconomicProjectionIntegrityVerifier.InputMismatch,
+            PmsShadowEconomicProjectionIntegrityVerifier.Verify(
+                projection with { SelectedModelRuns = models }).Blockers);
+
+        var revisionTwo = Projection(2, "slot-integrity-two",
+            InstitutionalPositionAuthorityPolicy.CanonicalAuthorityCode);
+        Assert.Contains(PmsShadowEconomicProjectionIntegrityVerifier.ManifestMismatch,
+            PmsShadowEconomicProjectionIntegrityVerifier.Verify(revisionTwo with
+            {
+                SupersedesSlotManifestSha256 = new string('b', 64)
+            }).Blockers);
+        Assert.Contains(PmsShadowEconomicProjectionIntegrityVerifier.IdentityMismatch,
+            PmsShadowEconomicProjectionIntegrityVerifier.Verify(
+                projection with { ProjectionRevisionId = Id(999999) }).Blockers);
+    }
+
+    [Fact]
+    public void ProjectionIntegrityRecognizesExactHistoricalAndCurrentIdentityContracts()
+    {
+        var current = Projection(2, "slot-identity-contract",
+            InstitutionalPositionAuthorityPolicy.CanonicalAuthorityCode);
+        var currentResult = PmsShadowEconomicProjectionIntegrityVerifier.Verify(current);
+        Assert.Equal(PmsShadowEconomicProjectionIntegrityVerifier.Proven, currentResult.Status);
+        Assert.Equal(PmsShadowEconomicProjectionIntegrityVerifier.ProjectionIdentityV2,
+            currentResult.ProjectionIdentityContractVersion);
+
+        var revisionIdentity =
+            $"{PmsShadowIntradayEconomicContract.TestEnvironment}:{current.SlotId}:{current.RawCaptureSha256}:{PmsShadowIntradayEconomicContract.Version}";
+        var historicalRevisionId = Arch5bHashing.GuidFromSha256(revisionIdentity);
+        var historicalManifest = Arch5bHashing.HashCanonical(new
+        {
+            RevisionId = historicalRevisionId,
+            Input = current.InputSha256,
+            Targets = current.TargetPositionsSha256,
+            Drifts = current.DriftsSha256,
+            Supersedes = current.SupersedesSlotManifestSha256,
+            NoOrder = true,
+            Blocker = PmsShadowStateContract.BrokerAdjustedBlocker
+        });
+        var historical = current with
+        {
+            ProjectionRevisionId = historicalRevisionId,
+            ManifestSha256 = historicalManifest
+        };
+        var historicalResult =
+            PmsShadowEconomicProjectionIntegrityVerifier.Verify(historical);
+        Assert.Equal(PmsShadowEconomicProjectionIntegrityVerifier.Proven,
+            historicalResult.Status);
+        Assert.Equal(PmsShadowEconomicProjectionIntegrityVerifier.ProjectionIdentityV1,
+            historicalResult.ProjectionIdentityContractVersion);
+        Assert.Equal(historicalRevisionId,
+            historicalResult.RecalculatedProjectionRevisionId);
+        Assert.Equal(historicalManifest, historicalResult.RecalculatedManifestSha256);
+
+        var inventedId = Id(999998);
+        var inventedManifest = Arch5bHashing.HashCanonical(new
+        {
+            RevisionId = inventedId,
+            Input = current.InputSha256,
+            Targets = current.TargetPositionsSha256,
+            Drifts = current.DriftsSha256,
+            Supersedes = current.SupersedesSlotManifestSha256,
+            NoOrder = true,
+            Blocker = PmsShadowStateContract.BrokerAdjustedBlocker
+        });
+        var inventedResult = PmsShadowEconomicProjectionIntegrityVerifier.Verify(
+            current with
+            {
+                ProjectionRevisionId = inventedId,
+                ManifestSha256 = inventedManifest
+            });
+        Assert.Equal(PmsShadowEconomicProjectionIntegrityVerifier.Invalid,
+            inventedResult.Status);
+        Assert.Equal(PmsShadowEconomicProjectionIntegrityVerifier.UnknownProjectionIdentity,
+            inventedResult.ProjectionIdentityContractVersion);
+        Assert.Contains(PmsShadowEconomicProjectionIntegrityVerifier.IdentityMismatch,
+            inventedResult.Blockers);
+        Assert.Contains(PmsShadowEconomicProjectionIntegrityVerifier.ManifestMismatch,
+            inventedResult.Blockers);
+    }
+
+    [Fact]
+    public void RepositoryAuthorityAcceptsMatchingCleanHead()
+    {
+        var root = Path.GetFullPath("rpt2-repository-fixture");
+        var result = InstitutionalRepositoryStateAuthority.Resolve(root,
+            new string('c', 40), new FakeRepositoryProbe(RawRepository(root)));
+        Assert.Equal(new string('c', 40), result.ActualHead);
+        Assert.True(result.WorktreeClean);
+    }
+
+    [Fact]
+    public void RepositoryAuthorityRejectsSuppliedCommitMismatch()
+    {
+        var root = Path.GetFullPath("rpt2-repository-fixture");
+        var error = Assert.Throws<InvalidDataException>(() =>
+            InstitutionalRepositoryStateAuthority.Resolve(root, new string('e', 40),
+                new FakeRepositoryProbe(RawRepository(root))));
+        Assert.Equal("RPT2_REPOSITORY_COMMIT_MISMATCH", error.Message);
+    }
+
+    [Fact]
+    public void RepositoryAuthorityRejectsDirtyWorktree()
+    {
+        var root = Path.GetFullPath("rpt2-repository-fixture");
+        var error = Assert.Throws<InvalidDataException>(() =>
+            InstitutionalRepositoryStateAuthority.Resolve(root, new string('c', 40),
+                new FakeRepositoryProbe(RawRepository(root) with
+                {
+                    WorktreeClean = false
+                })));
+        Assert.Equal("RPT2_REPOSITORY_WORKTREE_NOT_CLEAN", error.Message);
+    }
+
+    [Fact]
+    public void RepositoryAuthorityRejectsRoadmapOutsideHead()
+    {
+        var root = Path.GetFullPath("rpt2-repository-fixture");
+        var error = Assert.Throws<InvalidDataException>(() =>
+            InstitutionalRepositoryStateAuthority.Resolve(root, new string('c', 40),
+                new FakeRepositoryProbe(RawRepository(root) with
+                {
+                    WorktreeRoadmapBlobId = new string('e', 40)
+                })));
+        Assert.Equal("RPT2_ROADMAP_NOT_AT_HEAD", error.Message);
+    }
+
+    [Fact]
+    public void RepositoryAuthorityRejectsNonGitRoot()
+    {
+        var root = Path.GetFullPath("rpt2-repository-fixture");
+        var error = Assert.Throws<InvalidDataException>(() =>
+            InstitutionalRepositoryStateAuthority.Resolve(root, new string('c', 40),
+                new ThrowingRepositoryProbe()));
+        Assert.Equal("RPT2_REPOSITORY_ROOT_NOT_GIT", error.Message);
+    }
+
+    [Fact]
+    public void InstitutionalModeAcceptsExplicitAsOf()
+    {
+        Assert.Equal(AsOf, ReportingArguments.Parse(
+            ReportingArgs(AsOf.ToString("O"))).AsOfUtc);
+    }
+
+    [Fact]
+    public void InstitutionalModeRejectsMissingExplicitAsOf()
+    {
+        var error = Assert.Throws<InvalidDataException>(() =>
+            ReportingArguments.Parse(ReportingArgs(null)));
+        Assert.Equal("RPT2_EXPLICIT_AS_OF_REQUIRED", error.Message);
+    }
+
+    [Fact]
+    public void IdenticalExplicitAsOfArgumentsAreDeterministic()
+    {
+        var first = ReportingArguments.Parse(ReportingArgs(AsOf.ToString("O")));
+        var second = ReportingArguments.Parse(ReportingArgs(AsOf.ToString("O")));
+        Assert.Equal(first.AsOfUtc, second.AsOfUtc);
+    }
+
+    [Fact]
+    public void PositionLineAndCoverageChangesAlterSourceSnapshotSha()
+    {
+        var projection = Projection(1, "slot-snapshot", InstitutionalPositionAuthorityPolicy.CanonicalAuthorityCode);
+        var lines = PositionLines([projection]).ToArray();
+        var baseline = Build([projection], Mappings(), positionLines: lines);
+        var changedLines = lines.Skip(1).ToArray();
+        var changed = Build([projection], Mappings(), positionLines: changedLines);
+        Assert.NotEqual(baseline.SourceSnapshotSha256, changed.SourceSnapshotSha256);
+        Assert.NotEqual(
+            baseline.SourceSnapshot.PositionSnapshotCoverage[0].CurrentPositionAuthorityDecision,
+            changed.SourceSnapshot.PositionSnapshotCoverage[0].CurrentPositionAuthorityDecision);
+    }
+
+    [Fact]
+    public void ProjectionIntegrityStatusAndRepositoryHeadAlterSourceSnapshotSha()
+    {
+        var baseline = Build().SourceSnapshot;
+        var integrity = baseline.ProjectionIntegrity.ToArray();
+        integrity[0] = integrity[0] with { Status = PmsShadowEconomicProjectionIntegrityVerifier.Invalid };
+        var changedIntegrity = baseline with { ProjectionIntegrity = integrity };
+        Assert.NotEqual(InstitutionalSourceSnapshotContentAddress.ComputeSha256(baseline),
+            InstitutionalSourceSnapshotContentAddress.ComputeSha256(changedIntegrity));
+
+        var changedRepository = baseline with
+        {
+            RepositoryAuthority = baseline.RepositoryAuthority with
+            {
+                ActualHead = new string('e', 40),
+                EvidenceSha256 = new string('f', 64)
+            }
+        };
+        Assert.NotEqual(InstitutionalSourceSnapshotContentAddress.ComputeSha256(baseline),
+            InstitutionalSourceSnapshotContentAddress.ComputeSha256(changedRepository));
+    }
+
     public static IEnumerable<object[]> BlockedMetricCodes() =>
         InstitutionalMetricCatalog.BlockedMetrics().Select(value => new object[] { value.Code });
 
@@ -831,7 +1187,8 @@ public sealed class InstitutionalMetricFoundationTests
     private static InstitutionalMetricReportSet Build(
         IReadOnlyList<PmsShadowIntradayEconomicProjection> projections,
         IEnumerable<PmsShadowSecurityMappingRow> mappings,
-        DateTimeOffset? asOf = null)
+        DateTimeOffset? asOf = null,
+        IReadOnlyList<ReportingPositionSnapshotLineFact>? positionLines = null)
     {
         var snapshot = new OperationalReportingSnapshot(
             asOf ?? AsOf,
@@ -841,7 +1198,9 @@ public sealed class InstitutionalMetricFoundationTests
         {
             SlotManifestSha256BySlotId = SlotManifests(projections.ToArray()),
             EconomicProjectionSources = projections,
-            SecurityMappingSources = mappings.ToArray()
+            SecurityMappingSources = mappings.ToArray(),
+            PositionSnapshotLineSources = positionLines ?? PositionLines(projections),
+            RepositoryAuthority = RepositoryAuthority()
         };
         return InstitutionalMetricProjector.Build(snapshot, RoadmapSha);
     }
@@ -854,7 +1213,9 @@ public sealed class InstitutionalMetricFoundationTests
         {
             SlotManifestSha256BySlotId = SlotManifests(projections.ToArray()),
             EconomicProjectionSources = projections,
-            SecurityMappingSources = Mappings()
+            SecurityMappingSources = Mappings(),
+            PositionSnapshotLineSources = PositionLines(projections),
+            RepositoryAuthority = RepositoryAuthority()
         };
 
     private static ReportingSlotFact Slot(
@@ -903,10 +1264,11 @@ public sealed class InstitutionalMetricFoundationTests
                     modelId, strategy, instrumentId, $"PMS-{index:D3}", notional,
                     notional / 10m, notional / 10m, 1m, targetClose, AsOf.AddMinutes(-5),
                     Sha, Sha, new string('b', 40)));
+                var current = index == 0 ? 0m : (index + 1m) / 20m;
                 drifts.Add(new(Id(revision * 20000 + ordinal), Id(5000 + strategyIndex),
                     modelId, strategy, instrumentId, $"PMS-{index:D3}",
-                    notional / 20m, notional / 10m, notional / 20m, AsOf.AddMinutes(-5),
-                    Sha, Sha));
+                    current, notional / 10m, notional / 10m - current,
+                    AsOf.AddMinutes(-5), Sha, Sha));
                 ordinal++;
             }
         }
@@ -919,14 +1281,14 @@ public sealed class InstitutionalMetricFoundationTests
         }).ToArray();
         var completed = AsOf.AddMinutes(revision == 1 ? -19 : -4);
         var slotEnd = AsOf.AddMinutes(revision == 1 ? -20 : -5);
-        return new(Id(3000 + revision), revision, slotId,
+        return Rehash(new(Id(3000 + revision), revision, slotId,
             slotEnd.AddMinutes(-15), slotEnd, Sha, Id(6000 + revision),
             Sha, IngestionId, "session-rpt2", Id(7000), Id(7001),
             AsOf.AddMinutes(-30), positionAuthority,
             selected.Select(value => value.ModelRunId).ToArray(),
             selected.Select(value => value.QubesInputSnapshotId).ToArray(), selected, market,
             targets, drifts, Sha, Sha, Sha, Sha, revision == 1 ? null : Sha,
-            "COMPLETED", "COMPLETED", true, true, completed);
+            "COMPLETED", "COMPLETED", true, true, completed));
     }
 
     private sealed record TargetSpec(string Strategy, string Symbol, decimal Notional);
@@ -1004,19 +1366,69 @@ public sealed class InstitutionalMetricFoundationTests
             };
         }).ToArray();
         var slotEnd = AsOf.AddMinutes(-20 + 15 * (ingestionOrdinal - 1));
-        var projection = template with
+        var projection = Rehash(template with
         {
-            ProjectionRevisionId = Id(800000 + ingestionOrdinal * 100 + revision),
             SlotStartUtc = slotEnd.AddMinutes(-15),
             SlotEndUtc = slotEnd,
             CompletedAtUtc = slotEnd.AddMinutes(1),
             SourceIngestionId = ingestionId,
             SourceSessionId = $"session-{ingestionOrdinal}",
+            AccountSnapshotId = Id(810000 + ingestionOrdinal),
+            PositionSnapshotId = Id(820000 + ingestionOrdinal),
             TargetPositions = targets,
             PositionOnlyDrifts = drifts
-        };
+        });
         return new(projection, mappings);
     }
+
+    private static PmsShadowIntradayEconomicProjection Rehash(
+        PmsShadowIntradayEconomicProjection projection)
+    {
+        var integrity = PmsShadowEconomicProjectionIntegrityVerifier.Verify(projection);
+        return projection with
+        {
+            ProjectionRevisionId = integrity.RecalculatedProjectionRevisionId,
+            MarketDataSnapshotSha256 = integrity.RecalculatedMarketDataSnapshotSha256,
+            TargetPositionsSha256 = integrity.RecalculatedTargetPositionsSha256,
+            DriftsSha256 = integrity.RecalculatedDriftsSha256,
+            InputSha256 = integrity.RecalculatedInputSha256,
+            ManifestSha256 = integrity.RecalculatedManifestSha256
+        };
+    }
+
+    private static IReadOnlyList<ReportingPositionSnapshotLineFact> PositionLines(
+        IReadOnlyList<PmsShadowIntradayEconomicProjection> projections) =>
+        projections.GroupBy(value => value.PositionSnapshotId)
+            .SelectMany(group =>
+            {
+                var revision = group.First();
+                return group.SelectMany(value => value.PositionOnlyDrifts)
+                    .GroupBy(value => value.InstrumentId)
+                    .Select(instrument =>
+                    {
+                        var drift = instrument.First();
+                        var rowIdentity =
+                            $"{revision.PositionSnapshotId:D}:{drift.InstrumentId:D}";
+                        return new ReportingPositionSnapshotLineFact(
+                            revision.PositionSnapshotId,
+                            drift.InstrumentId,
+                            drift.SecurityId,
+                            drift.SecurityId,
+                            drift.CurrentBaseQuantity,
+                            revision.SourceIngestionId,
+                            rowIdentity,
+                            revision.PositionSnapshotAsOfUtc,
+                            Sha);
+                    });
+            })
+            .OrderBy(value => value.PositionSnapshotId)
+            .ThenBy(value => value.InstrumentId)
+            .ToArray();
+
+    private static InstitutionalRepositoryStateAuthorityResult RepositoryAuthority() =>
+        new(InstitutionalRepositoryStateAuthority.ContractVersion, Sha,
+            new string('c', 40), true, true, true, new string('d', 40),
+            new string('c', 40), Sha);
 
     private static IReadOnlyList<PmsShadowSecurityMappingRow> Mappings() =>
         Enumerable.Range(0, 78).Select(index => new PmsShadowSecurityMappingRow(
@@ -1037,6 +1449,47 @@ public sealed class InstitutionalMetricFoundationTests
             0 => 10m, 1 => 0m, 2 => 20m, 3 => 10m, 4 => -10m,
             _ => ordinal % 2 == 0 ? 110m + ordinal : -45m - ordinal
         };
+    }
+
+    private static InstitutionalRepositoryRawState RawRepository(string root) =>
+        new(root, new string('c', 40), true, true, true,
+            new string('d', 40), new string('d', 40), null);
+
+    private sealed class FakeRepositoryProbe(InstitutionalRepositoryRawState state)
+        : IInstitutionalRepositoryStateProbe
+    {
+        public InstitutionalRepositoryRawState Read(string repositoryRoot,
+            string roadmapRelativePath) => state;
+    }
+
+    private sealed class ThrowingRepositoryProbe : IInstitutionalRepositoryStateProbe
+    {
+        public InstitutionalRepositoryRawState Read(string repositoryRoot,
+            string roadmapRelativePath) =>
+            throw new InvalidDataException("RPT2_REPOSITORY_ROOT_NOT_GIT");
+    }
+
+    private static string[] ReportingArgs(string? asOf)
+    {
+        var values = new List<string>
+        {
+            "report-institutional-metric-foundation", "--no-order",
+            "--expected-environment", "TEST",
+            "--expected-database", "qq_pms_shadow_arch7b_test",
+            "--expected-schema", "pms_shadow",
+            "--expected-postgresql-major", "18",
+            "--target-profile", "ARCH7B_RDS_TEST",
+            "--expected-target-fingerprint", Sha,
+            "--output-directory", "rpt2-output",
+            "--repository-commit", new string('c', 40),
+            "--repository-root", "."
+        };
+        if (asOf is not null)
+        {
+            values.Add("--as-of-utc");
+            values.Add(asOf);
+        }
+        return values.ToArray();
     }
 
     private static ReportingDatabaseIdentity Database() => new(

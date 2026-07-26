@@ -17,11 +17,11 @@ public static class InstitutionalMetricContract
     public const string NetConcentrationFormula = "target_net_concentration_v2";
     public const string TurnoverFormula = "target_turnover_canonical_symbol_v3";
     public const string DriftFormula = "position_only_drift_pair_grain_v2";
-    public const string SourceSnapshotVersion = "institutional_source_snapshot_v2";
+    public const string SourceSnapshotVersion = "institutional_source_snapshot_v3";
     public const string SupersededBundleSha256 =
-        "24f273ff4de29ccd8ccdf815bfa029181353fe110616d64538a9f0ba1244697a";
+        "d9fc0d51f82877b1163becc999569e80f6d4311962dee2e6fc36c470cc1d04d7";
     public const string SupersessionReason =
-        "RPT2_CURRENTNESS_LINEAGE_AND_AUDIT_FACT_AUTHORITY_CORRECTION_REQUIRED";
+        "RPT2_POSITION_COVERAGE_PROJECTION_INTEGRITY_AND_REPOSITORY_AUTHORITY_REQUIRED";
     public const string EconomicTimelineContractVersion =
         "institutional_economic_timeline_slot_end_v1";
     public const int ConcentrationTopN = 3;
@@ -347,6 +347,9 @@ public sealed record InstitutionalSourceSnapshot(
     ReportingDatabaseIdentity DatabaseIdentity,
     DateTimeOffset AsOfUtc,
     IReadOnlyList<InstitutionalSourceRevision> AuthoritativeRevisions,
+    IReadOnlyList<InstitutionalPositionSnapshotCoverageDecision> PositionSnapshotCoverage,
+    IReadOnlyList<PmsShadowEconomicProjectionIntegrityResult> ProjectionIntegrity,
+    InstitutionalRepositoryStateAuthorityResult RepositoryAuthority,
     string MappingSetSha256,
     InstitutionalMetricCurrentness Currentness,
     IReadOnlyList<InstitutionalSourceBreakFact> ActiveOrUnknownBreakFacts,

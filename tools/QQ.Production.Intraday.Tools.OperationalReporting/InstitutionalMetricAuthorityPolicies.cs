@@ -1,4 +1,5 @@
 using System.Security.Cryptography;
+using QQ.Production.Intraday.Application;
 using QQ.Production.Intraday.Infrastructure.PostgreSql;
 
 namespace QQ.Production.Intraday.Tools.OperationalReporting;
@@ -112,34 +113,171 @@ public sealed record InstitutionalPositionAuthorityDecision(
     string Reason,
     string ContractVersion);
 
+public sealed record InstitutionalPositionSnapshotCoverageDecision(
+    Guid EconomicRevisionId,
+    Guid PositionSnapshotId,
+    string ContractVersion,
+    string CoverageMode,
+    int RequiredInstrumentCount,
+    int CoveredInstrumentCount,
+    int MissingCount,
+    int DuplicateCount,
+    int ExtraCount,
+    int MismatchCount,
+    IReadOnlyList<Guid> MissingInstrumentIds,
+    IReadOnlyList<Guid> DuplicateInstrumentIds,
+    IReadOnlyList<Guid> MismatchInstrumentIds,
+    string PositionSnapshotLineSetSha256,
+    string CurrentPositionAuthorityDecision,
+    string AvailabilityStatus,
+    string Reason,
+    string EvidenceSha256);
+
+public static class InstitutionalPositionSnapshotCoveragePolicy
+{
+    public const string ContractVersion = "institutional_position_snapshot_coverage_v1";
+    public const string FullUniverseExplicitZero = "FULL_UNIVERSE_EXPLICIT_ZERO";
+    public const string SparseNonzero = "SPARSE_NONZERO";
+    public const string Unknown = "UNKNOWN";
+
+    public static InstitutionalPositionSnapshotCoverageDecision Evaluate(
+        PmsShadowIntradayEconomicProjection revision,
+        IEnumerable<ReportingPositionSnapshotLineFact> source)
+    {
+        ArgumentNullException.ThrowIfNull(revision);
+        ArgumentNullException.ThrowIfNull(source);
+        var required = revision.TargetPositions.Select(value => value.InstrumentId)
+            .Concat(revision.PositionOnlyDrifts.Select(value => value.InstrumentId))
+            .Distinct().Order().ToArray();
+        var lines = source.Where(value =>
+                value.PositionSnapshotId == revision.PositionSnapshotId)
+            .OrderBy(value => value.InstrumentId)
+            .ThenBy(value => value.RowIdentity, StringComparer.Ordinal)
+            .ToArray();
+        var byInstrument = lines.GroupBy(value => value.InstrumentId)
+            .ToDictionary(group => group.Key, group => group.ToArray());
+        var missing = required.Where(value => !byInstrument.ContainsKey(value)).ToArray();
+        var duplicates = byInstrument.Where(value => value.Value.Length != 1)
+            .Select(value => value.Key).Order().ToArray();
+        var requiredSet = required.ToHashSet();
+        var extras = byInstrument.Keys.Count(value => !requiredSet.Contains(value));
+        var mismatch = revision.PositionOnlyDrifts
+            .GroupBy(value => value.InstrumentId)
+            .Where(group => byInstrument.TryGetValue(group.Key, out var matches) &&
+                            matches.Length == 1 &&
+                            group.Any(value =>
+                                value.CurrentBaseQuantity != matches[0].CurrentBaseQuantity))
+            .Select(group => group.Key).Order().ToArray();
+        var metadataComplete = lines.All(value =>
+            value.SourceIngestionId == revision.SourceIngestionId &&
+            value.SourceAsOfUtc.Offset == TimeSpan.Zero &&
+            value.SourceAsOfUtc == revision.PositionSnapshotAsOfUtc &&
+            value.SourceAsOfUtc <= revision.SlotEndUtc);
+        var lineSetSha = Arch5bHashing.HashCanonical(lines.Select(value => new
+        {
+            value.PositionSnapshotId,
+            value.InstrumentId,
+            value.SecurityId,
+            value.Symbol,
+            value.CurrentBaseQuantity,
+            value.SourceIngestionId,
+            value.RowIdentity,
+            value.SourceAsOfUtc,
+            value.EvidenceSha256
+        }).ToArray());
+        var covered = required.Length - missing.Length;
+        var complete = lines.Length > 0 &&
+                       missing.Length == 0 &&
+                       duplicates.Length == 0 &&
+                       mismatch.Length == 0 &&
+                       metadataComplete;
+        var coverageMode = complete
+            ? FullUniverseExplicitZero
+            : lines.Length > 0 && missing.Length > 0 &&
+              lines.All(value => value.CurrentBaseQuantity != 0m)
+                ? SparseNonzero
+                : Unknown;
+        var authority = lines.Length == 0
+            ? ReportingAuthority.Absent
+            : complete &&
+              string.Equals(revision.PositionAuthority,
+                  InstitutionalPositionAuthorityPolicy.CanonicalAuthorityCode,
+                  StringComparison.Ordinal) &&
+              revision.AccountSnapshotId != Guid.Empty &&
+              revision.PositionSnapshotId != Guid.Empty
+                ? ReportingAuthority.Proven
+                : ReportingAuthority.Unknown;
+        var availability = authority == ReportingAuthority.Proven
+            ? MetricAvailabilityStatus.SourceProven
+            : MetricAvailabilityStatus.BlockedAuthorityUnproven;
+        var reason = authority switch
+        {
+            ReportingAuthority.Proven =>
+                "Every required instrument has one explicit, matching position line.",
+            ReportingAuthority.Absent =>
+                "No position snapshot line exists for the authoritative revision.",
+            _ when coverageMode == SparseNonzero =>
+                "The persisted position snapshot is sparse; missing instruments are not zero.",
+            _ => "Position snapshot coverage or lineage is not proven."
+        };
+        var evidenceSha = Arch5bHashing.HashCanonical(new
+        {
+            ContractVersion,
+            revision.ProjectionRevisionId,
+            revision.PositionSnapshotId,
+            CoverageMode = coverageMode,
+            RequiredInstrumentCount = required.Length,
+            CoveredInstrumentCount = covered,
+            MissingInstrumentIds = missing,
+            DuplicateInstrumentIds = duplicates,
+            ExtraCount = extras,
+            MismatchInstrumentIds = mismatch,
+            PositionSnapshotLineSetSha256 = lineSetSha,
+            CurrentPositionAuthorityDecision = authority,
+            AvailabilityStatus = availability,
+            MetadataComplete = metadataComplete
+        });
+        return new(
+            revision.ProjectionRevisionId,
+            revision.PositionSnapshotId,
+            ContractVersion,
+            coverageMode,
+            required.Length,
+            covered,
+            missing.Length,
+            duplicates.Length,
+            extras,
+            mismatch.Length,
+            missing,
+            duplicates,
+            mismatch,
+            lineSetSha,
+            authority,
+            availability,
+            reason,
+            evidenceSha);
+    }
+}
+
 public static class InstitutionalPositionAuthorityPolicy
 {
-    public const string ContractVersion = "institutional_position_authority_v1";
+    public const string ContractVersion = "institutional_position_authority_v2";
     public const string CanonicalAuthorityCode = "BROKER_PORTAL_EOD";
 
     public static InstitutionalPositionAuthorityDecision Evaluate(
-        PmsShadowIntradayEconomicProjection revision)
+        PmsShadowIntradayEconomicProjection revision,
+        InstitutionalPositionSnapshotCoverageDecision coverage)
     {
         ArgumentNullException.ThrowIfNull(revision);
-        if (string.IsNullOrWhiteSpace(revision.PositionAuthority))
-            return Decision(ReportingAuthority.Absent, "Position authority code is absent.");
-        if (!string.Equals(revision.PositionAuthority, CanonicalAuthorityCode,
-                StringComparison.Ordinal))
+        ArgumentNullException.ThrowIfNull(coverage);
+        if (coverage.EconomicRevisionId != revision.ProjectionRevisionId ||
+            coverage.PositionSnapshotId != revision.PositionSnapshotId)
             return Decision(ReportingAuthority.Unknown,
-                "Position authority code is not recognized by the versioned policy.");
-        if (revision.AccountSnapshotId == Guid.Empty ||
-            revision.PositionSnapshotId == Guid.Empty ||
-            revision.SourceIngestionId == Guid.Empty ||
-            revision.PositionSnapshotAsOfUtc.Offset != TimeSpan.Zero ||
-            revision.PositionSnapshotAsOfUtc > revision.SlotEndUtc ||
-            revision.PositionOnlyDrifts.Count == 0 ||
-            revision.PositionOnlyDrifts.Any(value =>
-                !InstitutionalAuthoritativeRevisionResolver.IsSha(value.InputSha256) ||
-                !InstitutionalAuthoritativeRevisionResolver.IsSha(value.OutputSha256)))
-            return Decision(ReportingAuthority.Unknown,
-                "Position snapshot identity or current-position lineage is incomplete.");
-        return new(ReportingAuthority.Proven, MetricAvailabilityStatus.SourceProven,
-            "The canonical PMS snapshot identity and current-position lineage are complete.",
+                "Position coverage evidence is bound to a different revision.");
+        return new(
+            coverage.CurrentPositionAuthorityDecision,
+            coverage.AvailabilityStatus,
+            coverage.Reason,
             ContractVersion);
     }
 

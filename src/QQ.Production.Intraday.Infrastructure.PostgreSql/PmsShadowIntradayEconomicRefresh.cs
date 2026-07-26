@@ -138,6 +138,10 @@ public sealed class PmsShadowIntradayEconomicProjectionBuilder
                 nameof(supersedesSlotManifestSha256));
         if (source.Models.Count != 4 || source.Models.Sum(value => value.Weights.Count) != 288)
             throw new InvalidDataException("SOURCE_MODEL_WEIGHT_SET_INCOMPLETE");
+        var requiredInstrumentIds = source.Models.SelectMany(value => value.Weights)
+            .Select(value => value.InstrumentId).Distinct().Order().ToArray();
+        if (requiredInstrumentIds.Any(value => !source.CurrentPositions.ContainsKey(value)))
+            throw new InvalidDataException("SOURCE_POSITION_SNAPSHOT_COVERAGE_INCOMPLETE");
         var mappings = source.Mappings.ToDictionary(value => value.InstrumentId);
         if (source.Models.SelectMany(value => value.Weights).Any(value => !mappings.ContainsKey(value.InstrumentId)))
             throw new InvalidDataException("SOURCE_SECURITY_MAPPING_INCOMPLETE");
@@ -207,7 +211,7 @@ public sealed class PmsShadowIntradayEconomicProjectionBuilder
                     weight.InstrumentId, weight.SecurityId, calculated.TargetNotionalUsd,
                     calculated.TargetBaseQuantity, calculated.TargetVenueQuantity, observation.DecisionPrice,
                     model.TargetCloseUtc, capture.SlotEndUtc, inputSha, targetOutputSha, model.CoreCommitId));
-                var current = source.CurrentPositions.GetValueOrDefault(weight.InstrumentId);
+                var current = source.CurrentPositions[weight.InstrumentId];
                 var delta = calculated.TargetBaseQuantity - current;
                 var driftId = Arch5bHashing.GuidFromSha256($"arch6f:drift:{revisionId:D}:{model.ModelRunId:D}:{weight.InstrumentId:D}");
                 var driftInput = Arch5bHashing.HashCanonical(new { targetOutputSha, source.PositionSnapshotId,
