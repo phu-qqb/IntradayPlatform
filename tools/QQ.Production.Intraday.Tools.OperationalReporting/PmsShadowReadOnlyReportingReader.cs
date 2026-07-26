@@ -103,7 +103,11 @@ public sealed class PmsShadowReadOnlyReportingReader(
                 reportingFx.Contributions,
                 reportingArch7a,
                 reportingArch7b,
-                observedFacts);
+                observedFacts)
+            {
+                EconomicProjectionSources = revisions,
+                SecurityMappingSources = mappings
+            };
         }
         catch
         {

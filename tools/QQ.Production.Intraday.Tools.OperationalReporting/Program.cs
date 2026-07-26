@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Security.Cryptography;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Npgsql;
@@ -33,27 +34,61 @@ Require(snapshot.Database.Database == arguments.ExpectedDatabase,
     "REPORTING_TARGET_IDENTITY_MISMATCH");
 Require(snapshot.Database.PostgreSqlMajor == arguments.ExpectedPostgreSqlMajor,
     "REPORTING_POSTGRESQL_MAJOR_MISMATCH");
-var report = OperationalReportProjector.Build(snapshot);
-var bundle = DeterministicReportingBundleWriter.Write(
-    report, arguments.OutputDirectory, arguments.Overwrite);
-Console.WriteLine(JsonSerializer.Serialize(new
+
+if (arguments.Mode == "report-operational-state")
 {
-    result = "ANUBIS_INFX_READONLY_REPORTING_BUNDLE_CREATED",
-    target = target.ObservableIdentity,
-    transaction_read_only = snapshot.Database.TransactionReadOnly,
-    snapshot.Database.TableCount,
-    snapshot.Database.RowCount,
-    migration_count = snapshot.Database.AppliedMigrations.Count,
-    active_break_count = report.Breaks.Count(value =>
-        value.Status is OperationalBreakStatus.Active or OperationalBreakStatus.Unknown),
-    bundle.OutputDirectory,
-    bundle.BundleSha256,
-    no_order = true
-}, new JsonSerializerOptions
+    var report = OperationalReportProjector.Build(snapshot);
+    var bundle = DeterministicReportingBundleWriter.Write(
+        report, arguments.OutputDirectory, arguments.Overwrite);
+    WriteResult(new
+    {
+        result = "ANUBIS_INFX_READONLY_REPORTING_BUNDLE_CREATED",
+        target = target.ObservableIdentity,
+        transaction_read_only = snapshot.Database.TransactionReadOnly,
+        snapshot.Database.TableCount,
+        snapshot.Database.RowCount,
+        migration_count = snapshot.Database.AppliedMigrations.Count,
+        active_break_count = report.Breaks.Count(value =>
+            value.Status is OperationalBreakStatus.Active or OperationalBreakStatus.Unknown),
+        bundle.OutputDirectory,
+        bundle.BundleSha256,
+        no_order = true
+    });
+}
+else
 {
-    PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower,
-    WriteIndented = true
-}));
+    var roadmapPath = Path.GetFullPath(arguments.RoadmapPath);
+    Require(Path.GetFileName(roadmapPath) ==
+            "hedge-fund-institutional-reporting-roadmap-v1.md" &&
+            File.Exists(roadmapPath), "RPT2_ROADMAP_MANIFEST_MISSING");
+    var roadmapSha = Convert.ToHexStringLower(SHA256.HashData(File.ReadAllBytes(roadmapPath)));
+    var report = InstitutionalMetricProjector.Build(snapshot, roadmapSha);
+    var bundle = DeterministicInstitutionalMetricBundleWriter.Write(
+        report, arguments.OutputDirectory, arguments.Overwrite);
+    WriteResult(new
+    {
+        result = "RPT2_INSTITUTIONAL_METRIC_FOUNDATION_BUNDLE_CREATED",
+        target = target.ObservableIdentity,
+        transaction_read_only = snapshot.Database.TransactionReadOnly,
+        snapshot.Database.TableCount,
+        snapshot.Database.RowCount,
+        migration_count = snapshot.Database.AppliedMigrations.Count,
+        metric_count = report.Catalog.Count,
+        blocked_metric_count = report.Availability.Count(value =>
+            value.AvailabilityStatus == MetricAvailabilityStatus.BlockedMissingSource),
+        bundle.OutputDirectory,
+        bundle.BundleSha256,
+        roadmap_sha256 = roadmapSha,
+        no_order = true
+    });
+}
+
+static void WriteResult(object result) => Console.WriteLine(JsonSerializer.Serialize(result,
+    new JsonSerializerOptions
+    {
+        PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower,
+        WriteIndented = true
+    }));
 
 static void Require(bool condition, string code)
 {
@@ -64,12 +99,15 @@ internal sealed class ReportingArguments
 {
     private readonly IReadOnlyDictionary<string, string> values;
 
-    private ReportingArguments(IReadOnlyDictionary<string, string> values, bool overwrite)
+    private ReportingArguments(IReadOnlyDictionary<string, string> values, bool overwrite,
+        string mode)
     {
         this.values = values;
         Overwrite = overwrite;
+        Mode = mode;
     }
 
+    public string Mode { get; }
     public string ExpectedEnvironment => Required("--expected-environment");
     public string ExpectedDatabase => Required("--expected-database");
     public string ExpectedSchema => Required("--expected-schema");
@@ -78,6 +116,7 @@ internal sealed class ReportingArguments
     public string ExpectedTargetFingerprint => Required("--expected-target-fingerprint");
     public string OutputDirectory => Required("--output-directory");
     public string RepositoryCommit => Required("--repository-commit");
+    public string RoadmapPath => Required("--roadmap-path");
     public bool Overwrite { get; }
     public int IncludeHistory => values.TryGetValue("--include-history", out var value)
         ? int.Parse(value, CultureInfo.InvariantCulture)
@@ -89,13 +128,23 @@ internal sealed class ReportingArguments
 
     public static ReportingArguments Parse(string[] args)
     {
-        Require(args.Contains("report-operational-state", StringComparer.Ordinal),
-            "REPORTING_MODE_REQUIRED");
+        var modes = new[]
+            {
+                "report-operational-state",
+                "report-institutional-metric-foundation"
+            }
+            .Where(mode => args.Contains(mode, StringComparer.Ordinal)).ToArray();
+        Require(modes.Length == 1, "REPORTING_MODE_REQUIRED");
         Require(args.Contains("--no-order", StringComparer.Ordinal),
             "REPORTING_NO_ORDER_REQUIRED");
         var overwrite = args.Contains("--overwrite", StringComparer.Ordinal);
         var flags = new HashSet<string>(StringComparer.Ordinal)
-            { "report-operational-state", "--no-order", "--overwrite" };
+            {
+                "report-operational-state",
+                "report-institutional-metric-foundation",
+                "--no-order",
+                "--overwrite"
+            };
         var values = new Dictionary<string, string>(StringComparer.Ordinal);
         for (var index = 0; index < args.Length; index++)
         {
@@ -105,7 +154,7 @@ internal sealed class ReportingArguments
                 "REPORTING_ARGUMENTS_MUST_BE_NAME_VALUE_PAIRS");
             values.Add(args[index], args[++index]);
         }
-        var parsed = new ReportingArguments(values, overwrite);
+        var parsed = new ReportingArguments(values, overwrite, modes[0]);
         Require(parsed.ExpectedEnvironment == OperationalReportingContract.TestEnvironment,
             "REPORTING_ENVIRONMENT_NOT_TEST");
         Require(parsed.ExpectedSchema == PmsShadowStateContract.SchemaName,
@@ -122,6 +171,10 @@ internal sealed class ReportingArguments
         Require(parsed.IncludeHistory is >= 1 and <= 1000,
             "REPORTING_INCLUDE_HISTORY_OUT_OF_RANGE");
         Require(parsed.AsOfUtc.Offset == TimeSpan.Zero, "REPORTING_AS_OF_NOT_UTC");
+        if (parsed.Mode == "report-institutional-metric-foundation")
+            Require(Path.GetFileName(parsed.RoadmapPath) ==
+                    "hedge-fund-institutional-reporting-roadmap-v1.md",
+                "RPT2_ROADMAP_MANIFEST_PATH_INVALID");
         return parsed;
     }
 

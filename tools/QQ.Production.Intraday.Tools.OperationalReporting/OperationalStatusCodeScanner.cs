@@ -49,7 +49,12 @@ public static partial class OperationalStatusCodeScanner
         "REPORTING_ID_LIST_JSON_INVALID",
         "REPORTING_REPOSITORY_COMMIT_INVALID",
         "REPORTING_INCLUDE_HISTORY_OUT_OF_RANGE",
-        "REPORTING_TRANSACTION_NOT_READ_ONLY"
+        "REPORTING_TRANSACTION_NOT_READ_ONLY",
+        "BLOCKED_MISSING_SOURCE",
+        "BLOCKED_AUTHORITY_UNPROVEN",
+        "RPT2_SECURITY_MAPPING_MISSING",
+        "PROVEN_WITH_EXPLICIT_AUTHORITY_GAPS",
+        "RPT2_ROADMAP_MANIFEST_MISSING"
     ], StringComparer.Ordinal);
 
     public static IReadOnlyList<OperationalSourceCodeInventoryItem> ScanAuthoritativeSource(

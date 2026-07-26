@@ -311,7 +311,11 @@ public sealed record OperationalReportingSnapshot(
     IReadOnlyList<ReportingFxStrategyContributionFact> FxStrategyContributions,
     IReadOnlyList<ReportingArch7aFact> Arch7a,
     IReadOnlyList<ReportingArch7bFact> Arch7b,
-    IReadOnlyList<ObservedOperationalCodeFact> ObservedCodeFacts);
+    IReadOnlyList<ObservedOperationalCodeFact> ObservedCodeFacts)
+{
+    public IReadOnlyList<PmsShadowIntradayEconomicProjection> EconomicProjectionSources { get; init; } = [];
+    public IReadOnlyList<PmsShadowSecurityMappingRow> SecurityMappingSources { get; init; } = [];
+}
 
 public sealed record OperationalSummary(
     DateTimeOffset GeneratedAtUtc,
