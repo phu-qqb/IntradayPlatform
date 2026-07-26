@@ -55,9 +55,11 @@ public sealed class InstitutionalReportingRoadmapContractTests
         Assert.Contains(
             "Status | `AUTHORITATIVE_REPORTING_ROADMAP`",
             text, StringComparison.Ordinal);
-        Assert.Contains(
-            "Next action: `RPT2_METRIC_AUTHORITY_AND_AVAILABILITY_FOUNDATION`",
-            text, StringComparison.Ordinal);
+        Require(text,
+            "Metric currentness reuses the RPT1 operational calendar",
+            "The economic timeline is ordered by `SlotEndUtc`",
+            "The versioned position authority code is `BROKER_PORTAL_EOD`",
+            "Next action: `RPT2_CURRENTNESS_LINEAGE_AND_AUDIT_FACT_AUTHORITY_FOUNDATION`");
     }
 
     [Fact]

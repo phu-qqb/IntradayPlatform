@@ -1,5 +1,4 @@
 using System.Globalization;
-using System.Security.Cryptography;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Npgsql;
@@ -57,12 +56,9 @@ if (arguments.Mode == "report-operational-state")
 }
 else
 {
-    var roadmapPath = Path.GetFullPath(arguments.RoadmapPath);
-    Require(Path.GetFileName(roadmapPath) ==
-            "hedge-fund-institutional-reporting-roadmap-v1.md" &&
-            File.Exists(roadmapPath), "RPT2_ROADMAP_MANIFEST_MISSING");
-    var roadmapSha = Convert.ToHexStringLower(SHA256.HashData(File.ReadAllBytes(roadmapPath)));
-    var report = InstitutionalMetricProjector.Build(snapshot, roadmapSha);
+    var roadmap = InstitutionalRoadmapAuthority.Resolve(
+        arguments.RepositoryRoot, arguments.RoadmapPath);
+    var report = InstitutionalMetricProjector.Build(snapshot, roadmap.Sha256);
     var bundle = DeterministicInstitutionalMetricBundleWriter.Write(
         report, arguments.OutputDirectory, arguments.Overwrite);
     WriteResult(new
@@ -78,7 +74,8 @@ else
             value.AvailabilityStatus == MetricAvailabilityStatus.BlockedMissingSource),
         bundle.OutputDirectory,
         bundle.BundleSha256,
-        roadmap_sha256 = roadmapSha,
+        roadmap_sha256 = roadmap.Sha256,
+        roadmap_authority_contract = roadmap.ContractVersion,
         source_snapshot_sha256 = bundle.SourceSnapshotSha256,
         superseded_bundle_sha256 = InstitutionalMetricContract.SupersededBundleSha256,
         no_order = true
@@ -118,7 +115,8 @@ internal sealed class ReportingArguments
     public string ExpectedTargetFingerprint => Required("--expected-target-fingerprint");
     public string OutputDirectory => Required("--output-directory");
     public string RepositoryCommit => Required("--repository-commit");
-    public string RoadmapPath => Required("--roadmap-path");
+    public string RepositoryRoot => Required("--repository-root");
+    public string? RoadmapPath => values.GetValueOrDefault("--roadmap-path");
     public bool Overwrite { get; }
     public int IncludeHistory => values.TryGetValue("--include-history", out var value)
         ? int.Parse(value, CultureInfo.InvariantCulture)
@@ -174,9 +172,7 @@ internal sealed class ReportingArguments
             "REPORTING_INCLUDE_HISTORY_OUT_OF_RANGE");
         Require(parsed.AsOfUtc.Offset == TimeSpan.Zero, "REPORTING_AS_OF_NOT_UTC");
         if (parsed.Mode == "report-institutional-metric-foundation")
-            Require(Path.GetFileName(parsed.RoadmapPath) ==
-                    "hedge-fund-institutional-reporting-roadmap-v1.md",
-                "RPT2_ROADMAP_MANIFEST_PATH_INVALID");
+            _ = parsed.RepositoryRoot;
         return parsed;
     }
 

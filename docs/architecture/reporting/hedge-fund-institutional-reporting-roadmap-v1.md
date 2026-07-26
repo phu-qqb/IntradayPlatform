@@ -213,12 +213,28 @@ concentrations are separate metrics and cross-pair strategy/model drift in USD
 has two separate blocked contracts.
 
 For each slot, RPT2 retains only `COMPLETED`, qualifying, no-order revisions
-with complete manifest, target, drift and selected-model lineage. Exactly one
-authoritative revision is selected using the maximum revision number and
-coherent completion and supersession lineage. An identity conflict or multiple
-candidates at the same authoritative rank fails closed. A superseded revision
-does not enter the RPT2 timeline and two revisions of the same slot never form
-a turnover period.
+with complete manifest, target, drift and selected-model lineage. The selected
+set is exactly INFX7, INFX8, INFX9 and INFX10, with one unique ModelRun and
+Qubes input per strategy, exact target/drift counts 66/66/78/78, complete
+target-close, output SHA-256 and Core commit lineage, and no unexpected model.
+Exactly one authoritative revision is selected using the maximum revision
+number and coherent supersession lineage. An identity conflict or multiple
+candidates at the same authoritative rank fails closed.
+
+The economic timeline is ordered by `SlotEndUtc`, `SlotStartUtc`,
+`CompletedAtUtc`, `SlotId` and projection revision identity. Completion
+time is audit metadata and never reorders economic periods. Turnover records
+both endpoint slot identities, both slot ends, the operational 15-minute gap
+count and whether the period is consecutive or spans authoritative gaps. A
+superseded revision does not enter the timeline and two revisions of the same
+slot never form a turnover period.
+
+Metric currentness reuses the RPT1 operational calendar. It distinguishes
+calendar state, slot-due state, the latest expected closed slot, latest
+persisted slot and latest qualifying economic revision. Outside the weekday
+calendar, the last required persisted slot remains the authority: a completed
+Friday slot is current through the weekend, while a MISSED last required slot
+remains explicitly obsolete. Civil age alone is not a freshness contract.
 
 Gross and net concentration are distinct metric families. Gross shares divide
 dimension gross notional by portfolio gross notional. Net shares divide the
@@ -233,9 +249,22 @@ conversion contract provide observation time, freshness, inversion and
 evidence authority.
 
 Every RPT2 bundle contains a canonical `source-snapshot.json`. Its file
-SHA-256 covers all authoritative revisions, source content SHAs, selected
-ModelRuns and outputs, mapping-set identity, active or unknown breaks, database
-identity, roadmap SHA, repository commit and fixed as-of time.
+SHA-256 covers all authoritative revisions, target and drift source timestamps,
+account and position snapshot identities, selected ModelRuns, Qubes inputs,
+outputs and Core commits, mapping-set identity, typed active or unknown break
+facts, currentness, database identity, roadmap SHA, repository commit and fixed
+as-of time. The roadmap itself is accepted only from the canonical path rooted
+at the explicit repository root.
+
+TargetPosition facts retain `CalculatedAtUtc`, revision completion time,
+decision price, Core commit ID and input/output SHA-256. PositionOnlyDrift
+facts retain current quantity, target quantity, exact arithmetic delta, source
+time, account and position snapshot IDs, position snapshot time, versioned
+authority code and input/output SHA-256. The versioned position authority code is `BROKER_PORTAL_EOD`; unknown authority text is not proven.
+Positive Fill or PositionLedgerEvent counts do not prove execution or
+accounting authority without their complete versioned contracts. When
+portfolio gross target notional is zero, GrossWeight is NULL with explicit
+data-quality status and caveat.
 
 ## 8. Dependency Matrix
 
@@ -245,7 +274,7 @@ identity, roadmap SHA, repository commit and fixed as-of time.
 | Target turnover | Successive qualified revisions | DERIVABLE_PROVEN | RPT2 | Requires two revisions | PMS economic revisions |
 | Current broker position | Broker position fact | BLOCKED_MISSING_SOURCE | RPT2+ | No authoritative broker position | Broker position authority |
 | Realized PnL | Fills and accounting ledger | BLOCKED_MISSING_SOURCE | RPT2+ | No authoritative Fills/ledger | Execution and accounting authority |
-| Unrealized PnL | Authoritative position and qualified marks | BLOCKED_MISSING_SOURCE | RPT2+ | Position authority absent | Position and mark authority |
+| Unrealized PnL | Authoritative position and qualified marks | BLOCKED_MISSING_SOURCE | RPT2+ | Qualified mark authority absent | Position and mark authority |
 | Net performance | NAV/AUM and fees | BLOCKED_MISSING_SOURCE | RPT2+ | NAV/AUM/fee authority absent | Fund accounting authority |
 | Live TCA | Real Fills and versioned benchmarks | BLOCKED_MISSING_SOURCE | RPT2+ | No real Fill authority | Broker execution authority |
 | Leverage | Exposure and authoritative NAV/AUM | BLOCKED_MISSING_SOURCE | RPT2+ | NAV/AUM absent | Fund accounting authority |
@@ -332,4 +361,4 @@ is versioned, review/approval is recorded and publication is immutable.
 | RPT4 | NOT STARTED |
 | Institutional publications | NOT STARTED |
 
-Next action: `RPT2_METRIC_AUTHORITY_AND_AVAILABILITY_FOUNDATION`.
+Next action: `RPT2_CURRENTNESS_LINEAGE_AND_AUDIT_FACT_AUTHORITY_FOUNDATION`.

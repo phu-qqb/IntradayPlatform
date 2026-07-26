@@ -137,7 +137,9 @@ public static class DeterministicInstitutionalMetricBundleWriter
         "EconomicRevisionId", "RevisionNumber", "SlotId", "TargetPositionId",
         "StrategyId", "ModelRunId", "TargetCloseUtc", "InstrumentId", "PmsSecurityId",
         "LmaxInstrumentId", "CanonicalSymbol", "TargetNotionalUsd", "TargetBaseQuantity",
-        "TargetVenueQuantity", "SourceAsOfUtc", "SourceEvidenceSha256", "AuthorityStatus"
+        "TargetVenueQuantity", "SourceAsOfUtc", "RevisionCompletedAtUtc",
+        "DecisionPrice", "CoreCommitId", "InputSha256", "OutputSha256",
+        "SourceEvidenceSha256", "AuthorityStatus"
     ];
 
     private static object?[] TargetFactRow(TargetPositionFact value) =>
@@ -146,24 +148,31 @@ public static class DeterministicInstitutionalMetricBundleWriter
         value.TargetPositionId, value.StrategyId, value.ModelRunId, value.TargetCloseUtc,
         value.InstrumentId, value.PmsSecurityId, value.LmaxInstrumentId,
         value.CanonicalSymbol, value.TargetNotionalUsd, value.TargetBaseQuantity,
-        value.TargetVenueQuantity, value.SourceAsOfUtc, value.SourceEvidenceSha256,
-        value.AuthorityStatus
+        value.TargetVenueQuantity, value.SourceAsOfUtc, value.RevisionCompletedAtUtc,
+        value.DecisionPrice, value.CoreCommitId, value.InputSha256, value.OutputSha256,
+        value.SourceEvidenceSha256, value.AuthorityStatus
     ];
 
     private static readonly string[] DriftFactHeaders =
     [
         "EconomicRevisionId", "PositionOnlyDriftId", "StrategyId", "ModelRunId",
         "TargetCloseUtc", "InstrumentId", "PmsSecurityId", "LmaxInstrumentId",
-        "CanonicalSymbol", "Delta", "Unit", "PositionAuthority",
-        "SourceEvidenceSha256", "AuthorityStatus"
+        "CanonicalSymbol", "CurrentBaseQuantity", "TargetBaseQuantity", "Delta",
+        "SourceAsOfUtc", "RevisionCompletedAtUtc", "AccountSnapshotId",
+        "PositionSnapshotId", "PositionSnapshotAsOfUtc", "PositionAuthorityCode",
+        "InputSha256", "OutputSha256", "Unit", "SourceEvidenceSha256",
+        "AuthorityStatus"
     ];
 
     private static object?[] DriftFactRow(PositionOnlyDriftFact value) =>
     [
         value.EconomicRevisionId, value.PositionOnlyDriftId, value.StrategyId,
         value.ModelRunId, value.TargetCloseUtc, value.InstrumentId, value.PmsSecurityId,
-        value.LmaxInstrumentId, value.CanonicalSymbol, value.Delta, value.Unit,
-        value.PositionAuthority, value.SourceEvidenceSha256, value.AuthorityStatus
+        value.LmaxInstrumentId, value.CanonicalSymbol, value.CurrentBaseQuantity,
+        value.TargetBaseQuantity, value.Delta, value.SourceAsOfUtc,
+        value.RevisionCompletedAtUtc, value.AccountSnapshotId, value.PositionSnapshotId,
+        value.PositionSnapshotAsOfUtc, value.PositionAuthorityCode, value.InputSha256,
+        value.OutputSha256, value.Unit, value.SourceEvidenceSha256, value.AuthorityStatus
     ];
 
     private static readonly string[] ExposureHeaders =
@@ -172,7 +181,8 @@ public static class DeterministicInstitutionalMetricBundleWriter
         "DimensionId", "StrategyId", "ModelRunId", "TargetCloseUtc", "InstrumentId",
         "PmsSecurityId", "LmaxInstrumentId", "CanonicalSymbol", "GrossTargetNotionalUsd",
         "NetTargetNotionalUsd", "LongTargetNotionalUsd", "ShortTargetNotionalUsd",
-        "GrossWeight", "FormulaVersion", "AuthorityStatus", "EvidenceSha256"
+        "GrossWeight", "DataQualityStatus", "Caveat", "FormulaVersion",
+        "AuthorityStatus", "EvidenceSha256"
     ];
 
     private static object?[] ExposureRow(TargetExposureRow value) =>
@@ -182,7 +192,8 @@ public static class DeterministicInstitutionalMetricBundleWriter
         value.TargetCloseUtc, value.InstrumentId, value.PmsSecurityId, value.LmaxInstrumentId,
         value.CanonicalSymbol, value.GrossTargetNotionalUsd, value.NetTargetNotionalUsd,
         value.LongTargetNotionalUsd, value.ShortTargetNotionalUsd, value.GrossWeight,
-        value.FormulaVersion, value.AuthorityStatus, value.EvidenceSha256
+        value.DataQualityStatus, value.Caveat, value.FormulaVersion,
+        value.AuthorityStatus, value.EvidenceSha256
     ];
 
     private static readonly string[] CurrencyHeaders =
@@ -232,8 +243,10 @@ public static class DeterministicInstitutionalMetricBundleWriter
 
     private static readonly string[] TurnoverHeaders =
     [
-        "PreviousEconomicRevisionId", "EconomicRevisionId", "PeriodStartUtc",
-        "PeriodEndUtc", "DimensionType", "DimensionId", "TargetTurnoverUsd",
+        "PreviousEconomicRevisionId", "EconomicRevisionId", "PreviousSlotId",
+        "CurrentSlotId", "PreviousSlotEndUtc", "CurrentSlotEndUtc",
+        "PeriodStartUtc", "PeriodEndUtc", "OperationalSlotGapCount",
+        "PeriodContinuityStatus", "DimensionType", "DimensionId", "TargetTurnoverUsd",
         "NewTargetCount", "ClosedTargetCount", "IncreaseCount", "ReductionCount",
         "InversionCount", "PreviousMappingSetSha256", "CurrentMappingSetSha256",
         "MetricCode", "FormulaVersion", "AvailabilityStatus", "EvidenceSha256"
@@ -241,8 +254,11 @@ public static class DeterministicInstitutionalMetricBundleWriter
 
     private static object?[] TurnoverRow(TargetTurnoverRow value) =>
     [
-        value.PreviousEconomicRevisionId, value.EconomicRevisionId, value.PeriodStartUtc,
-        value.PeriodEndUtc, value.DimensionType, value.DimensionId, value.TargetTurnoverUsd,
+        value.PreviousEconomicRevisionId, value.EconomicRevisionId,
+        value.PreviousSlotId, value.CurrentSlotId, value.PreviousSlotEndUtc,
+        value.CurrentSlotEndUtc, value.PeriodStartUtc, value.PeriodEndUtc,
+        value.OperationalSlotGapCount, value.PeriodContinuityStatus,
+        value.DimensionType, value.DimensionId, value.TargetTurnoverUsd,
         value.NewTargetCount, value.ClosedTargetCount, value.IncreaseCount,
         value.ReductionCount, value.InversionCount, value.PreviousMappingSetSha256,
         value.CurrentMappingSetSha256, value.MetricCode, value.FormulaVersion,

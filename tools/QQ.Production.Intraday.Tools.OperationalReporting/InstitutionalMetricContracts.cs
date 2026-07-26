@@ -15,13 +15,15 @@ public static class InstitutionalMetricContract
     public const string CurrencyFormula = "target_currency_leg_exposure_usd_v2";
     public const string GrossConcentrationFormula = "target_gross_concentration_v2";
     public const string NetConcentrationFormula = "target_net_concentration_v2";
-    public const string TurnoverFormula = "target_turnover_canonical_symbol_v2";
+    public const string TurnoverFormula = "target_turnover_canonical_symbol_v3";
     public const string DriftFormula = "position_only_drift_pair_grain_v2";
-    public const string SourceSnapshotVersion = "institutional_source_snapshot_v1";
+    public const string SourceSnapshotVersion = "institutional_source_snapshot_v2";
     public const string SupersededBundleSha256 =
-        "fdfe8e2ec7555f885548665b09038d0eafb9507b629ab1868ebf56b56a3ac041";
+        "24f273ff4de29ccd8ccdf815bfa029181353fe110616d64538a9f0ba1244697a";
     public const string SupersessionReason =
-        "RPT2_METRIC_SEMANTICS_AND_SOURCE_AUTHORITY_CORRECTION_REQUIRED";
+        "RPT2_CURRENTNESS_LINEAGE_AND_AUDIT_FACT_AUTHORITY_CORRECTION_REQUIRED";
+    public const string EconomicTimelineContractVersion =
+        "institutional_economic_timeline_slot_end_v1";
     public const int ConcentrationTopN = 3;
     public const string NullCsvValue = "NULL";
 }
@@ -85,6 +87,11 @@ public sealed record TargetPositionFact(
     decimal TargetBaseQuantity,
     decimal TargetVenueQuantity,
     DateTimeOffset SourceAsOfUtc,
+    DateTimeOffset RevisionCompletedAtUtc,
+    decimal DecisionPrice,
+    string CoreCommitId,
+    string InputSha256,
+    string OutputSha256,
     string SourceEvidenceSha256,
     string AuthorityStatus);
 
@@ -98,9 +105,18 @@ public sealed record PositionOnlyDriftFact(
     string PmsSecurityId,
     string LmaxInstrumentId,
     string CanonicalSymbol,
+    decimal CurrentBaseQuantity,
+    decimal TargetBaseQuantity,
     decimal Delta,
+    DateTimeOffset SourceAsOfUtc,
+    DateTimeOffset RevisionCompletedAtUtc,
+    Guid AccountSnapshotId,
+    Guid PositionSnapshotId,
+    DateTimeOffset PositionSnapshotAsOfUtc,
+    string PositionAuthorityCode,
+    string InputSha256,
+    string OutputSha256,
     string Unit,
-    string PositionAuthority,
     string SourceEvidenceSha256,
     string AuthorityStatus);
 
@@ -122,7 +138,9 @@ public sealed record TargetExposureRow(
     decimal NetTargetNotionalUsd,
     decimal LongTargetNotionalUsd,
     decimal ShortTargetNotionalUsd,
-    decimal GrossWeight,
+    decimal? GrossWeight,
+    string DataQualityStatus,
+    string Caveat,
     string FormulaVersion,
     string AuthorityStatus,
     string EvidenceSha256);
@@ -172,8 +190,14 @@ public sealed record TargetConcentrationSummaryRow(
 public sealed record TargetTurnoverRow(
     Guid PreviousEconomicRevisionId,
     Guid EconomicRevisionId,
+    string PreviousSlotId,
+    string CurrentSlotId,
+    DateTimeOffset PreviousSlotEndUtc,
+    DateTimeOffset CurrentSlotEndUtc,
     DateTimeOffset PeriodStartUtc,
     DateTimeOffset PeriodEndUtc,
+    int OperationalSlotGapCount,
+    string PeriodContinuityStatus,
     string DimensionType,
     string DimensionId,
     decimal TargetTurnoverUsd,
@@ -215,6 +239,16 @@ public sealed record InstitutionalDataQuality(
     bool MappingComplete,
     bool LineageComplete,
     string Freshness,
+    string MarketCalendarStatus,
+    string SlotDueStatus,
+    string? LatestExpectedClosedSlotId,
+    DateTimeOffset? LatestExpectedClosedSlotEndUtc,
+    string? LatestPersistedSlotId,
+    string? LatestPersistedSlotStatus,
+    string? LatestQualifyingRevisionSlotId,
+    string MetricCurrentnessStatus,
+    string CurrentnessReason,
+    string CurrentnessContractVersion,
     int ActiveBreakCount,
     int UnknownBreakCount,
     string Arch7aAuthority,
@@ -272,9 +306,37 @@ public sealed record InstitutionalSourceRevision(
     string ManifestSha256,
     string TargetPositionsSha256,
     string DriftsSha256,
+    DateTimeOffset TargetSourceAsOfUtcMin,
+    DateTimeOffset TargetSourceAsOfUtcMax,
+    DateTimeOffset DriftSourceAsOfUtcMin,
+    DateTimeOffset DriftSourceAsOfUtcMax,
+    Guid AccountSnapshotId,
+    Guid PositionSnapshotId,
+    DateTimeOffset PositionSnapshotAsOfUtc,
+    string PositionAuthorityCode,
     IReadOnlyList<Guid> SelectedModelRunIds,
     IReadOnlyList<string> SelectedOutputSha256,
     IReadOnlyList<string> SelectedCoreCommitIds);
+
+public sealed record InstitutionalSourceBreakFact(
+    string BreakId,
+    string ExactCode,
+    string? SourceExactCode,
+    string Status,
+    string Severity,
+    string AuthorityStatus,
+    string Component,
+    string ScopeType,
+    string ScopeId,
+    string? SlotId,
+    Guid? EconomicRevisionId,
+    Guid? TradeIntentId,
+    Guid? QualificationRunId,
+    DateTimeOffset FirstObservedAtUtc,
+    DateTimeOffset LastObservedAtUtc,
+    string? EvidenceSha256,
+    bool BlocksTrading,
+    bool BlocksAccounting);
 
 public sealed record InstitutionalSourceSnapshot(
     string ContractVersion,
@@ -286,7 +348,11 @@ public sealed record InstitutionalSourceSnapshot(
     DateTimeOffset AsOfUtc,
     IReadOnlyList<InstitutionalSourceRevision> AuthoritativeRevisions,
     string MappingSetSha256,
-    IReadOnlyList<string> ActiveOrUnknownBreakIds,
+    InstitutionalMetricCurrentness Currentness,
+    IReadOnlyList<InstitutionalSourceBreakFact> ActiveOrUnknownBreakFacts,
+    string PositionAuthorityContractIdentity,
+    string EconomicTimelineContractIdentity,
+    string RoadmapAuthorityContractIdentity,
     string Rpt1SourceContractIdentity,
     string? Rpt1SourceBundleSha256);
 
