@@ -105,6 +105,8 @@ public sealed class PmsShadowReadOnlyReportingReader(
                 reportingArch7b,
                 observedFacts)
             {
+                SlotManifestSha256BySlotId = slotRows.ToDictionary(
+                    value => value.SlotId, value => value.ManifestSha256, StringComparer.Ordinal),
                 EconomicProjectionSources = revisions,
                 SecurityMappingSources = mappings
             };

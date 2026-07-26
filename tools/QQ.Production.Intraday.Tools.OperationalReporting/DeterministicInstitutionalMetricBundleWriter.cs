@@ -1,21 +1,12 @@
 using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
-using System.Text.Encodings.Web;
-using System.Text.Json;
 
 namespace QQ.Production.Intraday.Tools.OperationalReporting;
 
 public static class DeterministicInstitutionalMetricBundleWriter
 {
     private static readonly UTF8Encoding Utf8 = new(false);
-    private static readonly JsonSerializerOptions Json = new()
-    {
-        PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower,
-        DictionaryKeyPolicy = JsonNamingPolicy.SnakeCaseLower,
-        WriteIndented = true,
-        Encoder = JavaScriptEncoder.Default
-    };
 
     public static InstitutionalBundleResult Write(
         InstitutionalMetricReportSet report,
@@ -43,8 +34,17 @@ public static class DeterministicInstitutionalMetricBundleWriter
             catalog_version = InstitutionalMetricContract.CatalogVersion,
             metrics = report.Catalog
         });
+        WriteJson(root, "source-snapshot.json", report.SourceSnapshot);
+        var snapshotFile = Describe(root, Path.Combine(root, "source-snapshot.json"));
+        Require(snapshotFile.Sha256 == report.SourceSnapshotSha256,
+            "RPT2_SOURCE_SNAPSHOT_SHA_MISMATCH");
+
         WriteCsv(root, "metric-availability.csv", AvailabilityHeaders,
             report.Availability.Select(AvailabilityRow));
+        WriteCsv(root, "target-position-facts.csv", TargetFactHeaders,
+            report.TargetPositionFacts.Select(TargetFactRow));
+        WriteCsv(root, "position-only-drift-facts.csv", DriftFactHeaders,
+            report.PositionOnlyDriftFacts.Select(DriftFactRow));
         WriteCsv(root, "target-exposure-by-revision.csv", ExposureHeaders,
             report.ExposureByRevision.Select(ExposureRow));
         WriteCsv(root, "target-exposure-by-strategy.csv", ExposureHeaders,
@@ -55,16 +55,18 @@ public static class DeterministicInstitutionalMetricBundleWriter
             report.ExposureByPair.Select(ExposureRow));
         WriteCsv(root, "target-exposure-by-currency.csv", CurrencyHeaders,
             report.ExposureByCurrency.Select(CurrencyRow));
-        WriteCsv(root, "target-gross-net.csv", ExposureHeaders,
-            report.ExposureByRevision.Select(ExposureRow));
-        WriteCsv(root, "target-concentration.csv", ConcentrationHeaders,
-            report.Concentrations.Select(ConcentrationRow));
+        WriteCsv(root, "target-concentration-gross.csv", ConcentrationHeaders,
+            report.GrossConcentrations.Select(ConcentrationRow));
+        WriteCsv(root, "target-concentration-net.csv", ConcentrationHeaders,
+            report.NetConcentrations.Select(ConcentrationRow));
+        WriteCsv(root, "target-concentration-summary.csv", ConcentrationSummaryHeaders,
+            report.ConcentrationSummaries.Select(ConcentrationSummaryRow));
         WriteCsv(root, "target-turnover.csv", TurnoverHeaders,
             report.Turnover.Select(TurnoverRow));
-        WriteCsv(root, "drift-by-strategy.csv", DriftHeaders,
-            report.DriftByStrategy.Select(DriftRow));
-        WriteCsv(root, "drift-by-model.csv", DriftHeaders,
-            report.DriftByModel.Select(DriftRow));
+        WriteCsv(root, "drift-by-strategy-pair.csv", DriftHeaders,
+            report.DriftByStrategyPair.Select(DriftRow));
+        WriteCsv(root, "drift-by-model-pair.csv", DriftHeaders,
+            report.DriftByModelPair.Select(DriftRow));
         WriteCsv(root, "drift-by-pair.csv", DriftHeaders,
             report.DriftByPair.Select(DriftRow));
         WriteJson(root, "pms-risk-summary.json", report.RiskSummary);
@@ -84,14 +86,9 @@ public static class DeterministicInstitutionalMetricBundleWriter
         var files = Directory.EnumerateFiles(root)
             .Select(path => Describe(root, path))
             .OrderBy(value => value.Path, StringComparer.Ordinal).ToArray();
+        Require(files.Length == 23, "RPT2_BUNDLE_SOURCE_FILE_COUNT_INVALID");
         var bundleSha = Hash(string.Join('\n', files.Select(value =>
             $"{value.Path}\t{value.SizeBytes.ToString(CultureInfo.InvariantCulture)}\t{value.Sha256}")));
-        var sourceSnapshotId = Hash(string.Join('\n',
-            report.RepositoryCommit,
-            report.Database.TargetFingerprint,
-            report.AsOfUtc.ToString("O", CultureInfo.InvariantCulture),
-            report.DataQuality.LatestEconomicRevisionId?.ToString("D") ??
-            InstitutionalMetricContract.NullCsvValue));
         var manifest = new InstitutionalBundleManifest(
             InstitutionalMetricContract.CatalogVersion,
             InstitutionalMetricContract.RoadmapId,
@@ -99,13 +96,15 @@ public static class DeterministicInstitutionalMetricBundleWriter
             report.RoadmapSha256,
             report.AsOfUtc,
             report.RepositoryCommit,
-            sourceSnapshotId,
+            report.SourceSnapshotSha256,
             report.Database.TargetProfileId,
             report.Database.TargetFingerprint,
             report.Catalog.Select(value => value.FormulaVersion)
                 .Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray(),
             files,
             bundleSha,
+            InstitutionalMetricContract.SupersededBundleSha256,
+            InstitutionalMetricContract.SupersessionReason,
             NoOrder: true,
             ReadOnly: true,
             NoSecrets: true);
@@ -113,22 +112,58 @@ public static class DeterministicInstitutionalMetricBundleWriter
         var allFiles = Directory.EnumerateFiles(root)
             .Select(path => Describe(root, path))
             .OrderBy(value => value.Path, StringComparer.Ordinal).ToArray();
-        Require(allFiles.Length == 20, "RPT2_BUNDLE_FILE_COUNT_INVALID");
-        return new(root, bundleSha, allFiles);
+        Require(allFiles.Length == 24, "RPT2_BUNDLE_FILE_COUNT_INVALID");
+        return new(root, bundleSha, report.SourceSnapshotSha256, allFiles);
     }
 
     private static readonly string[] AvailabilityHeaders =
     [
         "MetricCode", "AvailabilityStatus", "Value", "Unit", "Currency",
         "MissingRequiredFacts", "ActivationCondition", "Caveat", "AuthorityStatus",
-        "DataQualityStatus"
+        "DataQualityStatus", "ValueLocation", "FactFile", "FactRowCount",
+        "ValueIsScalar", "Grain"
     ];
 
     private static object?[] AvailabilityRow(InstitutionalMetricAvailability value) =>
     [
         value.MetricCode, value.AvailabilityStatus, value.Value, value.Unit, value.Currency,
         string.Join('|', value.MissingRequiredFacts), value.ActivationCondition, value.Caveat,
-        value.AuthorityStatus, value.DataQualityStatus
+        value.AuthorityStatus, value.DataQualityStatus, value.ValueLocation, value.FactFile,
+        value.FactRowCount, value.ValueIsScalar, value.Grain
+    ];
+
+    private static readonly string[] TargetFactHeaders =
+    [
+        "EconomicRevisionId", "RevisionNumber", "SlotId", "TargetPositionId",
+        "StrategyId", "ModelRunId", "TargetCloseUtc", "InstrumentId", "PmsSecurityId",
+        "LmaxInstrumentId", "CanonicalSymbol", "TargetNotionalUsd", "TargetBaseQuantity",
+        "TargetVenueQuantity", "SourceAsOfUtc", "SourceEvidenceSha256", "AuthorityStatus"
+    ];
+
+    private static object?[] TargetFactRow(TargetPositionFact value) =>
+    [
+        value.EconomicRevisionId, value.RevisionNumber, value.SlotId,
+        value.TargetPositionId, value.StrategyId, value.ModelRunId, value.TargetCloseUtc,
+        value.InstrumentId, value.PmsSecurityId, value.LmaxInstrumentId,
+        value.CanonicalSymbol, value.TargetNotionalUsd, value.TargetBaseQuantity,
+        value.TargetVenueQuantity, value.SourceAsOfUtc, value.SourceEvidenceSha256,
+        value.AuthorityStatus
+    ];
+
+    private static readonly string[] DriftFactHeaders =
+    [
+        "EconomicRevisionId", "PositionOnlyDriftId", "StrategyId", "ModelRunId",
+        "TargetCloseUtc", "InstrumentId", "PmsSecurityId", "LmaxInstrumentId",
+        "CanonicalSymbol", "Delta", "Unit", "PositionAuthority",
+        "SourceEvidenceSha256", "AuthorityStatus"
+    ];
+
+    private static object?[] DriftFactRow(PositionOnlyDriftFact value) =>
+    [
+        value.EconomicRevisionId, value.PositionOnlyDriftId, value.StrategyId,
+        value.ModelRunId, value.TargetCloseUtc, value.InstrumentId, value.PmsSecurityId,
+        value.LmaxInstrumentId, value.CanonicalSymbol, value.Delta, value.Unit,
+        value.PositionAuthority, value.SourceEvidenceSha256, value.AuthorityStatus
     ];
 
     private static readonly string[] ExposureHeaders =
@@ -137,7 +172,7 @@ public static class DeterministicInstitutionalMetricBundleWriter
         "DimensionId", "StrategyId", "ModelRunId", "TargetCloseUtc", "InstrumentId",
         "PmsSecurityId", "LmaxInstrumentId", "CanonicalSymbol", "GrossTargetNotionalUsd",
         "NetTargetNotionalUsd", "LongTargetNotionalUsd", "ShortTargetNotionalUsd",
-        "AbsoluteWeight", "FormulaVersion", "AuthorityStatus", "EvidenceSha256"
+        "GrossWeight", "FormulaVersion", "AuthorityStatus", "EvidenceSha256"
     ];
 
     private static object?[] ExposureRow(TargetExposureRow value) =>
@@ -146,7 +181,7 @@ public static class DeterministicInstitutionalMetricBundleWriter
         value.DimensionType, value.DimensionId, value.StrategyId, value.ModelRunId,
         value.TargetCloseUtc, value.InstrumentId, value.PmsSecurityId, value.LmaxInstrumentId,
         value.CanonicalSymbol, value.GrossTargetNotionalUsd, value.NetTargetNotionalUsd,
-        value.LongTargetNotionalUsd, value.ShortTargetNotionalUsd, value.AbsoluteWeight,
+        value.LongTargetNotionalUsd, value.ShortTargetNotionalUsd, value.GrossWeight,
         value.FormulaVersion, value.AuthorityStatus, value.EvidenceSha256
     ];
 
@@ -167,16 +202,32 @@ public static class DeterministicInstitutionalMetricBundleWriter
 
     private static readonly string[] ConcentrationHeaders =
     [
-        "EconomicRevisionId", "DimensionType", "DimensionId", "Concentration", "Rank",
-        "TopNConcentration", "Hhi", "GrossNetRatio", "FormulaVersion",
-        "DataQualityStatus", "Caveat"
+        "EconomicRevisionId", "DimensionType", "DimensionId", "Family",
+        "DimensionGrossTargetNotionalUsd", "DimensionNetTargetNotionalUsd",
+        "Denominator", "Share", "Rank", "FormulaVersion", "DataQualityStatus",
+        "EvidenceSha256", "Caveat"
     ];
 
     private static object?[] ConcentrationRow(TargetConcentrationRow value) =>
     [
-        value.EconomicRevisionId, value.DimensionType, value.DimensionId, value.Concentration,
-        value.Rank, value.TopNConcentration, value.Hhi, value.GrossNetRatio,
-        value.FormulaVersion, value.DataQualityStatus, value.Caveat
+        value.EconomicRevisionId, value.DimensionType, value.DimensionId, value.Family,
+        value.DimensionGrossTargetNotionalUsd, value.DimensionNetTargetNotionalUsd,
+        value.Denominator, value.Share, value.Rank, value.FormulaVersion,
+        value.DataQualityStatus, value.EvidenceSha256, value.Caveat
+    ];
+
+    private static readonly string[] ConcentrationSummaryHeaders =
+    [
+        "EconomicRevisionId", "DimensionType", "Family", "Denominator", "TopN",
+        "TopNConcentration", "Hhi", "GrossNetRatio", "FormulaVersion",
+        "DataQualityStatus", "EvidenceSha256", "Caveat"
+    ];
+
+    private static object?[] ConcentrationSummaryRow(TargetConcentrationSummaryRow value) =>
+    [
+        value.EconomicRevisionId, value.DimensionType, value.Family, value.Denominator,
+        value.TopN, value.TopNConcentration, value.Hhi, value.GrossNetRatio,
+        value.FormulaVersion, value.DataQualityStatus, value.EvidenceSha256, value.Caveat
     ];
 
     private static readonly string[] TurnoverHeaders =
@@ -184,8 +235,8 @@ public static class DeterministicInstitutionalMetricBundleWriter
         "PreviousEconomicRevisionId", "EconomicRevisionId", "PeriodStartUtc",
         "PeriodEndUtc", "DimensionType", "DimensionId", "TargetTurnoverUsd",
         "NewTargetCount", "ClosedTargetCount", "IncreaseCount", "ReductionCount",
-        "InversionCount", "MetricCode", "FormulaVersion", "AvailabilityStatus",
-        "EvidenceSha256"
+        "InversionCount", "PreviousMappingSetSha256", "CurrentMappingSetSha256",
+        "MetricCode", "FormulaVersion", "AvailabilityStatus", "EvidenceSha256"
     ];
 
     private static object?[] TurnoverRow(TargetTurnoverRow value) =>
@@ -193,22 +244,24 @@ public static class DeterministicInstitutionalMetricBundleWriter
         value.PreviousEconomicRevisionId, value.EconomicRevisionId, value.PeriodStartUtc,
         value.PeriodEndUtc, value.DimensionType, value.DimensionId, value.TargetTurnoverUsd,
         value.NewTargetCount, value.ClosedTargetCount, value.IncreaseCount,
-        value.ReductionCount, value.InversionCount, value.MetricCode, value.FormulaVersion,
+        value.ReductionCount, value.InversionCount, value.PreviousMappingSetSha256,
+        value.CurrentMappingSetSha256, value.MetricCode, value.FormulaVersion,
         value.AvailabilityStatus, value.EvidenceSha256
     ];
 
     private static readonly string[] DriftHeaders =
     [
-        "EconomicRevisionId", "DimensionType", "DimensionId", "SignedDrift",
-        "AbsoluteDrift", "SourceDriftCount", "PositionAuthority", "AvailabilityStatus",
-        "FormulaVersion", "EvidenceSha256"
+        "EconomicRevisionId", "DimensionType", "DimensionId", "CanonicalSymbol",
+        "Unit", "SignedDrift", "AbsoluteDrift", "SourceDriftCount",
+        "PositionAuthority", "AvailabilityStatus", "FormulaVersion", "EvidenceSha256"
     ];
 
     private static object?[] DriftRow(DriftSummaryRow value) =>
     [
-        value.EconomicRevisionId, value.DimensionType, value.DimensionId, value.SignedDrift,
-        value.AbsoluteDrift, value.SourceDriftCount, value.PositionAuthority,
-        value.AvailabilityStatus, value.FormulaVersion, value.EvidenceSha256
+        value.EconomicRevisionId, value.DimensionType, value.DimensionId,
+        value.CanonicalSymbol, value.Unit, value.SignedDrift, value.AbsoluteDrift,
+        value.SourceDriftCount, value.PositionAuthority, value.AvailabilityStatus,
+        value.FormulaVersion, value.EvidenceSha256
     ];
 
     private static readonly string[] BreakHeaders =
@@ -232,7 +285,8 @@ public static class DeterministicInstitutionalMetricBundleWriter
             CultureInfo.InvariantCulture) ?? InstitutionalMetricContract.NullCsvValue;
         var risk = report.RiskSummary;
         var blocked = report.Availability.Count(value =>
-            value.AvailabilityStatus == MetricAvailabilityStatus.BlockedMissingSource);
+            value.AvailabilityStatus is MetricAvailabilityStatus.BlockedMissingSource or
+                MetricAvailabilityStatus.BlockedAuthorityUnproven);
         var html = $$"""
             <!doctype html>
             <html lang="en">
@@ -255,14 +309,14 @@ public static class DeterministicInstitutionalMetricBundleWriter
                 <tr><th>Economic revision</th><td>{{risk.EconomicRevisionId?.ToString("D") ?? "NULL"}}</td></tr>
                 <tr><th>Gross target exposure USD</th><td>{{N(risk.GrossTargetExposureUsd)}}</td></tr>
                 <tr><th>Net target exposure USD</th><td>{{N(risk.NetTargetExposureUsd)}}</td></tr>
-                <tr><th>Max pair concentration</th><td>{{N(risk.MaxPairConcentration)}}</td></tr>
-                <tr><th>Max strategy concentration</th><td>{{N(risk.MaxStrategyConcentration)}}</td></tr>
+                <tr><th>Max pair gross concentration</th><td>{{N(risk.MaxPairGrossConcentration)}}</td></tr>
+                <tr><th>Max pair net concentration</th><td>{{N(risk.MaxPairNetConcentration)}}</td></tr>
                 <tr><th>Target turnover USD</th><td>{{N(risk.TargetTurnoverUsd)}}</td></tr>
               </tbody></table>
               <h2>Authority</h2>
-              <p class="ok">Target metrics preserve their PMS economic revision authority.</p>
+              <p class="ok">Source facts and derived metrics retain distinct authority.</p>
               <p class="blocked">{{blocked}} metrics are explicitly blocked and carry no fabricated value.</p>
-              <p>Leverage is unavailable without authoritative AUM or NAV. Target turnover is not executed turnover.</p>
+              <p>Cross-pair base quantities are never summed. Target turnover is not executed turnover.</p>
             </body>
             </html>
             """;
@@ -270,7 +324,7 @@ public static class DeterministicInstitutionalMetricBundleWriter
     }
 
     private static void WriteJson(string root, string name, object value) =>
-        WriteText(Path.Combine(root, name), JsonSerializer.Serialize(value, Json) + "\n");
+        WriteText(Path.Combine(root, name), InstitutionalCanonicalJson.SerializeFile(value));
 
     private static void WriteCsv(
         string root,

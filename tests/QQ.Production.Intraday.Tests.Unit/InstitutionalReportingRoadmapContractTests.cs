@@ -31,7 +31,16 @@ public sealed class InstitutionalReportingRoadmapContractTests
             "XLSX",
             "Missing, absent or unknown data is never converted to zero",
             "No ModelRun, Fill, position or ledger event may be invented",
-            "no Databento data, download or API request",
+            "No Databento API request is permitted",
+            "No new Databento download is permitted",
+            "Existing Databento data already stored on `D:` may be used only",
+            "This RPT2 packet makes no Databento API request",
+            "uses no Databento data or path",
+            "`SOURCE_PROVEN` is reserved for a directly persisted fact",
+            "Gross and net concentration are distinct metric families",
+            "Base quantities from different instruments or currencies are not additive",
+            "source-snapshot.json",
+            "candidates at the same authoritative rank fails closed",
             "General Manifest Traceability",
             "Phase Completion Criteria");
     }
@@ -49,6 +58,17 @@ public sealed class InstitutionalReportingRoadmapContractTests
         Assert.Contains(
             "Next action: `RPT2_METRIC_AUTHORITY_AND_AVAILABILITY_FOUNDATION`",
             text, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Databento_contract_forbids_network_but_not_authorized_local_lineage()
+    {
+        var text = File.ReadAllText(Path.Combine(RepositoryRoot(), RelativePath));
+        Assert.Contains("No Databento API request is permitted", text, StringComparison.Ordinal);
+        Assert.Contains("No new Databento download is permitted", text, StringComparison.Ordinal);
+        Assert.Contains("Existing Databento data already stored on `D:` may be used only", text,
+            StringComparison.Ordinal);
+        Assert.DoesNotContain("Databento is prohibited", text, StringComparison.Ordinal);
     }
 
     private static void Require(string text, params string[] required)

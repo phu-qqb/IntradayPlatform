@@ -62,7 +62,10 @@ Reporting is not merely a presentation layer. Every result preserves:
 - Timestamps are UTC and decimals use invariant culture.
 - Outputs are deterministic and content-addressed with SHA-256.
 - Reports contain no secrets.
-- Databento is prohibited: no Databento data, download or API request.
+- No Databento API request is permitted.
+- No new Databento download is permitted.
+- Existing Databento data already stored on `D:` may be used only when an
+  explicitly authorized work packet requires it and its local lineage is proven.
 
 ## 5. Four-Layer Architecture
 
@@ -198,6 +201,42 @@ Every metric carries:
 `DERIVABLE_PROBABLE`, `BLOCKED_MISSING_SOURCE`,
 `BLOCKED_AUTHORITY_UNPROVEN`, `NOT_APPLICABLE`, `UNKNOWN`.
 
+`SOURCE_PROVEN` is reserved for a directly persisted fact published at its
+source grain. A formula, sum, ratio, concentration, HHI or turnover result is
+`DERIVABLE_PROVEN` even when all of its inputs are source-proven. Source facts
+and derived metrics are published separately and a derived row never assumes
+the authority status of its inputs without evaluating the formula contract.
+The corrected RPT2 catalog contains 44 metrics: 2 source-proven facts,
+14 derivable-proven formulas and 28 metrics blocked for missing source
+authority. The expanded cardinality is explicit because gross and net
+concentrations are separate metrics and cross-pair strategy/model drift in USD
+has two separate blocked contracts.
+
+For each slot, RPT2 retains only `COMPLETED`, qualifying, no-order revisions
+with complete manifest, target, drift and selected-model lineage. Exactly one
+authoritative revision is selected using the maximum revision number and
+coherent completion and supersession lineage. An identity conflict or multiple
+candidates at the same authoritative rank fails closed. A superseded revision
+does not enter the RPT2 timeline and two revisions of the same slot never form
+a turnover period.
+
+Gross and net concentration are distinct metric families. Gross shares divide
+dimension gross notional by portfolio gross notional. Net shares divide the
+absolute dimension net notional by the sum of absolute dimension net
+notionals. HHI and top-N are calculated independently over each normalized
+share set. Gross/net ratio is a portfolio summary and is not concentration.
+
+Base quantities from different instruments or currencies are not additive.
+Position-only drift is published at pair, strategy/pair and model/pair grains.
+A cross-pair USD drift is unavailable until qualified marks and a versioned
+conversion contract provide observation time, freshness, inversion and
+evidence authority.
+
+Every RPT2 bundle contains a canonical `source-snapshot.json`. Its file
+SHA-256 covers all authoritative revisions, source content SHAs, selected
+ModelRuns and outputs, mapping-set identity, active or unknown breaks, database
+identity, roadmap SHA, repository commit and fixed as-of time.
+
 ## 8. Dependency Matrix
 
 | Metric | Required source | Current availability | Activation phase | Current blocker | Required authority |
@@ -230,6 +269,10 @@ culture. CSV grains, keys, relations, units, currencies, null policy and
 as-of behavior are versioned with each output contract.
 
 ## 10. Publication And Immutability
+
+This RPT2 packet makes no Databento API request, performs no Databento
+download and uses no Databento data or path. The conditional local `D:` rule
+above does not grant use without a separate explicit work packet.
 
 Every publication records:
 

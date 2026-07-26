@@ -54,7 +54,9 @@ public static partial class OperationalStatusCodeScanner
         "BLOCKED_AUTHORITY_UNPROVEN",
         "RPT2_SECURITY_MAPPING_MISSING",
         "PROVEN_WITH_EXPLICIT_AUTHORITY_GAPS",
-        "RPT2_ROADMAP_MANIFEST_MISSING"
+        "RPT2_ROADMAP_MANIFEST_MISSING",
+        "RPT2_SOURCE_SNAPSHOT_SHA_MISMATCH",
+        "RPT2_DRIFT_MODEL_RUN_LINEAGE_MISSING"
     ], StringComparer.Ordinal);
 
     public static IReadOnlyList<OperationalSourceCodeInventoryItem> ScanAuthoritativeSource(

@@ -79,6 +79,8 @@ else
         bundle.OutputDirectory,
         bundle.BundleSha256,
         roadmap_sha256 = roadmapSha,
+        source_snapshot_sha256 = bundle.SourceSnapshotSha256,
+        superseded_bundle_sha256 = InstitutionalMetricContract.SupersededBundleSha256,
         no_order = true
     });
 }

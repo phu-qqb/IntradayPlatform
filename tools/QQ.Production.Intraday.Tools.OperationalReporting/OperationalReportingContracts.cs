@@ -313,6 +313,8 @@ public sealed record OperationalReportingSnapshot(
     IReadOnlyList<ReportingArch7bFact> Arch7b,
     IReadOnlyList<ObservedOperationalCodeFact> ObservedCodeFacts)
 {
+    public IReadOnlyDictionary<string, string?> SlotManifestSha256BySlotId { get; init; } =
+        new Dictionary<string, string?>(StringComparer.Ordinal);
     public IReadOnlyList<PmsShadowIntradayEconomicProjection> EconomicProjectionSources { get; init; } = [];
     public IReadOnlyList<PmsShadowSecurityMappingRow> SecurityMappingSources { get; init; } = [];
 }

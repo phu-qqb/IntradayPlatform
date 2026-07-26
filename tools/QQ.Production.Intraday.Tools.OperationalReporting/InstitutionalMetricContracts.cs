@@ -1,17 +1,28 @@
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.Encodings.Web;
+using System.Text.Json;
 using QQ.Production.Intraday.Infrastructure.PostgreSql;
 
 namespace QQ.Production.Intraday.Tools.OperationalReporting;
 
 public static class InstitutionalMetricContract
 {
-    public const string CatalogVersion = "anubis_infx_institutional_metric_catalog_v1";
+    public const string CatalogVersion = "anubis_infx_institutional_metric_catalog_v2";
     public const string RoadmapId = "hedge_fund_institutional_reporting_roadmap";
     public const string RoadmapVersion = "v1";
-    public const string ExposureFormula = "target_exposure_usd_v1";
-    public const string CurrencyFormula = "target_currency_leg_exposure_usd_v1";
-    public const string ConcentrationFormula = "target_concentration_v1";
-    public const string TurnoverFormula = "target_turnover_gross_change_usd_v1";
-    public const string DriftFormula = "position_only_drift_v1";
+    public const string ExposureFormula = "target_exposure_usd_v2";
+    public const string CurrencyFormula = "target_currency_leg_exposure_usd_v2";
+    public const string GrossConcentrationFormula = "target_gross_concentration_v2";
+    public const string NetConcentrationFormula = "target_net_concentration_v2";
+    public const string TurnoverFormula = "target_turnover_canonical_symbol_v2";
+    public const string DriftFormula = "position_only_drift_pair_grain_v2";
+    public const string SourceSnapshotVersion = "institutional_source_snapshot_v1";
+    public const string SupersededBundleSha256 =
+        "fdfe8e2ec7555f885548665b09038d0eafb9507b629ab1868ebf56b56a3ac041";
+    public const string SupersessionReason =
+        "RPT2_METRIC_SEMANTICS_AND_SOURCE_AUTHORITY_CORRECTION_REQUIRED";
+    public const int ConcentrationTopN = 3;
     public const string NullCsvValue = "NULL";
 }
 
@@ -51,7 +62,47 @@ public sealed record InstitutionalMetricAvailability(
     string ActivationCondition,
     string Caveat,
     string AuthorityStatus,
-    string DataQualityStatus);
+    string DataQualityStatus,
+    string? ValueLocation,
+    string? FactFile,
+    int FactRowCount,
+    bool ValueIsScalar,
+    string Grain);
+
+public sealed record TargetPositionFact(
+    Guid EconomicRevisionId,
+    int RevisionNumber,
+    string SlotId,
+    Guid TargetPositionId,
+    string StrategyId,
+    Guid ModelRunId,
+    DateTimeOffset TargetCloseUtc,
+    Guid InstrumentId,
+    string PmsSecurityId,
+    string LmaxInstrumentId,
+    string CanonicalSymbol,
+    decimal TargetNotionalUsd,
+    decimal TargetBaseQuantity,
+    decimal TargetVenueQuantity,
+    DateTimeOffset SourceAsOfUtc,
+    string SourceEvidenceSha256,
+    string AuthorityStatus);
+
+public sealed record PositionOnlyDriftFact(
+    Guid EconomicRevisionId,
+    Guid PositionOnlyDriftId,
+    string StrategyId,
+    Guid ModelRunId,
+    DateTimeOffset TargetCloseUtc,
+    Guid InstrumentId,
+    string PmsSecurityId,
+    string LmaxInstrumentId,
+    string CanonicalSymbol,
+    decimal Delta,
+    string Unit,
+    string PositionAuthority,
+    string SourceEvidenceSha256,
+    string AuthorityStatus);
 
 public sealed record TargetExposureRow(
     Guid EconomicRevisionId,
@@ -71,7 +122,7 @@ public sealed record TargetExposureRow(
     decimal NetTargetNotionalUsd,
     decimal LongTargetNotionalUsd,
     decimal ShortTargetNotionalUsd,
-    decimal AbsoluteWeight,
+    decimal GrossWeight,
     string FormulaVersion,
     string AuthorityStatus,
     string EvidenceSha256);
@@ -93,13 +144,29 @@ public sealed record TargetConcentrationRow(
     Guid EconomicRevisionId,
     string DimensionType,
     string DimensionId,
-    decimal? Concentration,
+    string Family,
+    decimal DimensionGrossTargetNotionalUsd,
+    decimal DimensionNetTargetNotionalUsd,
+    decimal? Denominator,
+    decimal? Share,
     int Rank,
+    string FormulaVersion,
+    string DataQualityStatus,
+    string EvidenceSha256,
+    string Caveat);
+
+public sealed record TargetConcentrationSummaryRow(
+    Guid EconomicRevisionId,
+    string DimensionType,
+    string Family,
+    decimal? Denominator,
+    int? TopN,
     decimal? TopNConcentration,
     decimal? Hhi,
     decimal? GrossNetRatio,
     string FormulaVersion,
     string DataQualityStatus,
+    string EvidenceSha256,
     string Caveat);
 
 public sealed record TargetTurnoverRow(
@@ -115,6 +182,8 @@ public sealed record TargetTurnoverRow(
     int IncreaseCount,
     int ReductionCount,
     int InversionCount,
+    string PreviousMappingSetSha256,
+    string CurrentMappingSetSha256,
     string MetricCode,
     string FormulaVersion,
     string AvailabilityStatus,
@@ -124,6 +193,8 @@ public sealed record DriftSummaryRow(
     Guid EconomicRevisionId,
     string DimensionType,
     string DimensionId,
+    string CanonicalSymbol,
+    string Unit,
     decimal SignedDrift,
     decimal AbsoluteDrift,
     int SourceDriftCount,
@@ -162,12 +233,16 @@ public sealed record PmsRiskSummary(
     decimal? NetTargetExposureUsd,
     decimal? LongTargetNotionalUsd,
     decimal? ShortTargetNotionalUsd,
-    decimal? MaxPairConcentration,
-    decimal? MaxStrategyConcentration,
-    decimal? PairHhi,
-    decimal? StrategyHhi,
+    decimal? MaxPairGrossConcentration,
+    decimal? MaxPairNetConcentration,
+    decimal? MaxStrategyGrossConcentration,
+    decimal? MaxStrategyNetConcentration,
+    decimal? PairGrossHhi,
+    decimal? PairNetHhi,
+    decimal? StrategyGrossHhi,
+    decimal? StrategyNetHhi,
     decimal? GrossNetRatio,
-    decimal? AbsoluteDrift,
+    IReadOnlyDictionary<string, decimal>? AbsoluteDriftByPair,
     decimal? TargetTurnoverUsd,
     string LeverageAvailability,
     string LeverageCaveat,
@@ -185,6 +260,36 @@ public sealed record PowerBiCsvContract(
     string NullPolicy,
     string AsOfBehavior);
 
+public sealed record InstitutionalSourceRevision(
+    Guid EconomicRevisionId,
+    string SlotId,
+    int RevisionNumber,
+    DateTimeOffset SlotEndUtc,
+    DateTimeOffset CompletedAtUtc,
+    Guid SourceIngestionId,
+    string SourceSessionId,
+    string MarketDataSnapshotSha256,
+    string ManifestSha256,
+    string TargetPositionsSha256,
+    string DriftsSha256,
+    IReadOnlyList<Guid> SelectedModelRunIds,
+    IReadOnlyList<string> SelectedOutputSha256,
+    IReadOnlyList<string> SelectedCoreCommitIds);
+
+public sealed record InstitutionalSourceSnapshot(
+    string ContractVersion,
+    string RepositoryCommit,
+    string RoadmapSha256,
+    string TargetProfileId,
+    string TargetFingerprint,
+    ReportingDatabaseIdentity DatabaseIdentity,
+    DateTimeOffset AsOfUtc,
+    IReadOnlyList<InstitutionalSourceRevision> AuthoritativeRevisions,
+    string MappingSetSha256,
+    IReadOnlyList<string> ActiveOrUnknownBreakIds,
+    string Rpt1SourceContractIdentity,
+    string? Rpt1SourceBundleSha256);
+
 public sealed record InstitutionalMetricReportSet(
     DateTimeOffset AsOfUtc,
     string RepositoryCommit,
@@ -192,20 +297,26 @@ public sealed record InstitutionalMetricReportSet(
     string RoadmapSha256,
     IReadOnlyList<InstitutionalMetricDefinition> Catalog,
     IReadOnlyList<InstitutionalMetricAvailability> Availability,
+    IReadOnlyList<TargetPositionFact> TargetPositionFacts,
+    IReadOnlyList<PositionOnlyDriftFact> PositionOnlyDriftFacts,
     IReadOnlyList<TargetExposureRow> ExposureByRevision,
     IReadOnlyList<TargetExposureRow> ExposureByStrategy,
     IReadOnlyList<TargetExposureRow> ExposureByModel,
     IReadOnlyList<TargetExposureRow> ExposureByPair,
     IReadOnlyList<TargetCurrencyExposureRow> ExposureByCurrency,
-    IReadOnlyList<TargetConcentrationRow> Concentrations,
+    IReadOnlyList<TargetConcentrationRow> GrossConcentrations,
+    IReadOnlyList<TargetConcentrationRow> NetConcentrations,
+    IReadOnlyList<TargetConcentrationSummaryRow> ConcentrationSummaries,
     IReadOnlyList<TargetTurnoverRow> Turnover,
-    IReadOnlyList<DriftSummaryRow> DriftByStrategy,
-    IReadOnlyList<DriftSummaryRow> DriftByModel,
+    IReadOnlyList<DriftSummaryRow> DriftByStrategyPair,
+    IReadOnlyList<DriftSummaryRow> DriftByModelPair,
     IReadOnlyList<DriftSummaryRow> DriftByPair,
     PmsRiskSummary RiskSummary,
     InstitutionalDataQuality DataQuality,
     IReadOnlyList<OperationalBreak> ActiveBreaks,
-    IReadOnlyList<PowerBiCsvContract> PowerBiContracts);
+    IReadOnlyList<PowerBiCsvContract> PowerBiContracts,
+    InstitutionalSourceSnapshot SourceSnapshot,
+    string SourceSnapshotSha256);
 
 public sealed record InstitutionalBundleFile(string Path, long SizeBytes, string Sha256);
 
@@ -216,12 +327,14 @@ public sealed record InstitutionalBundleManifest(
     string RoadmapSha256,
     DateTimeOffset AsOfUtc,
     string RepositoryCommit,
-    string SourceSnapshotId,
+    string SourceSnapshotSha256,
     string TargetProfileId,
     string TargetFingerprint,
     IReadOnlyList<string> FormulaVersions,
     IReadOnlyList<InstitutionalBundleFile> Files,
     string BundleSha256,
+    string SupersedesBundleSha256,
+    string SupersessionReason,
     bool NoOrder,
     bool ReadOnly,
     bool NoSecrets);
@@ -229,6 +342,7 @@ public sealed record InstitutionalBundleManifest(
 public sealed record InstitutionalBundleResult(
     string OutputDirectory,
     string BundleSha256,
+    string SourceSnapshotSha256,
     IReadOnlyList<InstitutionalBundleFile> Files);
 
 internal sealed record InstitutionalTargetSource(
@@ -236,3 +350,30 @@ internal sealed record InstitutionalTargetSource(
     PmsShadowSlotTargetPosition Target,
     PmsShadowSecurityMappingRow Mapping,
     string CanonicalSymbol);
+
+internal sealed record InstitutionalDriftSource(
+    PmsShadowIntradayEconomicProjection Revision,
+    PmsShadowSlotPositionOnlyDrift Drift,
+    PmsShadowSecurityMappingRow Mapping,
+    string CanonicalSymbol,
+    DateTimeOffset TargetCloseUtc);
+
+internal static class InstitutionalCanonicalJson
+{
+    private static readonly UTF8Encoding Utf8 = new(false);
+
+    public static readonly JsonSerializerOptions Options = new()
+    {
+        PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower,
+        DictionaryKeyPolicy = JsonNamingPolicy.SnakeCaseLower,
+        WriteIndented = true,
+        Encoder = JavaScriptEncoder.Default
+    };
+
+    public static string SerializeFile(object value) =>
+        JsonSerializer.Serialize(value, Options).Replace("\r\n", "\n", StringComparison.Ordinal) +
+        "\n";
+
+    public static string FileSha256(object value) =>
+        Convert.ToHexStringLower(SHA256.HashData(Utf8.GetBytes(SerializeFile(value))));
+}
