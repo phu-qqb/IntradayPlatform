@@ -42,6 +42,16 @@ public static class Arch7bBracketedGlobalFlatContract
         "ARCH7B_WORKING_ORDER_REPORT_AUTHORITY_UNAVAILABLE";
     public const string NonzeroPositionBlocker =
         "NO_GO_ARCH7B_NONZERO_CURRENT_POSITION_MAPPING_NOT_QUALIFIED";
+    public const string TemporalLineageContractVersion =
+        "arch7b_broker_snapshot_after_pms_source_v1";
+    public const string ImportEligibility =
+        "NOT_AUTHORIZED_REQUIRES_FRESH_BRACKET_AND_SEPARATE_IMPORT_PACKET";
+    public const string ImportFreshnessStatus =
+        "NOT_EVALUATED_FOR_FUTURE_IMPORT";
+    public const string SourceSelectionAuthority =
+        "LATEST_COMPLETED_INGESTION_FAIL_CLOSED_EXACT_AUTHORITATIVE_MODEL_SET_V1";
+    public const string TargetCloseTemporalContract =
+        "SCHEDULED_TARGET_CLOSE_MAY_FOLLOW_BROKER_SNAPSHOT_V1";
     public const string TargetProfile = "ARCH7B_RDS_TEST";
     public const string TargetDatabase = "qq_pms_shadow_arch7b_test";
     public const string TargetEnvironment = "TEST";
@@ -99,7 +109,8 @@ public sealed record Arch7bCoreBracketEvidence(
     bool NoAccountApi,
     bool NoDatabento,
     string EvidenceRoot,
-    int IndexedFileCount);
+    int IndexedFileCount,
+    Arch7bCoreBracketReportSemanticVerification? RecomputedSemantics = null);
 
 public static class Arch7bCoreBracketEvidencePackageReader
 {
@@ -115,12 +126,6 @@ public static class Arch7bCoreBracketEvidencePackageReader
     private static readonly string[] RequiredIndexedFiles =
     [
         "acquisition-manifest.json",
-        "attempt-1/attempt-manifest.json",
-        "attempt-1/P1-open-positions.csv",
-        "attempt-1/P2-open-positions.csv",
-        "attempt-1/T0-individual-trades.csv",
-        "attempt-1/T1-individual-trades.csv",
-        "attempt-1/T2-individual-trades.csv",
         "complementary/account-statement.pdf",
         "complementary/account-summary.csv",
         "complementary/currency-wallets.csv",
@@ -180,6 +185,8 @@ public static class Arch7bCoreBracketEvidencePackageReader
             Require(indexed.Contains(required), $"ARCH7B_CORE_INDEX_REQUIRED_FILE_MISSING:{required}");
 
         var contract = ParseObject(contractPath, "ARCH7B_CORE_CONTRACT_JSON_INVALID");
+        var recomputed = Arch7bCoreBracketReportSemanticVerifier.Verify(
+            root, contract, indexed);
         var manifest = ParseObject(manifestPath, "ARCH7B_CORE_MANIFEST_JSON_INVALID");
         var qualification = ParseObject(qualificationPath,
             "ARCH7B_CORE_QUALIFICATION_JSON_INVALID");
@@ -196,7 +203,7 @@ public static class Arch7bCoreBracketEvidencePackageReader
             "ARCH7B_CORE_QUALIFICATION_SAFETY_INVALID");
 
         var evidence = BuildEvidence(root, contract, expectations.CoreRepositoryCommit,
-            contractFileSha, finalIndexSha, indexed.Count);
+            contractFileSha, finalIndexSha, indexed.Count, recomputed);
         ValidateSemanticContract(evidence);
         ValidateRecalculableHashes(root, contract, evidence);
         RequireSha(expectations.EvidenceSha256, "ARCH7B_EXPECTED_EVIDENCE_SHA_INVALID");
@@ -310,7 +317,8 @@ public static class Arch7bCoreBracketEvidencePackageReader
         string coreCommit,
         string contractFileSha,
         string finalIndexSha,
-        int fileCount)
+        int fileCount,
+        Arch7bCoreBracketReportSemanticVerification recomputed)
     {
         var attempts = contract["Attempts"]?.AsArray()
             ?? throw new InvalidDataException("ARCH7B_CORE_ATTEMPTS_MISSING");
@@ -356,7 +364,8 @@ public static class Arch7bCoreBracketEvidencePackageReader
             true,
             true,
             root,
-            fileCount);
+            fileCount,
+            recomputed);
     }
 
     private static void ValidateManifest(JsonObject manifest, string contractFileSha)
@@ -390,7 +399,9 @@ public static class Arch7bCoreBracketEvidencePackageReader
         JsonObject contract,
         Arch7bCoreBracketEvidence evidence)
     {
-        var last = contract["Attempts"]!.AsArray()[^1]!.AsObject();
+        var successful = evidence.RecomputedSemantics
+            ?? throw new InvalidDataException("ARCH7B_CORE_RECOMPUTED_SEMANTICS_MISSING");
+        var last = contract["Attempts"]!.AsArray()[successful.SuccessfulAttemptNumber - 1]!.AsObject();
         var labels = new[] { "T0", "P1", "T1", "P2", "T2" };
         var complementaryFiles = new Dictionary<string, string>(StringComparer.Ordinal)
         {
@@ -460,52 +471,8 @@ public static class Arch7bCoreBracketEvidencePackageReader
         Require(HashJsonWithout(contract, "EvidenceSha256") == evidence.EvidenceSha256,
             "ARCH7B_CORE_CONTRACT_EVIDENCE_SHA_MISMATCH");
 
-        ValidateHeaderSha(SafePath(root, "attempt-1/T2-individual-trades.csv"),
-            evidence.ExecutionHeaderSetSha256);
-        ValidateHeaderSha(SafePath(root, "attempt-1/P2-open-positions.csv"),
-            evidence.PositionHeaderSetSha256);
     }
 
-    private static void ValidateHeaderSha(string path, string expected)
-    {
-        var firstLine = File.ReadLines(path).FirstOrDefault()
-            ?? throw new InvalidDataException("ARCH7B_CORE_REPORT_HEADER_MISSING");
-        var normalized = ParseCsvRecord(firstLine)
-            .Select(value => Regex.Replace(value.Trim(), @"\s+", " ").ToLowerInvariant())
-            .Order(StringComparer.Ordinal)
-            .ToArray();
-        Require(Sha256(JsonSerializer.Serialize(normalized)) == expected,
-            "ARCH7B_CORE_REPORT_HEADER_SHA_MISMATCH");
-    }
-
-    private static IReadOnlyList<string> ParseCsvRecord(string text)
-    {
-        var values = new List<string>();
-        var field = new StringBuilder();
-        var quoted = false;
-        for (var index = 0; index < text.Length; index++)
-        {
-            var value = text[index];
-            if (value == '"')
-            {
-                if (quoted && index + 1 < text.Length && text[index + 1] == '"')
-                {
-                    field.Append('"');
-                    index++;
-                }
-                else quoted = !quoted;
-            }
-            else if (value == ',' && !quoted)
-            {
-                values.Add(field.ToString());
-                field.Clear();
-            }
-            else field.Append(value);
-        }
-        Require(!quoted, "ARCH7B_CORE_REPORT_HEADER_CSV_INVALID");
-        values.Add(field.ToString());
-        return values;
-    }
 
     private static void RejectSecrets(string path, string relative)
     {
@@ -610,17 +577,31 @@ public sealed record Arch7bRequiredInstrument(
     string LmaxInstrumentId,
     string MappingSha256);
 
+public sealed record Arch7bMappingCardinalities(
+    int DistinctSymbols,
+    int DistinctLmaxInstrumentIds,
+    int SymbolCollisionCount,
+    int LmaxInstrumentIdCollisionCount,
+    string CollisionContract);
+
 public sealed record Arch7bRequiredPmsUniverse(
     Guid SourceIngestionId,
     string SourceSessionId,
     Guid SourceAccountSnapshotId,
     decimal NavUsd,
     DateTimeOffset IngestionCompletedAtUtc,
+    IReadOnlyList<PmsShadowQubesInputSnapshotRow> QubesInputs,
+    DateTimeOffset EarliestModelAsOfUtc,
+    DateTimeOffset LatestModelAsOfUtc,
+    DateTimeOffset EarliestTargetCloseUtc,
+    DateTimeOffset LatestTargetCloseUtc,
     IReadOnlyList<PmsShadowEconomicModel> Models,
     IReadOnlyList<PmsShadowEconomicMapping> Mappings,
     IReadOnlyList<Arch7bRequiredInstrument> Instruments,
+    Arch7bMappingCardinalities MappingCardinalities,
     IReadOnlyDictionary<string, int> StrategyCounts,
     string RequiredUniverseSha256,
+    string SourceSelectionAuthority,
     string TargetProfile,
     string TargetFingerprint,
     bool TransactionReadOnly,
@@ -633,6 +614,7 @@ public static class Arch7bRequiredPmsUniverseBuilder
         PmsShadowIngestionRow ingestion,
         PmsShadowAccountSnapshotRow account,
         IReadOnlyList<PmsShadowModelRunRow> modelRows,
+        IReadOnlyList<PmsShadowQubesInputSnapshotRow> qubesRows,
         IReadOnlyList<PmsShadowTargetWeightRow> weightRows,
         IReadOnlyList<PmsShadowSecurityMappingRow> mappingRows,
         string targetProfile,
@@ -655,8 +637,12 @@ public static class Arch7bRequiredPmsUniverseBuilder
                 models.Select(value => value.StrategyId)
                     .ToHashSet(StringComparer.Ordinal)
                     .SetEquals(Arch7bBracketedGlobalFlatContract.RequiredStrategies),
-            "ARCH7B_PMS_REQUIRED_MODEL_SET_MISMATCH");
-        Require(models.All(value => value.IngestionId == ingestion.IngestionId &&
+            "ARCH7B_LATEST_COMPLETED_PMS_INGESTION_INVALID");
+        Require(models.All(value => value.ModelRunId != Guid.Empty &&
+                                    value.QubesInputSnapshotId != Guid.Empty &&
+                                    value.IngestionId == ingestion.IngestionId &&
+                                    value.TargetCloseUtc.Offset == TimeSpan.Zero &&
+                                    value.AsOfUtc.Offset == TimeSpan.Zero &&
                                     value.NotAnOrder &&
                                     !value.ExecutionAllowed &&
                                     !value.AccountingEligible &&
@@ -665,11 +651,48 @@ public static class Arch7bRequiredPmsUniverseBuilder
                                         value.CoreMasterCommitId, value.CoreMasterObjectFormat)),
             "ARCH7B_PMS_MODEL_LINEAGE_INVALID");
 
+        var qubesInputs = qubesRows
+            .OrderBy(value => value.StrategyId, StringComparer.Ordinal)
+            .ToArray();
+        Require(qubesInputs.Length == models.Length &&
+                qubesInputs.Select(value => value.SnapshotId).Distinct().Count() ==
+                models.Length,
+            "ARCH7B_PMS_QUBES_INPUT_MISSING");
+        var qubesById = qubesInputs.ToDictionary(value => value.SnapshotId);
+        Require(qubesInputs.All(value =>
+                    value.SnapshotId != Guid.Empty &&
+                    value.IngestionId == ingestion.IngestionId &&
+                    value.TargetCloseUtc.Offset == TimeSpan.Zero &&
+                    !string.IsNullOrWhiteSpace(value.StrategyId) &&
+                    Arch5bHashing.IsSha256(value.InputSha256) &&
+                    Arch5bHashing.IsSha256(value.SourceSnapshotSha256) &&
+                    Arch5bHashing.IsSha256(value.OverlaySha256) &&
+                    Arch5bHashing.IsSha256(value.MappingSha256) &&
+                    (value.GapLedgerSha256 is null ||
+                     Arch5bHashing.IsSha256(value.GapLedgerSha256))),
+            "ARCH7B_PMS_QUBES_INPUT_LINEAGE_MISMATCH");
+        Require(models.All(value =>
+                    qubesById.TryGetValue(value.QubesInputSnapshotId, out var input) &&
+                    input.IngestionId == value.IngestionId &&
+                    input.StrategyId == value.StrategyId),
+            "ARCH7B_PMS_QUBES_INPUT_LINEAGE_MISMATCH");
+        Require(models.All(value =>
+                    qubesById[value.QubesInputSnapshotId].TargetCloseUtc ==
+                    value.TargetCloseUtc),
+            "ARCH7B_PMS_TARGET_CLOSE_LINEAGE_MISMATCH");
+
         var modelIds = models.Select(value => value.ModelRunId).ToHashSet();
-        var weights = weightRows.Where(value => modelIds.Contains(value.ModelRunId))
+        var weights = weightRows
             .OrderBy(value => value.ModelRunId)
             .ThenBy(value => value.SecurityId, StringComparer.Ordinal)
             .ToArray();
+        Require(weights.All(value => modelIds.Contains(value.ModelRunId)),
+            "ARCH7B_PMS_UNEXPECTED_MODEL_WEIGHT");
+        var modelById = models.ToDictionary(value => value.ModelRunId);
+        Require(weights.All(value =>
+                    value.TargetCloseUtc == modelById[value.ModelRunId].TargetCloseUtc &&
+                    value.OutputSha256 == modelById[value.ModelRunId].OutputSha256),
+            "ARCH7B_PMS_TARGET_CLOSE_LINEAGE_MISMATCH");
         Require(weights.GroupBy(value => (value.ModelRunId, value.InstrumentId))
                 .All(group => group.Count() == 1),
             "ARCH7B_PMS_DUPLICATE_INSTRUMENT_ID");
@@ -683,9 +706,17 @@ public static class Arch7bRequiredPmsUniverseBuilder
             "ARCH7B_PMS_MODEL_WEIGHT_COUNTS_MISMATCH");
 
         var mappings = mappingRows
-            .Where(value => value.IngestionId == ingestion.IngestionId)
             .OrderBy(value => value.InstrumentId)
             .ToArray();
+        Require(mappings.All(value =>
+                    value.IngestionId == ingestion.IngestionId &&
+                    value.InstrumentId != Guid.Empty &&
+                    !string.IsNullOrWhiteSpace(value.SecurityId) &&
+                    Regex.IsMatch(value.Symbol, "^[A-Z]{6}$",
+                        RegexOptions.CultureInvariant) &&
+                    !string.IsNullOrWhiteSpace(value.LmaxInstrumentId) &&
+                    Arch5bHashing.IsSha256(value.MappingSha256)),
+            "ARCH7B_PMS_SECURITY_MAPPING_IDENTITY_MISMATCH");
         Require(mappings.GroupBy(value => value.InstrumentId).All(group => group.Count() == 1),
             "ARCH7B_PMS_DUPLICATE_INSTRUMENT_ID");
         Require(mappings.GroupBy(value => value.SecurityId, StringComparer.Ordinal)
@@ -708,22 +739,45 @@ public static class Arch7bRequiredPmsUniverseBuilder
             return new Arch7bRequiredInstrument(mapping.InstrumentId, mapping.SecurityId,
                 mapping.Symbol, mapping.LmaxInstrumentId, mapping.MappingSha256);
         }).ToArray();
+        var mappingCardinalities = new Arch7bMappingCardinalities(
+            instruments.Select(value => value.Symbol)
+                .Distinct(StringComparer.Ordinal).Count(),
+            instruments.Select(value => value.LmaxInstrumentId)
+                .Distinct(StringComparer.Ordinal).Count(),
+            instruments.GroupBy(value => value.Symbol, StringComparer.Ordinal)
+                .Sum(group => Math.Max(0, group.Count() - 1)),
+            instruments.GroupBy(value => value.LmaxInstrumentId, StringComparer.Ordinal)
+                .Sum(group => Math.Max(0, group.Count() - 1)),
+            "SYMBOL_AND_LMAX_IDENTITIES_MAY_BE_REUSED_COLLISIONS_INVENTORIED_V1");
         var universeSha = Arch5bHashing.HashCanonical(new
         {
             ContractVersion = Arch7bBracketedGlobalFlatContract.Version,
             ingestion.IngestionId,
             ingestion.SourceSessionId,
+            SourceSelectionAuthority =
+                Arch7bBracketedGlobalFlatContract.SourceSelectionAuthority,
             Models = models.Select(value => new
             {
                 value.StrategyId,
                 value.ModelRunId,
                 value.QubesInputSnapshotId,
                 value.TargetCloseUtc,
+                value.AsOfUtc,
                 value.OutputSha256,
                 value.CoreMasterCommitId
             }),
+            QubesInputs = qubesInputs.Select(value => new
+            {
+                value.SnapshotId,
+                value.IngestionId,
+                value.StrategyId,
+                value.TargetCloseUtc,
+                value.InputSha256,
+                value.MappingSha256
+            }),
             StrategyCounts = counts.OrderBy(value => value.Key, StringComparer.Ordinal),
-            Instruments = instruments
+            Instruments = instruments,
+            MappingCardinalities = mappingCardinalities
         });
         var economicMappings = instruments.Select(value =>
         {
@@ -748,11 +802,18 @@ public static class Arch7bRequiredPmsUniverseBuilder
             account.NavOrEquity,
             ingestion.CompletedAtUtc
                 ?? throw new InvalidDataException("ARCH7B_PMS_INGESTION_COMPLETION_MISSING"),
+            qubesInputs,
+            models.Min(value => value.AsOfUtc),
+            models.Max(value => value.AsOfUtc),
+            models.Min(value => value.TargetCloseUtc),
+            models.Max(value => value.TargetCloseUtc),
             economicModels,
             economicMappings,
             instruments,
+            mappingCardinalities,
             counts,
             universeSha,
+            Arch7bBracketedGlobalFlatContract.SourceSelectionAuthority,
             targetProfile,
             targetFingerprint,
             transactionReadOnly,
@@ -811,11 +872,13 @@ public sealed class Arch7bRequiredPmsUniverseReader(
                 .SingleAsync(value => value.IngestionId == ingestion.IngestionId,
                     cancellationToken);
             var models = await context.ModelRuns.AsNoTracking()
-                .Where(value => value.IngestionId == ingestion.IngestionId &&
-                                Arch7bBracketedGlobalFlatContract.RequiredStrategies
-                                    .Contains(value.StrategyId))
+                .Where(value => value.IngestionId == ingestion.IngestionId)
                 .ToArrayAsync(cancellationToken);
             var modelIds = models.Select(value => value.ModelRunId).ToArray();
+            var qubesIds = models.Select(value => value.QubesInputSnapshotId).ToArray();
+            var qubesInputs = await context.QubesInputSnapshots.AsNoTracking()
+                .Where(value => qubesIds.Contains(value.SnapshotId))
+                .ToArrayAsync(cancellationToken);
             var weights = await context.TargetWeights.AsNoTracking()
                 .Where(value => modelIds.Contains(value.ModelRunId))
                 .ToArrayAsync(cancellationToken);
@@ -823,7 +886,7 @@ public sealed class Arch7bRequiredPmsUniverseReader(
                 .Where(value => value.IngestionId == ingestion.IngestionId)
                 .ToArrayAsync(cancellationToken);
             var result = Arch7bRequiredPmsUniverseBuilder.Build(
-                ingestion, account, models, weights, mappings,
+                ingestion, account, models, qubesInputs, weights, mappings,
                 target.TargetProfileId, target.TargetFingerprint,
                 transactionReadOnly, pending);
             await transaction.RollbackAsync(cancellationToken);
@@ -878,6 +941,10 @@ public sealed record Arch7bNormalizedPositionLine(
     Guid InstrumentId,
     string SecurityId,
     string Symbol,
+    string LmaxInstrumentId,
+    string MappingSha256,
+    Guid SourceIngestionId,
+    string PmsSourceSessionId,
     decimal CurrentBaseQuantity,
     string ProvenanceKind,
     string PositionAuthorityCode,
@@ -902,6 +969,16 @@ public sealed record Arch7bPmsGlobalFlatPositionSnapshot(
     DateTimeOffset PositionReportP2Utc,
     DateTimeOffset BracketUpperBoundUtc,
     DateTimeOffset PositionSnapshotAsOfUtc,
+    DateTimeOffset PmsSourceIngestionCompletedAtUtc,
+    DateTimeOffset LatestModelAsOfUtc,
+    DateTimeOffset LatestTargetCloseUtc,
+    bool BrokerSnapshotAfterIngestion,
+    string TemporalLineageStatus,
+    string TemporalLineageContractVersion,
+    string TargetCloseTemporalContract,
+    string ImportEligibility,
+    string ImportFreshnessStatus,
+    Arch7bMappingCardinalities MappingCardinalities,
     int RawBrokerPositionCount,
     int RequiredInstrumentCount,
     int NormalizedLineCount,
@@ -936,6 +1013,12 @@ public static class Arch7bGlobalFlatPositionSnapshotBuilder
         Require(universe.TransactionReadOnly && universe.NoDatabaseWrite &&
                 !universe.PendingModelChanges,
             "ARCH7B_PMS_READ_ONLY_AUTHORITY_INVALID");
+        Require(core.PositionReportP2Utc >= universe.IngestionCompletedAtUtc &&
+                core.BracketUpperBoundUtc >= universe.IngestionCompletedAtUtc &&
+                core.PositionReportP2Utc >= universe.LatestModelAsOfUtc,
+            "ARCH7B_BROKER_POSITION_SNAPSHOT_PREDATES_PMS_SOURCE");
+        var temporalLineageStatus =
+            "PROVEN_BROKER_SNAPSHOT_AFTER_PMS_INGESTION_AND_MODEL_ASOF";
 
         var identity = string.Join(':',
             Arch7bBracketedGlobalFlatContract.Version,
@@ -954,7 +1037,9 @@ public static class Arch7bGlobalFlatPositionSnapshotBuilder
             .Select(value =>
             {
                 var lineId = Arch5bHashing.GuidFromSha256(
-                    $"arch7b:position-line:{identity}:{value.InstrumentId:D}");
+                    $"arch7b:position-line:{identity}:{value.InstrumentId:D}:" +
+                    $"{value.LmaxInstrumentId}:{value.MappingSha256}:" +
+                    $"{universe.SourceIngestionId:D}:{universe.SourceSessionId}");
                 var lineEvidence = Arch5bHashing.HashCanonical(new
                 {
                     PositionSnapshotLineId = lineId,
@@ -962,6 +1047,10 @@ public static class Arch7bGlobalFlatPositionSnapshotBuilder
                     value.InstrumentId,
                     value.SecurityId,
                     value.Symbol,
+                    value.LmaxInstrumentId,
+                    value.MappingSha256,
+                    SourceIngestionId = universe.SourceIngestionId,
+                    PmsSourceSessionId = universe.SourceSessionId,
                     CurrentBaseQuantity = 0m,
                     ProvenanceKind = Arch7bBracketedGlobalFlatContract.ProvenanceKind,
                     PositionAuthorityCode =
@@ -975,7 +1064,8 @@ public static class Arch7bGlobalFlatPositionSnapshotBuilder
                 });
                 return new Arch7bNormalizedPositionLine(
                     lineId, positionSnapshotId, value.InstrumentId, value.SecurityId,
-                    value.Symbol, 0m,
+                    value.Symbol, value.LmaxInstrumentId, value.MappingSha256,
+                    universe.SourceIngestionId, universe.SourceSessionId, 0m,
                     Arch7bBracketedGlobalFlatContract.ProvenanceKind,
                     Arch7bBracketedGlobalFlatContract.PositionAuthorityCode,
                     core.AccountId, core.PositionCount, core.EvidenceSha256,
@@ -997,6 +1087,19 @@ public static class Arch7bGlobalFlatPositionSnapshotBuilder
             PositionReportP2Utc = core.PositionReportP2Utc,
             BracketUpperBoundUtc = core.BracketUpperBoundUtc,
             PositionSnapshotAsOfUtc = core.PositionReportP2Utc,
+            PmsSourceIngestionCompletedAtUtc = universe.IngestionCompletedAtUtc,
+            LatestModelAsOfUtc = universe.LatestModelAsOfUtc,
+            LatestTargetCloseUtc = universe.LatestTargetCloseUtc,
+            BrokerSnapshotAfterIngestion = true,
+            TemporalLineageStatus = temporalLineageStatus,
+            TemporalLineageContractVersion =
+                Arch7bBracketedGlobalFlatContract.TemporalLineageContractVersion,
+            TargetCloseTemporalContract =
+                Arch7bBracketedGlobalFlatContract.TargetCloseTemporalContract,
+            ImportEligibility = Arch7bBracketedGlobalFlatContract.ImportEligibility,
+            ImportFreshnessStatus =
+                Arch7bBracketedGlobalFlatContract.ImportFreshnessStatus,
+            universe.MappingCardinalities,
             RawBrokerPositionCount = core.PositionCount,
             RequiredInstrumentCount = universe.Instruments.Count,
             NormalizedLineCount = lines.Length,
@@ -1027,6 +1130,16 @@ public static class Arch7bGlobalFlatPositionSnapshotBuilder
             snapshotCore.PositionReportP2Utc,
             snapshotCore.BracketUpperBoundUtc,
             snapshotCore.PositionSnapshotAsOfUtc,
+            snapshotCore.PmsSourceIngestionCompletedAtUtc,
+            snapshotCore.LatestModelAsOfUtc,
+            snapshotCore.LatestTargetCloseUtc,
+            snapshotCore.BrokerSnapshotAfterIngestion,
+            snapshotCore.TemporalLineageStatus,
+            snapshotCore.TemporalLineageContractVersion,
+            snapshotCore.TargetCloseTemporalContract,
+            snapshotCore.ImportEligibility,
+            snapshotCore.ImportFreshnessStatus,
+            snapshotCore.MappingCardinalities,
             snapshotCore.RawBrokerPositionCount,
             snapshotCore.RequiredInstrumentCount,
             snapshotCore.NormalizedLineCount,
@@ -1285,11 +1398,27 @@ public static class Arch7bGlobalFlatOutputWriter
                 ContractVersion = Arch7bBracketedGlobalFlatContract.Version,
                 CoreRepositoryCommit = core.CoreRepositoryCommit,
                 BracketEvidenceSha256 = core.EvidenceSha256,
+                SuccessfulAttemptNumber =
+                    core.RecomputedSemantics?.SuccessfulAttemptNumber,
+                RecomputedExecutionReports =
+                    core.RecomputedSemantics?.ExecutionReports,
+                RecomputedPositionReports =
+                    core.RecomputedSemantics?.PositionReports,
                 universe.RequiredUniverseSha256,
                 snapshot.NormalizedLineSetSha256,
                 snapshot.AccountSnapshotId,
                 snapshot.PositionSnapshotId,
                 snapshot.PositionSnapshotAsOfUtc,
+                snapshot.PmsSourceIngestionCompletedAtUtc,
+                snapshot.LatestModelAsOfUtc,
+                snapshot.LatestTargetCloseUtc,
+                snapshot.BrokerSnapshotAfterIngestion,
+                snapshot.TemporalLineageStatus,
+                snapshot.TemporalLineageContractVersion,
+                snapshot.TargetCloseTemporalContract,
+                snapshot.ImportEligibility,
+                snapshot.ImportFreshnessStatus,
+                snapshot.MappingCardinalities,
                 WorkingOrderAuthority =
                     Arch7bBracketedGlobalFlatContract.WorkingOrderAuthority,
                 WorkingOrderBlocker =
@@ -1332,7 +1461,7 @@ public static class Arch7bGlobalFlatOutputWriter
         var path = Path.Combine(root, "normalized-position-lines.csv");
         using var writer = new StreamWriter(path, false, new UTF8Encoding(false));
         writer.WriteLine(
-            "position_snapshot_line_id,position_snapshot_id,instrument_id,security_id,symbol,current_base_quantity,provenance_kind,position_authority_code,account_id,broker_position_count,bracket_evidence_sha256,required_universe_sha256,core_repository_commit,position_snapshot_as_of_utc,evidence_sha256");
+            "position_snapshot_line_id,position_snapshot_id,instrument_id,security_id,symbol,lmax_instrument_id,mapping_sha256,source_ingestion_id,pms_source_session_id,current_base_quantity,provenance_kind,position_authority_code,account_id,broker_position_count,bracket_evidence_sha256,required_universe_sha256,core_repository_commit,position_snapshot_as_of_utc,evidence_sha256");
         foreach (var value in lines.OrderBy(value => value.InstrumentId))
             writer.WriteLine(string.Join(',',
                 value.PositionSnapshotLineId.ToString("D"),
@@ -1340,6 +1469,10 @@ public static class Arch7bGlobalFlatOutputWriter
                 value.InstrumentId.ToString("D"),
                 Csv(value.SecurityId),
                 Csv(value.Symbol),
+                Csv(value.LmaxInstrumentId),
+                value.MappingSha256,
+                value.SourceIngestionId.ToString("D"),
+                Csv(value.PmsSourceSessionId),
                 value.CurrentBaseQuantity.ToString(CultureInfo.InvariantCulture),
                 value.ProvenanceKind,
                 value.PositionAuthorityCode,
@@ -1362,13 +1495,23 @@ public static class Arch7bGlobalFlatOutputWriter
         - Consumer contract: `{Arch7bBracketedGlobalFlatContract.Version}`
         - Core commit: `{core.CoreRepositoryCommit}`
         - Core evidence SHA-256: `{core.EvidenceSha256}`
+        - Successful Core attempt: `{core.RecomputedSemantics?.SuccessfulAttemptNumber}`
         - Position report P2 UTC: `{core.PositionReportP2Utc:O}`
+        - PMS ingestion ID: `{universe.SourceIngestionId:D}`
+        - PMS ingestion completed UTC: `{universe.IngestionCompletedAtUtc:O}`
+        - Model as-of range: `{universe.EarliestModelAsOfUtc:O}` to `{universe.LatestModelAsOfUtc:O}`
+        - Target close range: `{universe.EarliestTargetCloseUtc:O}` to `{universe.LatestTargetCloseUtc:O}`
+        - Temporal lineage: `{snapshot.TemporalLineageStatus}`
+        - Target-close temporal contract: `{snapshot.TargetCloseTemporalContract}`
         - Raw broker position count: `{core.PositionCount}`
         - Required PMS instruments: `{universe.Instruments.Count}`
         - Required universe SHA-256: `{universe.RequiredUniverseSha256}`
+        - Mapping cardinalities: `{universe.MappingCardinalities}`
         - Normalized lines: `{snapshot.NormalizedLineCount}`
         - Derived zero lines: `{snapshot.DerivedZeroCount}`
         - Unknown lines: `{snapshot.UnknownCount}`
+        - Import eligibility: `{snapshot.ImportEligibility}`
+        - Import freshness: `{snapshot.ImportFreshnessStatus}`
         - Position authority: `{snapshot.PositionAuthorityCode}`
         - Working-order authority: `{snapshot.WorkingOrderAuthority}`
         - Working-order blocker: `{snapshot.WorkingOrderBlocker}`

@@ -16,6 +16,14 @@ Databento, or write to PostgreSQL. PostgreSQL access is limited to a
 ## Fail-closed contract
 
 The consumer rejects the package unless all of the following are proven:
+- `arch7b_core_bracket_report_semantic_verifier_v1` reparses every CSV with
+  the Core 0.5.0 `lmax_portal_report_csv_parser_v2` rules and recomputes
+  headers, rows, canonical records, duplicate counts, timestamps, account IDs,
+  and semantic SHA-256 values;
+- attempts are numbered consecutively from one to three, only the terminal
+  attempt is stable, and every declared attempt directory and manifest is
+  present in the exact final-index inventory;
+- all report paths are resolved from the terminal successful attempt number;
 
 - exact Core commit, contract version, downloader version, account,
   environment, and session mode;
@@ -49,20 +57,38 @@ The latest completed ingestion must contain exactly:
 | INFX9 | 78 |
 | INFX10 | 78 |
 
+The reader always selects the latest completed ingestion and then requires its
+exact authoritative four-model set. It never falls back to an older completed
+ingestion. Each selected model must have one matching Qubes input snapshot from
+the same ingestion and strategy, with the same UTC `TargetCloseUtc`, valid
+artifact hashes, `NotAnOrder=true`, `ExecutionAllowed=false`, and
+`AccountingEligible=false`. Unexpected model weights fail closed.
+
 Their union must contain exactly 99 distinct instruments, each with one
-unambiguous security mapping. The required-universe SHA-256 binds the selected
-ingestion, models, weights, and mappings.
+unambiguous `InstrumentId`/`SecurityId` mapping and nonempty canonical symbol,
+LMAX instrument ID, and mapping SHA-256. Symbol and LMAX ID reuse is permitted
+by the economic contract, but distinct cardinalities and collisions are
+inventoried. The required-universe SHA-256 binds the selected ingestion, Qubes
+inputs, models, weights, mappings, cardinalities, and source-selection authority.
 
 ## Global-flat normalization
 
 The candidate contains one explicit zero line for every required instrument.
 Each line records the bracket evidence SHA-256, required-universe SHA-256,
-Core commit, P2 broker timestamp, account, provenance, and authority code.
+Core commit, P2 broker timestamp, account, provenance, authority code,
+LMAX instrument ID, mapping SHA-256, source ingestion ID, and PMS source
+session ID.
 Deterministic account, position-snapshot, and line identities change whenever
-the source evidence or required universe changes.
+the source evidence, required universe, or instrument mapping changes.
 
-`PositionSnapshotAsOfUtc` is the P2 broker timestamp. Host time, file time, and
-an arbitrary bracket midpoint are never temporal authorities.
+`PositionSnapshotAsOfUtc` is the P2 broker timestamp.
+`arch7b_broker_snapshot_after_pms_source_v1` requires P2 and the bracket upper
+bound to be at or after the selected ingestion completion, and P2 to be at or
+after every selected ModelRun `AsOfUtc`. INFX `TargetCloseUtc` is a scheduled
+economic horizon and may follow the broker snapshot; that exception is explicit
+as `SCHEDULED_TARGET_CLOSE_MAY_FOLLOW_BROKER_SNAPSHOT_V1` and is never used as
+an as-of authority. Host time, file time, and an arbitrary bracket midpoint
+are never temporal authorities.
 
 Working-order authority remains `INCONNU`, with blocker
 `ARCH7B_WORKING_ORDER_REPORT_AUTHORITY_UNAVAILABLE`.
@@ -80,6 +106,13 @@ zero, every delta equals its target quantity, and projection integrity must be
 ## Future append-only import
 
 Import is deliberately outside this change and requires separate
-authorization. A future importer must:
+authorization. Every output states:
+
+- `ImportEligibility=NOT_AUTHORIZED_REQUIRES_FRESH_BRACKET_AND_SEPARATE_IMPORT_PACKET`;
+- `ImportFreshnessStatus=NOT_EVALUATED_FOR_FUTURE_IMPORT`.
+
+The 2026-07-27 package is immutable historical evidence at its P2 timestamp,
+not a standing current snapshot. A future importer must acquire a fresh bracket
+immediately before its separately authorized append-only import, then:
 
 1. Revalidate the complete Core evidence and required RDS universe.

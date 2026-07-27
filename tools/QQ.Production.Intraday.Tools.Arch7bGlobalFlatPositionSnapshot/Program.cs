@@ -52,6 +52,25 @@ Console.WriteLine(JsonSerializer.Serialize(new
     target = target.ObservableIdentity,
     core.CoreRepositoryCommit,
     bracket_evidence_sha256 = core.EvidenceSha256,
+    successful_attempt_number = core.RecomputedSemantics?.SuccessfulAttemptNumber,
+    recomputed_execution_reports = core.RecomputedSemantics?.ExecutionReports,
+    recomputed_position_reports = core.RecomputedSemantics?.PositionReports,
+    pms_source_ingestion_id = universe.SourceIngestionId,
+    pms_source_ingestion_completed_at_utc = universe.IngestionCompletedAtUtc,
+    model_as_of_range = new
+    {
+        earliest = universe.EarliestModelAsOfUtc,
+        latest = universe.LatestModelAsOfUtc
+    },
+    target_close_range = new
+    {
+        earliest = universe.EarliestTargetCloseUtc,
+        latest = universe.LatestTargetCloseUtc
+    },
+    snapshot.TemporalLineageStatus,
+    snapshot.ImportEligibility,
+    snapshot.ImportFreshnessStatus,
+    universe.MappingCardinalities,
     raw_broker_position_count = core.PositionCount,
     required_instrument_count = universe.Instruments.Count,
     universe.RequiredUniverseSha256,

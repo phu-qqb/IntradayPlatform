@@ -451,6 +451,7 @@ public sealed class Arch7bBracketedGlobalFlatPositionSnapshotTests
             plan.Ingestion,
             plan.AccountSnapshot,
             plan.ModelRuns,
+            plan.QubesInputSnapshots,
             plan.TargetWeights,
             mappings ?? plan.SecurityMappings,
             Arch7bBracketedGlobalFlatContract.TargetProfile,
@@ -590,7 +591,8 @@ public sealed class Arch7bBracketedGlobalFlatPositionSnapshotTests
                 ["ResponseServerDateUtc"] = "Mon, 27 Jul 2026 11:23:45 GMT",
                 ["RawSha256"] = FileHash(Path.Combine(Root, "attempt-1", file)),
                 ["SemanticSha256"] = emptySemanticSha,
-                ["HeaderSetSha256"] = headerSha
+                ["HeaderSetSha256"] = headerSha,
+                ["RowCount"] = 0
             };
             var attempt = new JsonObject
             {
@@ -682,6 +684,8 @@ public sealed class Arch7bBracketedGlobalFlatPositionSnapshotTests
                 ["DownloaderVersion"] = Arch7bBracketedGlobalFlatContract.DownloaderVersion,
                 ["PositionCount"] = 0,
                 ["ExecutionCount"] = 0,
+                ["DuplicateIdenticalExecutionCount"] = 0,
+                ["LatestExecutionTime"] = null,
                 ["StableExecutionSet"] = true,
                 ["StablePositionSet"] = true,
                 ["AsOfLowerBoundUtc"] = "2026-07-27T11:23:45.000Z",
