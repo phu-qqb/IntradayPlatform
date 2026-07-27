@@ -21,6 +21,20 @@ public static class Arch7bPositionImportContract
     public const string FromFuture = "ARCH7B_POSITION_BRACKET_FROM_FUTURE";
     public const string PredatesPmsSource = "ARCH7B_POSITION_BRACKET_PREDATES_PMS_SOURCE";
     public const string NotPrearmed = "ARCH7B_POSITION_IMPORT_NOT_PREARMED";
+    public const string AuthorizationMismatch =
+        "ARCH7B_POSITION_IMPORT_AUTHORIZATION_MISMATCH";
+    public const string OwnerMismatch =
+        "ARCH7B_POSITION_IMPORT_OWNER_MISMATCH";
+    public const string RepositoryStateMismatch =
+        "ARCH7B_POSITION_IMPORT_REPOSITORY_STATE_MISMATCH";
+    public const string ChronologyInvalid =
+        "ARCH7B_POSITION_IMPORT_CHRONOLOGY_INVALID";
+    public const string DatabaseTimezoneInvalid =
+        "ARCH7B_POSITION_IMPORT_DATABASE_TIMEZONE_NOT_UTC";
+    public const string IntraTransactionReadbackMismatch =
+        "ARCH7B_POSITION_IMPORT_INTRA_TRANSACTION_READBACK_MISMATCH";
+    public const string PostCommitReadbackMismatch =
+        "ARCH7B_POSITION_IMPORT_POST_COMMIT_READBACK_MISMATCH";
     public const int RequiredLineCount = 99;
     public const int MaximumAgeSeconds =
         PmsShadowFreshSlotHandoffContract.AbsoluteStartDeadlineSeconds;
@@ -86,6 +100,8 @@ public sealed record Arch7bPositionImportReadyMarker(
     string ContractVersion,
     string CoreEvidenceSha256,
     string ConsumerSnapshotEvidenceSha256,
+    string PackageManifestSha256,
+    string ArmedEvidenceSha256,
     string RequiredUniverseSha256,
     string NormalizedLineSetSha256,
     Guid PositionSnapshotId,
@@ -95,9 +111,10 @@ public sealed record Arch7bPositionImportReadyMarker(
     string TargetProfile,
     string TargetFingerprint,
     string RepositoryCommit,
+    string BuildCommit,
     string FutureAuthorizationId,
     string OwnerId,
-    DateTimeOffset CreatedAtUtc,
+    DateTimeOffset ReadyAtDatabaseUtc,
     bool NoOrder);
 
 public static class Arch7bPositionImportPackageReader
@@ -119,6 +136,7 @@ public static class Arch7bPositionImportPackageReader
         Require(File.Exists(manifestPath) && File.Exists(universePath) &&
                 File.Exists(snapshotPath) && File.Exists(linesPath),
             "ARCH7B_POSITION_IMPORT_PACKAGE_INCOMPLETE");
+        RejectReparsePoint(root);
 
         using var manifestDocument = JsonDocument.Parse(File.ReadAllBytes(manifestPath));
         var manifest = manifestDocument.RootElement;
@@ -129,13 +147,8 @@ public static class Arch7bPositionImportPackageReader
                 True(manifest, "no_database_write") && True(manifest, "no_fill") &&
                 True(manifest, "no_ledger_write"),
             "ARCH7B_POSITION_IMPORT_PACKAGE_SAFETY_INVALID");
-        foreach (var property in manifest.GetProperty("files").EnumerateObject())
-        {
-            var path = SafePath(root, property.Name);
-            Require(File.Exists(path), "ARCH7B_POSITION_IMPORT_MANIFEST_FILE_MISSING");
-            Require(FileSha(path) == property.Value.GetString(),
-                "ARCH7B_POSITION_IMPORT_MANIFEST_FILE_SHA_MISMATCH");
-        }
+        Arch7bPositionImportPackageIntegrity.ValidateInventory(
+            root, manifest.GetProperty("files"));
 
         var universe = JsonSerializer.Deserialize<Arch7bRequiredPmsUniverse>(
             File.ReadAllBytes(universePath), Json)
@@ -179,14 +192,22 @@ public static class Arch7bPositionImportPackageReader
                 manifest.GetProperty("position_snapshot_id").GetGuid() ==
                 snapshot.PositionSnapshotId,
             "ARCH7B_POSITION_IMPORT_MANIFEST_BINDING_MISMATCH");
-        Require(CountCsvDataRows(linesPath) == Arch7bPositionImportContract.RequiredLineCount,
-            "ARCH7B_POSITION_IMPORT_CSV_CARDINALITY_INVALID");
+        Arch7bPositionImportPackageIntegrity.ValidateCsvJsonParity(
+            linesPath, snapshot.Lines);
 
         return new(root, FileSha(manifestPath), universe, snapshot);
     }
 
-    private static int CountCsvDataRows(string path) =>
-        File.ReadLines(path).Skip(1).Count();
+    private static void RejectReparsePoint(string root)
+    {
+        var current = new DirectoryInfo(root);
+        while (current is not null)
+        {
+            Require((current.Attributes & FileAttributes.ReparsePoint) == 0,
+                "ARCH7B_POSITION_IMPORT_REPARSE_POINT_REJECTED");
+            current = current.Parent;
+        }
+    }
 
     private static bool True(JsonElement value, string property) =>
         value.GetProperty(property).ValueKind == JsonValueKind.True;
@@ -268,7 +289,7 @@ public static class Arch7bPositionImportPlanner
             true,
             false,
             true,
-            PmsShadowStateContract.EvidenceClassification);
+            Arch7bBracketedGlobalFlatContract.PositionAuthorityCode);
         var status = Arch7bPositionImportContract.New;
         if (database.ExistingById is not null || database.ExistingByEvidence is not null)
         {
@@ -315,10 +336,63 @@ public static class Arch7bPositionImportPlanner
 
 public sealed class Arch7bPositionImportStore(
     DbContextOptions<PmsShadowDbContext> options,
-    PmsShadowPostgreSqlTarget target,
-    TimeProvider? clock = null)
+    PmsShadowPostgreSqlTarget target)
 {
-    private TimeProvider Clock { get; } = clock ?? TimeProvider.System;
+    public async Task<DateTimeOffset> ArmAsync(
+        Guid expectedSourceIngestionId,
+        CancellationToken cancellationToken = default)
+    {
+        await using var context = new PmsShadowDbContext(options);
+        await context.Database.OpenConnectionAsync(cancellationToken);
+        await using var transaction = await context.Database.BeginTransactionAsync(
+            IsolationLevel.RepeatableRead, cancellationToken);
+        try
+        {
+            await context.Database.ExecuteSqlRawAsync(
+                "SET TRANSACTION READ ONLY", cancellationToken);
+            await ValidateTargetAsync(context, cancellationToken);
+            await ValidatePrivilegesAsync(context, cancellationToken);
+            var latest = await context.Ingestions.AsNoTracking()
+                .OrderByDescending(value => value.StartedAtUtc)
+                .ThenByDescending(value => value.IngestionId)
+                .FirstOrDefaultAsync(cancellationToken);
+            if (latest is null ||
+                latest.IngestionId != expectedSourceIngestionId ||
+                latest.Status != PmsShadowIngestionStatuses.Completed ||
+                latest.CompletedAtUtc is null)
+                throw new InvalidDataException(
+                    "ARCH7B_POSITION_IMPORT_LATEST_INGESTION_CHANGED");
+            var databaseUtc = await ReadDatabaseUtcAsync(
+                context, cancellationToken);
+            await transaction.RollbackAsync(cancellationToken);
+            return databaseUtc;
+        }
+        catch
+        {
+            await transaction.RollbackAsync(CancellationToken.None);
+            throw;
+        }
+        finally
+        {
+            await context.Database.CloseConnectionAsync();
+        }
+    }
+
+    public async Task<DateTimeOffset> ReadDatabaseTimeAsync(
+        CancellationToken cancellationToken = default)
+    {
+        await using var context = new PmsShadowDbContext(options);
+        await context.Database.OpenConnectionAsync(cancellationToken);
+        try
+        {
+            await ValidateTargetAsync(context, cancellationToken);
+            return await ReadDatabaseUtcAsync(context, cancellationToken);
+        }
+        finally
+        {
+            await context.Database.CloseConnectionAsync();
+        }
+    }
 
     public async Task<Arch7bPositionImportPlan> PlanAsync(
         Arch7bPositionImportPackage package,
@@ -359,17 +433,13 @@ public sealed class Arch7bPositionImportStore(
 
     public async Task<Arch7bPositionImportPlan> ApplyAsync(
         Arch7bPositionImportPackage package,
+        Arch7bPositionImportArmedState armed,
         Arch7bPositionImportReadyMarker marker,
-        string expectedRepositoryCommit,
+        Arch7bRepositoryState repository,
+        string expectedFutureAuthorizationId,
+        string expectedOwnerId,
         CancellationToken cancellationToken = default)
     {
-        Arch7bPositionImportReadyMarkerStore.Validate(
-            marker, package, target, expectedRepositoryCommit);
-        var freshness = Arch7bPositionImportFreshnessPolicy.Evaluate(
-            package, Clock.GetUtcNow(), historicalFixture: false);
-        if (!freshness.ApplyEligible)
-            throw new InvalidDataException(freshness.Status);
-
         await using var context = new PmsShadowDbContext(options);
         await context.Database.OpenConnectionAsync(cancellationToken);
         await using var transaction = await context.Database.BeginTransactionAsync(
@@ -377,9 +447,27 @@ public sealed class Arch7bPositionImportStore(
         try
         {
             await ValidateTargetAsync(context, cancellationToken);
+            var lockIdentity = string.Join(':',
+                Arch7bPositionImportContract.Version,
+                target.TargetProfileId,
+                package.Snapshot.AccountId,
+                package.Universe.SourceIngestionId.ToString("D"));
             await context.Database.ExecuteSqlInterpolatedAsync(
-                $"SELECT pg_advisory_xact_lock(hashtextextended({package.Snapshot.PositionSnapshotId.ToString("D")}, 0))",
+                $"SELECT pg_advisory_xact_lock(hashtextextended({lockIdentity}, 0))",
                 cancellationToken);
+            var applyAtDatabaseUtc = await ReadDatabaseUtcAsync(
+                context, cancellationToken);
+            Arch7bPositionImportReadyMarkerStore.Validate(
+                marker, armed, package, target, repository,
+                expectedFutureAuthorizationId, expectedOwnerId,
+                applyAtDatabaseUtc);
+            var freshness = Arch7bPositionImportFreshnessPolicy.Evaluate(
+                package, applyAtDatabaseUtc, historicalFixture: false);
+            if (!freshness.ApplyEligible)
+                throw new InvalidDataException(freshness.Status);
+            await ValidatePrivilegesAsync(context, cancellationToken);
+            var protectedCounts = await ProtectedCountsAsync(
+                context, cancellationToken);
             var state = await ReadStateAsync(context, package, false,
                 cancellationToken);
             var plan = Arch7bPositionImportPlanner.Build(package, freshness, state);
@@ -387,7 +475,12 @@ public sealed class Arch7bPositionImportStore(
                 throw new InvalidDataException("ARCH7B_POSITION_IMPORT_COLLISION");
             if (plan.Status == Arch7bPositionImportContract.AlreadyAppliedIdentical)
             {
+                await VerifyPersistedAsync(context, package,
+                    Arch7bPositionImportContract.IntraTransactionReadbackMismatch,
+                    cancellationToken);
                 await transaction.RollbackAsync(cancellationToken);
+                await VerifyPostCommitAsync(
+                    package, protectedCounts, cancellationToken);
                 return plan;
             }
 
@@ -400,7 +493,7 @@ public sealed class Arch7bPositionImportStore(
                 package.Snapshot.PositionSnapshotAsOfUtc,
                 package.Snapshot.EvidenceSha256,
                 true, false, true,
-                PmsShadowStateContract.EvidenceClassification));
+                Arch7bBracketedGlobalFlatContract.PositionAuthorityCode));
             context.PositionSnapshotLines.AddRange(package.Snapshot.Lines.Select(value =>
                 new PmsShadowPositionSnapshotLineRow(
                     package.Snapshot.PositionSnapshotId,
@@ -412,7 +505,12 @@ public sealed class Arch7bPositionImportStore(
             if (written != Arch7bPositionImportContract.RequiredLineCount + 1)
                 throw new InvalidDataException(
                     "ARCH7B_POSITION_IMPORT_ROW_DELTA_MISMATCH");
+            await VerifyPersistedAsync(context, package,
+                Arch7bPositionImportContract.IntraTransactionReadbackMismatch,
+                cancellationToken);
             await transaction.CommitAsync(cancellationToken);
+            await VerifyPostCommitAsync(
+                package, protectedCounts, cancellationToken);
             return plan;
         }
         catch
@@ -432,15 +530,38 @@ public sealed class Arch7bPositionImportStore(
         bool readOnly,
         CancellationToken cancellationToken)
     {
-        var ingestionExists = await context.Ingestions.AsNoTracking().AnyAsync(value =>
-            value.IngestionId == package.Universe.SourceIngestionId &&
-            value.SourceSessionId == package.Universe.SourceSessionId &&
-            value.Status == PmsShadowIngestionStatuses.Completed,
+        var ingestion = await context.Ingestions.AsNoTracking()
+            .OrderByDescending(value => value.StartedAtUtc)
+            .ThenByDescending(value => value.IngestionId)
+            .FirstOrDefaultAsync(cancellationToken)
+            ?? throw new InvalidDataException(
+                "ARCH7B_POSITION_IMPORT_SOURCE_INGESTION_MISSING");
+        if (ingestion.IngestionId != package.Universe.SourceIngestionId ||
+            ingestion.SourceSessionId != package.Universe.SourceSessionId ||
+            ingestion.Status != PmsShadowIngestionStatuses.Completed ||
+            ingestion.CompletedAtUtc is null)
+            throw new InvalidDataException(
+                "ARCH7B_POSITION_IMPORT_LATEST_INGESTION_CHANGED");
+        var account = await context.AccountSnapshots.AsNoTracking().SingleAsync(value =>
+            value.IngestionId == ingestion.IngestionId,
             cancellationToken);
-        var accountExists = await context.AccountSnapshots.AsNoTracking().AnyAsync(value =>
-            value.AccountSnapshotId == package.Universe.SourceAccountSnapshotId &&
-            value.IngestionId == package.Universe.SourceIngestionId,
-            cancellationToken);
+        var models = await context.ModelRuns.AsNoTracking().Where(value =>
+            value.IngestionId == ingestion.IngestionId).ToArrayAsync(cancellationToken);
+        var modelIds = models.Select(value => value.ModelRunId).ToArray();
+        var qubesIds = models.Select(value => value.QubesInputSnapshotId).ToArray();
+        var qubes = await context.QubesInputSnapshots.AsNoTracking().Where(value =>
+            qubesIds.Contains(value.SnapshotId)).ToArrayAsync(cancellationToken);
+        var weights = await context.TargetWeights.AsNoTracking().Where(value =>
+            modelIds.Contains(value.ModelRunId)).ToArrayAsync(cancellationToken);
+        var mappings = await context.SecurityMappings.AsNoTracking().Where(value =>
+            value.IngestionId == ingestion.IngestionId).ToArrayAsync(cancellationToken);
+        var databaseUniverse = Arch7bRequiredPmsUniverseBuilder.Build(
+            ingestion, account, models, qubes, weights, mappings,
+            target.TargetProfileId, target.TargetFingerprint,
+            transactionReadOnly: true,
+            pendingModelChanges: context.Database.HasPendingModelChanges());
+        Arch7bPositionImportUniverseValidator.RequireExact(
+            package.Universe, databaseUniverse, target);
         var existingById = await context.PositionSnapshots.AsNoTracking()
             .SingleOrDefaultAsync(value =>
                 value.PositionSnapshotId == package.Snapshot.PositionSnapshotId,
@@ -458,19 +579,11 @@ public sealed class Arch7bPositionImportStore(
                 .Where(value => value.PositionSnapshotId == existingId.Value)
                 .ToArrayAsync(cancellationToken);
         return new(
-            ingestionExists,
-            accountExists,
-            await context.ModelRuns.AsNoTracking().CountAsync(value =>
-                value.IngestionId == package.Universe.SourceIngestionId,
-                cancellationToken),
-            await context.TargetWeights.AsNoTracking().CountAsync(value =>
-                context.ModelRuns.Where(run =>
-                    run.IngestionId == package.Universe.SourceIngestionId)
-                    .Select(run => run.ModelRunId).Contains(value.ModelRunId),
-                cancellationToken),
-            await context.SecurityMappings.AsNoTracking().CountAsync(value =>
-                value.IngestionId == package.Universe.SourceIngestionId,
-                cancellationToken),
+            true,
+            true,
+            models.Length,
+            weights.Length,
+            mappings.Length,
             existingById,
             existingByEvidence,
             lines,
@@ -478,6 +591,166 @@ public sealed class Arch7bPositionImportStore(
             await context.PositionSnapshotLines.AsNoTracking().CountAsync(cancellationToken),
             readOnly,
             context.Database.HasPendingModelChanges());
+    }
+
+    private static async Task VerifyPersistedAsync(
+        PmsShadowDbContext context,
+        Arch7bPositionImportPackage package,
+        string blocker,
+        CancellationToken cancellationToken)
+    {
+        var rows = await context.PositionSnapshots.AsNoTracking().Where(value =>
+            value.PositionSnapshotId == package.Snapshot.PositionSnapshotId)
+            .ToArrayAsync(cancellationToken);
+        var lines = await context.PositionSnapshotLines.AsNoTracking().Where(value =>
+            value.PositionSnapshotId == package.Snapshot.PositionSnapshotId)
+            .OrderBy(value => value.InstrumentId)
+            .ToArrayAsync(cancellationToken);
+        var expectedRow = new PmsShadowPositionSnapshotRow(
+            package.Snapshot.PositionSnapshotId,
+            package.Universe.SourceIngestionId,
+            package.Universe.SourceAccountSnapshotId,
+            DateOnly.FromDateTime(
+                package.Snapshot.PositionSnapshotAsOfUtc.UtcDateTime),
+            package.Snapshot.PositionSnapshotAsOfUtc,
+            package.Snapshot.EvidenceSha256,
+            true, false, true,
+            Arch7bBracketedGlobalFlatContract.PositionAuthorityCode);
+        var expectedLines = package.Snapshot.Lines
+            .OrderBy(value => value.InstrumentId)
+            .Select(value => new PmsShadowPositionSnapshotLineRow(
+                package.Snapshot.PositionSnapshotId,
+                value.InstrumentId, value.SecurityId, value.Symbol,
+                value.CurrentBaseQuantity)).ToArray();
+        if (rows.Length != 1 || rows[0] != expectedRow ||
+            !lines.SequenceEqual(expectedLines) ||
+            Arch5bHashing.HashCanonical(package.Snapshot.Lines) !=
+            package.Snapshot.NormalizedLineSetSha256)
+            throw new InvalidDataException(blocker);
+    }
+
+    private async Task VerifyPostCommitAsync(
+        Arch7bPositionImportPackage package,
+        IReadOnlyDictionary<string, int> protectedCounts,
+        CancellationToken cancellationToken)
+    {
+        await using var context = new PmsShadowDbContext(options);
+        await context.Database.OpenConnectionAsync(cancellationToken);
+        await using var transaction = await context.Database.BeginTransactionAsync(
+            IsolationLevel.RepeatableRead, cancellationToken);
+        try
+        {
+            await context.Database.ExecuteSqlRawAsync(
+                "SET TRANSACTION READ ONLY", cancellationToken);
+            await VerifyPersistedAsync(context, package,
+                Arch7bPositionImportContract.PostCommitReadbackMismatch,
+                cancellationToken);
+            var after = await ProtectedCountsAsync(context, cancellationToken);
+            if (!protectedCounts.OrderBy(value => value.Key)
+                    .SequenceEqual(after.OrderBy(value => value.Key)))
+                throw new InvalidDataException(
+                    Arch7bPositionImportContract.PostCommitReadbackMismatch);
+            await transaction.RollbackAsync(cancellationToken);
+        }
+        catch
+        {
+            await transaction.RollbackAsync(CancellationToken.None);
+            throw;
+        }
+        finally
+        {
+            await context.Database.CloseConnectionAsync();
+        }
+    }
+
+    private static async Task<IReadOnlyDictionary<string, int>>
+        ProtectedCountsAsync(
+            PmsShadowDbContext context,
+            CancellationToken cancellationToken) =>
+        new Dictionary<string, int>(StringComparer.Ordinal)
+        {
+            ["ingestions"] = await context.Ingestions.CountAsync(cancellationToken),
+            ["account_snapshots"] = await context.AccountSnapshots.CountAsync(cancellationToken),
+            ["model_runs"] = await context.ModelRuns.CountAsync(cancellationToken),
+            ["target_weights"] = await context.TargetWeights.CountAsync(cancellationToken),
+            ["security_mappings"] = await context.SecurityMappings.CountAsync(cancellationToken),
+            ["target_positions"] = await context.TargetPositions.CountAsync(cancellationToken),
+            ["position_only_drifts"] = await context.PositionOnlyDrifts.CountAsync(cancellationToken),
+            ["qualification_runs"] = await context.Arch7bQualificationRuns.CountAsync(cancellationToken),
+            ["fix_session_events"] = await context.Arch7bFixSessionEvents.CountAsync(cancellationToken),
+            ["order_send_ledger"] = await context.Arch7bOrderSendLedger.CountAsync(cancellationToken),
+            ["execution_reports"] = await context.Arch7bExecutionReports.CountAsync(cancellationToken),
+            ["fills"] = await context.Arch7bFills.CountAsync(cancellationToken),
+            ["position_ledger_events"] =
+                await context.Arch7bPositionLedgerEvents.CountAsync(cancellationToken),
+            ["final_reconciliations"] =
+                await context.Arch7bFinalReconciliations.CountAsync(cancellationToken)
+        };
+
+    private static async Task ValidatePrivilegesAsync(
+        PmsShadowDbContext context,
+        CancellationToken cancellationToken)
+    {
+        var sourceSelect = await ScalarBoolAsync(context, """
+            SELECT has_table_privilege(current_user,'pms_shadow.ingestions','SELECT')
+               AND has_table_privilege(current_user,'pms_shadow.account_snapshots','SELECT')
+               AND has_table_privilege(current_user,'pms_shadow.model_runs','SELECT')
+               AND has_table_privilege(current_user,'pms_shadow.qubes_input_snapshots','SELECT')
+               AND has_table_privilege(current_user,'pms_shadow.target_weights','SELECT')
+               AND has_table_privilege(current_user,'pms_shadow.security_mappings','SELECT')
+            """, cancellationToken);
+        var state = new Arch7bPositionImportPrivilegeState(
+            sourceSelect,
+            await HasPrivilege(context, "position_snapshots", "INSERT", cancellationToken),
+            await HasPrivilege(context, "position_snapshot_lines", "INSERT", cancellationToken),
+            await HasPrivilege(context, "position_snapshots", "UPDATE", cancellationToken),
+            await HasPrivilege(context, "position_snapshots", "DELETE", cancellationToken),
+            await HasPrivilege(context, "position_snapshot_lines", "UPDATE", cancellationToken),
+            await HasPrivilege(context, "position_snapshot_lines", "DELETE", cancellationToken),
+            await ScalarBoolAsync(context, """
+                SELECT has_table_privilege(current_user,'pms_shadow.arch7b_fills','INSERT')
+                    OR has_table_privilege(current_user,'pms_shadow.arch7b_position_ledger_events','INSERT')
+                    OR has_table_privilege(current_user,'pms_shadow.arch7b_order_send_ledger','INSERT')
+                    OR has_table_privilege(current_user,'pms_shadow.target_positions','INSERT')
+                    OR has_table_privilege(current_user,'pms_shadow.position_only_drifts','INSERT')
+                """, cancellationToken));
+        Arch7bPositionImportPrivilegePolicy.RequireExact(state);
+    }
+
+    private static Task<bool> HasPrivilege(
+        PmsShadowDbContext context,
+        string table,
+        string privilege,
+        CancellationToken cancellationToken) =>
+        ScalarBoolAsync(context,
+            $"SELECT has_table_privilege(current_user,'pms_shadow.{table}','{privilege}')",
+            cancellationToken);
+
+    private static async Task<bool> ScalarBoolAsync(
+        PmsShadowDbContext context,
+        string sql,
+        CancellationToken cancellationToken)
+    {
+        await using var command = context.Database.GetDbConnection().CreateCommand();
+        command.Transaction = context.Database.CurrentTransaction?.GetDbTransaction();
+        command.CommandText = sql;
+        return Convert.ToBoolean(
+            await command.ExecuteScalarAsync(cancellationToken),
+            CultureInfo.InvariantCulture);
+    }
+
+    private static async Task<DateTimeOffset> ReadDatabaseUtcAsync(
+        PmsShadowDbContext context,
+        CancellationToken cancellationToken)
+    {
+        if (await ScalarAsync(context, "SHOW TIMEZONE", cancellationToken) != "UTC")
+            throw new InvalidDataException(
+                Arch7bPositionImportContract.DatabaseTimezoneInvalid);
+        var value = await ScalarAsync(
+            context, "SELECT clock_timestamp()", cancellationToken);
+        var parsed = DateTimeOffset.Parse(
+            value, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind);
+        return parsed.ToUniversalTime();
     }
 
     private async Task ValidateTargetAsync(
@@ -530,6 +803,37 @@ public static class Arch7bPositionImportReadyMarkerStore
         WriteIndented = true
     };
 
+    public static Arch7bPositionImportReadyMarker Create(
+        Arch7bPositionImportArmedState armed,
+        Arch7bPositionImportPackage package,
+        PmsShadowPostgreSqlTarget target,
+        Arch7bRepositoryState repository,
+        DateTimeOffset readyAtDatabaseUtc)
+    {
+        Arch7bPositionImportArmedStateStore.Validate(
+            armed, target, repository, armed.FutureAuthorizationId, armed.OwnerId);
+        return new(
+            Arch7bPositionImportContract.Version,
+            package.Snapshot.BracketEvidenceSha256,
+            package.Snapshot.EvidenceSha256,
+            package.ManifestSha256,
+            armed.EvidenceSha256,
+            package.Snapshot.RequiredUniverseSha256,
+            package.Snapshot.NormalizedLineSetSha256,
+            package.Snapshot.PositionSnapshotId,
+            package.Universe.SourceIngestionId,
+            package.Universe.SourceAccountSnapshotId,
+            package.Snapshot.PositionSnapshotAsOfUtc,
+            target.TargetProfileId,
+            target.TargetFingerprint,
+            repository.HeadCommit,
+            repository.BuildCommit,
+            armed.FutureAuthorizationId,
+            armed.OwnerId,
+            readyAtDatabaseUtc,
+            true);
+    }
+
     public static void PublishAtomic(string path, Arch7bPositionImportReadyMarker marker)
     {
         var fullPath = Path.GetFullPath(path);
@@ -558,13 +862,30 @@ public static class Arch7bPositionImportReadyMarkerStore
 
     public static void Validate(
         Arch7bPositionImportReadyMarker marker,
+        Arch7bPositionImportArmedState armed,
         Arch7bPositionImportPackage package,
         PmsShadowPostgreSqlTarget target,
-        string expectedRepositoryCommit)
+        Arch7bRepositoryState repository,
+        string expectedFutureAuthorizationId,
+        string expectedOwnerId,
+        DateTimeOffset applyAtDatabaseUtc)
     {
+        if (marker.FutureAuthorizationId != expectedFutureAuthorizationId ||
+            armed.FutureAuthorizationId != marker.FutureAuthorizationId)
+            throw new InvalidDataException(
+                Arch7bPositionImportContract.AuthorizationMismatch);
+        if (marker.OwnerId != expectedOwnerId ||
+            armed.OwnerId != marker.OwnerId)
+            throw new InvalidDataException(
+                Arch7bPositionImportContract.OwnerMismatch);
+        Arch7bPositionImportArmedStateStore.Validate(
+            armed, target, repository,
+            expectedFutureAuthorizationId, expectedOwnerId);
         if (marker.ContractVersion != Arch7bPositionImportContract.Version ||
             marker.CoreEvidenceSha256 != package.Snapshot.BracketEvidenceSha256 ||
             marker.ConsumerSnapshotEvidenceSha256 != package.Snapshot.EvidenceSha256 ||
+            marker.PackageManifestSha256 != package.ManifestSha256 ||
+            marker.ArmedEvidenceSha256 != armed.EvidenceSha256 ||
             marker.RequiredUniverseSha256 != package.Snapshot.RequiredUniverseSha256 ||
             marker.NormalizedLineSetSha256 != package.Snapshot.NormalizedLineSetSha256 ||
             marker.PositionSnapshotId != package.Snapshot.PositionSnapshotId ||
@@ -573,15 +894,33 @@ public static class Arch7bPositionImportReadyMarkerStore
             marker.PositionSnapshotAsOfUtc != package.Snapshot.PositionSnapshotAsOfUtc ||
             marker.TargetProfile != target.TargetProfileId ||
             marker.TargetFingerprint != target.TargetFingerprint ||
-            marker.RepositoryCommit != expectedRepositoryCommit ||
-            string.IsNullOrWhiteSpace(marker.FutureAuthorizationId) ||
-            marker.CreatedAtUtc.Offset != TimeSpan.Zero ||
-            marker.CreatedAtUtc < package.Snapshot.PositionSnapshotAsOfUtc ||
-            marker.CreatedAtUtc - package.Snapshot.PositionSnapshotAsOfUtc >
-            TimeSpan.FromSeconds(Arch7bPositionImportContract.MaximumAgeSeconds) ||
-            string.IsNullOrWhiteSpace(marker.OwnerId) ||
+            marker.RepositoryCommit != repository.HeadCommit ||
+            marker.BuildCommit != repository.BuildCommit ||
+            marker.RepositoryCommit != marker.BuildCommit ||
+            marker.ReadyAtDatabaseUtc.Offset != TimeSpan.Zero ||
+            applyAtDatabaseUtc.Offset != TimeSpan.Zero ||
             !marker.NoOrder)
             throw new InvalidDataException(Arch7bPositionImportContract.NotPrearmed);
+
+        if (!(armed.ArmedAtDatabaseUtc <= package.Snapshot.BracketLowerBoundUtc &&
+              package.Snapshot.BracketLowerBoundUtc <=
+              package.Snapshot.PositionReportP2Utc &&
+              package.Snapshot.PositionReportP2Utc <=
+              marker.ReadyAtDatabaseUtc &&
+              marker.ReadyAtDatabaseUtc <= applyAtDatabaseUtc))
+            throw new InvalidDataException(
+                Arch7bPositionImportContract.ChronologyInvalid);
+
+        var oneShot = Arch5bHashing.HashCanonical(new
+        {
+            marker.FutureAuthorizationId,
+            marker.PackageManifestSha256,
+            marker.PositionSnapshotId,
+            marker.TargetFingerprint
+        });
+        if (!Arch5bHashing.IsSha256(oneShot))
+            throw new InvalidDataException(
+                Arch7bPositionImportContract.AuthorizationMismatch);
     }
 
     public static IDisposable AcquireOwner(string path, string ownerId)
@@ -602,6 +941,24 @@ public static class Arch7bPositionImportReadyMarkerStore
             throw new InvalidDataException(
                 "ARCH7B_POSITION_IMPORT_OWNER_ALREADY_ACQUIRED");
         }
+    }
+
+    public static void PublishOwner(string path, string ownerId)
+    {
+        if (string.IsNullOrWhiteSpace(ownerId))
+            throw new InvalidDataException(
+                Arch7bPositionImportContract.OwnerMismatch);
+        Arch7bPositionImportAtomicFile.Publish(
+            path, new { OwnerId = ownerId }, Json);
+    }
+
+    public static void ValidateOwner(string path, string ownerId)
+    {
+        using var document = JsonDocument.Parse(
+            File.ReadAllBytes(Path.GetFullPath(path)));
+        if (document.RootElement.GetProperty("owner_id").GetString() != ownerId)
+            throw new InvalidDataException(
+                Arch7bPositionImportContract.OwnerMismatch);
     }
 
     private sealed class OwnerLease(FileStream stream, string path) : IDisposable
@@ -646,7 +1003,9 @@ public static class Arch7bPositionImportOutputWriter
             SecurityMappingsDuplicated = false,
             MaximumAgeSeconds = Arch7bPositionImportContract.MaximumAgeSeconds,
             ApplyRequiresFreshBracket = true,
-            ApplyRequiresPrearmedMarker = true,
+            ApplyRequiresPrearmedStateAndReadyMarker = true,
+            PositionSnapshotSelectionContract =
+                PmsShadowIntradayEconomicContract.PositionSnapshotSelectionVersion,
             NoOrder = true,
             NoFix = true
         });
@@ -691,12 +1050,16 @@ public static class Arch7bPositionImportOutputWriter
             RequiredBindings = new[]
             {
                 "core_evidence_sha256", "consumer_snapshot_evidence_sha256",
+                "package_manifest_sha256", "armed_evidence_sha256",
                 "required_universe_sha256", "normalized_line_set_sha256",
                 "position_snapshot_id", "source_ingestion_id",
                 "source_account_snapshot_id", "position_snapshot_as_of_utc",
                 "target_profile", "target_fingerprint", "repository_commit",
-                "future_authorization_id", "owner_id", "no_order"
+                "build_commit", "future_authorization_id", "owner_id",
+                "ready_at_database_utc", "no_order"
             },
+            ArmedStateFile = "importer.armed.json",
+            ArmedTimeAuthority = "POSTGRESQL_CLOCK_TIMESTAMP_UTC",
             AtomicPublish = "CREATE_NEW_TEMP_THEN_MOVE_SAME_VOLUME",
             ConcurrentOwnerPolicy = "CREATE_NEW_OWNER_LOCK_FAIL_CLOSED"
         });

@@ -14,8 +14,11 @@ public static class PmsShadowIntradayEconomicContract
 {
     public const string Version = "pms_shadow_intraday_economic_projection_v1";
     public const string TargetPositionVersion = "canonical_target_position_calculator_v1";
+    public const string PositionSnapshotSelectionVersion =
+        "arch7b_position_snapshot_for_slot_selection_v1";
     public const string TestEnvironment = "TEST";
     public const int MaximumUsdLegSkewSeconds = 15;
+    public const int MaximumPositionAgeSeconds = 300;
     public const int PostgreSqlPriceScale = 12;
 
     public static (decimal Bid, decimal Ask, decimal DecisionPrice) ToPostgreSqlMarketPrices(
@@ -94,6 +97,77 @@ public sealed record PmsShadowEconomicSource(Guid IngestionId, string SourceSess
     Guid AccountSnapshotId, decimal NavUsd, Guid PositionSnapshotId, DateTimeOffset PositionAsOfUtc,
     string PositionAuthority, IReadOnlyDictionary<Guid, decimal> CurrentPositions,
     IReadOnlyList<PmsShadowEconomicMapping> Mappings, IReadOnlyList<PmsShadowEconomicModel> Models);
+
+public static class PmsShadowPositionSnapshotForSlotSelection
+{
+    public const string Missing = "ARCH7B_POSITION_SNAPSHOT_MISSING_FOR_SLOT";
+    public const string AfterSlot = "ARCH7B_POSITION_SNAPSHOT_AFTER_SLOT_START";
+    public const string Stale = "ARCH7B_POSITION_SNAPSHOT_STALE_FOR_SLOT";
+    public const string Ambiguous = "ARCH7B_POSITION_SNAPSHOT_SELECTION_AMBIGUOUS";
+
+    public static PmsShadowPositionSnapshotRow Select(
+        IEnumerable<PmsShadowPositionSnapshotRow> candidates,
+        DateTimeOffset slotStartUtc)
+    {
+        RequireUtc(slotStartUtc);
+        var all = candidates.OrderBy(value => value.AsOfUtc)
+            .ThenBy(value => value.PositionSnapshotId).ToArray();
+        if (all.Length == 0)
+            throw new InvalidDataException(Missing);
+
+        var eligible = all.Where(value => value.AsOfUtc <= slotStartUtc).ToArray();
+        if (eligible.Length == 0)
+            throw new InvalidDataException(AfterSlot);
+
+        var maximumAsOfUtc = eligible.Max(value => value.AsOfUtc);
+        var latest = eligible.Where(value => value.AsOfUtc == maximumAsOfUtc).ToArray();
+        if (latest.Length != 1)
+            throw new InvalidDataException(Ambiguous);
+
+        var age = slotStartUtc - latest[0].AsOfUtc;
+        if (age > TimeSpan.FromSeconds(
+                PmsShadowIntradayEconomicContract.MaximumPositionAgeSeconds))
+            throw new InvalidDataException(Stale);
+        return latest[0];
+    }
+
+    public static void ValidateSelected(
+        PmsShadowPositionSnapshotRow selected,
+        PmsShadowIngestionRow ingestion,
+        PmsShadowAccountSnapshotRow account,
+        IReadOnlyList<PmsShadowPositionSnapshotLineRow> lines,
+        IReadOnlyList<PmsShadowSecurityMappingRow> mappings)
+    {
+        if (selected.IngestionId != ingestion.IngestionId ||
+            selected.AccountSnapshotId != account.AccountSnapshotId ||
+            !selected.BrokerAuthority ||
+            !selected.EmptyStateWasExplicitlyObserved ||
+            selected.EmptyStateWasInferred ||
+            selected.Classification !=
+            Arch7bBracketedGlobalFlatContract.PositionAuthorityCode ||
+            !Arch5bHashing.IsSha256(selected.SnapshotSha256))
+            throw new InvalidDataException(
+                "ARCH7B_POSITION_SNAPSHOT_AUTHORITY_INVALID");
+
+        var mappingByInstrument = mappings.ToDictionary(value => value.InstrumentId);
+        if (lines.Count != Arch7bPositionImportContract.RequiredLineCount ||
+            lines.Select(value => value.InstrumentId).Distinct().Count() !=
+            Arch7bPositionImportContract.RequiredLineCount ||
+            lines.Any(value => !mappingByInstrument.TryGetValue(
+                value.InstrumentId, out var mapping) ||
+                mapping.SecurityId != value.SecurityId ||
+                mapping.Symbol != value.Symbol))
+            throw new InvalidDataException(
+                "SOURCE_POSITION_SNAPSHOT_COVERAGE_INCOMPLETE");
+    }
+
+    private static void RequireUtc(DateTimeOffset value)
+    {
+        if (value.Offset != TimeSpan.Zero)
+            throw new InvalidDataException(
+                "ARCH7B_POSITION_SNAPSHOT_SLOT_NOT_UTC");
+    }
+}
 
 public sealed record PmsShadowSlotMarketObservation(Guid InstrumentId, string SecurityId,
     string Symbol, string LmaxInstrumentId, decimal Bid, decimal Ask, decimal DecisionPrice,
@@ -197,16 +271,33 @@ public sealed class PmsShadowIntradayEconomicProjectionBuilder
                     new VenueId(mapping.VenueId), new InstrumentId(mapping.InstrumentId), mapping.Symbol,
                     mapping.LmaxInstrumentId, mapping.QuantityMultiplier, mapping.QuantityIncrement,
                     mapping.QuantityIncrement, mapping.PriceIncrement);
-                var inputSha = Arch5bHashing.HashCanonical(new { capture.SlotId, capture.ArtifactSha256,
-                    MarketDataSnapshotId = marketId, model.ModelRunId, weight.InstrumentId, weight.Weight,
-                    observation.Bid, observation.Ask, source.NavUsd, mapping.QuantityMultiplier,
-                    mapping.QuantityIncrement, Contract = PmsShadowIntradayEconomicContract.TargetPositionVersion });
+                var inputSha = Arch5bHashing.HashCanonical(new
+                {
+                    capture.SlotId,
+                    capture.ArtifactSha256,
+                    MarketDataSnapshotId = marketId,
+                    model.ModelRunId,
+                    weight.InstrumentId,
+                    weight.Weight,
+                    observation.Bid,
+                    observation.Ask,
+                    source.NavUsd,
+                    mapping.QuantityMultiplier,
+                    mapping.QuantityIncrement,
+                    Contract = PmsShadowIntradayEconomicContract.TargetPositionVersion
+                });
                 var calculated = calculator.Calculate(domainRun,
                     new TargetWeight(new ModelRunId(model.ModelRunId), new InstrumentId(weight.InstrumentId),
                         weight.Weight, weight.SecurityId), market, venueMapping);
                 var targetId = Arch5bHashing.GuidFromSha256($"arch6f:target:{revisionId:D}:{marketId:D}:{model.ModelRunId:D}:{weight.InstrumentId:D}:{PmsShadowIntradayEconomicContract.TargetPositionVersion}");
-                var targetOutputSha = Arch5bHashing.HashCanonical(new { targetId, calculated.TargetNotionalUsd,
-                    calculated.TargetBaseQuantity, calculated.TargetVenueQuantity, observation.DecisionPrice });
+                var targetOutputSha = Arch5bHashing.HashCanonical(new
+                {
+                    targetId,
+                    calculated.TargetNotionalUsd,
+                    calculated.TargetBaseQuantity,
+                    calculated.TargetVenueQuantity,
+                    observation.DecisionPrice
+                });
                 targets.Add(new(targetId, targetStage, model.ModelRunId, model.StrategyId,
                     weight.InstrumentId, weight.SecurityId, calculated.TargetNotionalUsd,
                     calculated.TargetBaseQuantity, calculated.TargetVenueQuantity, observation.DecisionPrice,
@@ -214,10 +305,19 @@ public sealed class PmsShadowIntradayEconomicProjectionBuilder
                 var current = source.CurrentPositions[weight.InstrumentId];
                 var delta = calculated.TargetBaseQuantity - current;
                 var driftId = Arch5bHashing.GuidFromSha256($"arch6f:drift:{revisionId:D}:{model.ModelRunId:D}:{weight.InstrumentId:D}");
-                var driftInput = Arch5bHashing.HashCanonical(new { targetOutputSha, source.PositionSnapshotId,
-                    CurrentBaseQuantity = current });
-                var driftOutput = Arch5bHashing.HashCanonical(new { driftId, calculated.TargetBaseQuantity,
-                    CurrentBaseQuantity = current, Delta = delta });
+                var driftInput = Arch5bHashing.HashCanonical(new
+                {
+                    targetOutputSha,
+                    source.PositionSnapshotId,
+                    CurrentBaseQuantity = current
+                });
+                var driftOutput = Arch5bHashing.HashCanonical(new
+                {
+                    driftId,
+                    calculated.TargetBaseQuantity,
+                    CurrentBaseQuantity = current,
+                    Delta = delta
+                });
                 drifts.Add(new(driftId, driftStage, model.ModelRunId, model.StrategyId,
                     weight.InstrumentId, weight.SecurityId, current, calculated.TargetBaseQuantity, delta,
                     capture.SlotEndUtc, driftInput, driftOutput));
@@ -225,13 +325,32 @@ public sealed class PmsShadowIntradayEconomicProjectionBuilder
         }
         var targetSha = Arch5bHashing.HashCanonical(targets.OrderBy(value => value.TargetPositionId).ToArray());
         var driftSha = Arch5bHashing.HashCanonical(drifts.OrderBy(value => value.DriftId).ToArray());
-        var input = Arch5bHashing.HashCanonical(new { capture.SlotId, capture.ArtifactSha256, marketId,
-            MarketSha = marketSha, Models = source.Models.Select(value => new { value.ModelRunId,
-                value.QubesInputSnapshotId, value.OutputSha256 }), source.AccountSnapshotId,
-            source.PositionSnapshotId, source.PositionAsOfUtc });
-        var manifest = Arch5bHashing.HashCanonical(new { RevisionId = revisionId, Input = input,
-            Targets = targetSha, Drifts = driftSha, Supersedes = supersedesSlotManifestSha256,
-            NoOrder = true, Blocker = PmsShadowStateContract.BrokerAdjustedBlocker });
+        var input = Arch5bHashing.HashCanonical(new
+        {
+            capture.SlotId,
+            capture.ArtifactSha256,
+            marketId,
+            MarketSha = marketSha,
+            Models = source.Models.Select(value => new
+            {
+                value.ModelRunId,
+                value.QubesInputSnapshotId,
+                value.OutputSha256
+            }),
+            source.AccountSnapshotId,
+            source.PositionSnapshotId,
+            source.PositionAsOfUtc
+        });
+        var manifest = Arch5bHashing.HashCanonical(new
+        {
+            RevisionId = revisionId,
+            Input = input,
+            Targets = targetSha,
+            Drifts = driftSha,
+            Supersedes = supersedesSlotManifestSha256,
+            NoOrder = true,
+            Blocker = PmsShadowStateContract.BrokerAdjustedBlocker
+        });
         return new(revisionId, revisionNumber, capture.SlotId, capture.SlotStartUtc, capture.SlotEndUtc,
             capture.ArtifactSha256, marketId, marketSha, source.IngestionId, source.SourceSessionId,
             source.AccountSnapshotId, source.PositionSnapshotId, source.PositionAsOfUtc,
@@ -278,7 +397,8 @@ public interface IPmsShadowIntradayEconomicProjectionStore
 {
     Task<string?> LoadSupersededManifestShaAsync(string slotId,
         CancellationToken cancellationToken = default);
-    Task<PmsShadowEconomicSource> LoadSourceAsync(string sourceSessionId,
+    Task<PmsShadowEconomicSource> LoadSourceAsync(
+        string sourceSessionId, DateTimeOffset slotStartUtc,
         CancellationToken cancellationToken = default);
     Task<PmsShadowEconomicApplyOutcome> ApplyAsync(PmsShadowIntradayEconomicProjection projection,
         CancellationToken cancellationToken = default);
@@ -318,7 +438,8 @@ public sealed class EfPmsShadowIntradayEconomicProjectionStore(
         _ => throw new InvalidDataException("INVALID_SLOT_MANIFEST_SHA")
     };
 
-    public async Task<PmsShadowEconomicSource> LoadSourceAsync(string sourceSessionId,
+    public async Task<PmsShadowEconomicSource> LoadSourceAsync(
+        string sourceSessionId, DateTimeOffset slotStartUtc,
         CancellationToken cancellationToken = default)
     {
         await using var context = await contextFactory.CreateDbContextAsync(cancellationToken);
@@ -327,17 +448,25 @@ public sealed class EfPmsShadowIntradayEconomicProjectionStore(
             cancellationToken);
         var account = await context.AccountSnapshots.AsNoTracking().SingleAsync(value =>
             value.IngestionId == ingestion.IngestionId, cancellationToken);
-        var position = await context.PositionSnapshots.AsNoTracking().SingleAsync(value =>
-            value.IngestionId == ingestion.IngestionId, cancellationToken);
-        var current = await context.PositionSnapshotLines.AsNoTracking().Where(value =>
+        var positionCandidates = await context.PositionSnapshots.AsNoTracking().Where(value =>
+            value.IngestionId == ingestion.IngestionId).ToArrayAsync(cancellationToken);
+        var position = PmsShadowPositionSnapshotForSlotSelection.Select(
+            positionCandidates, slotStartUtc);
+        var positionLines = await context.PositionSnapshotLines.AsNoTracking().Where(value =>
             value.PositionSnapshotId == position.PositionSnapshotId)
-            .ToDictionaryAsync(value => value.InstrumentId, value => value.CurrentBaseQuantity, cancellationToken);
+            .ToArrayAsync(cancellationToken);
         var mappings = await context.SecurityMappings.AsNoTracking().Where(value =>
             value.IngestionId == ingestion.IngestionId).OrderBy(value => value.SecurityId)
-            .Select(value => new PmsShadowEconomicMapping(value.InstrumentId, value.VenueId,
+            .ToArrayAsync(cancellationToken);
+        PmsShadowPositionSnapshotForSlotSelection.ValidateSelected(
+            position, ingestion, account, positionLines, mappings);
+        var current = positionLines.ToDictionary(
+            value => value.InstrumentId, value => value.CurrentBaseQuantity);
+        var economicMappings = mappings.Select(value =>
+            new PmsShadowEconomicMapping(value.InstrumentId, value.VenueId,
                 value.VenueInstrumentId, value.SecurityId, value.Symbol, value.LmaxInstrumentId,
                 value.QuantityMultiplier, value.QuantityIncrement, value.PriceIncrement))
-            .ToArrayAsync(cancellationToken);
+            .ToArray();
         var models = await context.ModelRuns.AsNoTracking().Where(value =>
             value.IngestionId == ingestion.IngestionId).OrderBy(value => value.StrategyId)
             .ToArrayAsync(cancellationToken);
@@ -345,7 +474,8 @@ public sealed class EfPmsShadowIntradayEconomicProjectionStore(
         var weights = await context.TargetWeights.AsNoTracking().Where(value =>
             modelIds.Contains(value.ModelRunId)).OrderBy(value => value.SecurityId).ToArrayAsync(cancellationToken);
         return new(ingestion.IngestionId, sourceSessionId, account.AccountSnapshotId, account.NavOrEquity,
-            position.PositionSnapshotId, position.AsOfUtc, account.Authority, current, mappings,
+            position.PositionSnapshotId, position.AsOfUtc, position.Classification, current,
+            economicMappings,
             models.Select(model => new PmsShadowEconomicModel(model.ModelRunId, model.QubesInputSnapshotId,
                 model.StrategyId, model.TargetCloseUtc, model.AsOfUtc, model.OutputSha256,
                 model.CoreMasterCommitId, weights.Where(value => value.ModelRunId == model.ModelRunId)
@@ -492,8 +622,11 @@ public sealed class EfPmsShadowIntradayEconomicProjectionStore(
         params (string Name, object Value)[] parameters)
     {
         var command = connection.CreateCommand(); command.Transaction = transaction; command.CommandText = sql;
-        foreach (var (name, value) in parameters) { var parameter = command.CreateParameter();
-            parameter.ParameterName = name; parameter.Value = value; command.Parameters.Add(parameter); }
+        foreach (var (name, value) in parameters)
+        {
+            var parameter = command.CreateParameter();
+            parameter.ParameterName = name; parameter.Value = value; command.Parameters.Add(parameter);
+        }
         return command;
     }
 }
@@ -505,7 +638,8 @@ public sealed class PmsShadowIntradayEconomicRefreshPipeline(string captureRoot,
         CancellationToken cancellationToken = default)
     {
         var capture = PmsShadowRealSlotCaptureReader.Read(Path.Combine(captureRoot, slot.SlotId, "slot_manifest.json"));
-        var source = await store.LoadSourceAsync(sourceSessionId, cancellationToken);
+        var source = await store.LoadSourceAsync(
+            sourceSessionId, slot.SlotStartUtc, cancellationToken);
         var oldRows = await store.LoadSupersededManifestShaAsync(slot.SlotId, cancellationToken);
         var projection = new PmsShadowIntradayEconomicProjectionBuilder().Build(capture, source, oldRows);
         var outcome = await store.ApplyAsync(projection, cancellationToken);
@@ -517,10 +651,13 @@ public sealed class PmsShadowIntradayEconomicRefreshPipeline(string captureRoot,
             projection.TargetPositions.Count, projection.PositionOnlyDrifts.Count,
             PmsShadowStateContract.BrokerAdjustedBlocker, projection.ManifestSha256, source.SourceSessionId,
             source.IngestionId, outcome.Result == PmsShadowEconomicApplyResult.Completed ? "COMPLETED" :
-                "ALREADY_APPLIED_IDENTICAL", new Dictionary<string, int> { ["projection_revisions"] = 1,
+                "ALREADY_APPLIED_IDENTICAL", new Dictionary<string, int>
+                {
+                    ["projection_revisions"] = 1,
                     ["market_data_observations"] = projection.MarketData.Count,
                     ["target_positions"] = projection.TargetPositions.Count,
-                    ["position_only_drifts"] = projection.PositionOnlyDrifts.Count },
+                    ["position_only_drifts"] = projection.PositionOnlyDrifts.Count
+                },
             PmsShadowIntradayFreshness.Fresh, PmsShadowIntradayNoOrderCounters.Zero, true,
             projection.CompletedAtUtc);
     }

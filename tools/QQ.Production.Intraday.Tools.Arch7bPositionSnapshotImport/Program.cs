@@ -5,12 +5,6 @@ using Npgsql;
 using QQ.Production.Intraday.Infrastructure.PostgreSql;
 
 var arguments = Arch7bPositionImportArguments.Parse(args);
-var package = Arch7bPositionImportPackageReader.Read(arguments.PackageRoot);
-var observedUtc = arguments.Mode == "plan-import"
-    ? arguments.ObservedUtc
-    : DateTimeOffset.UtcNow;
-var freshness = Arch7bPositionImportFreshnessPolicy.Evaluate(
-    package, observedUtc, arguments.HistoricalFixture);
 var target = PmsShadowPostgreSqlTargetContract.Validate(
     arguments.BuildLogicalConnectionString(),
     new(
@@ -30,13 +24,49 @@ var options = new DbContextOptionsBuilder<PmsShadowDbContext>()
         Arch7bBracketedGlobalFlatContract.PostgreSqlMajor, 0))
     .Options;
 var store = new Arch7bPositionImportStore(options, target);
+var repository = new GitArch7bRepositoryStateAuthority().Resolve(
+    arguments.RepositoryRoot, arguments.BuildCommit);
+
+if (arguments.Mode == "arm-import")
+{
+    var databaseUtc = await store.ArmAsync(
+        arguments.ExpectedSourceIngestionId);
+    var armed = Arch7bPositionImportArmedStateStore.Create(
+        target, repository, arguments.FutureAuthorizationId,
+        arguments.OwnerId, arguments.ExpectedSourceIngestionId,
+        databaseUtc);
+    Arch7bPositionImportReadyMarkerStore.PublishOwner(
+        arguments.OwnerLockPath, arguments.OwnerId);
+    Arch7bPositionImportArmedStateStore.PublishAtomic(
+        arguments.ArmedStatePath, armed);
+    Console.WriteLine(JsonSerializer.Serialize(new
+    {
+        result = "ARMED",
+        armed.ArmedAtDatabaseUtc,
+        armed.EvidenceSha256,
+        target = target.ObservableIdentity,
+        repository_commit = repository.HeadCommit,
+        build_commit = repository.BuildCommit,
+        no_database_write = true,
+        no_lmax_acquisition = true,
+        no_order = true
+    }, Arch7bPositionImportArguments.Json));
+    return;
+}
+
+var package = Arch7bPositionImportPackageReader.Read(arguments.PackageRoot);
+var observedUtc = arguments.Mode == "plan-import"
+    ? arguments.ObservedUtc
+    : await store.ReadDatabaseTimeAsync();
+var freshness = Arch7bPositionImportFreshnessPolicy.Evaluate(
+    package, observedUtc, arguments.HistoricalFixture);
 
 if (arguments.Mode == "plan-import")
 {
     var plan = await store.PlanAsync(package, freshness);
     var output = Arch7bPositionImportOutputWriter.Write(
         arguments.OutputDirectory, package, freshness, plan, target,
-        arguments.RepositoryCommit);
+        repository.HeadCommit);
     Console.WriteLine(JsonSerializer.Serialize(new
     {
         result = freshness.Status,
@@ -57,29 +87,53 @@ if (arguments.Mode == "plan-import")
     return;
 }
 
+var armedState = Arch7bPositionImportArmedStateStore.Read(
+    arguments.ArmedStatePath);
+Arch7bPositionImportReadyMarkerStore.ValidateOwner(
+    arguments.OwnerLockPath, arguments.OwnerId);
+
+if (arguments.Mode == "publish-ready")
+{
+    Require(freshness.ApplyEligible, freshness.Status);
+    _ = await store.PlanAsync(package, freshness);
+    var markerToPublish = Arch7bPositionImportReadyMarkerStore.Create(
+        armedState, package, target, repository, observedUtc);
+    Arch7bPositionImportReadyMarkerStore.PublishAtomic(
+        arguments.ReadyMarkerPath, markerToPublish);
+    Console.WriteLine(JsonSerializer.Serialize(new
+    {
+        result = "READY",
+        markerToPublish.ReadyAtDatabaseUtc,
+        markerToPublish.PackageManifestSha256,
+        markerToPublish.ArmedEvidenceSha256,
+        target = target.ObservableIdentity,
+        no_database_write = true,
+        no_lmax_acquisition = true,
+        no_order = true,
+    }, Arch7bPositionImportArguments.Json));
+    return;
+}
+
 Require(arguments.Apply, "ARCH7B_POSITION_IMPORT_EXPLICIT_APPLY_REQUIRED");
 Require(!arguments.HistoricalFixture,
     Arch7bPositionImportContract.HistoricalFixture);
 Require(freshness.ApplyEligible, freshness.Status);
 var marker = Arch7bPositionImportReadyMarkerStore.Read(arguments.ReadyMarkerPath);
-using (Arch7bPositionImportReadyMarkerStore.AcquireOwner(
-           arguments.OwnerLockPath, arguments.OwnerId))
+var result = await store.ApplyAsync(
+    package, armedState, marker, repository,
+    arguments.FutureAuthorizationId, arguments.OwnerId);
+Console.WriteLine(JsonSerializer.Serialize(new
 {
-    var result = await store.ApplyAsync(
-        package, marker, arguments.RepositoryCommit);
-    Console.WriteLine(JsonSerializer.Serialize(new
-    {
-        result = result.Status,
-        result.PositionSnapshotRowsToAdd,
-        result.PositionSnapshotLineRowsToAdd,
-        target = target.ObservableIdentity,
-        future_authorization_id = arguments.FutureAuthorizationId,
-        no_order = true,
-        no_fix = true,
-        no_fill = true,
-        no_position_ledger_event = true
-    }, Arch7bPositionImportArguments.Json));
-}
+    result = result.Status,
+    result.PositionSnapshotRowsToAdd,
+    result.PositionSnapshotLineRowsToAdd,
+    target = target.ObservableIdentity,
+    future_authorization_id = arguments.FutureAuthorizationId,
+    no_order = true,
+    no_fix = true,
+    no_fill = true,
+    no_position_ledger_event = true
+}, Arch7bPositionImportArguments.Json));
 
 static void Require(bool condition, string code)
 {
@@ -111,15 +165,20 @@ public sealed class Arch7bPositionImportArguments
     public string Mode { get; }
     public string PackageRoot => Required("--package-root");
     public string OutputDirectory => Required("--output-directory");
-    public string RepositoryCommit => RequiredSha("--repository-commit", 40);
+    public string RepositoryRoot => Path.GetFullPath(
+        Required("--repository-root"));
+    public string BuildCommit => RequiredSha("--build-commit", 40);
     public string ExpectedTargetFingerprint =>
         RequiredSha("--expected-target-fingerprint");
+    public Guid ExpectedSourceIngestionId =>
+        Guid.Parse(Required("--expected-source-ingestion-id"));
     public bool HistoricalFixture => flags.Contains("--historical-fixture");
     public bool Apply => flags.Contains("--apply");
     public DateTimeOffset ObservedUtc =>
         DateTimeOffset.Parse(Required("--observed-utc"),
             CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind);
     public string ReadyMarkerPath => Required("--ready-marker");
+    public string ArmedStatePath => Required("--armed-state");
     public string OwnerLockPath => Required("--owner-lock");
     public string OwnerId => Required("--owner-id");
     public string FutureAuthorizationId => Required("--future-authorization-id");
@@ -127,7 +186,8 @@ public sealed class Arch7bPositionImportArguments
     public static Arch7bPositionImportArguments Parse(string[] args)
     {
         Require(args.Length > 0 &&
-                args[0] is "plan-import" or "apply-import",
+                args[0] is "arm-import" or "publish-ready" or
+                    "plan-import" or "apply-import",
             "ARCH7B_POSITION_IMPORT_MODE_REQUIRED");
         Require(args.Contains("--no-order", StringComparer.Ordinal),
             "ARCH7B_POSITION_IMPORT_NO_ORDER_REQUIRED");
@@ -166,8 +226,8 @@ public sealed class Arch7bPositionImportArguments
         Require(parsed.Required("--target-profile") ==
                 Arch7bBracketedGlobalFlatContract.TargetProfile,
             "ARCH7B_POSITION_IMPORT_PROFILE_MISMATCH");
-        _ = parsed.PackageRoot;
-        _ = parsed.RepositoryCommit;
+        _ = parsed.RepositoryRoot;
+        _ = parsed.BuildCommit;
         _ = parsed.ExpectedTargetFingerprint;
         if (parsed.Mode == "plan-import")
         {
@@ -177,16 +237,34 @@ public sealed class Arch7bPositionImportArguments
             Require(parsed.ObservedUtc.Offset == TimeSpan.Zero,
                 "ARCH7B_POSITION_IMPORT_OBSERVED_UTC_REQUIRED");
         }
+        else if (parsed.Mode == "arm-import")
+        {
+            Require(!parsed.Apply && !parsed.HistoricalFixture,
+                "ARCH7B_POSITION_IMPORT_ARM_FLAGS_INVALID");
+            _ = parsed.ExpectedSourceIngestionId;
+            _ = parsed.ArmedStatePath;
+            _ = parsed.OwnerLockPath;
+            _ = parsed.OwnerId;
+            _ = parsed.FutureAuthorizationId;
+        }
         else
         {
-            Require(parsed.Apply,
-                "ARCH7B_POSITION_IMPORT_EXPLICIT_APPLY_REQUIRED");
-            Require(!parsed.HistoricalFixture,
-                Arch7bPositionImportContract.HistoricalFixture);
+            _ = parsed.PackageRoot;
+            _ = parsed.ArmedStatePath;
             _ = parsed.ReadyMarkerPath;
             _ = parsed.OwnerLockPath;
             _ = parsed.OwnerId;
             _ = parsed.FutureAuthorizationId;
+            if (parsed.Mode == "publish-ready")
+                Require(!parsed.Apply && !parsed.HistoricalFixture,
+                    "ARCH7B_POSITION_IMPORT_PUBLISH_FLAGS_INVALID");
+            else
+            {
+                Require(parsed.Apply,
+                    "ARCH7B_POSITION_IMPORT_EXPLICIT_APPLY_REQUIRED");
+                Require(!parsed.HistoricalFixture,
+                    Arch7bPositionImportContract.HistoricalFixture);
+            }
         }
         return parsed;
     }
@@ -223,13 +301,17 @@ public sealed class Arch7bPositionImportArguments
             Database = Arch7bBracketedGlobalFlatContract.TargetDatabase,
             Username = Required("--role"),
             Password = password,
-            ApplicationName = Mode == "plan-import"
-                ? "QQ_ARCH7B_POSITION_IMPORT_PLAN_READONLY"
-                : "QQ_ARCH7B_POSITION_IMPORT_APPLY_APPEND_ONLY",
+            ApplicationName = Mode switch
+            {
+                "arm-import" => "QQ_ARCH7B_POSITION_IMPORT_ARM_READONLY",
+                "publish-ready" => "QQ_ARCH7B_POSITION_IMPORT_READY_READONLY",
+                "plan-import" => "QQ_ARCH7B_POSITION_IMPORT_PLAN_READONLY",
+                _ => "QQ_ARCH7B_POSITION_IMPORT_APPLY_APPEND_ONLY"
+            },
             SslMode = SslMode.VerifyFull,
             IncludeErrorDetail = false
         };
-        if (Mode == "plan-import")
+        if (Mode != "apply-import")
             builder.Options = "-c default_transaction_read_only=on";
         if (values.TryGetValue("--root-certificate", out var certificate))
             builder.RootCertificate = certificate;

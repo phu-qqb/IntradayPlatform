@@ -195,7 +195,8 @@ public sealed class Arch6fEconomicRefreshTests
             Task.FromResult<IReadOnlyList<PmsShadowIntradayEconomicProjection>>(values);
         public Task<string?> LoadSupersededManifestShaAsync(string slotId,
             CancellationToken cancellationToken = default) => throw new NotSupportedException();
-        public Task<PmsShadowEconomicSource> LoadSourceAsync(string sourceSessionId,
+        public Task<PmsShadowEconomicSource> LoadSourceAsync(
+            string sourceSessionId, DateTimeOffset slotStartUtc,
             CancellationToken cancellationToken = default) => throw new NotSupportedException();
         public Task<PmsShadowEconomicApplyOutcome> ApplyAsync(PmsShadowIntradayEconomicProjection projection,
             CancellationToken cancellationToken = default) => throw new NotSupportedException();

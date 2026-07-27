@@ -302,8 +302,7 @@ public sealed class Arch7bAppendOnlyPositionImportTests
     public void T35_ReadyMarkerValidatesAllBindings()
     {
         var package = Package();
-        Arch7bPositionImportReadyMarkerStore.Validate(
-            Marker(package), package, Target(), Sha('a', 40));
+        ValidateMarker(Marker(package), package);
     }
 
     [Fact]
@@ -312,9 +311,8 @@ public sealed class Arch7bAppendOnlyPositionImportTests
         var package = Package();
         var marker = Marker(package) with { FutureAuthorizationId = "" };
         var exception = Assert.Throws<InvalidDataException>(() =>
-            Arch7bPositionImportReadyMarkerStore.Validate(
-                marker, package, Target(), Sha('a', 40)));
-        Assert.Equal(Arch7bPositionImportContract.NotPrearmed, exception.Message);
+            ValidateMarker(marker, package));
+        Assert.Equal(Arch7bPositionImportContract.AuthorizationMismatch, exception.Message);
     }
 
     [Fact]
@@ -323,8 +321,7 @@ public sealed class Arch7bAppendOnlyPositionImportTests
         var package = Package();
         var marker = Marker(package) with { TargetFingerprint = Sha('0') };
         Assert.Throws<InvalidDataException>(() =>
-            Arch7bPositionImportReadyMarkerStore.Validate(
-                marker, package, Target(), Sha('a', 40)));
+            ValidateMarker(marker, package));
     }
 
     [Fact]
@@ -333,7 +330,10 @@ public sealed class Arch7bAppendOnlyPositionImportTests
         var package = Package();
         Assert.Throws<InvalidDataException>(() =>
             Arch7bPositionImportReadyMarkerStore.Validate(
-                Marker(package), package, Target(), Sha('b', 40)));
+                Marker(package), Armed(package), package, Target(),
+                Repository() with { HeadCommit = Sha('b', 40) },
+                "authorization", "owner",
+                P2.AddSeconds(1)));
     }
 
     [Fact]
@@ -345,8 +345,7 @@ public sealed class Arch7bAppendOnlyPositionImportTests
             ConsumerSnapshotEvidenceSha256 = Sha('1')
         };
         Assert.Throws<InvalidDataException>(() =>
-            Arch7bPositionImportReadyMarkerStore.Validate(
-                marker, package, Target(), Sha('a', 40)));
+            ValidateMarker(marker, package));
     }
 
     [Fact]
@@ -578,7 +577,7 @@ public sealed class Arch7bAppendOnlyPositionImportTests
             P2,
             package.Snapshot.EvidenceSha256,
             true, false, true,
-            PmsShadowStateContract.EvidenceClassification);
+            Arch7bBracketedGlobalFlatContract.PositionAuthorityCode);
 
     private static IReadOnlyList<PmsShadowPositionSnapshotLineRow> ExpectedLines(
         Arch7bPositionImportPackage package) =>
@@ -587,7 +586,7 @@ public sealed class Arch7bAppendOnlyPositionImportTests
                 value.PositionSnapshotId, value.InstrumentId,
                 value.SecurityId, value.Symbol, value.CurrentBaseQuantity)).ToArray();
 
-    private static Arch7bPositionImportPackage Package(
+    internal static Arch7bPositionImportPackage Package(
         DateTimeOffset? ingestionCompletedAtUtc = null)
     {
         var ingestionId = Id(1);
@@ -650,21 +649,30 @@ public sealed class Arch7bAppendOnlyPositionImportTests
         return new("fixture", Sha('m'), universe, snapshot);
     }
 
+    private static void ValidateMarker(
+        Arch7bPositionImportReadyMarker marker,
+        Arch7bPositionImportPackage package) =>
+        Arch7bPositionImportReadyMarkerStore.Validate(
+            marker, Armed(package), package, Target(), Repository(),
+            "authorization", "owner", P2.AddSeconds(1));
+
     private static Arch7bPositionImportReadyMarker Marker(
         Arch7bPositionImportPackage package) =>
-        new(Arch7bPositionImportContract.Version,
-            package.Snapshot.BracketEvidenceSha256,
-            package.Snapshot.EvidenceSha256,
-            package.Snapshot.RequiredUniverseSha256,
-            package.Snapshot.NormalizedLineSetSha256,
-            package.Snapshot.PositionSnapshotId,
-            package.Universe.SourceIngestionId,
-            package.Universe.SourceAccountSnapshotId,
-            package.Snapshot.PositionSnapshotAsOfUtc,
-            Arch7bBracketedGlobalFlatContract.TargetProfile,
-            Sha('f'), Sha('a', 40), "authorization", "owner", P2, true);
+        Arch7bPositionImportReadyMarkerStore.Create(
+            Armed(package), package, Target(), Repository(), P2);
 
-    private static PmsShadowPostgreSqlTarget Target() =>
+    private static Arch7bPositionImportArmedState Armed(
+        Arch7bPositionImportPackage package) =>
+        Arch7bPositionImportArmedStateStore.Create(
+            Target(), Repository(), "authorization", "owner",
+            package.Universe.SourceIngestionId,
+            package.Snapshot.BracketLowerBoundUtc.AddSeconds(-1));
+
+    private static Arch7bRepositoryState Repository() =>
+        new(GitArch7bRepositoryStateAuthority.ContractVersion,
+            "C:\\repo", Sha('a', 40), Sha('a', 40), true, true);
+
+    internal static PmsShadowPostgreSqlTarget Target() =>
         new("test.example", 5432,
             Arch7bBracketedGlobalFlatContract.TargetDatabase,
             Arch7bBracketedGlobalFlatContract.TargetEnvironment,
@@ -674,7 +682,7 @@ public sealed class Arch7bAppendOnlyPositionImportTests
             PmsShadowPostgreSqlTargetContract.RemoteTlsKind,
             "VERIFYFULL", Sha('f'));
 
-    private static string WritePackageFixture()
+    internal static string WritePackageFixture()
     {
         var root = Temp();
         var package = Package();
@@ -687,9 +695,36 @@ public sealed class Arch7bAppendOnlyPositionImportTests
         File.WriteAllBytes(Path.Combine(root,
                 "pms-bracketed-global-flat-position-snapshot.json"),
             JsonSerializer.SerializeToUtf8Bytes(package.Snapshot, json));
-        var csv = new StringBuilder("header\n");
+        var csv = new StringBuilder("""
+            position_snapshot_line_id,position_snapshot_id,instrument_id,security_id,symbol,lmax_instrument_id,mapping_sha256,source_ingestion_id,pms_source_session_id,current_base_quantity,provenance_kind,position_authority_code,account_id,broker_position_count,bracket_evidence_sha256,required_universe_sha256,core_repository_commit,position_snapshot_as_of_utc,evidence_sha256
+
+            """);
         foreach (var line in package.Snapshot.Lines)
-            csv.Append(line.PositionSnapshotLineId).Append('\n');
+            csv.AppendJoin(',', new[]
+            {
+                line.PositionSnapshotLineId.ToString("D"),
+                line.PositionSnapshotId.ToString("D"),
+                line.InstrumentId.ToString("D"),
+                line.SecurityId,
+                line.Symbol,
+                line.LmaxInstrumentId,
+                line.MappingSha256,
+                line.SourceIngestionId.ToString("D"),
+                line.PmsSourceSessionId,
+                line.CurrentBaseQuantity.ToString(
+                    System.Globalization.CultureInfo.InvariantCulture),
+                line.ProvenanceKind,
+                line.PositionAuthorityCode,
+                line.AccountId,
+                line.BrokerPositionCount.ToString(
+                    System.Globalization.CultureInfo.InvariantCulture),
+                line.BracketEvidenceSha256,
+                line.RequiredUniverseSha256,
+                line.CoreRepositoryCommit,
+                line.PositionSnapshotAsOfUtc.ToString(
+                    "O", System.Globalization.CultureInfo.InvariantCulture),
+                line.EvidenceSha256
+            }).Append('\n');
         File.WriteAllText(Path.Combine(root, "normalized-position-lines.csv"),
             csv.ToString(), new UTF8Encoding(false));
         var files = Directory.GetFiles(root).ToDictionary(

@@ -53,7 +53,8 @@ var store = new EfPmsShadowIntradayEconomicProjectionStore(factory);
 
 if (mode == "project-only")
 {
-    var source = await store.LoadSourceAsync(sourceSessionId);
+    var source = await store.LoadSourceAsync(
+        sourceSessionId, captures.Min(value => value.SlotStartUtc));
     var projected = new List<PmsShadowIntradayEconomicProjection>();
     foreach (var capture in captures)
     {
@@ -68,10 +69,18 @@ if (mode == "project-only")
         status = "PROJECT_ONLY_OK",
         source_mappings = source.Mappings.Count,
         reused_model_runs = source.Models.Select(value => value.ModelRunId),
-        revisions = projected.Select(value => new { value.SlotId, value.RawCaptureSha256,
-            value.MarketDataSnapshotSha256, value.InputSha256, value.TargetPositionsSha256,
-            value.DriftsSha256, market_observations = value.MarketData.Count,
-            target_positions = value.TargetPositions.Count, position_only_drifts = value.PositionOnlyDrifts.Count }),
+        revisions = projected.Select(value => new
+        {
+            value.SlotId,
+            value.RawCaptureSha256,
+            value.MarketDataSnapshotSha256,
+            value.InputSha256,
+            value.TargetPositionsSha256,
+            value.DriftsSha256,
+            market_observations = value.MarketData.Count,
+            target_positions = value.TargetPositions.Count,
+            position_only_drifts = value.PositionOnlyDrifts.Count
+        }),
         lmax_sessions = 0,
         polygon_calls = 0,
         gpu_invocations = 0,
@@ -84,7 +93,8 @@ if (mode == "apply-and-replay")
 {
     await using (var context = factory.CreateDbContext())
         await context.Database.MigrateAsync();
-    var source = await store.LoadSourceAsync(sourceSessionId);
+    var source = await store.LoadSourceAsync(
+        sourceSessionId, captures.Min(value => value.SlotStartUtc));
     var firstPass = new List<PmsShadowEconomicApplyOutcome>();
     var secondPass = new List<PmsShadowEconomicApplyOutcome>();
     foreach (var capture in captures)
