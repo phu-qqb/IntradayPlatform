@@ -35,7 +35,8 @@ public static partial class OperationalStatusCodeScanner
     [
         "ARCH7B_DUPLICATE_EXEC_ID_CONFLICT",
         "ARCH7B_CONFLICTING_FIX_SEQUENCE",
-        "ARCH7B_FIX_SEQUENCE_GAP"
+        "ARCH7B_FIX_SEQUENCE_GAP",
+        "RAW_SLOT_IN_WINDOW_BBO_COVERAGE_INCOMPLETE:"
     ];
 
     private static readonly HashSet<string> ExplicitExclusions = new(
