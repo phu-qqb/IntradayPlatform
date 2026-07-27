@@ -63,6 +63,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "QQ.Production.Intraday.Tool
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "QQ.Production.Intraday.Tools.OperationalReporting", "tools\QQ.Production.Intraday.Tools.OperationalReporting\QQ.Production.Intraday.Tools.OperationalReporting.csproj", "{D41225AE-D906-48FF-AB13-749B28FCC08A}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "QQ.Production.Intraday.Tools.Arch7bGlobalFlatPositionSnapshot", "tools\QQ.Production.Intraday.Tools.Arch7bGlobalFlatPositionSnapshot\QQ.Production.Intraday.Tools.Arch7bGlobalFlatPositionSnapshot.csproj", "{58450A42-4B7D-4FFF-BB63-DCC5DF424AC9}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -397,6 +399,18 @@ Global
 		{D41225AE-D906-48FF-AB13-749B28FCC08A}.Release|x64.Build.0 = Release|Any CPU
 		{D41225AE-D906-48FF-AB13-749B28FCC08A}.Release|x86.ActiveCfg = Release|Any CPU
 		{D41225AE-D906-48FF-AB13-749B28FCC08A}.Release|x86.Build.0 = Release|Any CPU
+		{58450A42-4B7D-4FFF-BB63-DCC5DF424AC9}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{58450A42-4B7D-4FFF-BB63-DCC5DF424AC9}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{58450A42-4B7D-4FFF-BB63-DCC5DF424AC9}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{58450A42-4B7D-4FFF-BB63-DCC5DF424AC9}.Debug|x64.Build.0 = Debug|Any CPU
+		{58450A42-4B7D-4FFF-BB63-DCC5DF424AC9}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{58450A42-4B7D-4FFF-BB63-DCC5DF424AC9}.Debug|x86.Build.0 = Debug|Any CPU
+		{58450A42-4B7D-4FFF-BB63-DCC5DF424AC9}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{58450A42-4B7D-4FFF-BB63-DCC5DF424AC9}.Release|Any CPU.Build.0 = Release|Any CPU
+		{58450A42-4B7D-4FFF-BB63-DCC5DF424AC9}.Release|x64.ActiveCfg = Release|Any CPU
+		{58450A42-4B7D-4FFF-BB63-DCC5DF424AC9}.Release|x64.Build.0 = Release|Any CPU
+		{58450A42-4B7D-4FFF-BB63-DCC5DF424AC9}.Release|x86.ActiveCfg = Release|Any CPU
+		{58450A42-4B7D-4FFF-BB63-DCC5DF424AC9}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -429,5 +443,6 @@ Global
 		{BA0C694D-4AAD-48A4-B3AD-B254B2CA6870} = {07C2787E-EAC7-C090-1BA3-A61EC2A24D84}
 		{CC3E5FB5-FEBF-4A39-8686-606F5236482E} = {07C2787E-EAC7-C090-1BA3-A61EC2A24D84}
 		{D41225AE-D906-48FF-AB13-749B28FCC08A} = {07C2787E-EAC7-C090-1BA3-A61EC2A24D84}
+		{58450A42-4B7D-4FFF-BB63-DCC5DF424AC9} = {07C2787E-EAC7-C090-1BA3-A61EC2A24D84}
 	EndGlobalSection
 EndGlobal
