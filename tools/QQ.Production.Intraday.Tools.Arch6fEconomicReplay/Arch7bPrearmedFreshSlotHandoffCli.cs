@@ -83,14 +83,20 @@ public static class Arch7bPrearmedFreshSlotHandoffCli
                 targetFingerprint, nameof(targetFingerprint));
         }
 
+        var repositoryCommit = Required("--repository-commit");
         var options = PmsShadowFreshSlotHandoffOptions.Create(
             handoffRoot, slot, Required("--source-session-id"),
-            Required("--run-id"), Required("--repository-commit"),
+            Required("--run-id"), repositoryCommit,
             targetProfileId, targetFingerprint,
             TimeSpan.FromMilliseconds(values.TryGetValue("--poll-interval-ms", out var poll)
                 ? int.Parse(poll, CultureInfo.InvariantCulture)
                 : 100));
         var timeline = new PmsShadowFreshSlotHandoffTimeline(options);
+        var preflightClockPath = Path.Combine(options.SlotRoot,
+            "clock_authority_preflight.json");
+        var captureClockPath = Path.Combine(options.SlotRoot,
+            "clock_authority_capture.json");
+        var hostIdentity = Environment.MachineName;
 
         if (mode == "assert-prearmed")
         {
@@ -109,6 +115,24 @@ public static class Arch7bPrearmedFreshSlotHandoffCli
             Require(armed.GetProperty("prearmed_at_utc").GetDateTimeOffset() < closeUtc,
                 "HANDOFF_NOT_PREARMED_BEFORE_SLOT_CLOSE");
             Require(armed.GetProperty("no_order").GetBoolean(), "HANDOFF_NO_ORDER_MISSING");
+            Require(File.Exists(preflightClockPath),
+                PmsShadowCaptureClockAuthorityContract.Blocker);
+            var preflightClock =
+                PmsShadowCaptureClockAuthorityStore.Read(preflightClockPath);
+            PmsShadowCaptureClockAuthorityValidator.RequireQualified(
+                preflightClock, DateTimeOffset.UtcNow, hostIdentity, repositoryCommit);
+            var captureClock = PmsShadowCaptureClockAuthorityStore.Read(
+                Required("--clock-authority-capture-snapshot"));
+            PmsShadowCaptureClockAuthorityValidator.RequireQualified(
+                captureClock, DateTimeOffset.UtcNow, hostIdentity, repositoryCommit);
+            Require(captureClock.SnapshotSha256 != preflightClock.SnapshotSha256 &&
+                captureClock.CapturedAtUtc > preflightClock.CapturedAtUtc,
+                PmsShadowCaptureClockAuthorityContract.Blocker);
+            Require(captureClock.HostClockSource == preflightClock.HostClockSource &&
+                captureClock.ReferenceClockSource == preflightClock.ReferenceClockSource,
+                PmsShadowCaptureClockAuthorityContract.Blocker);
+            PmsShadowCaptureClockAuthorityStore.WriteAtomic(
+                captureClockPath, captureClock);
             timeline.Record(PmsShadowFreshSlotHandoffEvents.CaptureStarted);
             Write(new
             {
@@ -117,6 +141,7 @@ public static class Arch7bPrearmedFreshSlotHandoffCli
                 options.RunId,
                 options.TargetProfileId,
                 options.TargetFingerprint,
+                clock_authority_snapshot_sha256 = captureClock.SnapshotSha256,
                 no_order = true
             });
             return 0;
@@ -126,8 +151,31 @@ public static class Arch7bPrearmedFreshSlotHandoffCli
         {
             Require(File.Exists(options.ArmedStatePath), "HANDOFF_IMPORTER_NOT_PREARMED");
             Require(File.Exists(options.OwnershipPath), "HANDOFF_ORCHESTRATOR_OWNER_NOT_ACTIVE");
+            var artifactPath = Required("--artifact-path");
+            var manifestPath = Required("--manifest-path");
+            Require(File.Exists(captureClockPath),
+                PmsShadowCaptureClockAuthorityContract.Blocker);
+            var captureClock =
+                PmsShadowCaptureClockAuthorityStore.Read(captureClockPath);
+            var postCloseClock = PmsShadowCaptureClockAuthorityStore.Read(
+                Required("--clock-authority-post-close-snapshot"));
+            PmsShadowCaptureClockAuthorityValidator.RequireQualified(
+                postCloseClock, DateTimeOffset.UtcNow,
+                hostIdentity, repositoryCommit);
+            var clockAuthority = new PmsShadowCaptureClockAuthorityEvidence(
+                captureClock, postCloseClock);
+            PmsShadowCaptureClockAuthorityValidator.RequireQualifiedForSlot(
+                clockAuthority, slot, hostIdentity, repositoryCommit);
+            var selection = PmsShadowRealSlotManifestFinalizer.Finalize(
+                manifestPath, artifactPath, slot, clockAuthority,
+                hostIdentity, repositoryCommit);
+            Require(selection.Qualifying, "RAW_SLOT_IN_WINDOW_BBO_COVERAGE_INCOMPLETE");
+            var capture = PmsShadowRealSlotCaptureReader.Read(manifestPath);
+            Require(capture.SlotId == options.SlotId &&
+                capture.SlotEndUtc == options.SlotCloseUtc,
+                "HANDOFF_MANIFEST_SLOT_MISMATCH");
             var marker = PmsShadowFreshSlotReadyMarkerStore.Build(options,
-                Required("--artifact-path"), Required("--manifest-path"), timeline: timeline);
+                artifactPath, manifestPath, timeline: timeline);
             var status = PmsShadowFreshSlotReadyMarkerStore.PublishAtomic(options, marker, timeline);
             Write(new
             {
@@ -138,6 +186,8 @@ public static class Arch7bPrearmedFreshSlotHandoffCli
                 marker.CreatedAtUtc,
                 marker.TargetProfileId,
                 marker.TargetFingerprint,
+                marker.ClockAuthoritySnapshotSha256,
+                marker.ClockPostCloseSnapshotSha256,
                 marker.NoOrder
             });
             return 0;
@@ -156,6 +206,13 @@ public static class Arch7bPrearmedFreshSlotHandoffCli
         var result = await new PmsShadowFreshSlotHandoffRunner(options).RunAsync(
             async cancellationToken =>
             {
+                var preflightClock = PmsShadowCaptureClockAuthorityStore.Read(
+                    Required("--clock-authority-preflight-snapshot"));
+                PmsShadowCaptureClockAuthorityValidator.RequireQualified(
+                    preflightClock, DateTimeOffset.UtcNow,
+                    hostIdentity, repositoryCommit);
+                PmsShadowCaptureClockAuthorityStore.WriteAtomic(
+                    preflightClockPath, preflightClock);
                 await using (var context = factory.CreateDbContext())
                     Require(!context.Database.HasPendingModelChanges(),
                         "POSTGRESQL_PENDING_MODEL_CHANGES");

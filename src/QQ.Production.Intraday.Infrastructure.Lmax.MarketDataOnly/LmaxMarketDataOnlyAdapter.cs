@@ -80,6 +80,10 @@ public sealed record LmaxMarketDataOnlyBookValidation(
 public sealed class LmaxMarketDataOnlyObservationMapper
 {
     public const string ParserVersion = "M2C1A_REUSED_CONNECTIVITY_LAB_LMAX_FIX_MARKET_DATA_CODEC_V1";
+    public const string SourceTimestampFixTag = "52";
+    public const string SourceTimestampFixName = "SendingTime";
+    public const string SourceTimestampSemantics =
+        "LMAX_FIX_UTC_MESSAGE_TRANSMISSION_TIME";
     private readonly IReadOnlyDictionary<string, LmaxMarketDataOnlyInstrument> instrumentsBySecurityId;
     private readonly IReadOnlyDictionary<string, LmaxMarketDataOnlyInstrument> instrumentsBySymbol;
 
@@ -98,7 +102,9 @@ public sealed class LmaxMarketDataOnlyObservationMapper
         var symbol = NormalizeSymbol(LmaxFixMarketDataCodec.GetTag(frame.RawFixMessage, "55"));
         var instrument = ResolveInstrument(securityId, symbol);
         var entries = LmaxFixMarketDataCodec.ParseMarketDataEntries(frame.RawFixMessage);
-        var sourceTime = ParseFixUtc(LmaxFixMarketDataCodec.GetTag(frame.RawFixMessage, "52")) ?? frame.SocketReceiveUtc;
+        var sourceTime = ParseFixUtc(LmaxFixMarketDataCodec.GetTag(
+            frame.RawFixMessage, SourceTimestampFixTag)) ??
+            throw new InvalidDataException("LMAX_MARKET_DATA_SENDING_TIME_MISSING_OR_INVALID");
         var book = ValidateBook(instrument, entries, activeSubscriptions);
         var quoteEventId = $"lmax-md-{frame.SessionInstanceId}-{seq}-{instrument?.InstrumentId ?? securityId}-{CanonicalRecorderV2.Sha256Text(frame.RawFixMessage)[..12]}";
         var gapStatus = DetermineGap(seq, possDup, previousSeqNum, book.GapStatus);

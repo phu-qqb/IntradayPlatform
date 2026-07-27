@@ -7,6 +7,7 @@ public static class OperationalStatusCodeCatalog
             .Concat(OperationalStatusCodeInventory.Additional)
             .Concat(OperationalReportingStatusExtensions.All)
             .Concat(Arch7bPositionImportOperationalStatusDefinitions.All)
+            .Concat(Arch7bClockCutoffOperationalStatusDefinitions.All)
             .OrderBy(value => value.ExactCode, StringComparer.Ordinal).ToArray();
 
     public static OperationalStatusCodeDefinition Get(string exactCode)

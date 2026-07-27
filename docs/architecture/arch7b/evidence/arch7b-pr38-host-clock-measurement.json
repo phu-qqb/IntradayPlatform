@@ -1,0 +1,20 @@
+{
+  "contract_version": "pms_shadow_capture_clock_authority_v1",
+  "captured_at_utc": "2026-07-24T18:12:40.3970526+00:00",
+  "host_clock_source": "Local CMOS Clock",
+  "reference_clock_source": "time.windows.com [51.145.123.29:123]",
+  "measured_offset_milliseconds": 1751.9040,
+  "measurement_uncertainty_milliseconds": 29.1710,
+  "round_trip_milliseconds": 28.72435,
+  "sample_count": 4,
+  "maximum_absolute_offset_milliseconds": 100,
+  "maximum_uncertainty_milliseconds": 100,
+  "status": "FAIL",
+  "host_identity": "LAPTOP-PHU-QQB",
+  "process_id": 24216,
+  "repository_commit": "e74f984bf3320142617b9016fcb91610d36b5741",
+  "service_synchronized": false,
+  "leap_indicator": 3,
+  "last_successful_sync_utc": null,
+  "snapshot_sha256": "b1a1969b6538d5ccae61e16d7a2dc1987680e2e064cb771b0943e89da9d8ebcb"
+}

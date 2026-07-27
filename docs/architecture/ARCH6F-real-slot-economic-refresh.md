@@ -25,6 +25,30 @@ Each corrected slot revision:
 Daily ModelRuns are reused model inputs. Market data, target-position inputs, targets, and
 drifts are fresh slot facts. No fresh GPU model run is claimed for these slots.
 
+## Slot-bounded BBO selection
+
+The canonical slot manifest uses `SourceTimestampUtc` as economic time and
+selects only LMAX BBO events in the inclusive interval
+`SlotStartUtc <= SourceTimestampUtc <= SlotEndUtc`. `RecordedUtc` is immutable
+host receive provenance. LMAX `SendingTime(52)` and the host are separate
+clocks, so causality uses SHA-bound contemporary clock snapshots. Receipt is
+limited to two seconds after close. This is distinct from the unchanged
+300-second absolute import-start deadline; neither widens the economic slot.
+
+Selection is ordered by source timestamp, recorded timestamp, FIX sequence,
+source receive sequence, process sequence, and event ID. Post-close source
+events are counted by symbol but excluded from `last_bbo_by_symbol`, its
+selection SHA-256, target positions, and drifts. There is no timestamp clamp,
+rounding, truncation, or replacement with slot close.
+
+A qualifying manifest is versioned
+`slot_bbo_selection_source_timestamp_clock_authority_v2`, contains exactly 49 selected symbols,
+and records in-slot/post-close counts, excluded post-close counts by symbol,
+the selected source timestamp range, finalization deadline, and selection
+SHA-256. Missing in-window coverage fails closed with
+`RAW_SLOT_IN_WINDOW_BBO_COVERAGE_INCOMPLETE`; no qualifying ready marker may be
+published.
+
 ## Persistence
 
 Migration `20260722231500_AddIntradayEconomicProjectionRevisions` adds:

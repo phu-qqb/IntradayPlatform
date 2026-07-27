@@ -47,9 +47,24 @@ ZIP, historical inventory, test run, or full evidence copy is permitted between
 artifact finalization and marker publication. Cleanup that is not required for
 artifact integrity runs after publication and cannot block import.
 
+`publish-ready` is also the canonical manifest finalization boundary. It reads
+the closed raw artifact, verifies its SHA-256 and the 49 approved
+symbol/instrument identities, and writes a deterministic manifest before
+hashing. A source timestamp exactly at close is accepted; one tick after close
+is excluded and diagnosed. An in-slot source event recorded after close is
+accepted only inside the measured cross-clock envelope and the distinct
+two-second receipt/finalization bound.
+
+The ready marker is not created when any symbol lacks a valid in-window BBO,
+when source lead exceeds the measured envelope, when clock evidence is absent
+or invalid, when LMAX identity or sequence is invalid, or when a non-LMAX event
+contaminates a required symbol. The reader repeats source-window, snapshot SHA,
+clock-envelope and receipt checks as defense in depth. Neither layer clamps,
+rounds, truncates, retimestamps, or silently filters a selected BBO.
+
 ## Ready marker
 
-Contract version: `pms_shadow_fresh_slot_handoff_v2`.
+Contract version: `pms_shadow_fresh_slot_handoff_v3`.
 
 Required fields:
 
@@ -57,6 +72,8 @@ Required fields:
 - source session ID;
 - logical artifact path;
 - artifact and manifest SHA-256;
+- pre-capture clock snapshot SHA-256;
+- post-close clock snapshot SHA-256;
 - creation UTC and creator PID;
 - full repository commit;
 - non-secret target profile ID and target fingerprint;
@@ -66,8 +83,9 @@ Required fields:
 The marker is slot-specific and validates both files byte-for-byte. An identical
 second publish is idempotent. A conflicting marker, stale marker, pre-close
 marker, SHA mismatch, source mismatch, commit mismatch, target mismatch, or
-non-TEST/non-no-order marker fails closed. Version 1 markers have no target
-binding and are therefore not compatible with the version 2 operational path.
+non-TEST/non-no-order marker fails closed. Earlier markers lack either target
+or clock-snapshot binding and are not compatible with the version 3
+operational path.
 
 ## Portable PostgreSQL TEST target
 
