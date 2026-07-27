@@ -362,10 +362,10 @@ public sealed class Arch7bPositionImportStore(
                 latest.CompletedAtUtc is null)
                 throw new InvalidDataException(
                     "ARCH7B_POSITION_IMPORT_LATEST_INGESTION_CHANGED");
-            var databaseUtc = await ReadDatabaseUtcAsync(
+            var databaseClock = await ReadDatabaseClockAsync(
                 context, cancellationToken);
             await transaction.RollbackAsync(cancellationToken);
-            return databaseUtc;
+            return databaseClock.DatabaseUtc;
         }
         catch
         {
@@ -386,7 +386,66 @@ public sealed class Arch7bPositionImportStore(
         try
         {
             await ValidateTargetAsync(context, cancellationToken);
-            return await ReadDatabaseUtcAsync(context, cancellationToken);
+            return (await ReadDatabaseClockAsync(
+                context, cancellationToken)).DatabaseUtc;
+        }
+        finally
+        {
+            await context.Database.CloseConnectionAsync();
+        }
+    }
+
+    public async Task<Arch7bPostgreSqlClockQualification>
+        QualifyDatabaseClockAsync(
+            int sampleCount = 3,
+            CancellationToken cancellationToken = default)
+    {
+        if (sampleCount != 3)
+            throw new ArgumentOutOfRangeException(nameof(sampleCount));
+        await using var context = new PmsShadowDbContext(options);
+        await context.Database.OpenConnectionAsync(cancellationToken);
+        await using var transaction = await context.Database.BeginTransactionAsync(
+            IsolationLevel.RepeatableRead, cancellationToken);
+        try
+        {
+            await context.Database.ExecuteSqlRawAsync(
+                "SET TRANSACTION READ ONLY", cancellationToken);
+            var readOnly = string.Equals(await ScalarAsync(context,
+                    "SHOW transaction_read_only", cancellationToken),
+                "on", StringComparison.OrdinalIgnoreCase);
+            if (!readOnly)
+                throw new InvalidDataException(
+                    "ARCH7B_POSITION_IMPORT_CLOCK_TRANSACTION_NOT_READ_ONLY");
+            await ValidateTargetAsync(context, cancellationToken);
+            var version = await ScalarAsync(
+                context, "SHOW server_version", cancellationToken);
+            var samples = new List<Arch7bPostgreSqlClockSample>(sampleCount);
+            for (var index = 0; index < sampleCount; index++)
+            {
+                samples.Add(await ReadDatabaseClockAsync(
+                    context, cancellationToken));
+                if (index + 1 < sampleCount)
+                    await Task.Delay(TimeSpan.FromMilliseconds(10),
+                        cancellationToken);
+            }
+            var monotonic = samples.Zip(samples.Skip(1),
+                (left, right) => left.DatabaseUtc <= right.DatabaseUtc).All(value => value);
+            if (!monotonic)
+                throw new InvalidDataException(
+                    Arch7bPostgreSqlClockAuthorityContract.EpochMismatch);
+            await transaction.RollbackAsync(cancellationToken);
+            return new(
+                Arch7bPostgreSqlClockAuthorityContract.Version,
+                version,
+                readOnly,
+                samples,
+                monotonic,
+                NoDatabaseWrite: true);
+        }
+        catch
+        {
+            await transaction.RollbackAsync(CancellationToken.None);
+            throw;
         }
         finally
         {
@@ -455,8 +514,9 @@ public sealed class Arch7bPositionImportStore(
             await context.Database.ExecuteSqlInterpolatedAsync(
                 $"SELECT pg_advisory_xact_lock(hashtextextended({lockIdentity}, 0))",
                 cancellationToken);
-            var applyAtDatabaseUtc = await ReadDatabaseUtcAsync(
+            var applyDatabaseClock = await ReadDatabaseClockAsync(
                 context, cancellationToken);
+            var applyAtDatabaseUtc = applyDatabaseClock.DatabaseUtc;
             Arch7bPositionImportReadyMarkerStore.Validate(
                 marker, armed, package, target, repository,
                 expectedFutureAuthorizationId, expectedOwnerId,
@@ -739,19 +799,13 @@ public sealed class Arch7bPositionImportStore(
             CultureInfo.InvariantCulture);
     }
 
-    private static async Task<DateTimeOffset> ReadDatabaseUtcAsync(
+    private static Task<Arch7bPostgreSqlClockSample> ReadDatabaseClockAsync(
         PmsShadowDbContext context,
-        CancellationToken cancellationToken)
-    {
-        if (await ScalarAsync(context, "SHOW TIMEZONE", cancellationToken) != "UTC")
-            throw new InvalidDataException(
-                Arch7bPositionImportContract.DatabaseTimezoneInvalid);
-        var value = await ScalarAsync(
-            context, "SELECT clock_timestamp()", cancellationToken);
-        var parsed = DateTimeOffset.Parse(
-            value, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind);
-        return parsed.ToUniversalTime();
-    }
+        CancellationToken cancellationToken) =>
+        Arch7bPostgreSqlClockAuthority.ReadAsync(
+            context.Database.GetDbConnection(),
+            context.Database.CurrentTransaction?.GetDbTransaction(),
+            cancellationToken);
 
     private async Task ValidateTargetAsync(
         PmsShadowDbContext context,

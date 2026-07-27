@@ -113,14 +113,35 @@ public static class Arch7bPositionImportOperationalStatusDefinitions
             "No position snapshot exists for the requested source ingestion and slot."),
         Code("ARCH7B_POSITION_SNAPSHOT_STALE_FOR_SLOT", "FRESHNESS",
             OperationalBreakSeverity.Critical,
-            "The latest pre-slot position snapshot is older than 300 seconds.")
+            "The latest pre-slot position snapshot is older than 300 seconds."),
+        Code("NO_GO_ARCH7B_POSITION_IMPORT_DATABASE_CLOCK_AUTHORITY_CONVERSION_INVALID",
+            "FRESHNESS", OperationalBreakSeverity.Critical,
+            "The failed live run observed a host-timezone-dependent PostgreSQL clock conversion.",
+            Arch7bPostgreSqlClockAuthorityContract.Version),
+        Code("ARCH7B_POSITION_IMPORT_DATABASE_CLOCK_CLR_MAPPING_INVALID",
+            "RDS", OperationalBreakSeverity.Critical,
+            "The PostgreSQL timestamp driver mapping is not explicitly UTC.",
+            Arch7bPostgreSqlClockAuthorityContract.Version),
+        Code("ARCH7B_POSITION_IMPORT_DATABASE_CLOCK_EPOCH_MISMATCH",
+            "RDS", OperationalBreakSeverity.Critical,
+            "The typed PostgreSQL timestamp differs from its same-instant Unix epoch.",
+            Arch7bPostgreSqlClockAuthorityContract.Version),
+        Code("ARCH7B_POSITION_IMPORT_DATABASE_CLOCK_TYPE_INVALID",
+            "RDS", OperationalBreakSeverity.Critical,
+            "The PostgreSQL database clock is not timestamp with time zone.",
+            Arch7bPostgreSqlClockAuthorityContract.Version),
+        Code("ARCH7B_POSITION_IMPORT_DATABASE_TIMEZONE_NOT_UTC",
+            "RDS", OperationalBreakSeverity.Critical,
+            "The PostgreSQL clock-authority session timezone is not UTC.",
+            Arch7bPostgreSqlClockAuthorityContract.Version)
     ];
 
     private static OperationalStatusCodeDefinition Code(
         string exactCode,
         string category,
         OperationalBreakSeverity severity,
-        string description) =>
+        string description,
+        string? introducedByContractVersion = null) =>
         new(
             exactCode,
             "ARCH7B_POSITION_IMPORT",
@@ -135,5 +156,6 @@ public static class Arch7bPositionImportOperationalStatusDefinitions
             EvidenceRequirements:
                 "Exact package SHA identities, source lineage, target fingerprint and read-only plan.",
             Supersedes: null,
-            IntroducedByContractVersion: Arch7bPositionImportContract.Version);
+            IntroducedByContractVersion: introducedByContractVersion ??
+                Arch7bPositionImportContract.Version);
 }

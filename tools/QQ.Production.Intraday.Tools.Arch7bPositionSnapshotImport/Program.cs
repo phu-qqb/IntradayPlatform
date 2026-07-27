@@ -24,6 +24,45 @@ var options = new DbContextOptionsBuilder<PmsShadowDbContext>()
         Arch7bBracketedGlobalFlatContract.PostgreSqlMajor, 0))
     .Options;
 var store = new Arch7bPositionImportStore(options, target);
+
+if (arguments.Mode == "qualify-database-clock")
+{
+    var qualification = await store.QualifyDatabaseClockAsync();
+    var evidence = Arch7bPostgreSqlClockQualificationEvidenceWriter.Write(
+        arguments.OutputDirectory, qualification, target);
+    Console.WriteLine(JsonSerializer.Serialize(new
+    {
+        result = "ARCH7B_POSTGRESQL_DATABASE_CLOCK_AUTHORITY_QUALIFIED",
+        contract_version = qualification.ContractVersion,
+        qualification.PostgreSqlVersion,
+        qualification.TransactionReadOnly,
+        qualification.SamplesMonotonic,
+        sample_count = qualification.Samples.Count,
+        samples = qualification.Samples.Select(value => new
+        {
+            value.DatabaseUtc,
+            value.EpochDerivedUtc,
+            value.TypedVsEpochDeltaMicroseconds,
+            value.PostgreSqlType,
+            value.SessionTimeZone,
+            value.ClrType,
+            value.ClrDateTimeKind,
+            value.ClrOffset,
+            value.EvidenceSha256
+        }),
+        evidence.OutputDirectory,
+        evidence.ManifestSha256,
+        evidence.ZipSha256,
+        no_database_write = true,
+        no_armed_state = true,
+        no_owner_lock = true,
+        no_ready_marker = true,
+        no_lmax_acquisition = true,
+        no_order = true
+    }, Arch7bPositionImportArguments.Json));
+    return;
+}
+
 var repository = new GitArch7bRepositoryStateAuthority().Resolve(
     arguments.RepositoryRoot, arguments.BuildCommit);
 
@@ -187,7 +226,7 @@ public sealed class Arch7bPositionImportArguments
     {
         Require(args.Length > 0 &&
                 args[0] is "arm-import" or "publish-ready" or
-                    "plan-import" or "apply-import",
+                    "plan-import" or "apply-import" or "qualify-database-clock",
             "ARCH7B_POSITION_IMPORT_MODE_REQUIRED");
         Require(args.Contains("--no-order", StringComparer.Ordinal),
             "ARCH7B_POSITION_IMPORT_NO_ORDER_REQUIRED");
@@ -226,9 +265,19 @@ public sealed class Arch7bPositionImportArguments
         Require(parsed.Required("--target-profile") ==
                 Arch7bBracketedGlobalFlatContract.TargetProfile,
             "ARCH7B_POSITION_IMPORT_PROFILE_MISMATCH");
-        _ = parsed.RepositoryRoot;
-        _ = parsed.BuildCommit;
         _ = parsed.ExpectedTargetFingerprint;
+        if (parsed.Mode == "qualify-database-clock")
+        {
+            Require(!parsed.Apply && !parsed.HistoricalFixture,
+                "ARCH7B_POSITION_IMPORT_CLOCK_QUALIFICATION_FLAGS_INVALID");
+            _ = parsed.OutputDirectory;
+            return parsed;
+        }
+        else
+        {
+            _ = parsed.RepositoryRoot;
+            _ = parsed.BuildCommit;
+        }
         if (parsed.Mode == "plan-import")
         {
             Require(!parsed.Apply,
@@ -304,6 +353,8 @@ public sealed class Arch7bPositionImportArguments
             ApplicationName = Mode switch
             {
                 "arm-import" => "QQ_ARCH7B_POSITION_IMPORT_ARM_READONLY",
+                "qualify-database-clock" =>
+                    "QQ_ARCH7B_POSTGRESQL_CLOCK_QUALIFICATION_READONLY",
                 "publish-ready" => "QQ_ARCH7B_POSITION_IMPORT_READY_READONLY",
                 "plan-import" => "QQ_ARCH7B_POSITION_IMPORT_PLAN_READONLY",
                 _ => "QQ_ARCH7B_POSITION_IMPORT_APPLY_APPEND_ONLY"
