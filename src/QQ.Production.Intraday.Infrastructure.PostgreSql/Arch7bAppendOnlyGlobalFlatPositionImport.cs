@@ -140,9 +140,14 @@ public static class Arch7bPositionImportPackageReader
 
         using var manifestDocument = JsonDocument.Parse(File.ReadAllBytes(manifestPath));
         var manifest = manifestDocument.RootElement;
-        Require(manifest.GetProperty("contract_version").GetString() ==
-                Arch7bBracketedGlobalFlatContract.Version,
+        var contractVersion = manifest.GetProperty("contract_version").GetString();
+        Require(contractVersion is Arch7bBracketedGlobalFlatContract.Version or
+                Arch7bFreshPositionImportFastPathContract.Version,
             "ARCH7B_POSITION_IMPORT_CONSUMER_CONTRACT_MISMATCH");
+        if (contractVersion == Arch7bFreshPositionImportFastPathContract.Version)
+            Require(manifest.GetProperty("smoke_qualification_status").GetString() ==
+                    Arch7bFreshPositionImportFastPathContract.SmokeQualificationStatus,
+                "ARCH7B_POSITION_FAST_PATH_SMOKE_STATUS_INVALID");
         Require(True(manifest, "no_order") && True(manifest, "no_fix") &&
                 True(manifest, "no_database_write") && True(manifest, "no_fill") &&
                 True(manifest, "no_ledger_write"),

@@ -1736,11 +1736,11 @@ public static class Arch7bGlobalFlatOutputWriter
         }
     }
 
-    private static void WriteJson(string root, string name, object value) =>
+    internal static void WriteJson(string root, string name, object value) =>
         File.WriteAllBytes(Path.Combine(root, name),
             JsonSerializer.SerializeToUtf8Bytes(value, Json));
 
-    private static void WriteCsv(
+    internal static void WriteCsv(
         string root,
         IReadOnlyList<Arch7bNormalizedPositionLine> lines)
     {

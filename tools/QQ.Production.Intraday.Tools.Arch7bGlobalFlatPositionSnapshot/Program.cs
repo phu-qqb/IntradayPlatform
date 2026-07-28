@@ -5,13 +5,15 @@ using Npgsql;
 using QQ.Production.Intraday.Infrastructure.PostgreSql;
 
 var arguments = Arch7bGlobalFlatArguments.Parse(args);
+var timing = new Arch7bFreshPositionImportTimingCollector();
 var expectations = new Arch7bCoreEvidenceExpectations(
     arguments.CoreRepositoryCommit,
     arguments.ExpectedEvidenceSha256,
     arguments.ExpectedContractFileSha256,
     arguments.ExpectedFinalIndexSha256);
-var core = Arch7bCoreBracketEvidencePackageReader.Read(
-    arguments.EvidenceRoot, expectations);
+var core = timing.Measure("CORE_PACKAGE_VALIDATION", () =>
+    Arch7bCoreBracketEvidencePackageReader.Read(
+        arguments.EvidenceRoot, expectations));
 
 var logicalConnectionString = arguments.BuildLogicalConnectionString();
 var settings = new PmsShadowPostgreSqlTargetSettings(
@@ -34,17 +36,96 @@ var options = new DbContextOptionsBuilder<PmsShadowDbContext>()
             Arch7bBracketedGlobalFlatContract.PostgreSqlMajor, 0))
     .UseQueryTrackingBehavior(QueryTrackingBehavior.NoTracking)
     .Options;
-var universe = await new Arch7bRequiredPmsUniverseReader(options, target)
-    .ReadAsync();
-var snapshot = Arch7bGlobalFlatPositionSnapshotBuilder.Build(core, universe);
-var smokeA = Arch7bGlobalFlatEconomicSmokeRunner.Run(snapshot, universe);
-var smokeB = Arch7bGlobalFlatEconomicSmokeRunner.Run(snapshot, universe);
-var smokeIsDeterministic = Arch7bGlobalFlatOutputWriter.SerializeSmoke(smokeA)
-    .SequenceEqual(Arch7bGlobalFlatOutputWriter.SerializeSmoke(smokeB));
+var universe = await timing.MeasureAsync("RDS_UNIVERSE_READ", () =>
+    new Arch7bRequiredPmsUniverseReader(options, target).ReadAsync());
+var snapshot = timing.Measure("SNAPSHOT_BUILD", () =>
+    Arch7bGlobalFlatPositionSnapshotBuilder.Build(core, universe));
+
+if (arguments.FastPath)
+{
+    var package = timing.Measure("MINIMAL_PACKAGE_WRITE", () =>
+        Arch7bFreshPositionImportPackageWriter.Write(
+            arguments.OutputDirectory, core, universe, snapshot));
+    var fastTiming = timing.Complete(
+        "prepare-fresh-position-import-package",
+        core.PositionReportP2Utc,
+        smokeAExecuted: false,
+        smokeBExecuted: false);
+    Arch7bFreshPositionImportTimingWriter.Write(
+        arguments.TimingOutput!, package.OutputDirectory, fastTiming);
+
+    Console.WriteLine(JsonSerializer.Serialize(new
+    {
+        result = "ARCH7B_FRESH_POSITION_IMPORT_PACKAGE_PREPARED",
+        contract_version = Arch7bFreshPositionImportFastPathContract.Version,
+        target = target.ObservableIdentity,
+        core.CoreRepositoryCommit,
+        core.DownloaderVersion,
+        bracket_evidence_sha256 = core.EvidenceSha256,
+        successful_attempt_number =
+            core.RecomputedSemantics?.SuccessfulAttemptNumber,
+        position_report_p2_utc = core.PositionReportP2Utc,
+        pms_source_ingestion_id = universe.SourceIngestionId,
+        universe.RequiredUniverseSha256,
+        snapshot.NormalizedLineCount,
+        snapshot.DerivedZeroCount,
+        snapshot.UnknownCount,
+        snapshot.NormalizedLineSetSha256,
+        snapshot.AccountSnapshotId,
+        snapshot.PositionSnapshotId,
+        snapshot.PositionSnapshotAsOfUtc,
+        snapshot.PositionAuthorityCode,
+        snapshot.WorkingOrderAuthority,
+        snapshot.BrokerSendAllowed,
+        smoke_qualification_status =
+            Arch7bFreshPositionImportFastPathContract
+                .SmokeQualificationStatus,
+        smoke_executed = false,
+        package.OutputDirectory,
+        package.ManifestSha256,
+        timing_output = arguments.TimingOutput,
+        transaction_read_only = universe.TransactionReadOnly,
+        pending_model_changes = universe.PendingModelChanges,
+        zip_executed = false,
+        projection_bundle_written = false,
+        no_order = true,
+        no_fix = true,
+        no_database_write = true,
+        no_account_api = true,
+        no_databento = true
+    }, JsonOptions()));
+    return;
+}
+
+var smokeA = timing.Measure("SMOKE_A", () =>
+    Arch7bGlobalFlatEconomicSmokeRunner.Run(snapshot, universe));
+var smokeB = timing.Measure("SMOKE_B", () =>
+    Arch7bGlobalFlatEconomicSmokeRunner.Run(snapshot, universe));
+var smokeIsDeterministic = timing.Measure("SMOKE_DETERMINISM", () =>
+    Arch7bGlobalFlatOutputWriter.SerializeSmoke(smokeA)
+        .SequenceEqual(Arch7bGlobalFlatOutputWriter.SerializeSmoke(smokeB)));
 Require(smokeIsDeterministic,
     "ARCH7B_OFFLINE_SMOKE_NONDETERMINISTIC");
-var bundle = Arch7bGlobalFlatOutputWriter.Write(
-    arguments.OutputDirectory, core, universe, snapshot, smokeA, smokeB);
+var bundle = timing.Measure("FULL_BUNDLE_WRITE", () =>
+    Arch7bGlobalFlatOutputWriter.Write(
+        arguments.OutputDirectory, core, universe, snapshot, smokeA, smokeB));
+Arch7bFreshPositionImportPackageBundle? canonicalPackage = null;
+if (arguments.ImportPackageOutput is not null)
+{
+    canonicalPackage = timing.Measure("CANONICAL_IMPORT_PACKAGE_WRITE", () =>
+        Arch7bFreshPositionImportPackageWriter.Write(
+            arguments.ImportPackageOutput, core, universe, snapshot));
+}
+var fullTiming = timing.Complete(
+    "consume-bracketed-global-flat",
+    core.PositionReportP2Utc,
+    smokeAExecuted: true,
+    smokeBExecuted: true);
+if (arguments.TimingOutput is not null)
+{
+    Arch7bFreshPositionImportTimingWriter.Write(
+        arguments.TimingOutput, bundle.OutputDirectory, fullTiming);
+}
 
 Console.WriteLine(JsonSerializer.Serialize(new
 {
@@ -99,6 +180,8 @@ Console.WriteLine(JsonSerializer.Serialize(new
     },
     bundle.OutputDirectory,
     bundle.ManifestSha256,
+    canonical_import_package = canonicalPackage,
+    timing_output = arguments.TimingOutput,
     transaction_read_only = universe.TransactionReadOnly,
     pending_model_changes = universe.PendingModelChanges,
     no_order = true,
@@ -106,11 +189,13 @@ Console.WriteLine(JsonSerializer.Serialize(new
     no_database_write = true,
     no_account_api = true,
     no_databento = true
-}, new JsonSerializerOptions
+}, JsonOptions()));
+
+static JsonSerializerOptions JsonOptions() => new()
 {
     PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower,
     WriteIndented = true
-}));
+};
 
 static void Require(bool condition, string code)
 {
@@ -121,13 +206,19 @@ public sealed class Arch7bGlobalFlatArguments
 {
     private readonly IReadOnlyDictionary<string, string> values;
 
-    private Arch7bGlobalFlatArguments(IReadOnlyDictionary<string, string> values)
+    private Arch7bGlobalFlatArguments(
+        IReadOnlyDictionary<string, string> values,
+        bool fastPath)
     {
         this.values = values;
+        FastPath = fastPath;
     }
 
+    public bool FastPath { get; }
     public string EvidenceRoot => Required("--evidence-root");
     public string OutputDirectory => Required("--output-directory");
+    public string? ImportPackageOutput => Optional("--import-package-output");
+    public string? TimingOutput => Optional("--timing-output");
     public string CoreRepositoryCommit => RequiredSha("--core-repository-commit", 40);
     public string ExpectedEvidenceSha256 => RequiredSha("--expected-evidence-sha256");
     public string ExpectedContractFileSha256 =>
@@ -139,13 +230,17 @@ public sealed class Arch7bGlobalFlatArguments
 
     public static Arch7bGlobalFlatArguments Parse(string[] args)
     {
-        Require(args.Contains("consume-bracketed-global-flat", StringComparer.Ordinal),
-            "ARCH7B_MODE_REQUIRED");
+        var full = args.Contains(
+            "consume-bracketed-global-flat", StringComparer.Ordinal);
+        var fast = args.Contains(
+            "prepare-fresh-position-import-package", StringComparer.Ordinal);
+        Require(full ^ fast, "ARCH7B_MODE_REQUIRED");
         Require(args.Contains("--no-order", StringComparer.Ordinal),
             "ARCH7B_NO_ORDER_REQUIRED");
         var flags = new HashSet<string>(StringComparer.Ordinal)
         {
             "consume-bracketed-global-flat",
+            "prepare-fresh-position-import-package",
             "--no-order"
         };
         var values = new Dictionary<string, string>(StringComparer.Ordinal);
@@ -157,7 +252,7 @@ public sealed class Arch7bGlobalFlatArguments
                 "ARCH7B_ARGUMENTS_MUST_BE_NAME_VALUE_PAIRS");
             values.Add(args[index], args[++index]);
         }
-        var parsed = new Arch7bGlobalFlatArguments(values);
+        var parsed = new Arch7bGlobalFlatArguments(values, fast);
         Require(parsed.Required("--expected-environment") ==
                 Arch7bBracketedGlobalFlatContract.TargetEnvironment,
             "ARCH7B_TARGET_ENVIRONMENT_NOT_TEST");
@@ -180,6 +275,13 @@ public sealed class Arch7bGlobalFlatArguments
         _ = parsed.ExpectedContractFileSha256;
         _ = parsed.ExpectedFinalIndexSha256;
         _ = parsed.ExpectedTargetFingerprint;
+        if (fast)
+        {
+            Require(parsed.TimingOutput is not null,
+                "ARCH7B_POSITION_FAST_PATH_TIMING_OUTPUT_REQUIRED");
+            Require(parsed.ImportPackageOutput is null,
+                "ARCH7B_POSITION_FAST_PATH_SECOND_PACKAGE_FORBIDDEN");
+        }
         return parsed;
     }
 
@@ -215,7 +317,9 @@ public sealed class Arch7bGlobalFlatArguments
             Database = Arch7bBracketedGlobalFlatContract.TargetDatabase,
             Username = Required("--role"),
             Password = password,
-            ApplicationName = "QQ_ARCH7B_GLOBAL_FLAT_READONLY",
+            ApplicationName = FastPath
+                ? "QQ_ARCH7B_FRESH_POSITION_FAST_PATH_READONLY"
+                : "QQ_ARCH7B_GLOBAL_FLAT_READONLY",
             SslMode = SslMode.VerifyFull,
             IncludeErrorDetail = false,
             Options = "-c default_transaction_read_only=on"
@@ -236,6 +340,7 @@ public sealed class Arch7bGlobalFlatArguments
             $"ARCH7B_SHA_INVALID:{name}");
         return value;
     }
+    private string? Optional(string name) => values.GetValueOrDefault(name);
     private string Required(string name) =>
         values.GetValueOrDefault(name)
         ?? throw new InvalidDataException($"ARCH7B_ARGUMENT_MISSING:{name}");

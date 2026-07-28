@@ -66,6 +66,125 @@ if (arguments.Mode == "qualify-database-clock")
 var repository = new GitArch7bRepositoryStateAuthority().Resolve(
     arguments.RepositoryRoot, arguments.BuildCommit);
 
+if (arguments.Mode == "run-fresh-position-import-fast-path")
+{
+    var expectations = new Arch7bCoreEvidenceExpectations(
+        arguments.CoreRepositoryCommit,
+        arguments.ExpectedEvidenceSha256,
+        arguments.ExpectedContractFileSha256,
+        arguments.ExpectedFinalIndexSha256);
+    var core = Arch7bCoreBracketEvidencePackageReader.Read(
+        arguments.EvidenceRoot, expectations);
+    var timeline = new Arch7bFreshPositionImportAppendOnlyTimeline(
+        Path.Combine(arguments.OutputDirectory, "append-only-timeline"));
+    var currentStage = "PREARMED_VALIDATION";
+    DateTimeOffset? lastDatabaseUtc = null;
+    try
+    {
+        var armed = Arch7bPositionImportArmedStateStore.Read(
+            arguments.ArmedStatePath);
+        Arch7bPositionImportReadyMarkerStore.ValidateOwner(
+            arguments.OwnerLockPath, arguments.OwnerId);
+        Arch7bFreshPositionImportOrchestrationGuard.RequirePrearmed(
+            armed, target, repository, arguments.OwnerId,
+            arguments.FutureAuthorizationId,
+            arguments.ExpectedSourceIngestionId,
+            core.PositionReportP2Utc);
+
+        currentStage = "RDS_UNIVERSE_READ";
+        var universe = await new Arch7bRequiredPmsUniverseReader(options, target)
+            .ReadAsync();
+        Require(universe.SourceIngestionId ==
+                arguments.ExpectedSourceIngestionId,
+            "ARCH7B_POSITION_IMPORT_SOURCE_INGESTION_MISMATCH");
+        var snapshot = Arch7bGlobalFlatPositionSnapshotBuilder.Build(
+            core, universe);
+
+        currentStage = "PACKAGE_READY";
+        _ = Arch7bFreshPositionImportPackageWriter.Write(
+            arguments.PackageRoot, core, universe, snapshot);
+        lastDatabaseUtc = await store.ReadDatabaseTimeAsync();
+        timeline.Record(Arch7bFreshPositionImportSloPolicy.RequirePackageReady(
+            core.PositionReportP2Utc, lastDatabaseUtc.Value));
+        var fastPackage = Arch7bPositionImportPackageReader.Read(
+            arguments.PackageRoot);
+        var fastFreshness = Arch7bPositionImportFreshnessPolicy.Evaluate(
+            fastPackage, lastDatabaseUtc.Value, historicalFixture: false);
+        Require(fastFreshness.ApplyEligible, fastFreshness.Status);
+
+        currentStage = "READY";
+        _ = await store.PlanAsync(fastPackage, fastFreshness);
+        lastDatabaseUtc = await store.ReadDatabaseTimeAsync();
+        timeline.Record(Arch7bFreshPositionImportSloPolicy.RequireReady(
+            core.PositionReportP2Utc, lastDatabaseUtc.Value));
+        var fastMarker = Arch7bPositionImportReadyMarkerStore.Create(
+            armed, fastPackage, target, repository, lastDatabaseUtc.Value);
+        Arch7bPositionImportReadyMarkerStore.PublishAtomic(
+            arguments.ReadyMarkerPath, fastMarker);
+
+        currentStage = "PLAN";
+        lastDatabaseUtc = await store.ReadDatabaseTimeAsync();
+        fastFreshness = Arch7bPositionImportFreshnessPolicy.Evaluate(
+            fastPackage, lastDatabaseUtc.Value, historicalFixture: false);
+        Require(fastFreshness.ApplyEligible, fastFreshness.Status);
+        var fastPlan = await store.PlanAsync(fastPackage, fastFreshness);
+        lastDatabaseUtc = await store.ReadDatabaseTimeAsync();
+        timeline.Record(Arch7bFreshPositionImportSloPolicy.RequirePlan(
+            core.PositionReportP2Utc, lastDatabaseUtc.Value));
+
+        currentStage = "APPLY_START";
+        lastDatabaseUtc = await store.ReadDatabaseTimeAsync();
+        timeline.Record(Arch7bFreshPositionImportSloPolicy.RequireApplyStart(
+            core.PositionReportP2Utc, lastDatabaseUtc.Value));
+        var fastResult = await store.ApplyAsync(
+            fastPackage, armed, fastMarker, repository,
+            arguments.FutureAuthorizationId, arguments.OwnerId);
+        currentStage = "COMMIT_READBACK";
+        lastDatabaseUtc = await store.ReadDatabaseTimeAsync();
+        timeline.Record(
+            Arch7bFreshPositionImportSloPolicy.ObserveCommitReadback(
+                core.PositionReportP2Utc, lastDatabaseUtc.Value));
+
+        Console.WriteLine(JsonSerializer.Serialize(new
+        {
+            result = fastResult.Status,
+            contract_version =
+                Arch7bFreshPositionImportFastPathContract.Version,
+            package_manifest_sha256 = fastPackage.ManifestSha256,
+            package_ready_plan = fastPlan.Status,
+            fastResult.PositionSnapshotRowsToAdd,
+            fastResult.PositionSnapshotLineRowsToAdd,
+            target = target.ObservableIdentity,
+            timeline_directory = Path.Combine(
+                arguments.OutputDirectory, "append-only-timeline"),
+            smoke_qualification_status =
+                Arch7bFreshPositionImportFastPathContract
+                    .SmokeQualificationStatus,
+            no_order = true,
+            no_fix = true,
+            no_fill = true,
+            no_position_ledger_event = true
+        }, Arch7bPositionImportArguments.Json));
+        return;
+    }
+    catch (Exception exception)
+    {
+        try
+        {
+            timeline.RecordFailure(
+                currentStage,
+                core.PositionReportP2Utc,
+                lastDatabaseUtc,
+                exception.Message);
+        }
+        catch
+        {
+            // Preserve the first operational blocker.
+        }
+        throw;
+    }
+}
+
 if (arguments.Mode == "arm-import")
 {
     var databaseUtc = await store.ArmAsync(
@@ -209,6 +328,15 @@ public sealed class Arch7bPositionImportArguments
     public string BuildCommit => RequiredSha("--build-commit", 40);
     public string ExpectedTargetFingerprint =>
         RequiredSha("--expected-target-fingerprint");
+    public string EvidenceRoot => Required("--evidence-root");
+    public string CoreRepositoryCommit =>
+        RequiredSha("--core-repository-commit", 40);
+    public string ExpectedEvidenceSha256 =>
+        RequiredSha("--expected-evidence-sha256");
+    public string ExpectedContractFileSha256 =>
+        RequiredSha("--expected-contract-file-sha256");
+    public string ExpectedFinalIndexSha256 =>
+        RequiredSha("--expected-final-index-sha256");
     public Guid ExpectedSourceIngestionId =>
         Guid.Parse(Required("--expected-source-ingestion-id"));
     public bool HistoricalFixture => flags.Contains("--historical-fixture");
@@ -226,7 +354,8 @@ public sealed class Arch7bPositionImportArguments
     {
         Require(args.Length > 0 &&
                 args[0] is "arm-import" or "publish-ready" or
-                    "plan-import" or "apply-import" or "qualify-database-clock",
+                    "plan-import" or "apply-import" or "qualify-database-clock" or
+                    "run-fresh-position-import-fast-path",
             "ARCH7B_POSITION_IMPORT_MODE_REQUIRED");
         Require(args.Contains("--no-order", StringComparer.Ordinal),
             "ARCH7B_POSITION_IMPORT_NO_ORDER_REQUIRED");
@@ -278,7 +407,25 @@ public sealed class Arch7bPositionImportArguments
             _ = parsed.RepositoryRoot;
             _ = parsed.BuildCommit;
         }
-        if (parsed.Mode == "plan-import")
+        if (parsed.Mode == "run-fresh-position-import-fast-path")
+        {
+            Require(parsed.Apply && !parsed.HistoricalFixture,
+                "ARCH7B_POSITION_FAST_PATH_FLAGS_INVALID");
+            _ = parsed.PackageRoot;
+            _ = parsed.OutputDirectory;
+            _ = parsed.EvidenceRoot;
+            _ = parsed.CoreRepositoryCommit;
+            _ = parsed.ExpectedEvidenceSha256;
+            _ = parsed.ExpectedContractFileSha256;
+            _ = parsed.ExpectedFinalIndexSha256;
+            _ = parsed.ExpectedSourceIngestionId;
+            _ = parsed.ArmedStatePath;
+            _ = parsed.ReadyMarkerPath;
+            _ = parsed.OwnerLockPath;
+            _ = parsed.OwnerId;
+            _ = parsed.FutureAuthorizationId;
+        }
+        else if (parsed.Mode == "plan-import")
         {
             Require(!parsed.Apply,
                 "ARCH7B_POSITION_IMPORT_PLAN_APPLY_FLAG_FORBIDDEN");
@@ -357,12 +504,15 @@ public sealed class Arch7bPositionImportArguments
                     "QQ_ARCH7B_POSTGRESQL_CLOCK_QUALIFICATION_READONLY",
                 "publish-ready" => "QQ_ARCH7B_POSITION_IMPORT_READY_READONLY",
                 "plan-import" => "QQ_ARCH7B_POSITION_IMPORT_PLAN_READONLY",
+                "run-fresh-position-import-fast-path" =>
+                    "QQ_ARCH7B_FRESH_POSITION_IMPORT_FAST_PATH",
                 _ => "QQ_ARCH7B_POSITION_IMPORT_APPLY_APPEND_ONLY"
             },
             SslMode = SslMode.VerifyFull,
             IncludeErrorDetail = false
         };
-        if (Mode != "apply-import")
+        if (Mode is not ("apply-import" or
+            "run-fresh-position-import-fast-path"))
             builder.Options = "-c default_transaction_read_only=on";
         if (values.TryGetValue("--root-certificate", out var certificate))
             builder.RootCertificate = certificate;
