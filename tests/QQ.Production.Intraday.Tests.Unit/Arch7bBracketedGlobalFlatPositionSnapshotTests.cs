@@ -344,13 +344,219 @@ public sealed class Arch7bBracketedGlobalFlatPositionSnapshotTests
         }
     }
 
+    [Fact]
+    public void Case48_legacy_0_5_package_is_accepted_without_aws_metadata()
+    {
+        using var fixture = new CorePackageFixture();
+        var evidence = Arch7bCoreBracketEvidencePackageReader.Read(
+            fixture.Root, fixture.Expectations);
+        Assert.Equal(
+            Arch7bCoreDownloaderCompatibilityContract.LegacyProfile,
+            evidence.DownloaderCompatibility!.Profile);
+        Assert.Null(evidence.DownloaderCompatibility.SessionRecoveryMode);
+        Assert.Null(evidence.DownloaderCompatibility.SecretReferenceSha256);
+    }
+
+    [Fact]
+    public void Case49_aws_recovery_0_6_package_is_accepted()
+    {
+        using var fixture = AwsRecoveryFixture();
+        var evidence = Arch7bCoreBracketEvidencePackageReader.Read(
+            fixture.Root, fixture.Expectations);
+        Assert.Equal(
+            Arch7bCoreDownloaderCompatibilityContract.AwsRecoveryProfile,
+            evidence.DownloaderCompatibility!.Profile);
+        Assert.Equal(
+            Arch7bCoreDownloaderCompatibilityContract.AwsRecoveryMode,
+            evidence.DownloaderCompatibility.SessionRecoveryMode);
+        Assert.True(evidence.DownloaderCompatibility.ManualSessionReopenProven);
+    }
+
+    [Theory]
+    [InlineData("0.4.0")]
+    [InlineData("0.7.0")]
+    [InlineData("not-a-version")]
+    public void Case50_only_explicit_downloader_versions_are_accepted(string version) =>
+        AssertCode(Arch7bCoreDownloaderCompatibilityContract.VersionRejected,
+            () => Validate(ValidCore() with { DownloaderVersion = version }));
+
+    [Fact]
+    public void Case51_manifest_contract_downloader_mismatch_is_rejected()
+    {
+        using var fixture = AwsRecoveryFixture();
+        fixture.MutateManifest(value =>
+            value["downloader_version"] =
+                Arch7bCoreDownloaderCompatibilityContract.LegacyDownloaderVersion);
+        AssertRecoveryCode(
+            Arch7bCoreDownloaderCompatibilityContract.ManifestContractMismatch,
+            fixture);
+    }
+
+    [Fact]
+    public void Case52_missing_recovery_mode_is_rejected()
+    {
+        using var fixture = AwsRecoveryFixture();
+        fixture.MutateManifest(value => value.Remove("session_recovery_mode"));
+        AssertRecoveryInvalid(fixture);
+    }
+
+    [Fact]
+    public void Case53_wrong_recovery_mode_is_rejected()
+    {
+        using var fixture = AwsRecoveryFixture();
+        fixture.MutateManifest(value => value["session_recovery_mode"] = "OTHER");
+        AssertRecoveryInvalid(fixture);
+    }
+
+    [Theory]
+    [InlineData("credentials_recorded")]
+    [InlineData("secret_values_recorded")]
+    [InlineData("totp_recorded")]
+    public void Case54_recorded_secret_material_is_rejected(string property)
+    {
+        using var fixture = AwsRecoveryFixture();
+        fixture.MutateManifest(value => value[property] = true);
+        AssertRecoveryInvalid(fixture);
+    }
+
+    [Fact]
+    public void Case55_invalid_secret_reference_sha_is_rejected()
+    {
+        using var fixture = AwsRecoveryFixture();
+        fixture.MutateManifest(value => value["secret_reference_sha256"] = "bad");
+        AssertRecoveryInvalid(fixture);
+    }
+
+    [Theory]
+    [InlineData("secret_keys_contract_version")]
+    [InlineData("login_form_contract")]
+    [InlineData("automated_bootstrap_contract")]
+    public void Case56_wrong_recovery_contract_is_rejected(string property)
+    {
+        using var fixture = AwsRecoveryFixture();
+        fixture.MutateManifest(value => value[property] = "wrong");
+        AssertRecoveryInvalid(fixture);
+    }
+
+    [Fact]
+    public void Case57_secret_fetch_without_login_is_rejected()
+    {
+        using var fixture = AwsRecoveryFixture();
+        fixture.MutateManifest(value => value["login_performed"] = false);
+        AssertRecoveryInvalid(fixture);
+    }
+
+    [Fact]
+    public void Case58_secret_fetch_without_version_id_is_rejected()
+    {
+        using var fixture = AwsRecoveryFixture();
+        fixture.MutateManifest(value => value.Remove("secret_version_id"));
+        AssertRecoveryInvalid(fixture);
+    }
+
+    [Fact]
+    public void Case59_login_without_reopen_proof_is_rejected()
+    {
+        using var fixture = AwsRecoveryFixture();
+        fixture.MutateManifest(value =>
+            value.Remove("manual_session_reopen_proof"));
+        AssertRecoveryInvalid(fixture);
+    }
+
+    [Fact]
+    public void Case60_already_active_session_without_secret_read_is_accepted()
+    {
+        using var fixture = AwsRecoveryFixture();
+        fixture.MutateManifest(value =>
+        {
+            value["session_already_active"] = true;
+            value["secret_fetched"] = false;
+            value["login_performed"] = false;
+            value.Remove("secret_version_id");
+        });
+        var evidence = Arch7bCoreBracketEvidencePackageReader.Read(
+            fixture.Root, fixture.Expectations);
+        Assert.True(evidence.DownloaderCompatibility!.SessionAlreadyActive);
+        Assert.False(evidence.DownloaderCompatibility.SecretFetched);
+        Assert.False(evidence.DownloaderCompatibility.LoginPerformed);
+        Assert.False(evidence.DownloaderCompatibility.SecretVersionIdPresent);
+    }
+
+    [Fact]
+    public void Case61_reopen_proof_wrong_account_is_rejected()
+    {
+        using var fixture = AwsRecoveryFixture();
+        fixture.MutateManifest(value =>
+            value["manual_session_reopen_proof"]!["account_id"] = "wrong");
+        AssertRecoveryInvalid(fixture);
+    }
+
+    [Fact]
+    public void Case62_reopen_proof_secret_read_is_rejected()
+    {
+        using var fixture = AwsRecoveryFixture();
+        fixture.MutateManifest(value =>
+            value["manual_session_reopen_proof"]!["secret_read_during_probe"] = true);
+        AssertRecoveryInvalid(fixture);
+    }
+
+    [Fact]
+    public void Case63_raw_credential_property_is_rejected()
+    {
+        using var fixture = AwsRecoveryFixture();
+        fixture.MutateManifest(value => value["password"] = null);
+        AssertRecoveryInvalid(fixture);
+    }
+
+    [Fact]
+    public void Case64_real_0_6_package_is_requalified_when_present()
+    {
+        var root = Environment.GetEnvironmentVariable(
+            "ARCH7B_REAL_CORE_EVIDENCE_ROOT");
+        if (string.IsNullOrWhiteSpace(root)) return;
+        var evidence = Arch7bCoreBracketEvidencePackageReader.Read(
+            root,
+            new(
+                "e3c01e8100740b89702bc85961442e5b4e3f6d92",
+                "5ecc7aafaa75ec59c23deda97f8f4d471e5f035b4c394dcfe470dea3e8a13d04",
+                "16e327ccb23b4b5655913e00a1e07c924b749d284ebaaaf27507c8929c054e08",
+                "c535a14f75b4e99a66fe92ca77304323de94fb921301a9ca0221136203f1f114"));
+        Assert.Equal(
+            Arch7bCoreDownloaderCompatibilityContract.AwsRecoveryDownloaderVersion,
+            evidence.DownloaderVersion);
+        Assert.Equal(
+            Arch7bCoreDownloaderCompatibilityContract.AwsRecoveryProfile,
+            evidence.DownloaderCompatibility!.Profile);
+        Assert.Equal(0, evidence.ExecutionCount);
+        Assert.Equal(0, evidence.PositionCount);
+        Assert.True(evidence.StableExecutionSet);
+        Assert.True(evidence.StablePositionSet);
+        Assert.False(evidence.DownloaderCompatibility.CredentialsRecorded);
+        Assert.False(evidence.DownloaderCompatibility.SecretValuesRecorded);
+        Assert.False(evidence.DownloaderCompatibility.TotpRecorded);
+    }
+
+    private static CorePackageFixture AwsRecoveryFixture() =>
+        new(Arch7bCoreDownloaderCompatibilityContract.AwsRecoveryDownloaderVersion);
+
+    private static void AssertRecoveryInvalid(CorePackageFixture fixture) =>
+        AssertRecoveryCode(
+            Arch7bCoreDownloaderCompatibilityContract.RecoveryMetadataInvalid,
+            fixture);
+
+    private static void AssertRecoveryCode(
+        string code,
+        CorePackageFixture fixture) =>
+        AssertCode(code, () => Arch7bCoreBracketEvidencePackageReader.Read(
+            fixture.Root, fixture.Expectations));
+
     private static void Validate(Arch7bCoreBracketEvidence value) =>
         Arch7bCoreBracketEvidencePackageReader.ValidateSemanticContract(value);
 
     private static Arch7bCoreBracketEvidence ValidCore() => new(
         Hash('a', 40),
         Arch7bBracketedGlobalFlatContract.CoreContractVersion,
-        Arch7bBracketedGlobalFlatContract.DownloaderVersion,
+        Arch7bCoreDownloaderCompatibilityContract.LegacyDownloaderVersion,
         Arch7bBracketedGlobalFlatContract.AccountId,
         Arch7bBracketedGlobalFlatContract.Environment,
         Arch7bBracketedGlobalFlatContract.SessionMode,
@@ -382,7 +588,9 @@ public sealed class Arch7bBracketedGlobalFlatPositionSnapshotTests
         true,
         true,
         "fixture",
-        15);
+        15,
+        null,
+        Arch7bCoreDownloaderCompatibilityContract.LegacyEvidence());
 
     private static PmsShadowPersistencePlan Plan()
     {
@@ -525,8 +733,13 @@ public sealed class Arch7bBracketedGlobalFlatPositionSnapshotTests
             "Position UTI"
         ];
 
-        public CorePackageFixture()
+        private readonly string downloaderVersion;
+
+        public CorePackageFixture(
+            string downloaderVersion =
+                Arch7bCoreDownloaderCompatibilityContract.LegacyDownloaderVersion)
         {
+            this.downloaderVersion = downloaderVersion;
             Root = Path.Combine(Path.GetTempPath(),
                 "arch7b-core-package-" + Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(Path.Combine(Root, "attempt-1"));
@@ -551,6 +764,15 @@ public sealed class Arch7bBracketedGlobalFlatPositionSnapshotTests
             index["file_count_excluding_index"] = index["files"]!.AsArray().Count;
             WriteJson(indexPath, index);
             Expectations = Expectations with { FinalIndexSha256 = FileHash(indexPath) };
+        }
+
+        public void MutateManifest(Action<JsonObject> mutate)
+        {
+            var path = Path.Combine(Root, "acquisition-manifest.json");
+            var manifest = JsonNode.Parse(File.ReadAllText(path))!.AsObject();
+            mutate(manifest);
+            WriteJson(path, manifest);
+            RebuildIndex();
         }
 
         public void WriteIndexedFile(string relative, string content)
@@ -681,7 +903,7 @@ public sealed class Arch7bBracketedGlobalFlatPositionSnapshotTests
                 ["AccountId"] = Arch7bBracketedGlobalFlatContract.AccountId,
                 ["Environment"] = Arch7bBracketedGlobalFlatContract.Environment,
                 ["SessionMode"] = Arch7bBracketedGlobalFlatContract.SessionMode,
-                ["DownloaderVersion"] = Arch7bBracketedGlobalFlatContract.DownloaderVersion,
+                ["DownloaderVersion"] = downloaderVersion,
                 ["PositionCount"] = 0,
                 ["ExecutionCount"] = 0,
                 ["DuplicateIdenticalExecutionCount"] = 0,
@@ -746,6 +968,42 @@ public sealed class Arch7bBracketedGlobalFlatPositionSnapshotTests
                     ["sha256"] = contractFileSha
                 }
             };
+            if (downloaderVersion ==
+                Arch7bCoreDownloaderCompatibilityContract.AwsRecoveryDownloaderVersion)
+            {
+                manifest["downloader_version"] = downloaderVersion;
+                manifest["session_recovery_mode"] =
+                    Arch7bCoreDownloaderCompatibilityContract.AwsRecoveryMode;
+                manifest["credentials_recorded"] = false;
+                manifest["secret_values_recorded"] = false;
+                manifest["totp_recorded"] = false;
+                manifest["secret_source"] =
+                    Arch7bCoreDownloaderCompatibilityContract.AwsSecretSource;
+                manifest["secret_reference_sha256"] = Hash('7');
+                manifest["secret_version_id"] = "sanitized-version-id";
+                manifest["secret_keys_contract_version"] =
+                    Arch7bCoreDownloaderCompatibilityContract.CredentialSecretContractVersion;
+                manifest["login_form_contract"] =
+                    Arch7bCoreDownloaderCompatibilityContract.LoginFormContractVersion;
+                manifest["automated_bootstrap_contract"] =
+                    Arch7bCoreDownloaderCompatibilityContract.AutomatedBootstrapContractVersion;
+                manifest["session_already_active"] = false;
+                manifest["secret_fetched"] = true;
+                manifest["login_performed"] = true;
+                manifest["mfa_mode"] = "NOT_CHALLENGED";
+                manifest["manual_session_reopen_proof"] = new JsonObject
+                {
+                    ["status"] =
+                        Arch7bCoreDownloaderCompatibilityContract.ManualSessionReopenStatus,
+                    ["account_id"] = Arch7bBracketedGlobalFlatContract.AccountId,
+                    ["report_type"] =
+                        Arch7bCoreDownloaderCompatibilityContract.ManualSessionReopenReportType,
+                    ["form_id"] =
+                        Arch7bCoreDownloaderCompatibilityContract.ManualSessionReopenFormId,
+                    ["secret_read_during_probe"] = false,
+                    ["credentials_recorded"] = false
+                };
+            }
             WriteJson(Path.Combine(Root, "acquisition-manifest.json"), manifest);
             var qualification = new JsonObject
             {

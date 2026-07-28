@@ -13,11 +13,44 @@ The consumer does not connect to FIX, send an order, call Account API or
 Databento, or write to PostgreSQL. PostgreSQL access is limited to a
 `READ ONLY` transaction that resolves the latest qualified model universe.
 
+## Core downloader compatibility
+
+`arch7b_core_downloader_compatibility_v1` separates three identities:
+
+- `DownloaderVersion` is the Core implementation version;
+- `CoreContractVersion` is the economic bracket contract;
+- `DownloaderCompatibilityProfile` is the Intraday consumer rule set.
+
+The exact compatibility matrix is:
+
+| Downloader | Profile | Economic contract | Session |
+| --- | --- | --- | --- |
+| `0.5.0` | `LEGACY_MANUAL_SESSION_V2` | `lmax_portal_bracketed_current_position_snapshot_v2` | `manual-session` |
+| `0.6.0` | `AWS_SECRET_RECOVERY_MANUAL_SESSION_V2` | `lmax_portal_bracketed_current_position_snapshot_v2` | `manual-session` |
+
+No range or lexical version comparison is used. Every version other than
+`0.5.0` and `0.6.0`, including a future `0.7.0`, fails with
+`ARCH7B_CORE_DOWNLOADER_VERSION_REJECTED`. Supporting another version requires
+an explicit compatibility-table entry, tests, and validation of its new
+metadata.
+
+The legacy profile accepts immutable `0.5.0` manifests without AWS recovery
+metadata and does not invent those fields in the result. The `0.6.0` profile
+requires matching manifest and contract downloader versions plus sanitized AWS
+Secrets Manager recovery provenance: exact recovery/source/credential/login/
+bootstrap contracts, a valid secret-reference SHA-256, no recorded credential,
+secret value, TOTP, cookie, or authorization value, and a coherent active-
+session or authenticated-reopen proof for account `1754288005`.
+
+Session recovery is operational provenance only. It does not provide economic
+authority, change the bracket v2 schemas or header hashes, or change the
+economic session from `manual-session`.
+
 ## Fail-closed contract
 
 The consumer rejects the package unless all of the following are proven:
 - `arch7b_core_bracket_report_semantic_verifier_v1` reparses every CSV with
-  the Core 0.5.0 `lmax_portal_report_csv_parser_v2` rules and recomputes
+  the Core 0.5.0/0.6.0 `lmax_portal_report_csv_parser_v2` rules and recomputes
   headers, rows, canonical records, duplicate counts, timestamps, account IDs,
   and semantic SHA-256 values;
 - attempts are numbered consecutively from one to three, only the terminal
@@ -114,5 +147,11 @@ authorization. Every output states:
 The 2026-07-27 package is immutable historical evidence at its P2 timestamp,
 not a standing current snapshot. A future importer must acquire a fresh bracket
 immediately before its separately authorized append-only import, then:
+The `arch7b-first-e2e-no-order-20260728T103254Z` package is likewise immutable
+historical evidence and remains
+`HISTORICAL_ABORTED_RUN_NOT_IMPORT_ELIGIBLE`. Requalifying its downloader
+compatibility does not revive its slot, run, authorization, owner, armed state,
+lock, output directory, or bracket package for import.
+
 
 1. Revalidate the complete Core evidence and required RDS universe.

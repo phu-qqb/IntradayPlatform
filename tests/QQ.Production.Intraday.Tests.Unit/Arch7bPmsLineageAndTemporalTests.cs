@@ -243,7 +243,7 @@ public sealed class Arch7bPmsLineageAndTemporalTests
     private static Arch7bCoreBracketEvidence Core(DateTimeOffset timestamp) => new(
         Hash('a', 40),
         Arch7bBracketedGlobalFlatContract.CoreContractVersion,
-        Arch7bBracketedGlobalFlatContract.DownloaderVersion,
+        Arch7bCoreDownloaderCompatibilityContract.LegacyDownloaderVersion,
         Arch7bBracketedGlobalFlatContract.AccountId,
         Arch7bBracketedGlobalFlatContract.Environment,
         Arch7bBracketedGlobalFlatContract.SessionMode,
@@ -275,7 +275,9 @@ public sealed class Arch7bPmsLineageAndTemporalTests
         true,
         true,
         "fixture",
-        15);
+        15,
+        null,
+        Arch7bCoreDownloaderCompatibilityContract.LegacyEvidence());
 
     private static IEnumerable<int> StrategySecurityIds(string strategyId) =>
         strategyId switch

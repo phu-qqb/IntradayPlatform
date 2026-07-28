@@ -51,6 +51,10 @@ Console.WriteLine(JsonSerializer.Serialize(new
     result = "ARCH7B_BRACKETED_GLOBAL_FLAT_POSITION_SNAPSHOT_CREATED",
     target = target.ObservableIdentity,
     core.CoreRepositoryCommit,
+    core.DownloaderVersion,
+    downloader_compatibility_contract =
+        core.DownloaderCompatibility?.ContractVersion,
+    downloader_compatibility_profile = core.DownloaderCompatibility?.Profile,
     bracket_evidence_sha256 = core.EvidenceSha256,
     successful_attempt_number = core.RecomputedSemantics?.SuccessfulAttemptNumber,
     recomputed_execution_reports = core.RecomputedSemantics?.ExecutionReports,

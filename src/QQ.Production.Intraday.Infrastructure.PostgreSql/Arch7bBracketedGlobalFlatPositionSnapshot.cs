@@ -16,7 +16,6 @@ public static class Arch7bBracketedGlobalFlatContract
 {
     public const string Version = "lmax_bracketed_global_flat_to_pms_position_snapshot_v1";
     public const string CoreContractVersion = "lmax_portal_bracketed_current_position_snapshot_v2";
-    public const string DownloaderVersion = "0.5.0";
     public const string AccountId = "1754288005";
     public const string Environment = "LMAX_LONDON_DEMO";
     public const string SessionMode = "manual-session";
@@ -68,6 +67,68 @@ public static class Arch7bBracketedGlobalFlatContract
         };
 }
 
+public static class Arch7bCoreDownloaderCompatibilityContract
+{
+    public const string Version = "arch7b_core_downloader_compatibility_v1";
+    public const string LegacyDownloaderVersion = "0.5.0";
+    public const string AwsRecoveryDownloaderVersion = "0.6.0";
+    public const string LegacyProfile = "LEGACY_MANUAL_SESSION_V2";
+    public const string AwsRecoveryProfile = "AWS_SECRET_RECOVERY_MANUAL_SESSION_V2";
+    public const string AwsRecoveryMode = "AWS_SECRETS_MANAGER_AUTOMATED_BOOTSTRAP";
+    public const string AwsSecretSource = "AWS_SECRETS_MANAGER";
+    public const string CredentialSecretContractVersion =
+        "lmax_portal_credential_secret_v1";
+    public const string LoginFormContractVersion =
+        "lmax_london_demo_portal_login_form_v1";
+    public const string AutomatedBootstrapContractVersion =
+        "lmax_portal_automated_session_recovery_v1";
+    public const string ManualSessionReopenStatus =
+        "AUTHENTICATED_REPORT_FORM_PRESENT";
+    public const string ManualSessionReopenReportType = "account-summary";
+    public const string ManualSessionReopenFormId = "account-summary-download";
+    public const string VersionRejected =
+        "ARCH7B_CORE_DOWNLOADER_VERSION_REJECTED";
+    public const string ManifestContractMismatch =
+        "ARCH7B_CORE_DOWNLOADER_MANIFEST_CONTRACT_MISMATCH";
+    public const string RecoveryMetadataInvalid =
+        "ARCH7B_CORE_SESSION_RECOVERY_METADATA_INVALID";
+    public const string HistoricalBlocker =
+        "NO_GO_ARCH7B_CORE_DOWNLOADER_VERSION_CONTRACT_MISMATCH";
+
+    public static Arch7bCoreDownloaderCompatibilityEvidence LegacyEvidence() =>
+        new(
+            Version,
+            LegacyProfile,
+            null, null, null, null, null, null, null, null, null, null,
+            null, null, null, null);
+
+    public static string ResolveProfile(string downloaderVersion) =>
+        downloaderVersion switch
+        {
+            LegacyDownloaderVersion => LegacyProfile,
+            AwsRecoveryDownloaderVersion => AwsRecoveryProfile,
+            _ => throw new InvalidDataException(VersionRejected)
+        };
+}
+
+public sealed record Arch7bCoreDownloaderCompatibilityEvidence(
+    string ContractVersion,
+    string Profile,
+    string? SessionRecoveryMode,
+    bool? SessionAlreadyActive,
+    bool? SecretFetched,
+    bool? LoginPerformed,
+    string? MfaMode,
+    string? SecretReferenceSha256,
+    bool? SecretVersionIdPresent,
+    string? CredentialSecretContractVersion,
+    string? LoginFormContractVersion,
+    string? AutomatedBootstrapContractVersion,
+    bool? ManualSessionReopenProven,
+    bool? CredentialsRecorded,
+    bool? SecretValuesRecorded,
+    bool? TotpRecorded);
+
 public sealed record Arch7bCoreEvidenceExpectations(
     string CoreRepositoryCommit,
     string EvidenceSha256,
@@ -110,7 +171,8 @@ public sealed record Arch7bCoreBracketEvidence(
     bool NoDatabento,
     string EvidenceRoot,
     int IndexedFileCount,
-    Arch7bCoreBracketReportSemanticVerification? RecomputedSemantics = null);
+    Arch7bCoreBracketReportSemanticVerification? RecomputedSemantics = null,
+    Arch7bCoreDownloaderCompatibilityEvidence? DownloaderCompatibility = null);
 
 public static class Arch7bCoreBracketEvidencePackageReader
 {
@@ -190,7 +252,8 @@ public static class Arch7bCoreBracketEvidencePackageReader
         var manifest = ParseObject(manifestPath, "ARCH7B_CORE_MANIFEST_JSON_INVALID");
         var qualification = ParseObject(qualificationPath,
             "ARCH7B_CORE_QUALIFICATION_JSON_INVALID");
-        ValidateManifest(manifest, contractFileSha);
+        var compatibility = ValidateManifest(
+            manifest, contract, contractFileSha);
         Require(Text(qualification, "repository") == "phu-qqb/QQ.Production.Core",
             "ARCH7B_CORE_QUALIFICATION_REPOSITORY_INVALID");
         Require(Text(qualification, "merge_commit") == expectations.CoreRepositoryCommit,
@@ -203,7 +266,8 @@ public static class Arch7bCoreBracketEvidencePackageReader
             "ARCH7B_CORE_QUALIFICATION_SAFETY_INVALID");
 
         var evidence = BuildEvidence(root, contract, expectations.CoreRepositoryCommit,
-            contractFileSha, finalIndexSha, indexed.Count, recomputed);
+            contractFileSha, finalIndexSha, indexed.Count, recomputed,
+            compatibility);
         ValidateSemanticContract(evidence);
         ValidateRecalculableHashes(root, contract, evidence);
         RequireSha(expectations.EvidenceSha256, "ARCH7B_EXPECTED_EVIDENCE_SHA_INVALID");
@@ -217,8 +281,13 @@ public static class Arch7bCoreBracketEvidencePackageReader
         ArgumentNullException.ThrowIfNull(value);
         Require(value.CoreContractVersion == Arch7bBracketedGlobalFlatContract.CoreContractVersion,
             "ARCH7B_CORE_CONTRACT_VERSION_REJECTED");
-        Require(value.DownloaderVersion == Arch7bBracketedGlobalFlatContract.DownloaderVersion,
-            "ARCH7B_CORE_DOWNLOADER_VERSION_REJECTED");
+        var compatibilityProfile =
+            Arch7bCoreDownloaderCompatibilityContract.ResolveProfile(
+                value.DownloaderVersion);
+        var compatibility = value.DownloaderCompatibility ??
+            throw new InvalidDataException(
+                Arch7bCoreDownloaderCompatibilityContract.RecoveryMetadataInvalid);
+        ValidateCompatibilityEvidence(compatibility, compatibilityProfile);
         Require(value.AccountId == Arch7bBracketedGlobalFlatContract.AccountId,
             "ARCH7B_CORE_ACCOUNT_ID_MISMATCH");
         Require(value.Environment == Arch7bBracketedGlobalFlatContract.Environment,
@@ -279,6 +348,51 @@ public static class Arch7bCoreBracketEvidencePackageReader
             "ARCH7B_CORE_SAFETY_CONTRACT_INVALID");
     }
 
+    private static void ValidateCompatibilityEvidence(
+        Arch7bCoreDownloaderCompatibilityEvidence value,
+        string expectedProfile)
+    {
+        Require(value.ContractVersion ==
+                Arch7bCoreDownloaderCompatibilityContract.Version &&
+                value.Profile == expectedProfile,
+            Arch7bCoreDownloaderCompatibilityContract.RecoveryMetadataInvalid);
+        if (expectedProfile == Arch7bCoreDownloaderCompatibilityContract.LegacyProfile)
+        {
+            Require(value.SessionRecoveryMode is null &&
+                    value.SessionAlreadyActive is null &&
+                    value.SecretFetched is null &&
+                    value.LoginPerformed is null &&
+                    value.MfaMode is null &&
+                    value.SecretReferenceSha256 is null &&
+                    value.SecretVersionIdPresent is null &&
+                    value.CredentialSecretContractVersion is null &&
+                    value.LoginFormContractVersion is null &&
+                    value.AutomatedBootstrapContractVersion is null &&
+                    value.ManualSessionReopenProven is null &&
+                    value.CredentialsRecorded is null &&
+                    value.SecretValuesRecorded is null &&
+                    value.TotpRecorded is null,
+                Arch7bCoreDownloaderCompatibilityContract.RecoveryMetadataInvalid);
+            return;
+        }
+
+        Require(value.SessionRecoveryMode ==
+                    Arch7bCoreDownloaderCompatibilityContract.AwsRecoveryMode &&
+                value.CredentialSecretContractVersion ==
+                    Arch7bCoreDownloaderCompatibilityContract.CredentialSecretContractVersion &&
+                value.LoginFormContractVersion ==
+                    Arch7bCoreDownloaderCompatibilityContract.LoginFormContractVersion &&
+                value.AutomatedBootstrapContractVersion ==
+                    Arch7bCoreDownloaderCompatibilityContract.AutomatedBootstrapContractVersion &&
+                value.CredentialsRecorded == false &&
+                value.SecretValuesRecorded == false &&
+                value.TotpRecorded == false,
+            Arch7bCoreDownloaderCompatibilityContract.RecoveryMetadataInvalid);
+        RequireSha(value.SecretReferenceSha256,
+            Arch7bCoreDownloaderCompatibilityContract.RecoveryMetadataInvalid);
+        ValidateRecoveryState(value);
+    }
+
     private static HashSet<string> ValidateIndex(string root, JsonObject index)
     {
         var files = index["files"]?.AsArray()
@@ -318,7 +432,8 @@ public static class Arch7bCoreBracketEvidencePackageReader
         string contractFileSha,
         string finalIndexSha,
         int fileCount,
-        Arch7bCoreBracketReportSemanticVerification recomputed)
+        Arch7bCoreBracketReportSemanticVerification recomputed,
+        Arch7bCoreDownloaderCompatibilityEvidence compatibility)
     {
         var attempts = contract["Attempts"]?.AsArray()
             ?? throw new InvalidDataException("ARCH7B_CORE_ATTEMPTS_MISSING");
@@ -365,11 +480,18 @@ public static class Arch7bCoreBracketEvidencePackageReader
             true,
             root,
             fileCount,
-            recomputed);
+            recomputed,
+            compatibility);
     }
 
-    private static void ValidateManifest(JsonObject manifest, string contractFileSha)
+    private static Arch7bCoreDownloaderCompatibilityEvidence ValidateManifest(
+        JsonObject manifest,
+        JsonObject contract,
+        string contractFileSha)
     {
+        var downloaderVersion = Text(contract, "DownloaderVersion");
+        var profile = Arch7bCoreDownloaderCompatibilityContract.ResolveProfile(
+            downloaderVersion);
         Require(Text(manifest, "account_id") == Arch7bBracketedGlobalFlatContract.AccountId,
             "ARCH7B_CORE_MANIFEST_ACCOUNT_MISMATCH");
         Require(Text(manifest, "session_mode") == Arch7bBracketedGlobalFlatContract.SessionMode,
@@ -392,6 +514,166 @@ public static class Arch7bCoreBracketEvidencePackageReader
             "ARCH7B_CORE_MANIFEST_CONTRACT_PATH_INVALID");
         Require(Text(artifact, "sha256") == contractFileSha,
             "ARCH7B_CORE_MANIFEST_CONTRACT_SHA_MISMATCH");
+
+        var manifestDownloaderVersion = OptionalText(
+            manifest, "downloader_version",
+            Arch7bCoreDownloaderCompatibilityContract.ManifestContractMismatch);
+        Require(manifestDownloaderVersion is null ||
+                manifestDownloaderVersion == downloaderVersion,
+            Arch7bCoreDownloaderCompatibilityContract.ManifestContractMismatch);
+        if (profile == Arch7bCoreDownloaderCompatibilityContract.LegacyProfile)
+        {
+            return new(
+                Arch7bCoreDownloaderCompatibilityContract.Version,
+                profile,
+                null, null, null, null, null, null, null, null, null, null,
+                null, null, null, null);
+        }
+
+        Require(manifestDownloaderVersion == downloaderVersion,
+            Arch7bCoreDownloaderCompatibilityContract.ManifestContractMismatch);
+        RejectSensitiveRecoveryProperties(manifest);
+        var recoveryCode =
+            Arch7bCoreDownloaderCompatibilityContract.RecoveryMetadataInvalid;
+        Require(OptionalText(manifest, "session_recovery_mode", recoveryCode) ==
+                    Arch7bCoreDownloaderCompatibilityContract.AwsRecoveryMode &&
+                OptionalText(manifest, "secret_source", recoveryCode) ==
+                    Arch7bCoreDownloaderCompatibilityContract.AwsSecretSource &&
+                OptionalText(manifest, "secret_keys_contract_version", recoveryCode) ==
+                    Arch7bCoreDownloaderCompatibilityContract.CredentialSecretContractVersion &&
+                OptionalText(manifest, "login_form_contract", recoveryCode) ==
+                    Arch7bCoreDownloaderCompatibilityContract.LoginFormContractVersion &&
+                OptionalText(manifest, "automated_bootstrap_contract", recoveryCode) ==
+                    Arch7bCoreDownloaderCompatibilityContract.AutomatedBootstrapContractVersion,
+            recoveryCode);
+        Require(OptionalBool(manifest, "credentials_recorded", recoveryCode) == false &&
+                OptionalBool(manifest, "secret_values_recorded", recoveryCode) == false &&
+                OptionalBool(manifest, "totp_recorded", recoveryCode) == false,
+            recoveryCode);
+        var secretReferenceSha = OptionalText(
+            manifest, "secret_reference_sha256", recoveryCode);
+        RequireSha(secretReferenceSha, recoveryCode);
+
+        var sessionAlreadyActive = OptionalBool(
+            manifest, "session_already_active", recoveryCode);
+        var secretFetched = OptionalBool(manifest, "secret_fetched", recoveryCode);
+        var loginPerformed = OptionalBool(manifest, "login_performed", recoveryCode);
+        var mfaMode = OptionalText(manifest, "mfa_mode", recoveryCode);
+        Require(mfaMode is null || !string.IsNullOrWhiteSpace(mfaMode), recoveryCode);
+        var secretVersionId = OptionalText(manifest, "secret_version_id", recoveryCode);
+        var reopenProof = manifest["manual_session_reopen_proof"] switch
+        {
+            null => null,
+            JsonObject value => value,
+            _ => throw new InvalidDataException(recoveryCode)
+        };
+        bool? reopenProven = null;
+        if (reopenProof is not null)
+        {
+            reopenProven =
+                OptionalText(reopenProof, "status", recoveryCode) ==
+                    Arch7bCoreDownloaderCompatibilityContract.ManualSessionReopenStatus &&
+                OptionalText(reopenProof, "account_id", recoveryCode) ==
+                    Arch7bBracketedGlobalFlatContract.AccountId &&
+                OptionalText(reopenProof, "report_type", recoveryCode) ==
+                    Arch7bCoreDownloaderCompatibilityContract.ManualSessionReopenReportType &&
+                OptionalText(reopenProof, "form_id", recoveryCode) ==
+                    Arch7bCoreDownloaderCompatibilityContract.ManualSessionReopenFormId &&
+                OptionalBool(reopenProof, "secret_read_during_probe", recoveryCode) == false &&
+                OptionalBool(reopenProof, "credentials_recorded", recoveryCode) == false;
+            Require(reopenProven == true, recoveryCode);
+        }
+
+        var compatibility = new Arch7bCoreDownloaderCompatibilityEvidence(
+            Arch7bCoreDownloaderCompatibilityContract.Version,
+            profile,
+            Arch7bCoreDownloaderCompatibilityContract.AwsRecoveryMode,
+            sessionAlreadyActive,
+            secretFetched,
+            loginPerformed,
+            mfaMode,
+            secretReferenceSha,
+            secretVersionId is null ? false : !string.IsNullOrWhiteSpace(secretVersionId),
+            Arch7bCoreDownloaderCompatibilityContract.CredentialSecretContractVersion,
+            Arch7bCoreDownloaderCompatibilityContract.LoginFormContractVersion,
+            Arch7bCoreDownloaderCompatibilityContract.AutomatedBootstrapContractVersion,
+            reopenProven,
+            false,
+            false,
+            false);
+        ValidateRecoveryState(compatibility);
+        return compatibility;
+    }
+
+    private static void ValidateRecoveryState(
+        Arch7bCoreDownloaderCompatibilityEvidence value)
+    {
+        var code = Arch7bCoreDownloaderCompatibilityContract.RecoveryMetadataInvalid;
+        if (value.SecretFetched == true)
+            Require(value.LoginPerformed == true &&
+                    value.SecretVersionIdPresent == true &&
+                    value.ManualSessionReopenProven == true,
+                code);
+        if (value.LoginPerformed == true)
+            Require(value.SecretFetched == true &&
+                    value.ManualSessionReopenProven == true,
+                code);
+        if (value.SessionAlreadyActive == true)
+            Require(value.SecretFetched != true && value.LoginPerformed != true, code);
+    }
+
+    private static string? OptionalText(
+        JsonObject value,
+        string name,
+        string code)
+    {
+        try
+        {
+            return value[name]?.GetValue<string>();
+        }
+        catch (InvalidOperationException)
+        {
+            throw new InvalidDataException(code);
+        }
+    }
+
+    private static bool? OptionalBool(
+        JsonObject value,
+        string name,
+        string code)
+    {
+        try
+        {
+            return value[name]?.GetValue<bool>();
+        }
+        catch (InvalidOperationException)
+        {
+            throw new InvalidDataException(code);
+        }
+    }
+
+    private static void RejectSensitiveRecoveryProperties(JsonNode node)
+    {
+        var sensitive = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            "username", "password", "totp_seed", "totp_code", "cookie",
+            "cookies", "authorization", "secret_string", "secretstring"
+        };
+        if (node is JsonObject value)
+        {
+            foreach (var property in value)
+            {
+                Require(!sensitive.Contains(property.Key),
+                    Arch7bCoreDownloaderCompatibilityContract.RecoveryMetadataInvalid);
+                if (property.Value is not null)
+                    RejectSensitiveRecoveryProperties(property.Value);
+            }
+        }
+        else if (node is JsonArray array)
+        {
+            foreach (var item in array)
+                if (item is not null) RejectSensitiveRecoveryProperties(item);
+        }
     }
 
     private static void ValidateRecalculableHashes(
@@ -1397,6 +1679,10 @@ public static class Arch7bGlobalFlatOutputWriter
             {
                 ContractVersion = Arch7bBracketedGlobalFlatContract.Version,
                 CoreRepositoryCommit = core.CoreRepositoryCommit,
+                core.DownloaderVersion,
+                DownloaderCompatibilityContract =
+                    core.DownloaderCompatibility?.ContractVersion,
+                DownloaderCompatibilityProfile = core.DownloaderCompatibility?.Profile,
                 BracketEvidenceSha256 = core.EvidenceSha256,
                 SuccessfulAttemptNumber =
                     core.RecomputedSemantics?.SuccessfulAttemptNumber,
