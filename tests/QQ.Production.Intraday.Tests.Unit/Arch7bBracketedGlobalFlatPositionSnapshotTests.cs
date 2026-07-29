@@ -536,6 +536,259 @@ public sealed class Arch7bBracketedGlobalFlatPositionSnapshotTests
         Assert.False(evidence.DownloaderCompatibility.TotpRecorded);
     }
 
+    [Fact]
+    public void Case65_fast_package_has_exact_inventory_and_is_import_readable()
+    {
+        var root = TempRoot("arch7b-fast-package");
+        try
+        {
+            var plan = Plan();
+            var universe = Universe(plan);
+            var snapshot = Arch7bGlobalFlatPositionSnapshotBuilder.Build(
+                ValidCore(), universe);
+            _ = Arch7bFreshPositionImportPackageWriter.Write(
+                root, ValidCore(), universe, snapshot);
+
+            Assert.Equal(
+                new[]
+                {
+                    "manifest.json",
+                    "normalized-position-lines.csv",
+                    "pms-bracketed-global-flat-position-snapshot.json",
+                    "required-pms-universe.json"
+                },
+                Directory.EnumerateFiles(root).Select(Path.GetFileName)
+                    .Order(StringComparer.Ordinal));
+            var package = Arch7bPositionImportPackageReader.Read(root);
+            Assert.Equal(99, package.Snapshot.NormalizedLineCount);
+            Assert.Equal(99, package.Snapshot.DerivedZeroCount);
+            Assert.Equal(0, package.Snapshot.UnknownCount);
+            var manifest = JsonNode.Parse(File.ReadAllText(
+                Path.Combine(root, "manifest.json")))!.AsObject();
+            Assert.Equal(
+                Arch7bFreshPositionImportFastPathContract.Version,
+                manifest["contract_version"]!.GetValue<string>());
+            Assert.Equal(
+                Arch7bFreshPositionImportFastPathContract
+                    .SmokeQualificationStatus,
+                manifest["smoke_qualification_status"]!.GetValue<string>());
+        }
+        finally
+        {
+            DeleteRoot(root);
+        }
+    }
+
+    [Fact]
+    public void Case66_full_and_fast_canonical_packages_are_byte_identical()
+    {
+        var fullBundleRoot = TempRoot("arch7b-full-bundle");
+        var fullPackageRoot = TempRoot("arch7b-full-package");
+        var fastPackageRoot = TempRoot("arch7b-fast-package");
+        try
+        {
+            var core = ValidCore();
+            var universe = Universe(Plan());
+            var snapshot = Arch7bGlobalFlatPositionSnapshotBuilder.Build(
+                core, universe);
+            var smokeA = Arch7bGlobalFlatEconomicSmokeRunner.Run(
+                snapshot, universe);
+            var smokeB = Arch7bGlobalFlatEconomicSmokeRunner.Run(
+                snapshot, universe);
+            _ = Arch7bGlobalFlatOutputWriter.Write(
+                fullBundleRoot, core, universe, snapshot, smokeA, smokeB);
+            _ = Arch7bFreshPositionImportPackageWriter.Write(
+                fullPackageRoot, core, universe, snapshot);
+            _ = Arch7bFreshPositionImportPackageWriter.Write(
+                fastPackageRoot, core, universe, snapshot);
+
+            foreach (var name in Directory.EnumerateFiles(fullPackageRoot)
+                         .Select(Path.GetFileName))
+            {
+                Assert.Equal(
+                    File.ReadAllBytes(Path.Combine(fullPackageRoot, name!)),
+                    File.ReadAllBytes(Path.Combine(fastPackageRoot, name!)));
+            }
+        }
+        finally
+        {
+            DeleteRoot(fullBundleRoot);
+            DeleteRoot(fullPackageRoot);
+            DeleteRoot(fastPackageRoot);
+        }
+    }
+
+    [Fact]
+    public void Case67_timing_evidence_stays_outside_minimal_package()
+    {
+        var packageRoot = TempRoot("arch7b-fast-package");
+        var evidenceRoot = TempRoot("arch7b-fast-timing");
+        try
+        {
+            var core = ValidCore();
+            var universe = Universe(Plan());
+            var snapshot = Arch7bGlobalFlatPositionSnapshotBuilder.Build(
+                core, universe);
+            _ = Arch7bFreshPositionImportPackageWriter.Write(
+                packageRoot, core, universe, snapshot);
+            var timing = new Arch7bFreshPositionImportTimingCollector();
+            _ = timing.Measure("MINIMAL_PACKAGE_TEST", () => 1);
+            var evidence = timing.Complete(
+                "prepare-fresh-position-import-package",
+                core.PositionReportP2Utc,
+                smokeAExecuted: false,
+                smokeBExecuted: false);
+            var timingPath = Path.Combine(evidenceRoot, "timing.json");
+            Arch7bFreshPositionImportTimingWriter.Write(
+                timingPath, packageRoot, evidence);
+
+            Assert.True(File.Exists(timingPath));
+            Assert.Equal(4, Directory.EnumerateFiles(packageRoot).Count());
+            Assert.False(evidence.SmokeAExecuted);
+            Assert.False(evidence.SmokeBExecuted);
+            Assert.False(evidence.ZipExecuted);
+        }
+        finally
+        {
+            DeleteRoot(packageRoot);
+            DeleteRoot(evidenceRoot);
+        }
+    }
+
+    [Fact]
+    public void Case68_fast_path_slo_boundaries_and_blockers_are_exact()
+    {
+        var p2 = DateTimeOffset.Parse("2026-07-27T11:23:45Z");
+        Assert.Equal("PASS",
+            Arch7bFreshPositionImportSloPolicy.RequirePackageReady(
+                p2, p2.AddSeconds(60)).Status);
+        Assert.Equal("PASS",
+            Arch7bFreshPositionImportSloPolicy.RequireReady(
+                p2, p2.AddSeconds(90)).Status);
+        Assert.Equal("PASS",
+            Arch7bFreshPositionImportSloPolicy.RequirePlan(
+                p2, p2.AddSeconds(120)).Status);
+        Assert.Equal("PASS",
+            Arch7bFreshPositionImportSloPolicy.RequireApplyStart(
+                p2, p2.AddSeconds(150)).Status);
+        Assert.Equal("PASS",
+            Arch7bFreshPositionImportSloPolicy.ObserveCommitReadback(
+                p2, p2.AddSeconds(180)).Status);
+        Assert.Equal("EXPECTATION_EXCEEDED",
+            Arch7bFreshPositionImportSloPolicy.ObserveCommitReadback(
+                p2, p2.AddMilliseconds(180001)).Status);
+        AssertCode(
+            Arch7bFreshPositionImportFastPathContract.PackageSloExceeded,
+            () => Arch7bFreshPositionImportSloPolicy.RequirePackageReady(
+                p2, p2.AddMilliseconds(60001)));
+        AssertCode(
+            Arch7bFreshPositionImportFastPathContract.ReadySloExceeded,
+            () => Arch7bFreshPositionImportSloPolicy.RequireReady(
+                p2, p2.AddMilliseconds(90001)));
+        AssertCode(
+            Arch7bFreshPositionImportFastPathContract.PlanSloExceeded,
+            () => Arch7bFreshPositionImportSloPolicy.RequirePlan(
+                p2, p2.AddMilliseconds(120001)));
+        AssertCode(
+            Arch7bFreshPositionImportFastPathContract.ApplyStartSloExceeded,
+            () => Arch7bFreshPositionImportSloPolicy.RequireApplyStart(
+                p2, p2.AddMilliseconds(150001)));
+    }
+
+    [Fact]
+    public void Case69_slo_uses_utc_database_authority_only()
+    {
+        var p2 = DateTimeOffset.Parse("2026-07-27T11:23:45Z");
+        AssertCode("ARCH7B_POSITION_IMPORT_TIMESTAMP_NOT_UTC",
+            () => Arch7bFreshPositionImportSloPolicy.RequirePackageReady(
+                p2.ToOffset(TimeSpan.FromHours(1)), p2.AddSeconds(1)));
+        AssertCode(Arch7bPositionImportContract.FromFuture,
+            () => Arch7bFreshPositionImportSloPolicy.RequirePackageReady(
+                p2, p2.AddMilliseconds(-1)));
+    }
+
+    [Fact]
+    public void Case70_fast_path_timeline_is_append_only()
+    {
+        var root = TempRoot("arch7b-fast-timeline");
+        try
+        {
+            var p2 = DateTimeOffset.Parse("2026-07-27T11:23:45Z");
+            var timeline = new Arch7bFreshPositionImportAppendOnlyTimeline(root);
+            timeline.Record(
+                Arch7bFreshPositionImportSloPolicy.RequirePackageReady(
+                    p2, p2.AddSeconds(10)));
+            timeline.RecordFailure(
+                "READY", p2, p2.AddSeconds(91),
+                Arch7bFreshPositionImportFastPathContract.ReadySloExceeded);
+            Assert.Equal(2, Directory.EnumerateFiles(root).Count());
+            AssertCode("ARCH7B_POSITION_FAST_PATH_TIMELINE_ALREADY_EXISTS",
+                () => new Arch7bFreshPositionImportAppendOnlyTimeline(root));
+        }
+        finally
+        {
+            DeleteRoot(root);
+        }
+    }
+
+    [Fact]
+    public void Case71_fast_branch_invokes_no_smoke_projection_bundle_or_zip()
+    {
+        var program = File.ReadAllText(Path.Combine(
+            RepositoryRoot(), "tools",
+            "QQ.Production.Intraday.Tools.Arch7bGlobalFlatPositionSnapshot",
+            "Program.cs"));
+        var start = program.IndexOf("if (arguments.FastPath)",
+            StringComparison.Ordinal);
+        var end = program.IndexOf("var smokeA =", start,
+            StringComparison.Ordinal);
+        Assert.True(start >= 0 && end > start);
+        var fastBranch = program[start..end];
+        Assert.DoesNotContain("Arch7bGlobalFlatEconomicSmokeRunner",
+            fastBranch, StringComparison.Ordinal);
+        Assert.DoesNotContain("Arch7bGlobalFlatOutputWriter.Write(",
+            fastBranch, StringComparison.Ordinal);
+        Assert.DoesNotContain("ZipFile.", fastBranch,
+            StringComparison.Ordinal);
+        Assert.DoesNotContain("DeterministicZip", fastBranch,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Case72_full_branch_retains_both_smokes_and_full_bundle()
+    {
+        var program = File.ReadAllText(Path.Combine(
+            RepositoryRoot(), "tools",
+            "QQ.Production.Intraday.Tools.Arch7bGlobalFlatPositionSnapshot",
+            "Program.cs"));
+        Assert.Equal(2, program.Split(
+            "Arch7bGlobalFlatEconomicSmokeRunner.Run",
+            StringSplitOptions.None).Length - 1);
+        Assert.Contains("FULL_BUNDLE_WRITE", program,
+            StringComparison.Ordinal);
+    }
+
+    private static string RepositoryRoot()
+    {
+        var current = new DirectoryInfo(AppContext.BaseDirectory);
+        while (current is not null)
+        {
+            if (File.Exists(Path.Combine(
+                    current.FullName, "QQ.Production.Intraday.sln")))
+                return current.FullName;
+            current = current.Parent;
+        }
+        throw new DirectoryNotFoundException(
+            "ARCH7B_TEST_REPOSITORY_ROOT_NOT_FOUND");
+    }
+    private static string TempRoot(string prefix) =>
+        Path.Combine(Path.GetTempPath(), prefix + "-" +
+            Guid.NewGuid().ToString("N"));
+
+    private static void DeleteRoot(string root)
+    {
+        if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
+    }
     private static CorePackageFixture AwsRecoveryFixture() =>
         new(Arch7bCoreDownloaderCompatibilityContract.AwsRecoveryDownloaderVersion);
 

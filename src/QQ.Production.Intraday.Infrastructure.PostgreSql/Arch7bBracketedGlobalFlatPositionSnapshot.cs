@@ -8,6 +8,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
 using QQ.Production.Intraday.Application;
 
 namespace QQ.Production.Intraday.Infrastructure.PostgreSql;
@@ -1110,32 +1111,34 @@ public static class Arch7bRequiredPmsUniverseBuilder
 }
 
 public sealed class Arch7bRequiredPmsUniverseReader(
-    DbContextOptions<PmsShadowDbContext> options,
-    PmsShadowPostgreSqlTarget target)
+    Arch7bPostgreSqlPinnedDbContextFactory contextFactory,
+    PmsShadowPostgreSqlTarget target,
+    Arch7bPostgreSqlPinnedSession session)
 {
     public async Task<Arch7bRequiredPmsUniverse> ReadAsync(
         CancellationToken cancellationToken = default)
     {
-        await using var context = new PmsShadowDbContext(options);
-        var connection = context.Database.GetDbConnection();
-        await connection.OpenAsync(cancellationToken);
-        await using var transaction = await connection.BeginTransactionAsync(
-            IsolationLevel.RepeatableRead, cancellationToken);
+        await using var lease = await session.AcquireAsync(cancellationToken);
+        await using var context = contextFactory.CreateDbContext(lease);
+        var connection = lease.Connection;
+        await using var transaction = await session.BeginTransactionAsync(
+            lease, context, IsolationLevel.RepeatableRead, cancellationToken);
+        var dbTransaction = transaction.GetDbTransaction();
         try
         {
-            await ExecuteAsync(connection, transaction,
+            await ExecuteAsync(connection, dbTransaction,
                 "SET TRANSACTION READ ONLY", cancellationToken);
             var transactionReadOnly = string.Equals(
-                await ScalarStringAsync(connection, transaction,
+                await ScalarStringAsync(connection, dbTransaction,
                     "SHOW transaction_read_only", cancellationToken),
                 "on", StringComparison.OrdinalIgnoreCase);
             Require(transactionReadOnly, "ARCH7B_PMS_TRANSACTION_NOT_READ_ONLY");
-            Require(await ScalarStringAsync(connection, transaction,
+            Require(await ScalarStringAsync(connection, dbTransaction,
                     "SELECT current_database()", cancellationToken) ==
                     Arch7bBracketedGlobalFlatContract.TargetDatabase,
                 "ARCH7B_PMS_DATABASE_IDENTITY_MISMATCH");
             var major = int.Parse(await ScalarStringAsync(connection,
-                    transaction,
+                    dbTransaction,
                     "SELECT current_setting('server_version_num')", cancellationToken),
                 CultureInfo.InvariantCulture) / 10000;
             Require(major == Arch7bBracketedGlobalFlatContract.PostgreSqlMajor,
@@ -1174,14 +1177,10 @@ public sealed class Arch7bRequiredPmsUniverseReader(
             await transaction.RollbackAsync(cancellationToken);
             return result;
         }
-        catch
+        catch (Exception exception)
         {
-            await transaction.RollbackAsync(CancellationToken.None);
-            throw;
-        }
-        finally
-        {
-            await connection.CloseAsync();
+            try { await transaction.RollbackAsync(CancellationToken.None); } catch { }
+            throw session.NormalizeOperationFailure(exception);
         }
     }
 
@@ -1736,11 +1735,11 @@ public static class Arch7bGlobalFlatOutputWriter
         }
     }
 
-    private static void WriteJson(string root, string name, object value) =>
+    internal static void WriteJson(string root, string name, object value) =>
         File.WriteAllBytes(Path.Combine(root, name),
             JsonSerializer.SerializeToUtf8Bytes(value, Json));
 
-    private static void WriteCsv(
+    internal static void WriteCsv(
         string root,
         IReadOnlyList<Arch7bNormalizedPositionLine> lines)
     {

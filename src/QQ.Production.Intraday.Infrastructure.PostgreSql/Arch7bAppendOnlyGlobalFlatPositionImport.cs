@@ -140,9 +140,14 @@ public static class Arch7bPositionImportPackageReader
 
         using var manifestDocument = JsonDocument.Parse(File.ReadAllBytes(manifestPath));
         var manifest = manifestDocument.RootElement;
-        Require(manifest.GetProperty("contract_version").GetString() ==
-                Arch7bBracketedGlobalFlatContract.Version,
+        var contractVersion = manifest.GetProperty("contract_version").GetString();
+        Require(contractVersion is Arch7bBracketedGlobalFlatContract.Version or
+                Arch7bFreshPositionImportFastPathContract.Version,
             "ARCH7B_POSITION_IMPORT_CONSUMER_CONTRACT_MISMATCH");
+        if (contractVersion == Arch7bFreshPositionImportFastPathContract.Version)
+            Require(manifest.GetProperty("smoke_qualification_status").GetString() ==
+                    Arch7bFreshPositionImportFastPathContract.SmokeQualificationStatus,
+                "ARCH7B_POSITION_FAST_PATH_SMOKE_STATUS_INVALID");
         Require(True(manifest, "no_order") && True(manifest, "no_fix") &&
                 True(manifest, "no_database_write") && True(manifest, "no_fill") &&
                 True(manifest, "no_ledger_write"),
@@ -334,18 +339,30 @@ public static class Arch7bPositionImportPlanner
     }
 }
 
-public sealed class Arch7bPositionImportStore(
-    DbContextOptions<PmsShadowDbContext> options,
-    PmsShadowPostgreSqlTarget target)
+public sealed class Arch7bPositionImportStore
 {
+    private readonly Arch7bPostgreSqlPinnedDbContextFactory contextFactory;
+    private readonly PmsShadowPostgreSqlTarget target;
+    private readonly Arch7bPostgreSqlPinnedSession session;
+
+    public Arch7bPositionImportStore(
+        Arch7bPostgreSqlPinnedDbContextFactory contextFactory,
+        PmsShadowPostgreSqlTarget target,
+        Arch7bPostgreSqlPinnedSession session)
+    {
+        this.contextFactory = contextFactory;
+        this.target = target;
+        this.session = session;
+    }
+
     public async Task<DateTimeOffset> ArmAsync(
         Guid expectedSourceIngestionId,
         CancellationToken cancellationToken = default)
     {
-        await using var context = new PmsShadowDbContext(options);
-        await context.Database.OpenConnectionAsync(cancellationToken);
-        await using var transaction = await context.Database.BeginTransactionAsync(
-            IsolationLevel.RepeatableRead, cancellationToken);
+        await using var lease = await session.AcquireAsync(cancellationToken);
+        await using var context = contextFactory.CreateDbContext(lease);
+        await using var transaction = await session.BeginTransactionAsync(
+            lease, context, IsolationLevel.RepeatableRead, cancellationToken);
         try
         {
             await context.Database.ExecuteSqlRawAsync(
@@ -367,31 +384,34 @@ public sealed class Arch7bPositionImportStore(
             await transaction.RollbackAsync(cancellationToken);
             return databaseClock.DatabaseUtc;
         }
-        catch
+        catch (Exception exception)
         {
-            await transaction.RollbackAsync(CancellationToken.None);
-            throw;
-        }
-        finally
-        {
-            await context.Database.CloseConnectionAsync();
+            try { await transaction.RollbackAsync(CancellationToken.None); } catch { }
+            throw session.NormalizeOperationFailure(exception);
         }
     }
 
     public async Task<DateTimeOffset> ReadDatabaseTimeAsync(
         CancellationToken cancellationToken = default)
     {
-        await using var context = new PmsShadowDbContext(options);
-        await context.Database.OpenConnectionAsync(cancellationToken);
+        await using var lease = await session.AcquireAsync(cancellationToken);
+        await using var context = contextFactory.CreateDbContext(lease);
+        await using var transaction = await session.BeginTransactionAsync(
+            lease, context, IsolationLevel.RepeatableRead, cancellationToken);
         try
         {
+            await context.Database.ExecuteSqlRawAsync(
+                "SET TRANSACTION READ ONLY", cancellationToken);
             await ValidateTargetAsync(context, cancellationToken);
-            return (await ReadDatabaseClockAsync(
+            var databaseUtc = (await ReadDatabaseClockAsync(
                 context, cancellationToken)).DatabaseUtc;
+            await transaction.RollbackAsync(cancellationToken);
+            return databaseUtc;
         }
-        finally
+        catch (Exception exception)
         {
-            await context.Database.CloseConnectionAsync();
+            try { await transaction.RollbackAsync(CancellationToken.None); } catch { }
+            throw session.NormalizeOperationFailure(exception);
         }
     }
 
@@ -402,10 +422,10 @@ public sealed class Arch7bPositionImportStore(
     {
         if (sampleCount != 3)
             throw new ArgumentOutOfRangeException(nameof(sampleCount));
-        await using var context = new PmsShadowDbContext(options);
-        await context.Database.OpenConnectionAsync(cancellationToken);
-        await using var transaction = await context.Database.BeginTransactionAsync(
-            IsolationLevel.RepeatableRead, cancellationToken);
+        await using var lease = await session.AcquireAsync(cancellationToken);
+        await using var context = contextFactory.CreateDbContext(lease);
+        await using var transaction = await session.BeginTransactionAsync(
+            lease, context, IsolationLevel.RepeatableRead, cancellationToken);
         try
         {
             await context.Database.ExecuteSqlRawAsync(
@@ -442,14 +462,10 @@ public sealed class Arch7bPositionImportStore(
                 monotonic,
                 NoDatabaseWrite: true);
         }
-        catch
+        catch (Exception exception)
         {
-            await transaction.RollbackAsync(CancellationToken.None);
-            throw;
-        }
-        finally
-        {
-            await context.Database.CloseConnectionAsync();
+            try { await transaction.RollbackAsync(CancellationToken.None); } catch { }
+            throw session.NormalizeOperationFailure(exception);
         }
     }
 
@@ -458,10 +474,10 @@ public sealed class Arch7bPositionImportStore(
         Arch7bPositionImportFreshness freshness,
         CancellationToken cancellationToken = default)
     {
-        await using var context = new PmsShadowDbContext(options);
-        await context.Database.OpenConnectionAsync(cancellationToken);
-        await using var transaction = await context.Database.BeginTransactionAsync(
-            IsolationLevel.RepeatableRead, cancellationToken);
+        await using var lease = await session.AcquireAsync(cancellationToken);
+        await using var context = contextFactory.CreateDbContext(lease);
+        await using var transaction = await session.BeginTransactionAsync(
+            lease, context, IsolationLevel.RepeatableRead, cancellationToken);
         try
         {
             await context.Database.ExecuteSqlRawAsync(
@@ -479,14 +495,10 @@ public sealed class Arch7bPositionImportStore(
             await transaction.RollbackAsync(cancellationToken);
             return plan;
         }
-        catch
+        catch (Exception exception)
         {
-            await transaction.RollbackAsync(CancellationToken.None);
-            throw;
-        }
-        finally
-        {
-            await context.Database.CloseConnectionAsync();
+            try { await transaction.RollbackAsync(CancellationToken.None); } catch { }
+            throw session.NormalizeOperationFailure(exception);
         }
     }
 
@@ -499,10 +511,11 @@ public sealed class Arch7bPositionImportStore(
         string expectedOwnerId,
         CancellationToken cancellationToken = default)
     {
-        await using var context = new PmsShadowDbContext(options);
-        await context.Database.OpenConnectionAsync(cancellationToken);
-        await using var transaction = await context.Database.BeginTransactionAsync(
-            IsolationLevel.Serializable, cancellationToken);
+        await using var lease = await session.AcquireAsync(cancellationToken);
+        await using var context = contextFactory.CreateDbContext(lease);
+        await using var transaction = await session.BeginTransactionAsync(
+            lease, context, IsolationLevel.Serializable, cancellationToken);
+        var transactionCompleted = false;
         try
         {
             await ValidateTargetAsync(context, cancellationToken);
@@ -539,8 +552,10 @@ public sealed class Arch7bPositionImportStore(
                     Arch7bPositionImportContract.IntraTransactionReadbackMismatch,
                     cancellationToken);
                 await transaction.RollbackAsync(cancellationToken);
+                transactionCompleted = true;
+                await transaction.DisposeAsync();
                 await VerifyPostCommitAsync(
-                    package, protectedCounts, cancellationToken);
+                    lease, package, protectedCounts, cancellationToken);
                 return plan;
             }
 
@@ -569,18 +584,17 @@ public sealed class Arch7bPositionImportStore(
                 Arch7bPositionImportContract.IntraTransactionReadbackMismatch,
                 cancellationToken);
             await transaction.CommitAsync(cancellationToken);
+            transactionCompleted = true;
+            await transaction.DisposeAsync();
             await VerifyPostCommitAsync(
-                package, protectedCounts, cancellationToken);
+                lease, package, protectedCounts, cancellationToken);
             return plan;
         }
-        catch
+        catch (Exception exception)
         {
-            await transaction.RollbackAsync(CancellationToken.None);
-            throw;
-        }
-        finally
-        {
-            await context.Database.CloseConnectionAsync();
+            if (!transactionCompleted)
+                try { await transaction.RollbackAsync(CancellationToken.None); } catch { }
+            throw session.NormalizeOperationFailure(exception);
         }
     }
 
@@ -690,14 +704,14 @@ public sealed class Arch7bPositionImportStore(
     }
 
     private async Task VerifyPostCommitAsync(
+        Arch7bPostgreSqlPinnedSessionLease lease,
         Arch7bPositionImportPackage package,
         IReadOnlyDictionary<string, int> protectedCounts,
         CancellationToken cancellationToken)
     {
-        await using var context = new PmsShadowDbContext(options);
-        await context.Database.OpenConnectionAsync(cancellationToken);
-        await using var transaction = await context.Database.BeginTransactionAsync(
-            IsolationLevel.RepeatableRead, cancellationToken);
+        await using var context = contextFactory.CreateDbContext(lease);
+        await using var transaction = await session.BeginTransactionAsync(
+            lease, context, IsolationLevel.RepeatableRead, cancellationToken);
         try
         {
             await context.Database.ExecuteSqlRawAsync(
@@ -712,14 +726,10 @@ public sealed class Arch7bPositionImportStore(
                     Arch7bPositionImportContract.PostCommitReadbackMismatch);
             await transaction.RollbackAsync(cancellationToken);
         }
-        catch
+        catch (Exception exception)
         {
-            await transaction.RollbackAsync(CancellationToken.None);
-            throw;
-        }
-        finally
-        {
-            await context.Database.CloseConnectionAsync();
+            try { await transaction.RollbackAsync(CancellationToken.None); } catch { }
+            throw session.NormalizeOperationFailure(exception);
         }
     }
 

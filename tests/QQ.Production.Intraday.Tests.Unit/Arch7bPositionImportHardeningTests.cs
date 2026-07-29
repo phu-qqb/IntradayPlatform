@@ -266,6 +266,98 @@ public sealed class Arch7bPositionImportHardeningTests
                 package.Universe, changed, Target()));
     }
 
+    [Fact]
+    public void T73_FastPathAcceptsExactPrearmedState()
+    {
+        var package = Arch7bAppendOnlyPositionImportTests.Package();
+        Arch7bFreshPositionImportOrchestrationGuard.RequirePrearmed(
+            Armed(package), Target(), Repository(), "owner", "authorization",
+            package.Universe.SourceIngestionId,
+            package.Snapshot.PositionReportP2Utc);
+    }
+
+    [Fact]
+    public void T74_FastPathOwnerMismatchStopsBeforePackage()
+    {
+        var package = Arch7bAppendOnlyPositionImportTests.Package();
+        var exception = Assert.Throws<InvalidDataException>(() =>
+            Arch7bFreshPositionImportOrchestrationGuard.RequirePrearmed(
+                Armed(package), Target(), Repository(), "other-owner",
+                "authorization", package.Universe.SourceIngestionId,
+                package.Snapshot.PositionReportP2Utc));
+        Assert.Equal(Arch7bPositionImportContract.OwnerMismatch,
+            exception.Message);
+    }
+
+    [Fact]
+    public void T75_FastPathAuthorizationMismatchStopsBeforePackage()
+    {
+        var package = Arch7bAppendOnlyPositionImportTests.Package();
+        var exception = Assert.Throws<InvalidDataException>(() =>
+            Arch7bFreshPositionImportOrchestrationGuard.RequirePrearmed(
+                Armed(package), Target(), Repository(), "owner",
+                "other-authorization", package.Universe.SourceIngestionId,
+                package.Snapshot.PositionReportP2Utc));
+        Assert.Equal(Arch7bPositionImportContract.AuthorizationMismatch,
+            exception.Message);
+    }
+
+    [Fact]
+    public void T76_FastPathSourceIngestionMismatchStopsBeforePackage()
+    {
+        var package = Arch7bAppendOnlyPositionImportTests.Package();
+        var exception = Assert.Throws<InvalidDataException>(() =>
+            Arch7bFreshPositionImportOrchestrationGuard.RequirePrearmed(
+                Armed(package), Target(), Repository(), "owner", "authorization",
+                Guid.NewGuid(), package.Snapshot.PositionReportP2Utc));
+        Assert.Equal("ARCH7B_POSITION_IMPORT_SOURCE_INGESTION_MISMATCH",
+            exception.Message);
+    }
+
+    [Fact]
+    public void T77_FastPathTargetMismatchStopsBeforePackage()
+    {
+        var package = Arch7bAppendOnlyPositionImportTests.Package();
+        var changedTarget = Target() with { TargetFingerprint = Hash('9') };
+        var exception = Assert.Throws<InvalidDataException>(() =>
+            Arch7bFreshPositionImportOrchestrationGuard.RequirePrearmed(
+                Armed(package), changedTarget, Repository(), "owner",
+                "authorization", package.Universe.SourceIngestionId,
+                package.Snapshot.PositionReportP2Utc));
+        Assert.Equal(Arch7bPositionImportContract.RepositoryStateMismatch,
+            exception.Message);
+    }
+
+    [Fact]
+    public void T78_FastPathRepositoryMismatchStopsBeforePackage()
+    {
+        var package = Arch7bAppendOnlyPositionImportTests.Package();
+        var changedRepository = Repository() with { HeadCommit = Hash('9', 40) };
+        var exception = Assert.Throws<InvalidDataException>(() =>
+            Arch7bFreshPositionImportOrchestrationGuard.RequirePrearmed(
+                Armed(package), Target(), changedRepository, "owner",
+                "authorization", package.Universe.SourceIngestionId,
+                package.Snapshot.PositionReportP2Utc));
+        Assert.Equal(Arch7bPositionImportContract.RepositoryStateMismatch,
+            exception.Message);
+    }
+
+    [Fact]
+    public void T79_FastPathRejectsArmCreatedAfterBrokerP2()
+    {
+        var package = Arch7bAppendOnlyPositionImportTests.Package();
+        var late = Arch7bPositionImportArmedStateStore.Create(
+            Target(), Repository(), "authorization", "owner",
+            package.Universe.SourceIngestionId,
+            package.Snapshot.PositionReportP2Utc.AddMilliseconds(1));
+        var exception = Assert.Throws<InvalidDataException>(() =>
+            Arch7bFreshPositionImportOrchestrationGuard.RequirePrearmed(
+                late, Target(), Repository(), "owner", "authorization",
+                package.Universe.SourceIngestionId,
+                package.Snapshot.PositionReportP2Utc));
+        Assert.Equal("ARCH7B_POSITION_FAST_PATH_LATE_ARM_REJECTED",
+            exception.Message);
+    }
     private static PmsShadowPositionSnapshotRow Select(
         params PmsShadowPositionSnapshotRow[] snapshots) =>
         PmsShadowPositionSnapshotForSlotSelection.Select(snapshots, Slot);

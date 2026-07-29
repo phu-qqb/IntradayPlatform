@@ -1,0 +1,58 @@
+{
+  "contract_version": "arch7b_postgresql_transport_profile_v1",
+  "profile": "DIRECT_VPC_PRIMARY_HOST_VERIFY_FULL",
+  "execution_host": {
+    "instance_id": "i-05535ebe6ce80a57b",
+    "private_ip": "10.0.2.94",
+    "subnet_id": "subnet-06a16e14d266882ca",
+    "security_group_id": "sg-0928052822c1b4c5b"
+  },
+  "rds": {
+    "instance_id": "db-arch7b-pms-shadow-test",
+    "endpoint": "db-arch7b-pms-shadow-test.cx0goossu17s.eu-west-2.rds.amazonaws.com",
+    "port": 5432,
+    "vpc_id": "vpc-0dcdbfc5ec569ac68",
+    "security_group_id": "sg-08a2c70bc6033a965",
+    "ingress_rule_id": "sgr-04ae47dda2d9e6938",
+    "runner_egress_rule_id": "sgr-06668dd7b02b3f444"
+  },
+  "runtime": {
+    "postgresql_major": 18,
+    "npgsql_version": "10.0.0",
+    "dotnet_runtime_version": "10.0.7"
+  },
+  "tls": {
+    "ssl_mode": "VerifyFull",
+    "ssl_negotiation": "Postgres",
+    "gss_encryption_mode": "Disable",
+    "certificate_validation_mode": "CHAIN_AND_HOSTNAME",
+    "root_certificate_sha256": "17976078e32d253e3d77a464933d96804357a7d61206e0ecdd38145a64f67527"
+  },
+  "pool": {
+    "pooling": true,
+    "minimum_pool_size": 1,
+    "maximum_pool_size": 1,
+    "multiplexing": false,
+    "no_reset_on_close": false,
+    "enlist": false,
+    "connection_idle_lifetime_seconds": 600,
+    "connection_lifetime_seconds": 900
+  },
+  "timeouts": {
+    "cold_connection_timeout_seconds": 20,
+    "command_timeout_seconds": 30,
+    "pooled_logical_checkout_maximum_milliseconds": 1000
+  },
+  "observability": {
+    "include_error_detail": false,
+    "log_parameters": false,
+    "persist_security_info": false
+  },
+  "warm_connection_authority": {
+    "contract_version": "arch7b_postgresql_warm_connection_authority_v1",
+    "cold_physical_open_count": 1,
+    "post_p2_physical_reconnect_count": 0,
+    "maximum_concurrent_logical_connections": 1,
+    "same_backend_process_id_required": true
+  }
+}
