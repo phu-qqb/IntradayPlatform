@@ -1,5 +1,6 @@
 using System.Data;
 using System.Data.Common;
+using System.Diagnostics;
 using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
@@ -8,6 +9,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 using Microsoft.EntityFrameworkCore;
+using Npgsql;
 using QQ.Production.Intraday.Application;
 
 namespace QQ.Production.Intraday.Infrastructure.PostgreSql;
@@ -1111,14 +1113,28 @@ public static class Arch7bRequiredPmsUniverseBuilder
 
 public sealed class Arch7bRequiredPmsUniverseReader(
     DbContextOptions<PmsShadowDbContext> options,
-    PmsShadowPostgreSqlTarget target)
+    PmsShadowPostgreSqlTarget target,
+    Arch7bPostgreSqlWarmConnectionAuthority? connectionAuthority = null)
 {
     public async Task<Arch7bRequiredPmsUniverse> ReadAsync(
         CancellationToken cancellationToken = default)
     {
         await using var context = new PmsShadowDbContext(options);
         var connection = context.Database.GetDbConnection();
+        var checkout = Stopwatch.StartNew();
         await connection.OpenAsync(cancellationToken);
+        checkout.Stop();
+        try
+        {
+            connectionAuthority?.ObserveLogicalCheckout(
+                ((NpgsqlConnection)connection).ProcessID,
+                checkout.Elapsed);
+        }
+        catch
+        {
+            await connection.CloseAsync();
+            throw;
+        }
         await using var transaction = await connection.BeginTransactionAsync(
             IsolationLevel.RepeatableRead, cancellationToken);
         try
@@ -1182,6 +1198,7 @@ public sealed class Arch7bRequiredPmsUniverseReader(
         finally
         {
             await connection.CloseAsync();
+            connectionAuthority?.CompleteLogicalCheckout();
         }
     }
 

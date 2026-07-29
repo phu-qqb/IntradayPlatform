@@ -1,10 +1,12 @@
 using System.Data;
+using System.Diagnostics;
 using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
+using Npgsql;
 using QQ.Production.Intraday.Application;
 
 namespace QQ.Production.Intraday.Infrastructure.PostgreSql;
@@ -341,14 +343,15 @@ public static class Arch7bPositionImportPlanner
 
 public sealed class Arch7bPositionImportStore(
     DbContextOptions<PmsShadowDbContext> options,
-    PmsShadowPostgreSqlTarget target)
+    PmsShadowPostgreSqlTarget target,
+    Arch7bPostgreSqlWarmConnectionAuthority? connectionAuthority = null)
 {
     public async Task<DateTimeOffset> ArmAsync(
         Guid expectedSourceIngestionId,
         CancellationToken cancellationToken = default)
     {
         await using var context = new PmsShadowDbContext(options);
-        await context.Database.OpenConnectionAsync(cancellationToken);
+        await OpenObservedAsync(context, cancellationToken);
         await using var transaction = await context.Database.BeginTransactionAsync(
             IsolationLevel.RepeatableRead, cancellationToken);
         try
@@ -379,7 +382,7 @@ public sealed class Arch7bPositionImportStore(
         }
         finally
         {
-            await context.Database.CloseConnectionAsync();
+            await CloseObservedAsync(context);
         }
     }
 
@@ -387,7 +390,7 @@ public sealed class Arch7bPositionImportStore(
         CancellationToken cancellationToken = default)
     {
         await using var context = new PmsShadowDbContext(options);
-        await context.Database.OpenConnectionAsync(cancellationToken);
+        await OpenObservedAsync(context, cancellationToken);
         try
         {
             await ValidateTargetAsync(context, cancellationToken);
@@ -396,7 +399,7 @@ public sealed class Arch7bPositionImportStore(
         }
         finally
         {
-            await context.Database.CloseConnectionAsync();
+            await CloseObservedAsync(context);
         }
     }
 
@@ -408,7 +411,7 @@ public sealed class Arch7bPositionImportStore(
         if (sampleCount != 3)
             throw new ArgumentOutOfRangeException(nameof(sampleCount));
         await using var context = new PmsShadowDbContext(options);
-        await context.Database.OpenConnectionAsync(cancellationToken);
+        await OpenObservedAsync(context, cancellationToken);
         await using var transaction = await context.Database.BeginTransactionAsync(
             IsolationLevel.RepeatableRead, cancellationToken);
         try
@@ -454,7 +457,7 @@ public sealed class Arch7bPositionImportStore(
         }
         finally
         {
-            await context.Database.CloseConnectionAsync();
+            await CloseObservedAsync(context);
         }
     }
 
@@ -464,7 +467,7 @@ public sealed class Arch7bPositionImportStore(
         CancellationToken cancellationToken = default)
     {
         await using var context = new PmsShadowDbContext(options);
-        await context.Database.OpenConnectionAsync(cancellationToken);
+        await OpenObservedAsync(context, cancellationToken);
         await using var transaction = await context.Database.BeginTransactionAsync(
             IsolationLevel.RepeatableRead, cancellationToken);
         try
@@ -491,7 +494,7 @@ public sealed class Arch7bPositionImportStore(
         }
         finally
         {
-            await context.Database.CloseConnectionAsync();
+            await CloseObservedAsync(context);
         }
     }
 
@@ -505,7 +508,7 @@ public sealed class Arch7bPositionImportStore(
         CancellationToken cancellationToken = default)
     {
         await using var context = new PmsShadowDbContext(options);
-        await context.Database.OpenConnectionAsync(cancellationToken);
+        await OpenObservedAsync(context, cancellationToken);
         await using var transaction = await context.Database.BeginTransactionAsync(
             IsolationLevel.Serializable, cancellationToken);
         try
@@ -585,7 +588,7 @@ public sealed class Arch7bPositionImportStore(
         }
         finally
         {
-            await context.Database.CloseConnectionAsync();
+            await CloseObservedAsync(context);
         }
     }
 
@@ -700,7 +703,7 @@ public sealed class Arch7bPositionImportStore(
         CancellationToken cancellationToken)
     {
         await using var context = new PmsShadowDbContext(options);
-        await context.Database.OpenConnectionAsync(cancellationToken);
+        await OpenObservedAsync(context, cancellationToken);
         await using var transaction = await context.Database.BeginTransactionAsync(
             IsolationLevel.RepeatableRead, cancellationToken);
         try
@@ -724,8 +727,35 @@ public sealed class Arch7bPositionImportStore(
         }
         finally
         {
-            await context.Database.CloseConnectionAsync();
+            await CloseObservedAsync(context);
         }
+    }
+
+    private async Task OpenObservedAsync(
+        PmsShadowDbContext context,
+        CancellationToken cancellationToken)
+    {
+        var checkout = Stopwatch.StartNew();
+        await context.Database.OpenConnectionAsync(cancellationToken);
+        checkout.Stop();
+        try
+        {
+            connectionAuthority?.ObserveLogicalCheckout(
+                ((NpgsqlConnection)context.Database.GetDbConnection())
+                .ProcessID,
+                checkout.Elapsed);
+        }
+        catch
+        {
+            await context.Database.CloseConnectionAsync();
+            throw;
+        }
+    }
+
+    private async Task CloseObservedAsync(PmsShadowDbContext context)
+    {
+        await context.Database.CloseConnectionAsync();
+        connectionAuthority?.CompleteLogicalCheckout();
     }
 
     private static async Task<IReadOnlyDictionary<string, int>>

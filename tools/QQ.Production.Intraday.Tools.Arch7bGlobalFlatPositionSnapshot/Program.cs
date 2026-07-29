@@ -1,7 +1,6 @@
 using System.Globalization;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
-using Npgsql;
 using QQ.Production.Intraday.Infrastructure.PostgreSql;
 
 var arguments = Arch7bGlobalFlatArguments.Parse(args);
@@ -11,33 +10,28 @@ var expectations = new Arch7bCoreEvidenceExpectations(
     arguments.ExpectedEvidenceSha256,
     arguments.ExpectedContractFileSha256,
     arguments.ExpectedFinalIndexSha256);
-var core = timing.Measure("CORE_PACKAGE_VALIDATION", () =>
-    Arch7bCoreBracketEvidencePackageReader.Read(
-        arguments.EvidenceRoot, expectations));
-
-var logicalConnectionString = arguments.BuildLogicalConnectionString();
-var settings = new PmsShadowPostgreSqlTargetSettings(
-    Arch7bBracketedGlobalFlatContract.TargetEnvironment,
-    Arch7bBracketedGlobalFlatContract.TargetDatabase,
-    PmsShadowStateContract.SchemaName,
-    Arch7bBracketedGlobalFlatContract.PostgreSqlMajor,
-    RequireTls: true,
-    AllowLoopback: false,
-    Arch7bBracketedGlobalFlatContract.TargetProfile);
-var target = PmsShadowPostgreSqlTargetContract.Validate(
-    logicalConnectionString, settings);
+await using var runtime = arguments.BuildRuntime();
+var target = runtime.Target;
 Require(target.TargetFingerprint == arguments.ExpectedTargetFingerprint,
     "ARCH7B_PMS_TARGET_FINGERPRINT_MISMATCH");
-
-await using var dataSource = arguments.BuildDataSource();
+var warmTask = runtime.WarmAsync();
+var coreTask = Task.Run(() =>
+    timing.Measure("CORE_PACKAGE_VALIDATION", () =>
+        Arch7bCoreBracketEvidencePackageReader.Read(
+            arguments.EvidenceRoot, expectations)));
+await Task.WhenAll(warmTask, coreTask);
+var core = await coreTask;
+var warmEvidence = await warmTask;
+runtime.Authority.EnterPostP2CriticalPath();
 var options = new DbContextOptionsBuilder<PmsShadowDbContext>()
-    .UseNpgsql(dataSource, npgsql =>
+    .UseNpgsql(runtime.DataSource, npgsql =>
         npgsql.SetPostgresVersion(
             Arch7bBracketedGlobalFlatContract.PostgreSqlMajor, 0))
     .UseQueryTrackingBehavior(QueryTrackingBehavior.NoTracking)
     .Options;
 var universe = await timing.MeasureAsync("RDS_UNIVERSE_READ", () =>
-    new Arch7bRequiredPmsUniverseReader(options, target).ReadAsync());
+    new Arch7bRequiredPmsUniverseReader(
+        options, target, runtime.Authority).ReadAsync());
 var snapshot = timing.Measure("SNAPSHOT_BUILD", () =>
     Arch7bGlobalFlatPositionSnapshotBuilder.Build(core, universe));
 
@@ -86,6 +80,9 @@ if (arguments.FastPath)
         timing_output = arguments.TimingOutput,
         transaction_read_only = universe.TransactionReadOnly,
         pending_model_changes = universe.PendingModelChanges,
+        transport_profile_sha256 = runtime.Profile.Sha256,
+        warm_connection = warmEvidence,
+        warm_connection_final = runtime.Authority.Snapshot(),
         zip_executed = false,
         projection_bundle_written = false,
         no_order = true,
@@ -184,6 +181,9 @@ Console.WriteLine(JsonSerializer.Serialize(new
     timing_output = arguments.TimingOutput,
     transaction_read_only = universe.TransactionReadOnly,
     pending_model_changes = universe.PendingModelChanges,
+    transport_profile_sha256 = runtime.Profile.Sha256,
+    warm_connection = warmEvidence,
+    warm_connection_final = runtime.Authority.Snapshot(),
     no_order = true,
     no_fix = true,
     no_database_write = true,
@@ -285,48 +285,25 @@ public sealed class Arch7bGlobalFlatArguments
         return parsed;
     }
 
-    public string BuildLogicalConnectionString() =>
-        BuildConnectionString(Required("--host"), Integer("--port"));
-
-    public NpgsqlDataSource BuildDataSource()
+    public Arch7bPostgreSqlRuntime BuildRuntime()
     {
-        var logicalHost = Required("--host");
-        var connectHost = values.GetValueOrDefault("--connect-host") ?? logicalHost;
-        var connectPort = values.ContainsKey("--connect-port")
-            ? Integer("--connect-port")
-            : Integer("--port");
-        var builder = new NpgsqlDataSourceBuilder(
-            BuildConnectionString(connectHost, connectPort));
-        builder.UseSslClientAuthenticationOptionsCallback(options =>
-            options.TargetHost = logicalHost);
-        return builder.Build();
-    }
-
-    private string BuildConnectionString(string host, int port)
-    {
+        Arch7bPostgreSqlTransportProfileContract.ValidateCommandLine(
+            values.Keys, Required("--host"), Integer("--port"));
         var reference = Required("--connection-secret-reference");
         Require(reference.StartsWith("env:", StringComparison.Ordinal),
             "ARCH7B_SECRET_REFERENCE_MUST_USE_ENV");
         var password = Environment.GetEnvironmentVariable(reference[4..]);
         Require(!string.IsNullOrWhiteSpace(password),
             "ARCH7B_SECRET_VALUE_UNAVAILABLE");
-        var builder = new NpgsqlConnectionStringBuilder
-        {
-            Host = host,
-            Port = port,
-            Database = Arch7bBracketedGlobalFlatContract.TargetDatabase,
-            Username = Required("--role"),
-            Password = password,
-            ApplicationName = FastPath
+        return Arch7bPostgreSqlDataSourceFactory.Create(
+            Arch7bPostgreSqlTransportProfile.DirectPrimary,
+            Required("--role"),
+            password!,
+            FastPath
                 ? "QQ_ARCH7B_FRESH_POSITION_FAST_PATH_READONLY"
                 : "QQ_ARCH7B_GLOBAL_FLAT_READONLY",
-            SslMode = SslMode.VerifyFull,
-            IncludeErrorDetail = false,
-            Options = "-c default_transaction_read_only=on"
-        };
-        if (values.TryGetValue("--root-certificate", out var rootCertificate))
-            builder.RootCertificate = rootCertificate;
-        return builder.ConnectionString;
+            Arch7bPostgreSqlAccessMode.ReadOnly,
+            Required("--root-certificate"));
     }
 
     private int Integer(string name) =>

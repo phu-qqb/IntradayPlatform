@@ -1,32 +1,24 @@
 using System.Globalization;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
-using Npgsql;
 using QQ.Production.Intraday.Infrastructure.PostgreSql;
 
 var arguments = Arch7bPositionImportArguments.Parse(args);
-var target = PmsShadowPostgreSqlTargetContract.Validate(
-    arguments.BuildLogicalConnectionString(),
-    new(
-        Arch7bBracketedGlobalFlatContract.TargetEnvironment,
-        Arch7bBracketedGlobalFlatContract.TargetDatabase,
-        PmsShadowStateContract.SchemaName,
-        Arch7bBracketedGlobalFlatContract.PostgreSqlMajor,
-        RequireTls: true,
-        AllowLoopback: false,
-        Arch7bBracketedGlobalFlatContract.TargetProfile));
+await using var runtime = arguments.BuildRuntime();
+var target = runtime.Target;
 Require(target.TargetFingerprint == arguments.ExpectedTargetFingerprint,
     "ARCH7B_POSITION_IMPORT_TARGET_FINGERPRINT_MISMATCH");
-
-await using var dataSource = arguments.BuildDataSource();
+var warmTask = runtime.WarmAsync();
 var options = new DbContextOptionsBuilder<PmsShadowDbContext>()
-    .UseNpgsql(dataSource, npgsql => npgsql.SetPostgresVersion(
+    .UseNpgsql(runtime.DataSource, npgsql => npgsql.SetPostgresVersion(
         Arch7bBracketedGlobalFlatContract.PostgreSqlMajor, 0))
     .Options;
-var store = new Arch7bPositionImportStore(options, target);
+var store = new Arch7bPositionImportStore(
+    options, target, runtime.Authority);
 
 if (arguments.Mode == "qualify-database-clock")
 {
+    var warmEvidence = await warmTask;
     var qualification = await store.QualifyDatabaseClockAsync();
     var evidence = Arch7bPostgreSqlClockQualificationEvidenceWriter.Write(
         arguments.OutputDirectory, qualification, target);
@@ -53,6 +45,9 @@ if (arguments.Mode == "qualify-database-clock")
         evidence.OutputDirectory,
         evidence.ManifestSha256,
         evidence.ZipSha256,
+        transport_profile_sha256 = runtime.Profile.Sha256,
+        warm_connection = warmEvidence,
+        warm_connection_final = runtime.Authority.Snapshot(),
         no_database_write = true,
         no_armed_state = true,
         no_owner_lock = true,
@@ -73,8 +68,13 @@ if (arguments.Mode == "run-fresh-position-import-fast-path")
         arguments.ExpectedEvidenceSha256,
         arguments.ExpectedContractFileSha256,
         arguments.ExpectedFinalIndexSha256);
-    var core = Arch7bCoreBracketEvidencePackageReader.Read(
-        arguments.EvidenceRoot, expectations);
+    var coreTask = Task.Run(() =>
+        Arch7bCoreBracketEvidencePackageReader.Read(
+            arguments.EvidenceRoot, expectations));
+    await Task.WhenAll(warmTask, coreTask);
+    var core = await coreTask;
+    var warmEvidence = await warmTask;
+    runtime.Authority.EnterPostP2CriticalPath();
     var timeline = new Arch7bFreshPositionImportAppendOnlyTimeline(
         Path.Combine(arguments.OutputDirectory, "append-only-timeline"));
     var currentStage = "PREARMED_VALIDATION";
@@ -92,7 +92,8 @@ if (arguments.Mode == "run-fresh-position-import-fast-path")
             core.PositionReportP2Utc);
 
         currentStage = "RDS_UNIVERSE_READ";
-        var universe = await new Arch7bRequiredPmsUniverseReader(options, target)
+        var universe = await new Arch7bRequiredPmsUniverseReader(
+                options, target, runtime.Authority)
             .ReadAsync();
         Require(universe.SourceIngestionId ==
                 arguments.ExpectedSourceIngestionId,
@@ -160,6 +161,9 @@ if (arguments.Mode == "run-fresh-position-import-fast-path")
             smoke_qualification_status =
                 Arch7bFreshPositionImportFastPathContract
                     .SmokeQualificationStatus,
+            transport_profile_sha256 = runtime.Profile.Sha256,
+            warm_connection = warmEvidence,
+            warm_connection_final = runtime.Authority.Snapshot(),
             no_order = true,
             no_fix = true,
             no_fill = true,
@@ -184,6 +188,8 @@ if (arguments.Mode == "run-fresh-position-import-fast-path")
         throw;
     }
 }
+
+_ = await warmTask;
 
 if (arguments.Mode == "arm-import")
 {
@@ -465,58 +471,38 @@ public sealed class Arch7bPositionImportArguments
         return parsed;
     }
 
-    public string BuildLogicalConnectionString() =>
-        BuildConnectionString(Required("--host"), Integer("--port"));
-
-    public NpgsqlDataSource BuildDataSource()
+    public Arch7bPostgreSqlRuntime BuildRuntime()
     {
-        var logicalHost = Required("--host");
-        var connectHost = values.GetValueOrDefault("--connect-host") ?? logicalHost;
-        var connectPort = values.ContainsKey("--connect-port")
-            ? Integer("--connect-port")
-            : Integer("--port");
-        var builder = new NpgsqlDataSourceBuilder(
-            BuildConnectionString(connectHost, connectPort));
-        builder.UseSslClientAuthenticationOptionsCallback(options =>
-            options.TargetHost = logicalHost);
-        return builder.Build();
-    }
-
-    private string BuildConnectionString(string host, int port)
-    {
+        Arch7bPostgreSqlTransportProfileContract.ValidateCommandLine(
+            values.Keys, Required("--host"), Integer("--port"));
         var reference = Required("--connection-secret-reference");
         Require(reference.StartsWith("env:", StringComparison.Ordinal),
             "ARCH7B_POSITION_IMPORT_SECRET_REFERENCE_MUST_USE_ENV");
         var password = Environment.GetEnvironmentVariable(reference[4..]);
         Require(!string.IsNullOrWhiteSpace(password),
             "ARCH7B_POSITION_IMPORT_SECRET_UNAVAILABLE");
-        var builder = new NpgsqlConnectionStringBuilder
+        var applicationName = Mode switch
         {
-            Host = host,
-            Port = port,
-            Database = Arch7bBracketedGlobalFlatContract.TargetDatabase,
-            Username = Required("--role"),
-            Password = password,
-            ApplicationName = Mode switch
-            {
-                "arm-import" => "QQ_ARCH7B_POSITION_IMPORT_ARM_READONLY",
-                "qualify-database-clock" =>
-                    "QQ_ARCH7B_POSTGRESQL_CLOCK_QUALIFICATION_READONLY",
-                "publish-ready" => "QQ_ARCH7B_POSITION_IMPORT_READY_READONLY",
-                "plan-import" => "QQ_ARCH7B_POSITION_IMPORT_PLAN_READONLY",
-                "run-fresh-position-import-fast-path" =>
-                    "QQ_ARCH7B_FRESH_POSITION_IMPORT_FAST_PATH",
-                _ => "QQ_ARCH7B_POSITION_IMPORT_APPLY_APPEND_ONLY"
-            },
-            SslMode = SslMode.VerifyFull,
-            IncludeErrorDetail = false
+            "arm-import" => "QQ_ARCH7B_POSITION_IMPORT_ARM_READONLY",
+            "qualify-database-clock" =>
+                "QQ_ARCH7B_POSTGRESQL_CLOCK_QUALIFICATION_READONLY",
+            "publish-ready" => "QQ_ARCH7B_POSITION_IMPORT_READY_READONLY",
+            "plan-import" => "QQ_ARCH7B_POSITION_IMPORT_PLAN_READONLY",
+            "run-fresh-position-import-fast-path" =>
+                "QQ_ARCH7B_FRESH_POSITION_IMPORT_FAST_PATH",
+            _ => "QQ_ARCH7B_POSITION_IMPORT_APPLY_APPEND_ONLY"
         };
-        if (Mode is not ("apply-import" or
-            "run-fresh-position-import-fast-path"))
-            builder.Options = "-c default_transaction_read_only=on";
-        if (values.TryGetValue("--root-certificate", out var certificate))
-            builder.RootCertificate = certificate;
-        return builder.ConnectionString;
+        var accessMode = Mode is "apply-import" or
+            "run-fresh-position-import-fast-path"
+            ? Arch7bPostgreSqlAccessMode.ApplyAppendOnly
+            : Arch7bPostgreSqlAccessMode.ReadOnly;
+        return Arch7bPostgreSqlDataSourceFactory.Create(
+            Arch7bPostgreSqlTransportProfile.DirectPrimary,
+            Required("--role"),
+            password!,
+            applicationName,
+            accessMode,
+            Required("--root-certificate"));
     }
 
     private int Integer(string name) =>
