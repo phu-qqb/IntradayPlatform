@@ -1,0 +1,49 @@
+{
+  "contract_version": "arch7b_postgresql_pooled_checkout_slo_forensic_v1",
+  "historical_verdict": "NO_GO_ARCH7B_POSTGRESQL_POOLED_CHECKOUT_SLO_EXCEEDED",
+  "historical_run_classification": "ABORTED_POSTGRESQL_POOLED_CHECKOUT_SLO_EXCEEDED",
+  "historical_evidence_root": "D:\\QQFund\\ARCH7B\\first-primary-direct-end-to-end-no-order-arch7b-primary-direct-20260729T125046Z",
+  "historical_zip_sha256": "daf6659a57b47eae19fed8447a95cf8c669aef16841649c2267c84a0df3a9adc",
+  "failed_stage": "QUALIFY_DATABASE_CLOCK_OPEN_OBSERVED",
+  "timed_operation": "DbContext.Database.OpenConnectionAsync",
+  "cold_open_started_utc": null,
+  "cold_open_completed_utc": null,
+  "cold_open_elapsed_milliseconds": null,
+  "warm_backend_process_id": null,
+  "checkout_started_utc": null,
+  "checkout_completed_utc": null,
+  "checkout_elapsed_milliseconds": null,
+  "checkout_backend_process_id": null,
+  "checkout_backend_process_id_status": "CHECKOUT_BACKEND_PID_NOT_RECORDED_BEFORE_SLO_FAILURE",
+  "connection_state_before": null,
+  "connection_state_after": null,
+  "dbcontext_or_model_initialization_included": "POSSIBLE_NOT_INSTRUMENTED",
+  "npgsql_session_reset_included": "POSSIBLE_NOT_INSTRUMENTED",
+  "scheduler_delay_included": "POSSIBLE_NOT_INSTRUMENTED",
+  "pool_counters_persisted": false,
+  "exception": "ARCH7B_POSTGRESQL_POOLED_CHECKOUT_SLO_EXCEEDED",
+  "sanitized_stack_status": "RECONSTRUCTED_FROM_EXACT_HEAD_NOT_PERSISTED_RUNTIME_STACK",
+  "sanitized_stack": [
+    "Arch7bPositionImportStore.OpenObservedAsync",
+    "Arch7bPositionImportStore.QualifyDatabaseClockAsync",
+    "QQ.Production.Intraday.Tools.Arch7bPositionSnapshotImport"
+  ],
+  "ordering_proof": {
+    "elapsed_slo_checked_before_pid_comparison": true,
+    "pid_comparison_reached": false,
+    "checkout_elapsed_serialized_before_failure": false,
+    "checkout_pid_serialized_before_failure": false
+  },
+  "root_cause": [
+    "The 1000 millisecond gate timed DbContext.Database.OpenConnectionAsync rather than a local-only lease.",
+    "That interval could include EF initialization, Npgsql reset, scheduler delay, and other client work.",
+    "The gate threw before comparing the returned ProcessID with the warmed backend ProcessID.",
+    "The v1 contract could not distinguish a slow checkout on the same backend from a physical reconnect."
+  ],
+  "forensic_verdict": "ARCH7B_POOLED_CHECKOUT_SLO_DID_NOT_PROVE_PHYSICAL_RECONNECT",
+  "secret_read_count": 1,
+  "retry_count": 0,
+  "database_write_count": 0,
+  "lmax_run_count": 0,
+  "historical_evidence_mutated": false
+}

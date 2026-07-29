@@ -214,7 +214,7 @@ public sealed class Arch7bPostgreSqlTransportProfileTests
     }
 
     [Fact]
-    public void Consumers_use_one_factory_and_no_local_transport_builder()
+    public void Consumers_select_pinned_factory_and_no_local_transport_builder()
     {
         var root = RepoRoot();
         var consumer = File.ReadAllText(Path.Combine(root, "tools",
@@ -224,9 +224,13 @@ public sealed class Arch7bPostgreSqlTransportProfileTests
             "QQ.Production.Intraday.Tools.Arch7bPositionSnapshotImport",
             "Program.cs"));
 
-        Assert.Contains("Arch7bPostgreSqlDataSourceFactory.Create",
+        Assert.Contains("Arch7bPostgreSqlPinnedSessionFactory.Create",
             consumer, StringComparison.Ordinal);
-        Assert.Contains("Arch7bPostgreSqlDataSourceFactory.Create",
+        Assert.Contains("Arch7bPostgreSqlPinnedSessionFactory.Create",
+            importer, StringComparison.Ordinal);
+        Assert.DoesNotContain("Arch7bPostgreSqlDataSourceFactory.Create",
+            consumer, StringComparison.Ordinal);
+        Assert.DoesNotContain("Arch7bPostgreSqlDataSourceFactory.Create",
             importer, StringComparison.Ordinal);
         Assert.DoesNotContain("new NpgsqlConnectionStringBuilder",
             consumer, StringComparison.Ordinal);
@@ -241,35 +245,35 @@ public sealed class Arch7bPostgreSqlTransportProfileTests
         Assert.DoesNotContain("BuildLogicalConnectionString",
             importer, StringComparison.Ordinal);
         Assert.Contains(
-            "ARCH7B_POSTGRESQL_MULTIPLE_DATA_SOURCES_FORBIDDEN",
+            "ARCH7B_POSTGRESQL_MULTIPLE_PINNED_SESSIONS_FORBIDDEN",
             File.ReadAllText(Path.Combine(RepoRoot(), "src",
                 "QQ.Production.Intraday.Infrastructure.PostgreSql",
-                "Arch7bPostgreSqlTransport.cs")),
+                "Arch7bPostgreSqlPinnedSession.cs")),
             StringComparison.Ordinal);
     }
 
     [Fact]
-    public void Fast_wrapper_warms_in_parallel_and_waits_both_gates()
+    public void Fast_wrapper_opens_pinned_session_in_parallel()
     {
         var source = File.ReadAllText(Path.Combine(RepoRoot(), "tools",
             "QQ.Production.Intraday.Tools.Arch7bPositionSnapshotImport",
             "Program.cs"));
 
-        Assert.Contains("var warmTask = runtime.WarmAsync();",
+        Assert.Contains("var openTask = runtime.OpenAsync();",
             source, StringComparison.Ordinal);
         Assert.Contains("var coreTask = Task.Run",
             source, StringComparison.Ordinal);
-        Assert.Contains("await Task.WhenAll(warmTask, coreTask);",
+        Assert.Contains("await Task.WhenAll(openTask, coreTask);",
             source, StringComparison.Ordinal);
-        Assert.Contains("runtime.Authority.EnterPostP2CriticalPath();",
+        Assert.DoesNotContain("EnterPostP2CriticalPath",
             source, StringComparison.Ordinal);
         Assert.Contains(
-            "new Arch7bPositionImportStore(\n    options, target, runtime.Authority)",
+            "new Arch7bPositionImportStore(\n    contextFactory, target, runtime)",
             source.Replace("\r\n", "\n"), StringComparison.Ordinal);
     }
 
     [Fact]
-    public void Store_and_universe_reader_observe_every_logical_checkout()
+    public void Store_and_universe_reader_use_pinned_leases()
     {
         var root = RepoRoot();
         var store = File.ReadAllText(Path.Combine(root, "src",
@@ -281,11 +285,15 @@ public sealed class Arch7bPostgreSqlTransportProfileTests
 
         Assert.Contains("VerifyPostCommitAsync", store,
             StringComparison.Ordinal);
-        Assert.Contains("OpenObservedAsync(context", store,
+        Assert.Contains("session.AcquireAsync", store,
             StringComparison.Ordinal);
-        Assert.Contains("ObserveLogicalCheckout", reader,
+        Assert.Contains("session.AcquireAsync", reader,
             StringComparison.Ordinal);
-        Assert.Contains("CompleteLogicalCheckout", reader,
+        Assert.DoesNotContain("OpenConnectionAsync", store,
+            StringComparison.Ordinal);
+        Assert.DoesNotContain("CloseConnectionAsync", store,
+            StringComparison.Ordinal);
+        Assert.DoesNotContain("ObserveLogicalCheckout", reader,
             StringComparison.Ordinal);
     }
 

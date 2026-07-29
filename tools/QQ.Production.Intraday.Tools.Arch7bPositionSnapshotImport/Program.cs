@@ -1,6 +1,5 @@
 using System.Globalization;
 using System.Text.Json;
-using Microsoft.EntityFrameworkCore;
 using QQ.Production.Intraday.Infrastructure.PostgreSql;
 
 var arguments = Arch7bPositionImportArguments.Parse(args);
@@ -8,17 +7,98 @@ await using var runtime = arguments.BuildRuntime();
 var target = runtime.Target;
 Require(target.TargetFingerprint == arguments.ExpectedTargetFingerprint,
     "ARCH7B_POSITION_IMPORT_TARGET_FINGERPRINT_MISMATCH");
-var warmTask = runtime.WarmAsync();
-var options = new DbContextOptionsBuilder<PmsShadowDbContext>()
-    .UseNpgsql(runtime.DataSource, npgsql => npgsql.SetPostgresVersion(
-        Arch7bBracketedGlobalFlatContract.PostgreSqlMajor, 0))
-    .Options;
+var openTask = runtime.OpenAsync();
+var contextFactory = new Arch7bPostgreSqlPinnedDbContextFactory(runtime);
 var store = new Arch7bPositionImportStore(
-    options, target, runtime.Authority);
+    contextFactory, target, runtime);
+
+if (arguments.Mode == "qualify-pinned-postgresql-session")
+{
+    var openEvidence = await openTask;
+    for (var index = 0; index < 10; index++)
+    {
+        await using var lease = await runtime.AcquireAsync();
+    }
+    var qualification = await store.QualifyDatabaseClockAsync();
+    var universe = await new Arch7bRequiredPmsUniverseReader(
+            contextFactory, target, runtime)
+        .ReadAsync();
+    var qualificationPackage = Arch7bPositionImportPackageReader.Read(
+        arguments.PackageRoot);
+    var historicalFreshness = Arch7bPositionImportFreshnessPolicy.Evaluate(
+        qualificationPackage, qualification.Samples[^1].DatabaseUtc,
+        historicalFixture: true);
+    Require(historicalFreshness.Status ==
+            Arch7bPositionImportContract.HistoricalFixture &&
+            !historicalFreshness.ApplyEligible,
+        "ARCH7B_PINNED_SESSION_HISTORICAL_PLAN_ELIGIBILITY_INVALID");
+    var plan = await store.PlanAsync(
+        qualificationPackage, historicalFreshness);
+    Require(plan.Status is Arch7bPositionImportContract.New or
+            Arch7bPositionImportContract.AlreadyAppliedIdentical,
+        "ARCH7B_PINNED_SESSION_HISTORICAL_PLAN_INVALID");
+    _ = await store.ReadDatabaseTimeAsync();
+    var beforeClose = runtime.Snapshot();
+    await runtime.DisposeAsync();
+    var finalSession = runtime.Snapshot();
+    var output = new
+    {
+        result = "ARCH7B_PINNED_POSTGRESQL_SESSION_QUALIFIED",
+        contract_version =
+            Arch7bPostgreSqlPinnedSessionAuthority.Version,
+        transport_profile_version = runtime.Profile.ContractVersion,
+        selected_profile = runtime.Profile.Profile,
+        pooling = runtime.Profile.Pooling,
+        open_evidence = new
+        {
+            openEvidence.ColdOpenElapsedMilliseconds,
+            openEvidence.BackendProcessId,
+            openEvidence.PostgreSqlVersion,
+            openEvidence.SessionTimeZone,
+            openEvidence.TlsActive,
+            openEvidence.PhysicalOpenCount,
+            openEvidence.PhysicalReconnectCount
+        },
+        session_before_close = SanitizedSession(beforeClose),
+        session_final = SanitizedSession(finalSession),
+        clock = new
+        {
+            qualification.PostgreSqlVersion,
+            qualification.TransactionReadOnly,
+            qualification.SamplesMonotonic,
+            samples = qualification.Samples
+        },
+        universe = new
+        {
+            instrument_count = universe.Instruments.Count,
+            model_count = universe.Models.Count,
+            qubes_count = universe.QubesInputs.Count,
+            mapping_count = universe.Mappings.Count,
+            universe.TransactionReadOnly,
+            universe.PendingModelChanges,
+            universe.RequiredUniverseSha256
+        },
+        historical_plan_result =
+            Arch7bPositionImportContract.HistoricalFixture,
+        historical_plan_idempotency = plan.Status,
+        same_pid_proven = beforeClose.BackendProcessId ==
+            openEvidence.BackendProcessId,
+        no_database_write = true,
+        no_lmax_acquisition = true,
+        no_order = true
+    };
+    Directory.CreateDirectory(arguments.OutputDirectory);
+    var json = JsonSerializer.Serialize(
+        output, Arch7bPositionImportArguments.Json);
+    File.WriteAllText(Path.Combine(arguments.OutputDirectory,
+        "pinned-postgresql-session-qualification.json"), json);
+    Console.WriteLine(json);
+    return;
+}
 
 if (arguments.Mode == "qualify-database-clock")
 {
-    var warmEvidence = await warmTask;
+    var openEvidence = await openTask;
     var qualification = await store.QualifyDatabaseClockAsync();
     var evidence = Arch7bPostgreSqlClockQualificationEvidenceWriter.Write(
         arguments.OutputDirectory, qualification, target);
@@ -46,8 +126,8 @@ if (arguments.Mode == "qualify-database-clock")
         evidence.ManifestSha256,
         evidence.ZipSha256,
         transport_profile_sha256 = runtime.Profile.Sha256,
-        warm_connection = warmEvidence,
-        warm_connection_final = runtime.Authority.Snapshot(),
+        pinned_session = SanitizedSession(openEvidence),
+        pinned_session_final = SanitizedSession(runtime.Snapshot()),
         no_database_write = true,
         no_armed_state = true,
         no_owner_lock = true,
@@ -71,10 +151,9 @@ if (arguments.Mode == "run-fresh-position-import-fast-path")
     var coreTask = Task.Run(() =>
         Arch7bCoreBracketEvidencePackageReader.Read(
             arguments.EvidenceRoot, expectations));
-    await Task.WhenAll(warmTask, coreTask);
+    await Task.WhenAll(openTask, coreTask);
     var core = await coreTask;
-    var warmEvidence = await warmTask;
-    runtime.Authority.EnterPostP2CriticalPath();
+    var openEvidence = await openTask;
     var timeline = new Arch7bFreshPositionImportAppendOnlyTimeline(
         Path.Combine(arguments.OutputDirectory, "append-only-timeline"));
     var currentStage = "PREARMED_VALIDATION";
@@ -93,7 +172,7 @@ if (arguments.Mode == "run-fresh-position-import-fast-path")
 
         currentStage = "RDS_UNIVERSE_READ";
         var universe = await new Arch7bRequiredPmsUniverseReader(
-                options, target, runtime.Authority)
+                contextFactory, target, runtime)
             .ReadAsync();
         Require(universe.SourceIngestionId ==
                 arguments.ExpectedSourceIngestionId,
@@ -162,8 +241,8 @@ if (arguments.Mode == "run-fresh-position-import-fast-path")
                 Arch7bFreshPositionImportFastPathContract
                     .SmokeQualificationStatus,
             transport_profile_sha256 = runtime.Profile.Sha256,
-            warm_connection = warmEvidence,
-            warm_connection_final = runtime.Authority.Snapshot(),
+            pinned_session = SanitizedSession(openEvidence),
+            pinned_session_final = SanitizedSession(runtime.Snapshot()),
             no_order = true,
             no_fix = true,
             no_fill = true,
@@ -189,7 +268,7 @@ if (arguments.Mode == "run-fresh-position-import-fast-path")
     }
 }
 
-_ = await warmTask;
+_ = await openTask;
 
 if (arguments.Mode == "arm-import")
 {
@@ -304,6 +383,30 @@ static void Require(bool condition, string code)
     if (!condition) throw new InvalidDataException(code);
 }
 
+static object SanitizedSession(
+    Arch7bPostgreSqlPinnedSessionEvidence evidence) => new
+    {
+        evidence.ContractVersion,
+        evidence.TransportProfileVersion,
+        evidence.SessionOpenedAtDiagnosticUtc,
+        evidence.ColdOpenElapsedMilliseconds,
+        evidence.BackendProcessId,
+        evidence.PostgreSqlVersion,
+        evidence.SessionTimeZone,
+        evidence.TlsActive,
+        evidence.TransportProfileSha256,
+        evidence.SessionLeaseCount,
+        evidence.MaximumConcurrentLeases,
+        evidence.MaximumLeaseAcquisitionMilliseconds,
+        evidence.TransactionCount,
+        evidence.PhysicalOpenCount,
+        evidence.PhysicalReconnectCount,
+        evidence.CloseCount,
+        evidence.ConnectionLossObserved,
+        evidence.ConnectionState,
+        evidence.EvidenceSha256
+    };
+
 public sealed class Arch7bPositionImportArguments
 {
     public static JsonSerializerOptions Json { get; } =
@@ -361,7 +464,8 @@ public sealed class Arch7bPositionImportArguments
         Require(args.Length > 0 &&
                 args[0] is "arm-import" or "publish-ready" or
                     "plan-import" or "apply-import" or "qualify-database-clock" or
-                    "run-fresh-position-import-fast-path",
+                    "run-fresh-position-import-fast-path" or
+                    "qualify-pinned-postgresql-session",
             "ARCH7B_POSITION_IMPORT_MODE_REQUIRED");
         Require(args.Contains("--no-order", StringComparer.Ordinal),
             "ARCH7B_POSITION_IMPORT_NO_ORDER_REQUIRED");
@@ -401,7 +505,15 @@ public sealed class Arch7bPositionImportArguments
                 Arch7bBracketedGlobalFlatContract.TargetProfile,
             "ARCH7B_POSITION_IMPORT_PROFILE_MISMATCH");
         _ = parsed.ExpectedTargetFingerprint;
-        if (parsed.Mode == "qualify-database-clock")
+        if (parsed.Mode == "qualify-pinned-postgresql-session")
+        {
+            Require(!parsed.Apply && parsed.HistoricalFixture,
+                "ARCH7B_PINNED_SESSION_QUALIFICATION_FLAGS_INVALID");
+            _ = parsed.PackageRoot;
+            _ = parsed.OutputDirectory;
+            return parsed;
+        }
+        else if (parsed.Mode == "qualify-database-clock")
         {
             Require(!parsed.Apply && !parsed.HistoricalFixture,
                 "ARCH7B_POSITION_IMPORT_CLOCK_QUALIFICATION_FLAGS_INVALID");
@@ -471,9 +583,9 @@ public sealed class Arch7bPositionImportArguments
         return parsed;
     }
 
-    public Arch7bPostgreSqlRuntime BuildRuntime()
+    public Arch7bPostgreSqlPinnedSession BuildRuntime()
     {
-        Arch7bPostgreSqlTransportProfileContract.ValidateCommandLine(
+        Arch7bPostgreSqlPinnedTransportProfileContract.ValidateCommandLine(
             values.Keys, Required("--host"), Integer("--port"));
         var reference = Required("--connection-secret-reference");
         Require(reference.StartsWith("env:", StringComparison.Ordinal),
@@ -484,6 +596,8 @@ public sealed class Arch7bPositionImportArguments
         var applicationName = Mode switch
         {
             "arm-import" => "QQ_ARCH7B_POSITION_IMPORT_ARM_READONLY",
+            "qualify-pinned-postgresql-session" =>
+                "QQ_ARCH7B_PINNED_SESSION_QUALIFICATION_READONLY",
             "qualify-database-clock" =>
                 "QQ_ARCH7B_POSTGRESQL_CLOCK_QUALIFICATION_READONLY",
             "publish-ready" => "QQ_ARCH7B_POSITION_IMPORT_READY_READONLY",
@@ -496,8 +610,8 @@ public sealed class Arch7bPositionImportArguments
             "run-fresh-position-import-fast-path"
             ? Arch7bPostgreSqlAccessMode.ApplyAppendOnly
             : Arch7bPostgreSqlAccessMode.ReadOnly;
-        return Arch7bPostgreSqlDataSourceFactory.Create(
-            Arch7bPostgreSqlTransportProfile.DirectPrimary,
+        return Arch7bPostgreSqlPinnedSessionFactory.Create(
+            Arch7bPostgreSqlPinnedTransportProfile.DirectPrimary,
             Required("--role"),
             password!,
             applicationName,

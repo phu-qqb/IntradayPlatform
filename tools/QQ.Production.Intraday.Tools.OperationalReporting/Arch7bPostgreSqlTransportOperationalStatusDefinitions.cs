@@ -7,8 +7,54 @@ public static class Arch7bPostgreSqlTransportOperationalStatusDefinitions
     public static IReadOnlyList<OperationalStatusCodeDefinition> All { get; } =
     [
         Code(
-            Arch7bPostgreSqlTransportProfileContract.ColdTimeoutMismatch,
+            Arch7bPostgreSqlPinnedTransportProfileContract.ColdTimeoutMismatch,
             "The cold Npgsql timeout differs from the qualified 20-second direct profile."),
+        CodeV2("ARCH7B_POSTGRESQL_PINNED_SESSION_POOLING_FORBIDDEN",
+            "Pooling is enabled for the selected pinned-session profile."),
+        CodeV2("ARCH7B_POSTGRESQL_COMMAND_TIMEOUT_MISMATCH",
+            "The pinned-session command timeout differs from 30 seconds."),
+        CodeV2("ARCH7B_POSTGRESQL_MULTIPLE_PINNED_SESSIONS_FORBIDDEN",
+            "More than one pinned PostgreSQL session was created in the process."),
+        CodeV2(Arch7bPostgreSqlPinnedSessionAuthority.SecondOpen,
+            "The pinned physical connection was opened more than once."),
+        CodeV2(Arch7bPostgreSqlPinnedSessionAuthority.LeaseContention,
+            "The local sequential-session lease exceeded 100 milliseconds."),
+        CodeV2(Arch7bPostgreSqlPinnedSessionAuthority.SessionLost,
+            "The pinned physical PostgreSQL session was lost; reconnect is forbidden."),
+        CodeV2("ARCH7B_POSTGRESQL_PINNED_SESSION_NOT_OPEN",
+            "A local lease was requested before the pinned session opened."),
+        CodeV2("ARCH7B_POSTGRESQL_PINNED_SESSION_LEASE_INVALID",
+            "A context or transaction used a foreign or disposed session lease."),
+        CodeV2("ARCH7B_POSTGRESQL_PINNED_SESSION_CLOSE_STATE_INVALID",
+            "The pinned physical connection close was not terminal and unique."),
+        CodeV2("ARCH7B_POSTGRESQL_PINNED_SESSION_CLOSE_WITH_ACTIVE_LEASE",
+            "The pinned physical connection was closed with active work."),
+        CodeV2(Arch7bPostgreSqlPinnedSessionAuthority.IdentityRowMissing,
+            "The pinned PostgreSQL identity query returned no row."),
+        CodeV2(Arch7bPostgreSqlPinnedSessionAuthority.DatabaseMismatch,
+            "The pinned session reached a different database."),
+        CodeV2(Arch7bPostgreSqlPinnedSessionAuthority.UserMismatch,
+            "The pinned session authenticated a different role."),
+        CodeV2(Arch7bPostgreSqlPinnedSessionAuthority.VersionMismatch,
+            "The pinned session reached a different PostgreSQL major."),
+        CodeV2(
+            Arch7bPostgreSqlPinnedSessionAuthority.BackendProcessIdMismatch,
+            "The SQL backend PID differs from the physical connection PID."),
+        CodeV2(
+            Arch7bPostgreSqlPinnedSessionAuthority.ContextConnectionMismatch,
+            "An EF context is not bound to the pinned physical connection."),
+        CodeV2("ARCH7B_POSTGRESQL_PINNED_TRANSACTION_WITHOUT_LEASE",
+            "A transaction was started without the active pinned lease."),
+        CodeV2("ARCH7B_POSTGRESQL_PINNED_SESSION_EVIDENCE_UNAVAILABLE",
+            "Session evidence was requested before the physical open completed."),
+        CodeV2("ARCH7B_POSTGRESQL_PINNED_SESSION_LEASE_STATE_INVALID",
+            "A pinned lease release did not match the active lease."),
+        CodeV2("ARCH7B_POSTGRESQL_PINNED_DATABASE_TIME_NOT_UTC",
+            "The pinned PostgreSQL clock value is not UTC."),
+        CodeV2("ARCH7B_POSTGRESQL_PINNED_TIMEZONE_NOT_UTC",
+            "The pinned PostgreSQL session timezone is not UTC."),
+        CodeV2("ARCH7B_POSTGRESQL_PINNED_TARGET_FINGERPRINT_INVALID",
+            "The pinned target fingerprint is not a full SHA-256."),
         Code("ARCH7B_POSTGRESQL_TRANSPORT_CONTRACT_MISMATCH",
             "The requested transport contract version is not authoritative."),
         Code("ARCH7B_POSTGRESQL_TRANSPORT_PROFILE_MISMATCH",
@@ -140,4 +186,24 @@ public static class Arch7bPostgreSqlTransportOperationalStatusDefinitions
             Supersedes: null,
             IntroducedByContractVersion:
                 Arch7bPostgreSqlTransportProfile.Version);
+
+    private static OperationalStatusCodeDefinition CodeV2(
+        string exactCode,
+        string description) =>
+        new(
+            exactCode,
+            "ARCH7B_POSTGRESQL_PINNED_SESSION",
+            "SECURITY",
+            OperationalBreakSeverity.Critical,
+            "PMS_SHADOW",
+            description,
+            $"Stop the process and inspect {exactCode}; do not reopen or select a fallback transport.",
+            AutomaticResolutionPossible: false,
+            BlocksTrading: true,
+            BlocksAccounting: true,
+            EvidenceRequirements:
+                "Exact transport profile SHA, pinned backend PID, physical-open count, lease timeline and terminal close.",
+            Supersedes: null,
+            IntroducedByContractVersion:
+                Arch7bPostgreSqlPinnedTransportProfile.Version);
 }

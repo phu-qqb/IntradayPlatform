@@ -1,6 +1,5 @@
 using System.Globalization;
 using System.Text.Json;
-using Microsoft.EntityFrameworkCore;
 using QQ.Production.Intraday.Infrastructure.PostgreSql;
 
 var arguments = Arch7bGlobalFlatArguments.Parse(args);
@@ -14,24 +13,18 @@ await using var runtime = arguments.BuildRuntime();
 var target = runtime.Target;
 Require(target.TargetFingerprint == arguments.ExpectedTargetFingerprint,
     "ARCH7B_PMS_TARGET_FINGERPRINT_MISMATCH");
-var warmTask = runtime.WarmAsync();
+var openTask = runtime.OpenAsync();
 var coreTask = Task.Run(() =>
     timing.Measure("CORE_PACKAGE_VALIDATION", () =>
         Arch7bCoreBracketEvidencePackageReader.Read(
             arguments.EvidenceRoot, expectations)));
-await Task.WhenAll(warmTask, coreTask);
+await Task.WhenAll(openTask, coreTask);
 var core = await coreTask;
-var warmEvidence = await warmTask;
-runtime.Authority.EnterPostP2CriticalPath();
-var options = new DbContextOptionsBuilder<PmsShadowDbContext>()
-    .UseNpgsql(runtime.DataSource, npgsql =>
-        npgsql.SetPostgresVersion(
-            Arch7bBracketedGlobalFlatContract.PostgreSqlMajor, 0))
-    .UseQueryTrackingBehavior(QueryTrackingBehavior.NoTracking)
-    .Options;
+var openEvidence = await openTask;
+var contextFactory = new Arch7bPostgreSqlPinnedDbContextFactory(runtime);
 var universe = await timing.MeasureAsync("RDS_UNIVERSE_READ", () =>
     new Arch7bRequiredPmsUniverseReader(
-        options, target, runtime.Authority).ReadAsync());
+        contextFactory, target, runtime).ReadAsync());
 var snapshot = timing.Measure("SNAPSHOT_BUILD", () =>
     Arch7bGlobalFlatPositionSnapshotBuilder.Build(core, universe));
 
@@ -81,8 +74,8 @@ if (arguments.FastPath)
         transaction_read_only = universe.TransactionReadOnly,
         pending_model_changes = universe.PendingModelChanges,
         transport_profile_sha256 = runtime.Profile.Sha256,
-        warm_connection = warmEvidence,
-        warm_connection_final = runtime.Authority.Snapshot(),
+        pinned_session = SanitizedSession(openEvidence),
+        pinned_session_final = SanitizedSession(runtime.Snapshot()),
         zip_executed = false,
         projection_bundle_written = false,
         no_order = true,
@@ -182,14 +175,38 @@ Console.WriteLine(JsonSerializer.Serialize(new
     transaction_read_only = universe.TransactionReadOnly,
     pending_model_changes = universe.PendingModelChanges,
     transport_profile_sha256 = runtime.Profile.Sha256,
-    warm_connection = warmEvidence,
-    warm_connection_final = runtime.Authority.Snapshot(),
+    pinned_session = SanitizedSession(openEvidence),
+    pinned_session_final = SanitizedSession(runtime.Snapshot()),
     no_order = true,
     no_fix = true,
     no_database_write = true,
     no_account_api = true,
     no_databento = true
 }, JsonOptions()));
+
+static object SanitizedSession(
+    Arch7bPostgreSqlPinnedSessionEvidence evidence) => new
+    {
+        evidence.ContractVersion,
+        evidence.TransportProfileVersion,
+        evidence.SessionOpenedAtDiagnosticUtc,
+        evidence.ColdOpenElapsedMilliseconds,
+        evidence.BackendProcessId,
+        evidence.PostgreSqlVersion,
+        evidence.SessionTimeZone,
+        evidence.TlsActive,
+        evidence.TransportProfileSha256,
+        evidence.SessionLeaseCount,
+        evidence.MaximumConcurrentLeases,
+        evidence.MaximumLeaseAcquisitionMilliseconds,
+        evidence.TransactionCount,
+        evidence.PhysicalOpenCount,
+        evidence.PhysicalReconnectCount,
+        evidence.CloseCount,
+        evidence.ConnectionLossObserved,
+        evidence.ConnectionState,
+        evidence.EvidenceSha256
+    };
 
 static JsonSerializerOptions JsonOptions() => new()
 {
@@ -285,9 +302,9 @@ public sealed class Arch7bGlobalFlatArguments
         return parsed;
     }
 
-    public Arch7bPostgreSqlRuntime BuildRuntime()
+    public Arch7bPostgreSqlPinnedSession BuildRuntime()
     {
-        Arch7bPostgreSqlTransportProfileContract.ValidateCommandLine(
+        Arch7bPostgreSqlPinnedTransportProfileContract.ValidateCommandLine(
             values.Keys, Required("--host"), Integer("--port"));
         var reference = Required("--connection-secret-reference");
         Require(reference.StartsWith("env:", StringComparison.Ordinal),
@@ -295,8 +312,8 @@ public sealed class Arch7bGlobalFlatArguments
         var password = Environment.GetEnvironmentVariable(reference[4..]);
         Require(!string.IsNullOrWhiteSpace(password),
             "ARCH7B_SECRET_VALUE_UNAVAILABLE");
-        return Arch7bPostgreSqlDataSourceFactory.Create(
-            Arch7bPostgreSqlTransportProfile.DirectPrimary,
+        return Arch7bPostgreSqlPinnedSessionFactory.Create(
+            Arch7bPostgreSqlPinnedTransportProfile.DirectPrimary,
             Required("--role"),
             password!,
             FastPath

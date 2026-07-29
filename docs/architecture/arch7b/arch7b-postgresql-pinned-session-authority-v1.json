@@ -1,0 +1,42 @@
+{
+  "contract_version": "arch7b_postgresql_pinned_session_authority_v1",
+  "topology": [
+    "one NpgsqlDataSource",
+    "one NpgsqlConnection",
+    "one authenticated backend ProcessID",
+    "sequential local leases",
+    "one terminal close"
+  ],
+  "open": {
+    "maximum_count": 1,
+    "maximum_cold_elapsed_seconds": 20,
+    "identity_and_tls_qualified_before_use": true
+  },
+  "lease": {
+    "primitive": "SemaphoreSlim(1,1)",
+    "maximum_acquisition_milliseconds": 100,
+    "maximum_concurrent_leases": 1,
+    "blocker": "ARCH7B_POSTGRESQL_PINNED_SESSION_LEASE_CONTENTION",
+    "network_work_included": false
+  },
+  "ef_core": {
+    "context_owns_connection": false,
+    "context_opens_connection": false,
+    "context_closes_connection": false,
+    "maximum_active_transactions": 1
+  },
+  "connection_loss": {
+    "blocker": "ARCH7B_POST_P2_PINNED_DATABASE_SESSION_LOST",
+    "reopen_allowed": false,
+    "second_session_allowed": false,
+    "fallback_allowed": false
+  },
+  "economic_slos_unchanged": {
+    "p2_to_package_seconds": 60,
+    "p2_to_ready_seconds": 90,
+    "p2_to_plan_seconds": 120,
+    "p2_to_apply_start_seconds": 150,
+    "freshness_seconds": 300
+  },
+  "no_order": true
+}
