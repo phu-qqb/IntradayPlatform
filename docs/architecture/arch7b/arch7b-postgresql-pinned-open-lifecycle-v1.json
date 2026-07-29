@@ -1,0 +1,46 @@
+{
+  "contract_version": "arch7b_postgresql_pinned_open_lifecycle_v1",
+  "state_machines": [
+    [
+      "CREATED",
+      "OPENING",
+      "OPEN",
+      "CLEANUP",
+      "COMPLETED"
+    ],
+    [
+      "CREATED",
+      "OPENING",
+      "OPEN_FAILED",
+      "CLEANUP",
+      "COMPLETED"
+    ],
+    [
+      "CREATED",
+      "PRECONDITION_FAILED_BEFORE_OPEN"
+    ],
+    [
+      "CREATED",
+      "OPENING",
+      "PRECONDITION_FAILED_DURING_OPEN",
+      "OPEN_CANCELLED_OR_SETTLED",
+      "CLEANUP",
+      "COMPLETED"
+    ]
+  ],
+  "npgsql_connection_timeout_seconds": 20,
+  "external_hard_deadline_seconds": 25,
+  "open_cancellation_grace_seconds": 2,
+  "primary_failure_authority": "FIRST_EXCEPTION_OBSERVED_MONOTONICALLY_VIA_EXCEPTION_DISPATCH_INFO",
+  "cleanup_authority": "CLEANUP_NEVER_REPLACES_A_PRIMARY_FAILURE",
+  "connecting_cleanup": {
+    "cancel_linked_open_token": true,
+    "wait_for_open_settlement_seconds": 2,
+    "close_or_dispose_while_connecting": false,
+    "terminal_code": "ARCH7B_PINNED_POSTGRESQL_CONNECTING_CLEANUP_DEFERRED_TO_PROCESS_EXIT",
+    "process_exit_required_for_handle_cleanup": true
+  },
+  "failure_evidence": "pinned-open-lifecycle-failure.json",
+  "secret_material_allowed": false,
+  "connection_string_allowed": false
+}

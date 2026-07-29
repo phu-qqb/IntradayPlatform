@@ -1,6 +1,7 @@
 using System.Data;
 using System.Diagnostics;
 using System.Globalization;
+using System.Runtime.ExceptionServices;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -547,12 +548,18 @@ public sealed class Arch7bPostgreSqlPinnedSessionLease : IAsyncDisposable
     }
 }
 
-public sealed class Arch7bPostgreSqlPinnedSession : IAsyncDisposable
+public sealed class Arch7bPostgreSqlPinnedSession :
+    IAsyncDisposable,
+    IArch7bPostgreSqlPinnedOpenRuntime
 {
     private static int processSessionCount;
     private readonly NpgsqlDataSource dataSource;
     private readonly NpgsqlConnection connection;
     private readonly string expectedUsername;
+    private readonly TaskCompletionSource openSettled =
+        new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private CancellationTokenSource? activeOpenCancellation;
+    private ExceptionDispatchInfo? primaryOpenFailure;
     private int openStarted;
     private int disposed;
 
@@ -578,6 +585,7 @@ public sealed class Arch7bPostgreSqlPinnedSession : IAsyncDisposable
     public PmsShadowPostgreSqlTarget Target { get; }
     public Arch7bPostgreSqlPinnedTransportProfile Profile { get; }
     public Arch7bPostgreSqlPinnedSessionAuthority Authority { get; }
+    public ConnectionState ConnectionState => connection.State;
 
     public async Task<Arch7bPostgreSqlPinnedSessionEvidence> OpenAsync(
         CancellationToken cancellationToken = default)
@@ -587,10 +595,12 @@ public sealed class Arch7bPostgreSqlPinnedSession : IAsyncDisposable
                 Arch7bPostgreSqlPinnedSessionAuthority.SecondOpen);
         var startedUtc = DateTimeOffset.UtcNow;
         var stopwatch = Stopwatch.StartNew();
-        await connection.OpenAsync(cancellationToken);
-        stopwatch.Stop();
+        activeOpenCancellation = CancellationTokenSource.CreateLinkedTokenSource(
+            cancellationToken);
         try
         {
+            await connection.OpenAsync(activeOpenCancellation.Token);
+            stopwatch.Stop();
             await using var command = connection.CreateCommand();
             command.CommandText = """
                 SELECT current_database(),
@@ -655,11 +665,15 @@ public sealed class Arch7bPostgreSqlPinnedSession : IAsyncDisposable
                 tlsActive);
             return Authority.Snapshot(connection.State);
         }
-        catch
+        catch (Exception exception)
         {
-            if (connection.State == ConnectionState.Open)
-                await connection.CloseAsync();
+            stopwatch.Stop();
+            primaryOpenFailure = ExceptionDispatchInfo.Capture(exception);
             throw;
+        }
+        finally
+        {
+            openSettled.TrySetResult();
         }
     }
 
@@ -714,23 +728,102 @@ public sealed class Arch7bPostgreSqlPinnedSession : IAsyncDisposable
             Arch7bPostgreSqlPinnedSessionAuthority.SessionLost);
     }
 
-    public async ValueTask DisposeAsync()
+    public async Task<Arch7bPostgreSqlPinnedCleanupResult> CompleteAsync(
+        Task openTask,
+        CancellationTokenSource openCancellation,
+        Exception? primaryFailure,
+        TimeSpan cancellationGrace)
     {
-        if (Interlocked.Exchange(ref disposed, 1) != 0) return;
+        if (Interlocked.Exchange(ref disposed, 1) != 0)
+            return new(
+                "ALREADY_COMPLETED",
+                connection.State,
+                connection.State,
+                false,
+                null,
+                false,
+                false);
+        var before = connection.State;
+        Exception? cleanupFailure = null;
+        var processExitRequired = false;
         try
         {
+            if (connection.State == ConnectionState.Connecting)
+            {
+                openCancellation.Cancel();
+                activeOpenCancellation?.Cancel();
+                try
+                {
+                    await openSettled.Task.WaitAsync(cancellationGrace);
+                }
+                catch (TimeoutException)
+                {
+                }
+                catch
+                {
+                    // The supervisor preserves the primary open failure.
+                }
+                if (connection.State == ConnectionState.Connecting)
+                {
+                    processExitRequired = true;
+                    return new(
+                        Arch7bPostgreSqlPinnedOpenLifecycleContract
+                            .ConnectingCleanupDeferred,
+                        before,
+                        connection.State,
+                        true,
+                        null,
+                        primaryFailure is not null ||
+                            primaryOpenFailure is not null,
+                        true);
+                }
+            }
             if (connection.State == ConnectionState.Open)
             {
                 await connection.CloseAsync();
                 Authority.ObserveClose();
             }
+            await connection.DisposeAsync();
+            await dataSource.DisposeAsync();
+        }
+        catch (Exception exception)
+        {
+            cleanupFailure = exception;
+            if (primaryFailure is null && primaryOpenFailure is null)
+                throw new InvalidDataException(
+                    Arch7bPostgreSqlPinnedOpenLifecycleContract
+                        .CleanupFailedWithoutPrimary,
+                    exception);
         }
         finally
         {
-            await connection.DisposeAsync();
-            await dataSource.DisposeAsync();
-            Interlocked.Exchange(ref processSessionCount, 0);
+            if (!processExitRequired)
+            {
+                activeOpenCancellation?.Dispose();
+                Interlocked.Exchange(ref processSessionCount, 0);
+            }
         }
+        return new(
+            cleanupFailure is null ? "COMPLETED" :
+                "CLEANUP_FAILURE_SUPPRESSED",
+            before,
+            connection.State,
+            true,
+            cleanupFailure?.GetType().FullName,
+            cleanupFailure is not null &&
+                (primaryFailure is not null ||
+                 primaryOpenFailure is not null),
+            false);
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        using var cancellation = new CancellationTokenSource();
+        _ = await CompleteAsync(
+            openSettled.Task,
+            activeOpenCancellation ?? cancellation,
+            primaryOpenFailure?.SourceException,
+            Arch7bPostgreSqlPinnedOpenLifecycleContract.CancellationGrace);
     }
 
     private static void Require(bool condition, string code)

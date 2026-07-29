@@ -314,12 +314,17 @@ public sealed class Arch7bPostgreSqlPinnedSessionTests
                  })
         {
             var source = File.ReadAllText(path);
-            Assert.Contains("var openTask = runtime.OpenAsync();",
+            Assert.Contains(
+                "var supervisor = new Arch7bPostgreSqlPinnedOpenSupervisor(",
+                source, StringComparison.Ordinal);
+            Assert.Contains("var openTask = supervisor.StartOpen();",
                 source, StringComparison.Ordinal);
             Assert.Contains("var coreTask = Task.Run",
                 source, StringComparison.Ordinal);
-            Assert.Contains("Task.WhenAll(openTask, coreTask)",
+            Assert.Contains("supervisor.WaitForOpenAndPeerAsync(coreTask)",
                 source, StringComparison.Ordinal);
+            Assert.DoesNotContain("await using var runtime", source,
+                StringComparison.Ordinal);
             Assert.DoesNotContain("WarmAsync", source,
                 StringComparison.Ordinal);
             Assert.DoesNotContain("runtime.DataSource", source,
