@@ -301,7 +301,9 @@ public sealed record Arch7bRepositoryState(
 public interface IArch7bRepositoryStateAuthority
 {
     Arch7bRepositoryState Resolve(
-        string repositoryRoot, string expectedBuildCommit);
+        string repositoryRoot,
+        string expectedBuildCommit,
+        Arch7bGitExecutableAuthority gitAuthority);
 }
 
 public sealed class GitArch7bRepositoryStateAuthority :
@@ -311,55 +313,36 @@ public sealed class GitArch7bRepositoryStateAuthority :
         "institutional_repository_state_authority_v1";
 
     public Arch7bRepositoryState Resolve(
-        string repositoryRoot, string expectedBuildCommit)
+        string repositoryRoot,
+        string expectedBuildCommit,
+        Arch7bGitExecutableAuthority gitAuthority)
     {
         var root = Path.GetFullPath(repositoryRoot);
-        var actualRoot = Run(root, "rev-parse", "--show-toplevel");
-        var head = Run(root, "rev-parse", "HEAD");
-        var status = Run(root,
-            ["status", "--porcelain=v1", "--untracked-files=all"],
-            allowEmpty: true);
-        var clean = string.IsNullOrWhiteSpace(status);
+        var git = new Arch7bGitCommandRunner(gitAuthority);
+        var actualRoot = git.Run(root, "rev-parse", "--show-toplevel");
+        var head = git.Run(root, "rev-parse", "HEAD");
+        var remote = git.Run(root, "remote", "get-url", "origin");
+        var status = git.RunAllowEmpty(root,
+            "status", "--porcelain=v1", "--untracked-files=all");
+        var worktreeDiff = git.RunAllowEmpty(
+            root, "diff", "--no-ext-diff");
+        var indexDiff = git.RunAllowEmpty(
+            root, "diff", "--cached", "--no-ext-diff");
+        var worktreeClean = string.IsNullOrWhiteSpace(status) &&
+                            string.IsNullOrWhiteSpace(worktreeDiff);
+        var indexClean = string.IsNullOrWhiteSpace(indexDiff);
         if (!string.Equals(
                 Path.GetFullPath(actualRoot), root,
                 StringComparison.OrdinalIgnoreCase) ||
             !GitCommitIdentityContract.IsValid(head, "sha1") ||
-            head != expectedBuildCommit || !clean)
+            head != expectedBuildCommit ||
+            remote != Arch7bGitExecutableAuthorityContract
+                .ExpectedRepositoryRemote ||
+            !worktreeClean || !indexClean)
             throw new InvalidDataException(
                 "ARCH7B_POSITION_IMPORT_REPOSITORY_STATE_MISMATCH");
         return new(ContractVersion, root, head, expectedBuildCommit,
             IndexClean: true, WorktreeClean: true);
-    }
-
-    private static string Run(
-        string root, params string[] arguments) =>
-        Run(root, arguments, allowEmpty: false);
-
-    private static string Run(
-        string root, string[] arguments, bool allowEmpty)
-    {
-        using var process = new Process
-        {
-            StartInfo = new("git")
-            {
-                WorkingDirectory = root,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true
-            }
-        };
-        foreach (var argument in arguments)
-            process.StartInfo.ArgumentList.Add(argument);
-        process.Start();
-        var output = process.StandardOutput.ReadToEnd().Trim();
-        var error = process.StandardError.ReadToEnd();
-        process.WaitForExit();
-        if (process.ExitCode != 0 || (!allowEmpty && output.Length == 0))
-            throw new InvalidDataException(
-                Arch7bPositionImportContract.RepositoryStateMismatch +
-                " " + error.Trim());
-        return output;
     }
 }
 

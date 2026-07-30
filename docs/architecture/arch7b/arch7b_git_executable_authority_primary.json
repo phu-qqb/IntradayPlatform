@@ -1,0 +1,17 @@
+{
+  "contract_version": "arch7b_git_executable_authority_v1",
+  "execution_host_instance_id": "i-05535ebe6ce80a57b",
+  "execution_host_name": "EC2AMAZ-SK6JMFA",
+  "git_executable_path": "D:\\QQFund\\ARCH7B\\runtime\\mingit\\cmd\\git.exe",
+  "git_executable_sha256": "7b7971dd13f0c3a284e538601f2f9770b3a87dfaccb5fb52d68141c67ed22364",
+  "git_version": "git version 2.55.0.windows.3",
+  "git_architecture": "x64",
+  "git_authenticode_status": "Valid",
+  "expected_repository_remote": "https://github.com/phu-qqb/IntradayPlatform.git",
+  "worktree_clean_required": true,
+  "index_clean_required": true,
+  "use_shell_execute": false,
+  "shell_used": false,
+  "ambient_path_used": false,
+  "command_timeout_seconds": 10
+}

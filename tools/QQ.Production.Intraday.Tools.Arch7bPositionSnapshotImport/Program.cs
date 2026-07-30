@@ -4,9 +4,26 @@ using System.Text.Json;
 using QQ.Production.Intraday.Infrastructure.PostgreSql;
 
 var arguments = Arch7bPositionImportArguments.Parse(args);
+if (arguments.Mode == "qualify-repository-authority")
+{
+    var git = arguments.BuildGitAuthority();
+    var repository = new GitArch7bRepositoryStateAuthority().Resolve(
+        arguments.RepositoryRoot, arguments.BuildCommit, git);
+    Require(repository.HeadCommit == arguments.ExpectedRepositoryHead,
+        "ARCH7B_POSITION_IMPORT_REPOSITORY_STATE_MISMATCH");
+    var evidence = Arch7bRepositoryAuthorityEvidenceWriter.Write(
+        arguments.OutputDirectory, git, repository);
+    Console.WriteLine(JsonSerializer.Serialize(
+        evidence, Arch7bPositionImportArguments.Json));
+    return;
+}
+
+var gitAuthority = arguments.RequiresRepository
+    ? arguments.BuildGitAuthority()
+    : null;
 var prevalidatedRepository = arguments.RequiresRepository
     ? new GitArch7bRepositoryStateAuthority().Resolve(
-        arguments.RepositoryRoot, arguments.BuildCommit)
+        arguments.RepositoryRoot, arguments.BuildCommit, gitAuthority!)
     : null;
 var runtime = arguments.BuildRuntime();
 var target = runtime.Target;
@@ -456,6 +473,16 @@ public sealed class Arch7bPositionImportArguments
     public string RepositoryRoot => Path.GetFullPath(
         Required("--repository-root"));
     public string BuildCommit => RequiredSha("--build-commit", 40);
+    public string ExpectedRepositoryHead =>
+        RequiredSha("--expected-repository-head", 40);
+    public string GitExecutable =>
+        values.GetValueOrDefault("--git-executable")
+        ?? throw new InvalidDataException(
+            Arch7bGitExecutableAuthorityContract.ArgumentRequired);
+    public string ExpectedGitSha256 =>
+        RequiredSha("--expected-git-sha256");
+    public string ExpectedGitVersion =>
+        Required("--expected-git-version");
     public string ExpectedTargetFingerprint =>
         RequiredSha("--expected-target-fingerprint");
     public string EvidenceRoot => Required("--evidence-root");
@@ -481,7 +508,8 @@ public sealed class Arch7bPositionImportArguments
     public string FutureAuthorizationId => Required("--future-authorization-id");
     public bool RequiresRepository =>
         Mode is not "qualify-pinned-postgresql-session" and
-            not "qualify-database-clock";
+            not "qualify-database-clock" and
+            not "qualify-repository-authority";
     public string LifecycleEvidenceDirectory => Mode switch
     {
         "arm-import" => ParentDirectory(ArmedStatePath),
@@ -500,8 +528,9 @@ public sealed class Arch7bPositionImportArguments
         Require(args.Length > 0 &&
                 args[0] is "arm-import" or "publish-ready" or
                     "plan-import" or "apply-import" or "qualify-database-clock" or
-                    "run-fresh-position-import-fast-path" or
-                    "qualify-pinned-postgresql-session",
+                    "qualify-pinned-postgresql-session" or
+                    "qualify-repository-authority" or
+                    "run-fresh-position-import-fast-path",
             "ARCH7B_POSITION_IMPORT_MODE_REQUIRED");
         Require(args.Contains("--no-order", StringComparer.Ordinal),
             "ARCH7B_POSITION_IMPORT_NO_ORDER_REQUIRED");
@@ -525,6 +554,22 @@ public sealed class Arch7bPositionImportArguments
         }
 
         var parsed = new Arch7bPositionImportArguments(args[0], values, flags);
+        if (parsed.Mode == "qualify-repository-authority")
+        {
+            Require(!parsed.Apply && !parsed.HistoricalFixture,
+                "ARCH7B_REPOSITORY_AUTHORITY_QUALIFICATION_FLAGS_INVALID");
+            _ = parsed.RepositoryRoot;
+            _ = parsed.BuildCommit;
+            _ = parsed.ExpectedRepositoryHead;
+            _ = parsed.GitExecutable;
+            _ = parsed.ExpectedGitSha256;
+            _ = parsed.ExpectedGitVersion;
+            _ = parsed.OutputDirectory;
+            Require(parsed.BuildCommit == parsed.ExpectedRepositoryHead,
+                "ARCH7B_POSITION_IMPORT_REPOSITORY_STATE_MISMATCH");
+            return parsed;
+        }
+
         Require(parsed.Required("--expected-environment") ==
                 Arch7bBracketedGlobalFlatContract.TargetEnvironment,
             "ARCH7B_POSITION_IMPORT_ENVIRONMENT_NOT_TEST");
@@ -563,6 +608,12 @@ public sealed class Arch7bPositionImportArguments
         {
             _ = parsed.RepositoryRoot;
             _ = parsed.BuildCommit;
+            _ = parsed.ExpectedRepositoryHead;
+            _ = parsed.GitExecutable;
+            _ = parsed.ExpectedGitSha256;
+            _ = parsed.ExpectedGitVersion;
+            Require(parsed.BuildCommit == parsed.ExpectedRepositoryHead,
+                "ARCH7B_POSITION_IMPORT_REPOSITORY_STATE_MISMATCH");
         }
         if (parsed.Mode == "run-fresh-position-import-fast-path")
         {
@@ -621,6 +672,14 @@ public sealed class Arch7bPositionImportArguments
         }
         return parsed;
     }
+
+    public Arch7bGitExecutableAuthority BuildGitAuthority() =>
+        new Arch7bGitExecutableAuthorityQualifier().Qualify(
+            GitExecutable,
+            ExpectedGitSha256,
+            ExpectedGitVersion,
+            Arch7bGitExecutableAuthorityContract.ExecutionHostInstanceId,
+            Environment.MachineName);
 
     public Arch7bPostgreSqlPinnedSession BuildRuntime()
     {
