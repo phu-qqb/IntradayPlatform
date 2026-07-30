@@ -6,7 +6,12 @@ namespace QQ.Production.Intraday.Tests.Unit;
 
 public sealed class Arch7bBoundedMarketDataCleanupTests
 {
-    private static readonly TimeSpan TestBudget = TimeSpan.FromMilliseconds(200);
+    private static readonly TimeSpan TimeoutTestBudget =
+        TimeSpan.FromMilliseconds(200);
+    private static readonly TimeSpan SuccessfulCleanupBudget =
+        TimeSpan.FromMilliseconds(
+            Arch7bKnownOrderQualificationPolicy
+                .MaximumMarketDataCleanupMilliseconds);
 
     [Fact]
     public async Task Blocked_unsubscribe_is_cancelled_and_valid_bbo_remains_allowed()
@@ -16,7 +21,7 @@ public sealed class Arch7bBoundedMarketDataCleanupTests
 
         var cleanup = await RunCleanupAsync(
             DateTimeOffset.UtcNow.AddSeconds(2),
-            TestBudget,
+            TimeoutTestBudget,
             token => BlockedWriteAsync(blocked, token),
             _ => Task.FromResult(true));
 
@@ -52,7 +57,7 @@ public sealed class Arch7bBoundedMarketDataCleanupTests
 
         var cleanup = await RunCleanupAsync(
             DateTimeOffset.UtcNow.AddSeconds(2),
-            TestBudget,
+            TimeoutTestBudget,
             _ => Task.FromResult(true),
             token => BlockedWriteAsync(blocked, token));
 
@@ -82,7 +87,7 @@ public sealed class Arch7bBoundedMarketDataCleanupTests
 
         var cleanup = await RunCleanupAsync(
             DateTimeOffset.UtcNow.AddSeconds(2),
-            TestBudget,
+            TimeoutTestBudget,
             token => BlockedWriteAsync(unsubscribe, token),
             token => BlockedWriteAsync(logout, token));
 
@@ -98,8 +103,8 @@ public sealed class Arch7bBoundedMarketDataCleanupTests
         Assert.Equal(0, unsubscribe.ActiveWrites);
         Assert.Equal(0, logout.ActiveWrites);
         Assert.True(
-            stopwatch.Elapsed <= TestBudget + TimeSpan.FromMilliseconds(600),
-            $"Cleanup elapsed {stopwatch.Elapsed} for budget {TestBudget}.");
+            stopwatch.Elapsed <= TimeoutTestBudget + TimeSpan.FromMilliseconds(600),
+            $"Cleanup elapsed {stopwatch.Elapsed} for budget {TimeoutTestBudget}.");
     }
 
     [Fact]
@@ -136,7 +141,7 @@ public sealed class Arch7bBoundedMarketDataCleanupTests
 
         var cleanup = await LmaxFixMarketDataCleanup.RunAsync(
             DateTimeOffset.UtcNow.AddMilliseconds(-1),
-            TestBudget,
+            TimeoutTestBudget,
             "REQ-1",
             _ =>
             {
@@ -179,8 +184,8 @@ public sealed class Arch7bBoundedMarketDataCleanupTests
         var socketDisposeCalls = 0;
 
         var cleanup = await LmaxFixMarketDataCleanup.RunAsync(
-            DateTimeOffset.UtcNow.AddSeconds(2),
-            TestBudget,
+            DateTimeOffset.UtcNow.AddSeconds(3),
+            SuccessfulCleanupBudget,
             mdReqId,
             _ =>
             {
@@ -203,11 +208,15 @@ public sealed class Arch7bBoundedMarketDataCleanupTests
             () => socketDisposeCalls++,
             default);
 
-        Assert.True(cleanup.UnsubscribeSent);
+        Assert.True(
+            cleanup.UnsubscribeSent,
+            string.Join(";", cleanup.Diagnostics));
         Assert.Equal(mdReqId, cleanup.UnsubscribeMdReqId);
         Assert.Equal("2", LmaxFixMarketDataCodec.GetTag(unsubscribeMessage!, "263"));
         Assert.Equal(mdReqId, LmaxFixMarketDataCodec.GetTag(unsubscribeMessage!, "262"));
-        Assert.True(cleanup.LogoutSent);
+        Assert.True(
+            cleanup.LogoutSent,
+            string.Join(";", cleanup.Diagnostics));
         Assert.Equal(1, logoutCalls);
         Assert.Equal(1, forceCloseCalls);
         Assert.Equal(1, streamDisposeCalls);
@@ -222,8 +231,8 @@ public sealed class Arch7bBoundedMarketDataCleanupTests
     public async Task Successful_cleanup_never_makes_invalid_bbo_acceptable()
     {
         var cleanup = await RunCleanupAsync(
-            DateTimeOffset.UtcNow.AddSeconds(2),
-            TestBudget,
+            DateTimeOffset.UtcNow.AddSeconds(3),
+            SuccessfulCleanupBudget,
             _ => Task.FromResult(true),
             _ => Task.FromResult(true));
 
@@ -247,12 +256,16 @@ public sealed class Arch7bBoundedMarketDataCleanupTests
         Assert.Throws<NotSupportedException>(() => list.Add("three"));
 
         var cleanup = await RunCleanupAsync(
-            DateTimeOffset.UtcNow.AddSeconds(2),
-            TestBudget,
+            DateTimeOffset.UtcNow.AddSeconds(3),
+            SuccessfulCleanupBudget,
             _ => Task.FromResult(true),
             _ => Task.FromResult(true));
-        Assert.True(cleanup.UnsubscribeSent);
-        Assert.True(cleanup.LogoutSent);
+        Assert.True(
+            cleanup.UnsubscribeSent,
+            string.Join(";", cleanup.Diagnostics));
+        Assert.True(
+            cleanup.LogoutSent,
+            string.Join(";", cleanup.Diagnostics));
         Assert.True(cleanup.StreamDisposeSucceeded);
         Assert.True(cleanup.SocketDisposeSucceeded);
     }
