@@ -8,6 +8,7 @@ public static class OperationalStatusCodeCatalog
             .Concat(OperationalReportingStatusExtensions.All)
             .Concat(Arch7bPositionImportOperationalStatusDefinitions.All)
             .Concat(Arch7bPostgreSqlTransportOperationalStatusDefinitions.All)
+            .Concat(Arch7bGitExecutableOperationalStatusDefinitions.All)
             .Concat(Arch7bClockCutoffOperationalStatusDefinitions.All)
             .Concat(Arch7bCoreDownloaderOperationalStatusDefinitions.All)
             .OrderBy(value => value.ExactCode, StringComparer.Ordinal).ToArray();
