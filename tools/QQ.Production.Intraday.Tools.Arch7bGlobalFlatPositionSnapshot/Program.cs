@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Runtime.ExceptionServices;
 using System.Text.Json;
 using QQ.Production.Intraday.Infrastructure.PostgreSql;
 
@@ -9,18 +10,23 @@ var expectations = new Arch7bCoreEvidenceExpectations(
     arguments.ExpectedEvidenceSha256,
     arguments.ExpectedContractFileSha256,
     arguments.ExpectedFinalIndexSha256);
-await using var runtime = arguments.BuildRuntime();
+var runtime = arguments.BuildRuntime();
 var target = runtime.Target;
 Require(target.TargetFingerprint == arguments.ExpectedTargetFingerprint,
     "ARCH7B_PMS_TARGET_FINGERPRINT_MISMATCH");
-var openTask = runtime.OpenAsync();
+var supervisor = new Arch7bPostgreSqlPinnedOpenSupervisor(
+    runtime, FastPathMode(arguments), arguments.OutputDirectory);
+var openTask = supervisor.StartOpen();
 var coreTask = Task.Run(() =>
     timing.Measure("CORE_PACKAGE_VALIDATION", () =>
         Arch7bCoreBracketEvidencePackageReader.Read(
             arguments.EvidenceRoot, expectations)));
-await Task.WhenAll(openTask, coreTask);
-var core = await coreTask;
-var openEvidence = await openTask;
+ExceptionDispatchInfo? primaryFailure = null;
+try
+{
+var parallel = await supervisor.WaitForOpenAndPeerAsync(coreTask);
+var core = parallel.PeerResult;
+var openEvidence = parallel.OpenEvidence;
 var contextFactory = new Arch7bPostgreSqlPinnedDbContextFactory(runtime);
 var universe = await timing.MeasureAsync("RDS_UNIVERSE_READ", () =>
     new Arch7bRequiredPmsUniverseReader(
@@ -183,6 +189,17 @@ Console.WriteLine(JsonSerializer.Serialize(new
     no_account_api = true,
     no_databento = true
 }, JsonOptions()));
+}
+catch (Exception exception)
+{
+    primaryFailure = ExceptionDispatchInfo.Capture(exception);
+    supervisor.CapturePrimary(exception);
+}
+finally
+{
+    _ = await supervisor.CompleteAsync(primaryFailure?.SourceException);
+}
+primaryFailure?.Throw();
 
 static object SanitizedSession(
     Arch7bPostgreSqlPinnedSessionEvidence evidence) => new
@@ -213,6 +230,10 @@ static JsonSerializerOptions JsonOptions() => new()
     PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower,
     WriteIndented = true
 };
+
+static string FastPathMode(Arch7bGlobalFlatArguments arguments) =>
+    arguments.FastPath ? "prepare-fresh-position-import-package" :
+        "consume-bracketed-global-flat";
 
 static void Require(bool condition, string code)
 {
@@ -292,6 +313,9 @@ public sealed class Arch7bGlobalFlatArguments
         _ = parsed.ExpectedContractFileSha256;
         _ = parsed.ExpectedFinalIndexSha256;
         _ = parsed.ExpectedTargetFingerprint;
+        Require(parsed.ExpectedTargetFingerprint ==
+                "72fa569ee28e4dec6272db0d69c7594b2be8853e9607dff3e78066378a0b5ee4",
+            "ARCH7B_PMS_TARGET_FINGERPRINT_MISMATCH");
         if (fast)
         {
             Require(parsed.TimingOutput is not null,

@@ -1,20 +1,30 @@
 using System.Globalization;
+using System.Runtime.ExceptionServices;
 using System.Text.Json;
 using QQ.Production.Intraday.Infrastructure.PostgreSql;
 
 var arguments = Arch7bPositionImportArguments.Parse(args);
-await using var runtime = arguments.BuildRuntime();
+var prevalidatedRepository = arguments.RequiresRepository
+    ? new GitArch7bRepositoryStateAuthority().Resolve(
+        arguments.RepositoryRoot, arguments.BuildCommit)
+    : null;
+var runtime = arguments.BuildRuntime();
 var target = runtime.Target;
 Require(target.TargetFingerprint == arguments.ExpectedTargetFingerprint,
     "ARCH7B_POSITION_IMPORT_TARGET_FINGERPRINT_MISMATCH");
-var openTask = runtime.OpenAsync();
 var contextFactory = new Arch7bPostgreSqlPinnedDbContextFactory(runtime);
 var store = new Arch7bPositionImportStore(
     contextFactory, target, runtime);
+var supervisor = new Arch7bPostgreSqlPinnedOpenSupervisor(
+    runtime, arguments.Mode, arguments.LifecycleEvidenceDirectory);
+var openTask = supervisor.StartOpen();
+ExceptionDispatchInfo? primaryFailure = null;
+try
+{
 
 if (arguments.Mode == "qualify-pinned-postgresql-session")
 {
-    var openEvidence = await openTask;
+    var openEvidence = await supervisor.WaitForOpenAsync();
     for (var index = 0; index < 10; index++)
     {
         await using var lease = await runtime.AcquireAsync();
@@ -39,7 +49,7 @@ if (arguments.Mode == "qualify-pinned-postgresql-session")
         "ARCH7B_PINNED_SESSION_HISTORICAL_PLAN_INVALID");
     _ = await store.ReadDatabaseTimeAsync();
     var beforeClose = runtime.Snapshot();
-    await runtime.DisposeAsync();
+    _ = await supervisor.CompleteAsync();
     var finalSession = runtime.Snapshot();
     var output = new
     {
@@ -98,7 +108,7 @@ if (arguments.Mode == "qualify-pinned-postgresql-session")
 
 if (arguments.Mode == "qualify-database-clock")
 {
-    var openEvidence = await openTask;
+    var openEvidence = await supervisor.WaitForOpenAsync();
     var qualification = await store.QualifyDatabaseClockAsync();
     var evidence = Arch7bPostgreSqlClockQualificationEvidenceWriter.Write(
         arguments.OutputDirectory, qualification, target);
@@ -138,8 +148,8 @@ if (arguments.Mode == "qualify-database-clock")
     return;
 }
 
-var repository = new GitArch7bRepositoryStateAuthority().Resolve(
-    arguments.RepositoryRoot, arguments.BuildCommit);
+var repository = prevalidatedRepository ?? throw new InvalidDataException(
+    "ARCH7B_POSITION_IMPORT_REPOSITORY_PREVALIDATION_MISSING");
 
 if (arguments.Mode == "run-fresh-position-import-fast-path")
 {
@@ -151,9 +161,9 @@ if (arguments.Mode == "run-fresh-position-import-fast-path")
     var coreTask = Task.Run(() =>
         Arch7bCoreBracketEvidencePackageReader.Read(
             arguments.EvidenceRoot, expectations));
-    await Task.WhenAll(openTask, coreTask);
-    var core = await coreTask;
-    var openEvidence = await openTask;
+    var parallel = await supervisor.WaitForOpenAndPeerAsync(coreTask);
+    var core = parallel.PeerResult;
+    var openEvidence = parallel.OpenEvidence;
     var timeline = new Arch7bFreshPositionImportAppendOnlyTimeline(
         Path.Combine(arguments.OutputDirectory, "append-only-timeline"));
     var currentStage = "PREARMED_VALIDATION";
@@ -268,7 +278,7 @@ if (arguments.Mode == "run-fresh-position-import-fast-path")
     }
 }
 
-_ = await openTask;
+_ = await supervisor.WaitForOpenAsync();
 
 if (arguments.Mode == "arm-import")
 {
@@ -377,6 +387,17 @@ Console.WriteLine(JsonSerializer.Serialize(new
     no_fill = true,
     no_position_ledger_event = true
 }, Arch7bPositionImportArguments.Json));
+}
+catch (Exception exception)
+{
+    primaryFailure = ExceptionDispatchInfo.Capture(exception);
+    supervisor.CapturePrimary(exception);
+}
+finally
+{
+    _ = await supervisor.CompleteAsync(primaryFailure?.SourceException);
+}
+primaryFailure?.Throw();
 
 static void Require(bool condition, string code)
 {
@@ -458,6 +479,21 @@ public sealed class Arch7bPositionImportArguments
     public string OwnerLockPath => Required("--owner-lock");
     public string OwnerId => Required("--owner-id");
     public string FutureAuthorizationId => Required("--future-authorization-id");
+    public bool RequiresRepository =>
+        Mode is not "qualify-pinned-postgresql-session" and
+            not "qualify-database-clock";
+    public string LifecycleEvidenceDirectory => Mode switch
+    {
+        "arm-import" => ParentDirectory(ArmedStatePath),
+        "publish-ready" or "apply-import" =>
+            ParentDirectory(ReadyMarkerPath),
+        _ => Path.GetFullPath(OutputDirectory)
+    };
+
+    private static string ParentDirectory(string path) =>
+        Path.GetDirectoryName(Path.GetFullPath(path))
+        ?? throw new InvalidDataException(
+            "ARCH7B_POSITION_IMPORT_LIFECYCLE_ROOT_INVALID");
 
     public static Arch7bPositionImportArguments Parse(string[] args)
     {
@@ -505,6 +541,9 @@ public sealed class Arch7bPositionImportArguments
                 Arch7bBracketedGlobalFlatContract.TargetProfile,
             "ARCH7B_POSITION_IMPORT_PROFILE_MISMATCH");
         _ = parsed.ExpectedTargetFingerprint;
+        Require(parsed.ExpectedTargetFingerprint ==
+                "72fa569ee28e4dec6272db0d69c7594b2be8853e9607dff3e78066378a0b5ee4",
+            "ARCH7B_POSITION_IMPORT_TARGET_FINGERPRINT_MISMATCH");
         if (parsed.Mode == "qualify-pinned-postgresql-session")
         {
             Require(!parsed.Apply && parsed.HistoricalFixture,

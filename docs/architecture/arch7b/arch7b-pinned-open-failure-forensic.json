@@ -1,0 +1,78 @@
+{
+  "contract_version": "arch7b_pinned_open_failure_forensic_v1",
+  "historical_verdict_preserved": "NO_GO_ARCH7B_PINNED_POSTGRESQL_SESSION_OPEN_FAILED_CONNECTION_STUCK_CONNECTING",
+  "run_classification": "ABORTED_PINNED_POSTGRESQL_OPEN_FAILURE_MASKED_BY_CONNECTING_CLEANUP",
+  "selected_slot": {
+    "start_utc": "2026-07-29T17:00:00Z",
+    "end_utc": "2026-07-29T17:15:00Z"
+  },
+  "sealed_execution": {
+    "ssm_command_id": "ff94ca98-c8b9-4795-96b4-54e4030ceb84",
+    "command_execution_started_utc": "2026-07-29T16:53:56.800Z",
+    "command_execution_finished_utc": "2026-07-29T16:53:58.800Z",
+    "terminal_elapsed_seconds": 2.709,
+    "exit_code": 1,
+    "process_created_utc": null,
+    "before_build_runtime_utc": null,
+    "before_open_async_utc": null,
+    "after_open_task_start_utc": null,
+    "first_exception_utc": null,
+    "unavailable_fields_reason": "PRIMARY_EXCEPTION_NOT_PRESENT_IN_SEALED_STDOUT_STDERR_OR_RUN_ARTIFACTS"
+  },
+  "historical_primary_exception": {
+    "recovered": false,
+    "classification": "G",
+    "classification_code": "PRIMARY_EXCEPTION_NOT_RECOVERABLE_FROM_SEALED_EVIDENCE",
+    "type": null,
+    "message_sanitized": null,
+    "inner_exception_types": [],
+    "sqlstate": null,
+    "stack_trace_sanitized": [],
+    "npgsql_state": "Connecting",
+    "timeout_inferred": false
+  },
+  "historical_cleanup_exception": {
+    "type": "System.InvalidOperationException",
+    "message_sanitized": "Can't close, connection is in state Connecting",
+    "sqlstate": null,
+    "npgsql_state": "Connecting",
+    "stack_trace_sanitized": [
+      "Npgsql.NpgsqlConnection.Close",
+      "Npgsql.NpgsqlConnection.CloseAsync",
+      "Npgsql.NpgsqlConnection.DisposeAsync",
+      "QQ.Production.Intraday.Infrastructure.PostgreSql.Arch7bPostgreSqlPinnedSession.DisposeAsync",
+      "QQ.Production.Intraday.Tools.Arch7bPositionSnapshotImport.Program"
+    ]
+  },
+  "masking_sequence": [
+    "A primary failure escaped the unsupervised OpenAsync task.",
+    "Top-level compiler-generated await-using cleanup invoked DisposeAsync.",
+    "DisposeAsync reached Npgsql disposal while ConnectionState was Connecting.",
+    "The cleanup InvalidOperationException became the only terminal stderr exception.",
+    "The original primary exception was not retained in sealed evidence."
+  ],
+  "code_paths_inspected": [
+    "target fingerprint validation",
+    "DbContext factory creation",
+    "store creation",
+    "Git repository authority resolution",
+    "build commit validation",
+    "secret target validation",
+    "root CA validation",
+    "Npgsql OpenAsync"
+  ],
+  "code_path_attribution": "INDETERMINATE_BECAUSE_PRIMARY_EXCEPTION_WAS_MASKED",
+  "distinct_prior_attempt_excluded": {
+    "ssm_command_id": "ad696d30",
+    "reason": "Earlier root-CA precondition attempt; not the selected failed pinned-open run."
+  },
+  "historical_evidence_modified": false,
+  "safety": {
+    "database_writes": 0,
+    "armed_state_published": false,
+    "owner_lock_published": false,
+    "lmax_acquisitions": 0,
+    "fix_sessions": 0,
+    "orders": 0
+  }
+}

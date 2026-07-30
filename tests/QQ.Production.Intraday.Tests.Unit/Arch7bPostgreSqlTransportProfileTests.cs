@@ -259,11 +259,14 @@ public sealed class Arch7bPostgreSqlTransportProfileTests
             "QQ.Production.Intraday.Tools.Arch7bPositionSnapshotImport",
             "Program.cs"));
 
-        Assert.Contains("var openTask = runtime.OpenAsync();",
+        Assert.Contains("var openTask = supervisor.StartOpen();",
             source, StringComparison.Ordinal);
         Assert.Contains("var coreTask = Task.Run",
             source, StringComparison.Ordinal);
-        Assert.Contains("await Task.WhenAll(openTask, coreTask);",
+        Assert.Contains(
+            "await supervisor.WaitForOpenAndPeerAsync(coreTask)",
+            source, StringComparison.Ordinal);
+        Assert.DoesNotContain("await using var runtime",
             source, StringComparison.Ordinal);
         Assert.DoesNotContain("EnterPostP2CriticalPath",
             source, StringComparison.Ordinal);
