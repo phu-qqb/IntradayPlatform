@@ -51,6 +51,42 @@ public static class Arch7bPostgreSqlTransportOperationalStatusDefinitions
             "A pinned lease release did not match the active lease."),
         CodeV2("ARCH7B_POSTGRESQL_PINNED_DATABASE_TIME_NOT_UTC",
             "The pinned PostgreSQL clock value is not UTC."),
+        Lifecycle(
+            Arch7bPostgreSqlPinnedOpenLifecycleContract.PrimaryOpenFailure,
+            OperationalBreakSeverity.Critical,
+            "Npgsql failed while opening the pinned PostgreSQL session.",
+            "Preserve the primary exception and stop; cleanup must not replace the open failure."),
+        Lifecycle(
+            Arch7bPostgreSqlPinnedOpenLifecycleContract.CleanupFailedWithoutPrimary,
+            OperationalBreakSeverity.Critical,
+            "Pinned-session cleanup failed without an earlier primary failure.",
+            "Treat cleanup as the terminal failure and inspect the lifecycle evidence before another run."),
+        Lifecycle(
+            Arch7bPostgreSqlPinnedOpenLifecycleContract.PrimaryFailurePreservationFailed,
+            OperationalBreakSeverity.Critical,
+            "The lifecycle could not preserve the first observed primary failure.",
+            "Stop because failure authority is no longer reliable; inspect primary and cleanup evidence."),
+        Lifecycle(
+            "CLEANUP_FAILURE_SUPPRESSED",
+            OperationalBreakSeverity.Error,
+            "Cleanup failed after a primary failure and was retained as secondary evidence.",
+            "Keep the primary failure authoritative and inspect the suppressed cleanup failure."),
+        Lifecycle(
+            "CLEANUP_FAILED_WITHOUT_PRIMARY",
+            OperationalBreakSeverity.Critical,
+            "The cleanup result records a failure with no primary failure to preserve.",
+            "Treat cleanup as terminal and inspect the pinned-open lifecycle evidence."),
+        Lifecycle(
+            "OPEN_FAILED",
+            OperationalBreakSeverity.Error,
+            "The pinned-open state machine observed a failed physical open.",
+            "Use the associated primary failure code as authority and do not reopen in-process."),
+        DiagnosticPlaceholder(
+            "UNKNOWN_TYPE",
+            "A sanitized stack frame did not expose a declaring type."),
+        DiagnosticPlaceholder(
+            "UNKNOWN_METHOD",
+            "A sanitized stack frame did not expose a method name."),
         CodeV2("ARCH7B_POSTGRESQL_PINNED_TIMEZONE_NOT_UTC",
             "The pinned PostgreSQL session timezone is not UTC."),
         CodeV2("ARCH7B_POSTGRESQL_PINNED_TARGET_FINGERPRINT_INVALID",
@@ -206,4 +242,46 @@ public static class Arch7bPostgreSqlTransportOperationalStatusDefinitions
             Supersedes: null,
             IntroducedByContractVersion:
                 Arch7bPostgreSqlPinnedTransportProfile.Version);
+
+    private static OperationalStatusCodeDefinition Lifecycle(
+        string exactCode,
+        OperationalBreakSeverity severity,
+        string description,
+        string operatorMeaning) =>
+        new(
+            exactCode,
+            "ARCH7B_POSTGRESQL_PINNED_OPEN_LIFECYCLE",
+            "LIFECYCLE",
+            severity,
+            "PMS_SHADOW",
+            description,
+            operatorMeaning,
+            AutomaticResolutionPossible: false,
+            BlocksTrading: true,
+            BlocksAccounting: true,
+            EvidenceRequirements:
+                "Pinned-open lifecycle transitions, primary failure code, sanitized exception chain, cleanup result and terminal connection state.",
+            Supersedes: null,
+            IntroducedByContractVersion:
+                Arch7bPostgreSqlPinnedOpenLifecycleContract.Version);
+
+    private static OperationalStatusCodeDefinition DiagnosticPlaceholder(
+        string exactCode,
+        string description) =>
+        new(
+            exactCode,
+            "ARCH7B_POSTGRESQL_PINNED_OPEN_LIFECYCLE",
+            "DIAGNOSTIC",
+            OperationalBreakSeverity.Info,
+            "SANITIZED_STACK_FRAME",
+            description,
+            "Use the primary lifecycle failure code for the operational decision; this placeholder carries no independent economic state.",
+            AutomaticResolutionPossible: false,
+            BlocksTrading: false,
+            BlocksAccounting: false,
+            EvidenceRequirements:
+                "Sanitized stack-frame entry and its enclosing pinned-open lifecycle failure evidence.",
+            Supersedes: null,
+            IntroducedByContractVersion:
+                Arch7bPostgreSqlPinnedOpenLifecycleContract.Version);
 }

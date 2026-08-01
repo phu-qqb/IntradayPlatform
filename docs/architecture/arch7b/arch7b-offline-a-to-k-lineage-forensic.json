@@ -1,0 +1,87 @@
+{
+  "contract_version": "arch7b_offline_a_to_k_lineage_forensic_v1",
+  "verdict": "NO_GO_ARCH7B_OFFLINE_REHEARSAL_ECONOMIC_LINEAGE_BREAK",
+  "first_break": "E_TO_F",
+  "stages": [
+    {
+      "stage": "A",
+      "status": "LINKED",
+      "contract": "lmax_portal_bracketed_current_position_snapshot_v2",
+      "identity": "2a4d6e6eb37449bf22cd9c17a6cbe5b0459897b120a3e37ca383e9b17084566d"
+    },
+    {
+      "stage": "B",
+      "status": "LINKED",
+      "contract": "arch7b_core_master_final_evidence_index_v1",
+      "identity": "6ea09a5d29f500eaa45e5040cebc1022110688dba045c505ec864fbb3e1cebd6"
+    },
+    {
+      "stage": "C",
+      "status": "LINKED",
+      "contract": "arch7b_core_to_position_consumer_offline_bridge_v1",
+      "identity": "5ba1232c93c40aed7b2bb10e22b9e0e2a3bba687a6f80cb954d37bda601fb7c1",
+      "result": "99/99/0"
+    },
+    {
+      "stage": "D",
+      "status": "LINKED",
+      "contract": "arch7b_bracketed_global_flat_position_import_v1",
+      "position_package_manifest_sha256": "460c3b7061d39775d53f7572346cc84964b18afcc2d2806d885ea6e9dbd8b4ef",
+      "normalized_line_set_sha256": "1b6833654f6e9e83bdca22ba04952bb63a6eb45c32903b4acc4b81a6e8880a6a",
+      "result": "+1/+99"
+    },
+    {
+      "stage": "E",
+      "status": "LINKED",
+      "selector": "PmsShadowPositionSnapshotForSlotSelection.Select",
+      "projected_snapshot_id": "c5f4d0d9-1912-c4ef-c8c9-61d0401caef7",
+      "source_session_id": "arch6b-daily-tier1-20260721T130346Z-422530a8",
+      "required_universe_sha256": "f538619ed5c5f49155aa23ab240f26c9cbf4dbe10352cd7ba68aea7cd783d5b4",
+      "position_as_of_utc": "2026-07-28T08:00:03Z",
+      "mapping_count": 99,
+      "symbol_kind": "REAL_FX_PAIRS"
+    },
+    {
+      "stage": "F",
+      "status": "ECONOMICALLY_DISTINCT_FIXTURE",
+      "fixture_path": "tests/QQ.Production.Intraday.Tests.Unit/Arch7bSlotBoundedBboSelectionTests.cs",
+      "fixture_repository_commit": "e74f984bf3320142617b9016fcb91610d36b5741",
+      "contract": "slot_bbo_selection_source_timestamp_clock_authority_v2",
+      "slot_id": "pms-shadow-15m-20260724T1030Z",
+      "slot_start_utc": "2026-07-24T10:30:00Z",
+      "slot_end_utc": "2026-07-24T10:45:00Z",
+      "required_symbol_count": 49,
+      "symbols": "GBPUSD_PLUS_X00001_THROUGH_X00048",
+      "source_session_id": "NOT_PRESENT",
+      "prior_position_snapshot_id": "NOT_PRESENT",
+      "prior_evidence_sha256": "NOT_PRESENT"
+    },
+    { "stage": "G", "status": "COVERED_IN_F_FIXTURE_NOT_CHAINED_AFTER_BREAK" },
+    { "stage": "H", "status": "COVERED_VERSIONED_NOT_EVALUATED_AFTER_FIRST_BREAK", "expected": "99/288/288" },
+    { "stage": "I", "status": "COVERED_VERSIONED_NOT_EVALUATED_AFTER_FIRST_BREAK", "expected": "66/66/78/78" },
+    { "stage": "J", "status": "COVERED_VERSIONED_NOT_EVALUATED_AFTER_FIRST_BREAK", "expected": "7/28" },
+    { "stage": "K", "status": "QUALIFIED_INDEPENDENTLY", "source_inventory": "COMPLETE", "missing_count": 0 }
+  ],
+  "break_evidence": {
+    "transition": "E_TO_F",
+    "reason": "F does not bind E's selected position snapshot, source session, required-universe SHA, or bridge evidence SHA, and 48 of its 49 symbols are synthetic X identifiers absent from E's 99 real FX-pair universe.",
+    "common_symbol_count": 1,
+    "e_required_symbol_count": 99,
+    "f_required_symbol_count": 49,
+    "invented_bridge_forbidden": true
+  },
+  "full_rehearsal": {
+    "executed": false,
+    "run_count": 0,
+    "reason": "The packet permits ten A-to-K rehearsals only when every transition is economically compatible."
+  },
+  "safety": {
+    "secret_reads": 0,
+    "database_connections": 0,
+    "live_slots": 0,
+    "lmax_calls": 0,
+    "fix_logons": 0,
+    "orders": 0,
+    "aws_mutations": 0
+  }
+}
