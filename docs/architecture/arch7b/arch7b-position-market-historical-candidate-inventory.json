@@ -1,0 +1,105 @@
+{
+  "contract_version": "arch7b_position_market_historical_candidate_inventory_v1",
+  "searched_sources": [
+    "versioned Git manifests and migrations",
+    "D:/QQFund/ARCH7B slot manifests",
+    "D:/QQFund/ARCH7B position packages and append-only import plans",
+    "D:/QQFund/ARCH7B economic revision and ARCH7A evidence",
+    "D:/QQFund/ARCH7B reporting and readiness bundles"
+  ],
+  "rds_read_used": false,
+  "distinct_market_slots": 7,
+  "distinct_position_snapshots": 4,
+  "matched_complete_count": 0,
+  "position_candidates": [
+    {
+      "position_snapshot_id": "afd6b2b3-ee4f-2b6e-1a95-1effd5e52249",
+      "position_snapshot_as_of_utc": "2026-07-27T11:23:45Z",
+      "classification": "POSITION_ONLY",
+      "reason": "No 49-symbol market slot exists within the production five-minute selection interval."
+    },
+    {
+      "position_snapshot_id": "6ac409fd-9eee-5e4d-574e-00b95b3561d7",
+      "position_snapshot_as_of_utc": "2026-07-27T11:23:45Z",
+      "classification": "POSITION_ONLY",
+      "reason": "Repeated package/import-plan identity; no matching market slot."
+    },
+    {
+      "position_snapshot_id": "305e9683-22e7-dcf0-5d35-4031f6b37465",
+      "position_snapshot_as_of_utc": "2026-07-28T10:53:49Z",
+      "classification": "POSITION_ONLY",
+      "reason": "Historical consumer evidence only; no matching capture manifest."
+    },
+    {
+      "position_snapshot_id": "2a8d16ee-e5bb-89eb-5bc6-eec4409db391",
+      "position_snapshot_as_of_utc": "2026-07-28T13:12:15Z",
+      "position_line_count": 99,
+      "required_pms_universe_sha256": "b39ec9382d4af69186e5665008fdbd2e5d67a27cfefa8caae42f1431235af07a",
+      "position_line_set_sha256": "4c2c0278da9c380fc6572c8e68f0c1ab8436f45dd91239334332b40d11804e24",
+      "account": "1754288005",
+      "target_profile": "ARCH7B_RDS_TEST",
+      "proposed_slot_id": "pms-shadow-15m-20260728T1315Z",
+      "age_at_slot_start_milliseconds": 165000,
+      "classification": "POSITION_ONLY",
+      "reason": "Temporal selection qualifies, but the run stopped before market capture; no market manifest or revision exists."
+    }
+  ],
+  "market_candidates": [
+    {
+      "slot_id": "pms-shadow-15m-20260723T1400Z",
+      "artifact_sha256": "ea9c3fb519d1c0dfaa0bace62255dc6338a7ab1aa2240ef4b6fdd6b080d69c55",
+      "selected_market_symbol_count": 49,
+      "classification": "REVISION_BINDING_MISSING"
+    },
+    {
+      "slot_id": "pms-shadow-15m-20260723T1430Z",
+      "artifact_sha256": "ae0f02b801965b3437631300e2bd5c3285841f96dbbbee310279f9dcb70d6eee",
+      "selected_market_symbol_count": 49,
+      "classification": "REVISION_BINDING_MISSING"
+    },
+    {
+      "slot_id": "pms-shadow-15m-20260723T1530Z",
+      "artifact_sha256": "3263151c47ef6849a8786da5d12c84e2b8cbb25c36add6ffc2758c6883498dcc",
+      "selected_market_symbol_count": 49,
+      "classification": "REVISION_BINDING_MISSING"
+    },
+    {
+      "slot_id": "pms-shadow-15m-20260723T1615Z",
+      "artifact_sha256": "5e79c0fcce73a898f6361f30f85b4fb08b071fb2a070c39eb2e024fe6e739966",
+      "selected_market_symbol_count": 49,
+      "classification": "REVISION_BINDING_MISSING"
+    },
+    {
+      "slot_id": "pms-shadow-15m-20260723T1745Z",
+      "artifact_sha256": "3840ca03f5eeaf0549bad28b8a7a04273662a3852a4b486a6dc03f21745cde46",
+      "selected_market_symbol_count": 49,
+      "classification": "REVISION_BINDING_MISSING"
+    },
+    {
+      "slot_id": "pms-shadow-15m-20260724T1030Z",
+      "artifact_sha256": "65769fb842e3dc22bbd26f00adb49b5c1b47a2777c59430b4258bb273184597b",
+      "market_data_snapshot_sha256": "cab38864a435fd7464477accd36104b003c01123f8522b1d4ed0e79936d2bd91",
+      "economic_revision_id": "91eae733-cd6d-b886-b8f7-d9f3b020f1c4",
+      "observation_target_drift_counts": "99/288/288",
+      "selected_market_symbol_count": 49,
+      "classification": "TEMPORAL_AUTHORITY_INVALID",
+      "reason": "Revision predates arch7b_position_snapshot_for_slot_selection_v1 and carries no current E-to-F binding evidence."
+    },
+    {
+      "slot_id": "pms-shadow-15m-20260724T1145Z",
+      "artifact_sha256": "b046bbea8ae263bcc77faa3889c3b268e55a2f1af13e0f057d15f5122e34ec0f",
+      "selected_market_symbol_count": 49,
+      "classification": "REVISION_BINDING_MISSING",
+      "reason": "Capture exists but the operational slot was persisted MISSED and no economic revision was created."
+    }
+  ],
+  "best_candidate": {
+    "slot_id": "pms-shadow-15m-20260728T1315Z",
+    "position_snapshot_id": "2a8d16ee-e5bb-89eb-5bc6-eec4409db391",
+    "classification": "POSITION_ONLY",
+    "first_missing_edge": "MARKET_CAPTURE_MANIFEST"
+  },
+  "verdict": "NO_GO_ARCH7B_MATCHED_HISTORICAL_POSITION_MARKET_SLOT_NOT_FOUND",
+  "no_invented_edge": true,
+  "no_order": true
+}
