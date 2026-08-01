@@ -4,6 +4,42 @@ using System.Text.Json;
 using QQ.Production.Intraday.Infrastructure.PostgreSql;
 
 var arguments = Arch7bPositionImportArguments.Parse(args);
+if (arguments.Mode == "qualify-core-to-position-consumer-offline-bridge")
+{
+    var result = Arch7bOfflineCoreConsumerBridgeRunner.Run(new(
+        arguments.EvidenceRoot,
+        arguments.OutputDirectory,
+        arguments.CoreRepositoryCommit,
+        arguments.CoreTree,
+        arguments.IntradayRepositoryCommit,
+        arguments.IntradayTree,
+        arguments.ExpectedEvidenceSha256,
+        arguments.ExpectedContractFileSha256,
+        arguments.ExpectedFinalIndexSha256,
+        arguments.ExpectedAcquisitionManifestSha256,
+        arguments.ExpectedBracketContractVersion,
+        arguments.ExpectedDownloaderVersion,
+        arguments.ExpectedAccount,
+        arguments.ExpectedSourceSessionId,
+        arguments.ExpectedExecutionSemanticSha256,
+        arguments.ExpectedPositionSemanticSha256,
+        arguments.ExpectedSourceIngestionId,
+        arguments.ExpectedRequiredUniverseSha256,
+        arguments.ExpectedPositionReportP2Utc,
+        arguments.ExpectedNormalizedCount,
+        arguments.ExpectedDerivedZeroCount,
+        arguments.ExpectedUnknownCount,
+        Environment.ProcessPath ?? throw new InvalidDataException(
+            "ARCH7B_BRIDGE_CONSUMER_EXECUTABLE_MISSING"),
+        arguments.ExpectedConsumerExecutableSha256,
+        arguments.SyntheticRunId,
+        arguments.SyntheticOwnerId,
+        arguments.SyntheticFutureAuthorizationId));
+    Console.WriteLine(JsonSerializer.Serialize(
+        result, Arch7bPositionImportArguments.Json));
+    return;
+}
+
 if (arguments.Mode == "qualify-repository-authority")
 {
     var git = arguments.BuildGitAuthority();
@@ -494,8 +530,39 @@ public sealed class Arch7bPositionImportArguments
         RequiredSha("--expected-contract-file-sha256");
     public string ExpectedFinalIndexSha256 =>
         RequiredSha("--expected-final-index-sha256");
+    public string ExpectedAcquisitionManifestSha256 =>
+        RequiredSha("--expected-acquisition-manifest-sha256");
+    public string ExpectedBracketContractVersion =>
+        Required("--expected-bracket-contract-version");
+    public string ExpectedDownloaderVersion =>
+        Required("--expected-downloader-version");
+    public string ExpectedAccount => Required("--expected-account");
+    public string ExpectedSourceSessionId =>
+        Required("--expected-source-session-id");
+    public string ExpectedExecutionSemanticSha256 =>
+        RequiredSha("--expected-execution-semantic-sha256");
+    public string ExpectedPositionSemanticSha256 =>
+        RequiredSha("--expected-position-semantic-sha256");
     public Guid ExpectedSourceIngestionId =>
         Guid.Parse(Required("--expected-source-ingestion-id"));
+    public string CoreTree => RequiredSha("--core-tree", 40);
+    public string IntradayRepositoryCommit =>
+        RequiredSha("--intraday-repository-commit", 40);
+    public string IntradayTree => RequiredSha("--intraday-tree", 40);
+    public string ExpectedRequiredUniverseSha256 =>
+        RequiredSha("--expected-required-universe-sha256");
+    public DateTimeOffset ExpectedPositionReportP2Utc =>
+        DateTimeOffset.Parse(Required("--expected-position-report-p2-utc"),
+            CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind);
+    public int ExpectedNormalizedCount => Integer("--expected-normalized-count");
+    public int ExpectedDerivedZeroCount => Integer("--expected-derived-zero-count");
+    public int ExpectedUnknownCount => Integer("--expected-unknown-count");
+    public string ExpectedConsumerExecutableSha256 =>
+        RequiredSha("--expected-consumer-executable-sha256");
+    public string SyntheticRunId => Required("--synthetic-run-id");
+    public string SyntheticOwnerId => Required("--synthetic-owner-id");
+    public string SyntheticFutureAuthorizationId =>
+        Required("--synthetic-future-authorization-id");
     public bool HistoricalFixture => flags.Contains("--historical-fixture");
     public bool Apply => flags.Contains("--apply");
     public DateTimeOffset ObservedUtc =>
@@ -509,7 +576,8 @@ public sealed class Arch7bPositionImportArguments
     public bool RequiresRepository =>
         Mode is not "qualify-pinned-postgresql-session" and
             not "qualify-database-clock" and
-            not "qualify-repository-authority";
+            not "qualify-repository-authority" and
+            not "qualify-core-to-position-consumer-offline-bridge";
     public string LifecycleEvidenceDirectory => Mode switch
     {
         "arm-import" => ParentDirectory(ArmedStatePath),
@@ -530,7 +598,8 @@ public sealed class Arch7bPositionImportArguments
                     "plan-import" or "apply-import" or "qualify-database-clock" or
                     "qualify-pinned-postgresql-session" or
                     "qualify-repository-authority" or
-                    "run-fresh-position-import-fast-path",
+                    "run-fresh-position-import-fast-path" or
+                    "qualify-core-to-position-consumer-offline-bridge",
             "ARCH7B_POSITION_IMPORT_MODE_REQUIRED");
         Require(args.Contains("--no-order", StringComparer.Ordinal),
             "ARCH7B_POSITION_IMPORT_NO_ORDER_REQUIRED");
@@ -567,6 +636,39 @@ public sealed class Arch7bPositionImportArguments
             _ = parsed.OutputDirectory;
             Require(parsed.BuildCommit == parsed.ExpectedRepositoryHead,
                 "ARCH7B_POSITION_IMPORT_REPOSITORY_STATE_MISMATCH");
+            return parsed;
+        }
+        if (parsed.Mode == "qualify-core-to-position-consumer-offline-bridge")
+        {
+            Require(!parsed.Apply && parsed.HistoricalFixture,
+                "ARCH7B_BRIDGE_QUALIFICATION_FLAGS_INVALID");
+            _ = parsed.OutputDirectory;
+            _ = parsed.EvidenceRoot;
+            _ = parsed.CoreRepositoryCommit;
+            _ = parsed.CoreTree;
+            _ = parsed.IntradayRepositoryCommit;
+            _ = parsed.IntradayTree;
+            _ = parsed.ExpectedEvidenceSha256;
+            _ = parsed.ExpectedContractFileSha256;
+            _ = parsed.ExpectedFinalIndexSha256;
+            _ = parsed.ExpectedAcquisitionManifestSha256;
+            _ = parsed.ExpectedBracketContractVersion;
+            _ = parsed.ExpectedDownloaderVersion;
+            _ = parsed.ExpectedAccount;
+            _ = parsed.ExpectedSourceSessionId;
+            _ = parsed.ExpectedExecutionSemanticSha256;
+            _ = parsed.ExpectedPositionSemanticSha256;
+            _ = parsed.ExpectedSourceIngestionId;
+            _ = parsed.ExpectedRequiredUniverseSha256;
+            Require(parsed.ExpectedPositionReportP2Utc.Offset == TimeSpan.Zero,
+                "ARCH7B_BRIDGE_P2_NOT_UTC");
+            _ = parsed.ExpectedNormalizedCount;
+            _ = parsed.ExpectedDerivedZeroCount;
+            _ = parsed.ExpectedUnknownCount;
+            _ = parsed.ExpectedConsumerExecutableSha256;
+            _ = parsed.SyntheticRunId;
+            _ = parsed.SyntheticOwnerId;
+            _ = parsed.SyntheticFutureAuthorizationId;
             return parsed;
         }
 

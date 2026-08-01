@@ -966,7 +966,7 @@ public sealed class Arch7bBracketedGlobalFlatPositionSnapshotTests
         }
     }
 
-    private sealed class CorePackageFixture : IDisposable
+    internal sealed class CorePackageFixture : IDisposable
     {
         private static readonly string[] ExecutionHeaders =
         [
@@ -1262,6 +1262,7 @@ public sealed class Arch7bBracketedGlobalFlatPositionSnapshotTests
             {
                 ["repository"] = "phu-qqb/QQ.Production.Core",
                 ["merge_commit"] = Hash('a', 40),
+                ["tree"] = Hash('b', 40),
                 ["no_order"] = true,
                 ["no_fix"] = true,
                 ["no_account_api"] = true,
