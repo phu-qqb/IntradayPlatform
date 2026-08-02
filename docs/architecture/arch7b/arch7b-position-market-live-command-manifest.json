@@ -1,0 +1,83 @@
+{
+  "contract": "arch7b_position_market_live_command_manifest_v1",
+  "status": "REQUIRES_OPERATIONAL_MARKET_SESSION",
+  "rules": {
+    "absolute_paths": true,
+    "lowercase_sha256": true,
+    "exactly_one_argument_occurrence": true,
+    "implicit_historical_root": false,
+    "historical_defaults": false,
+    "silent_reconstruction": false,
+    "no_order": true
+  },
+  "commands": [
+    {
+      "owner": "prearmed-importer",
+      "executable": "QQ.Production.Intraday.Tools.Arch6fEconomicReplay",
+      "mode": "prearm-and-import",
+      "arguments": {
+        "--position-market-draft-path": "REGENERATE_JUST_BEFORE_LIVE_RUN",
+        "--position-market-lineage-path": "REGENERATE_JUST_BEFORE_LIVE_RUN",
+        "--position-market-revision-binding-path": "REGENERATE_JUST_BEFORE_LIVE_RUN",
+        "--core-commit": "REGENERATE_JUST_BEFORE_LIVE_RUN",
+        "--market-capture-session-id": "REGENERATE_JUST_BEFORE_LIVE_RUN",
+        "--market-data-config-path": "REGENERATE_JUST_BEFORE_LIVE_RUN",
+        "--expected-market-data-config-sha256": "REGENERATE_JUST_BEFORE_LIVE_RUN"
+      }
+    },
+    {
+      "owner": "capture-starter",
+      "executable": "QQ.Production.Intraday.Tools.Arch6fEconomicReplay",
+      "mode": "assert-prearmed",
+      "arguments": {
+        "--position-market-draft-path": "REGENERATE_JUST_BEFORE_LIVE_RUN",
+        "--expected-position-market-draft-sha256": "REGENERATE_JUST_BEFORE_LIVE_RUN",
+        "--core-commit": "REGENERATE_JUST_BEFORE_LIVE_RUN",
+        "--market-capture-session-id": "REGENERATE_JUST_BEFORE_LIVE_RUN",
+        "--market-data-config-path": "REGENERATE_JUST_BEFORE_LIVE_RUN",
+        "--expected-market-data-config-sha256": "REGENERATE_JUST_BEFORE_LIVE_RUN"
+      }
+    },
+    {
+      "owner": "market-data-recorder",
+      "executable": "QQ.Production.Intraday.Tools.LmaxMarketDataCaptureOnly",
+      "mode": "live-market-data-only",
+      "arguments": {
+        "--position-market-draft-path": "REGENERATE_JUST_BEFORE_LIVE_RUN",
+        "--expected-position-market-draft-sha256": "REGENERATE_JUST_BEFORE_LIVE_RUN"
+      }
+    },
+    {
+      "owner": "canonical-slot-finalizer",
+      "executable": "QQ.Production.Intraday.Tools.Arch6fEconomicReplay",
+      "mode": "publish-ready",
+      "arguments": {
+        "--position-market-draft-path": "REGENERATE_JUST_BEFORE_LIVE_RUN",
+        "--expected-position-market-draft-sha256": "REGENERATE_JUST_BEFORE_LIVE_RUN",
+        "--position-market-lineage-path": "REGENERATE_JUST_BEFORE_LIVE_RUN",
+        "--core-commit": "REGENERATE_JUST_BEFORE_LIVE_RUN",
+        "--market-capture-session-id": "REGENERATE_JUST_BEFORE_LIVE_RUN"
+      }
+    },
+    {
+      "owner": "arch7a-qualification",
+      "executable": "QQ.Production.Intraday.Tools.Arch7aShadowQualification",
+      "mode": "qualify-shadow",
+      "arguments": {
+        "--position-market-revision-binding-path": "REGENERATE_JUST_BEFORE_LIVE_RUN",
+        "--expected-position-market-revision-binding-sha256": "REGENERATE_JUST_BEFORE_LIVE_RUN"
+      }
+    },
+    {
+      "owner": "read-only-reporting",
+      "executable": "QQ.Production.Intraday.Tools.OperationalReporting",
+      "mode": "report-operational-state",
+      "arguments": {
+        "--position-market-lineage-path": "REGENERATE_JUST_BEFORE_LIVE_RUN",
+        "--expected-position-market-lineage-sha256": "REGENERATE_JUST_BEFORE_LIVE_RUN",
+        "--position-market-revision-binding-path": "REGENERATE_JUST_BEFORE_LIVE_RUN",
+        "--expected-position-market-revision-binding-sha256": "REGENERATE_JUST_BEFORE_LIVE_RUN"
+      }
+    }
+  ]
+}

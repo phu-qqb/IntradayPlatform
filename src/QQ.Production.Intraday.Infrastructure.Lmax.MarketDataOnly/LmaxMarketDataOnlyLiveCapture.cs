@@ -7,9 +7,13 @@ namespace QQ.Production.Intraday.Infrastructure.Lmax.MarketDataOnly;
 
 public sealed partial class LmaxMarketDataOnlyCaptureRunner
 {
-    public async Task<LmaxMarketDataOnlyCaptureSummary> CaptureLiveAsync(LmaxMarketDataOnlyPreflightConfig config,CancellationToken cancellationToken=default)
+    public async Task<LmaxMarketDataOnlyCaptureSummary> CaptureLiveAsync(
+        LmaxMarketDataOnlyPreflightConfig config,string recorderRunId,
+        CancellationToken cancellationToken=default)
     {
-        var state=await CaptureState.CreateAsync(config,Resolve(config),"M2C1B_LMAX_DEMO_MD_"+DateTimeOffset.UtcNow.ToString("yyyyMMddHHmmssfff",CultureInfo.InvariantCulture),cancellationToken).ConfigureAwait(false);
+        if(string.IsNullOrWhiteSpace(recorderRunId))
+            throw new InvalidDataException("ARCH7B_POSITION_MARKET_CAPTURE_SESSION_REQUIRED");
+        var state=await CaptureState.CreateAsync(config,Resolve(config),recorderRunId,cancellationToken).ConfigureAwait(false);
         await using var _=state.Recorder.ConfigureAwait(false);
         System.Net.Sockets.TcpClient? client=null;Stream? stream=null;LmaxMarketDataOnlyGuardedWriteStream? guarded=null;
         var started=DateTimeOffset.UtcNow;

@@ -11,6 +11,7 @@ public static class OperationalStatusCodeCatalog
             .Concat(Arch7bGitExecutableOperationalStatusDefinitions.All)
             .Concat(Arch7bClockCutoffOperationalStatusDefinitions.All)
             .Concat(Arch7bCoreDownloaderOperationalStatusDefinitions.All)
+            .Concat(Arch7bPositionMarketOperationalStatusDefinitions.All)
             .OrderBy(value => value.ExactCode, StringComparer.Ordinal).ToArray();
 
     public static OperationalStatusCodeDefinition Get(string exactCode)

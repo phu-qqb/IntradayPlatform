@@ -755,17 +755,41 @@ public sealed class EfPmsShadowIntradayEconomicProjectionStore(
     }
 }
 
-public sealed class PmsShadowIntradayEconomicRefreshPipeline(string captureRoot, string sourceSessionId,
-    IPmsShadowIntradayEconomicProjectionStore store) : IPmsShadowIntradaySlotPipeline
+public sealed class PmsShadowIntradayEconomicRefreshPipeline : IPmsShadowIntradaySlotPipeline
 {
+    private readonly string captureRoot;
+    private readonly string sourceSessionId;
+    private readonly IPmsShadowIntradayEconomicProjectionStore store;
+    private readonly Arch7bPositionMarketImportAuthority? positionMarketAuthority;
+
+    public PmsShadowIntradayEconomicRefreshPipeline(string captureRoot,
+        string sourceSessionId, IPmsShadowIntradayEconomicProjectionStore store,
+        Arch7bPositionMarketImportAuthority? positionMarketAuthority = null)
+    {
+        this.captureRoot = captureRoot;
+        this.sourceSessionId = sourceSessionId;
+        this.store = store;
+        this.positionMarketAuthority = positionMarketAuthority;
+    }
+
     public async Task<PmsShadowIntradaySlotManifest> ExecuteAsync(PmsShadowIntradaySlotWindow slot,
         CancellationToken cancellationToken = default)
     {
-        var capture = PmsShadowRealSlotCaptureReader.Read(Path.Combine(captureRoot, slot.SlotId, "slot_manifest.json"));
+        var manifestPath = Path.Combine(captureRoot, slot.SlotId,
+            "slot_manifest.json");
+        var capture = PmsShadowRealSlotCaptureReader.Read(manifestPath);
         var source = await store.LoadSourceAsync(
             sourceSessionId, slot.SlotStartUtc, cancellationToken);
+        var lineage = positionMarketAuthority is null ? null :
+            Arch7bPositionMarketLiveWiring.RequireImportBinding(
+                manifestPath, positionMarketAuthority, source, capture);
         var oldRows = await store.LoadSupersededManifestShaAsync(slot.SlotId, cancellationToken);
         var projection = new PmsShadowIntradayEconomicProjectionBuilder().Build(capture, source, oldRows);
+        (Arch7bEconomicRevisionInputBinding Binding,
+            Arch7bContentAddressedFile File)? revisionBinding =
+            lineage is null ? null :
+            Arch7bPositionMarketLiveWiring.BindAndPublishRevision(
+                lineage, projection, positionMarketAuthority!.RevisionBindingPath);
         var outcome = await store.ApplyAsync(projection, cancellationToken);
         return new(slot.SlotId, slot.SlotStartUtc, slot.SlotEndUtc, slot.OperationalDate,
             capture.RecorderRunId + "/" + slot.SlotId, capture.ArtifactSha256, 0, [], 0, [], false,
@@ -773,7 +797,8 @@ public sealed class PmsShadowIntradayEconomicRefreshPipeline(string captureRoot,
             source.Models.Select(value => value.ModelRunId).ToArray(),
             source.Models.ToDictionary(value => value.StrategyId, value => value.OutputSha256),
             projection.TargetPositions.Count, projection.PositionOnlyDrifts.Count,
-            PmsShadowStateContract.BrokerAdjustedBlocker, projection.ManifestSha256, source.SourceSessionId,
+            PmsShadowStateContract.BrokerAdjustedBlocker,
+            revisionBinding?.File.Sha256 ?? projection.ManifestSha256, source.SourceSessionId,
             source.IngestionId, outcome.Result == PmsShadowEconomicApplyResult.Completed ? "COMPLETED" :
                 "ALREADY_APPLIED_IDENTICAL", new Dictionary<string, int>
                 {

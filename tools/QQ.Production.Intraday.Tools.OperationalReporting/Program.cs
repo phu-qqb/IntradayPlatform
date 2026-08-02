@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Npgsql;
+using QQ.Production.Intraday.Application;
 using QQ.Production.Intraday.Infrastructure.PostgreSql;
 using QQ.Production.Intraday.Tools.OperationalReporting;
 
@@ -42,6 +43,28 @@ Require(snapshot.Database.PostgreSqlMajor == arguments.ExpectedPostgreSqlMajor,
 
 if (arguments.Mode == "report-operational-state")
 {
+    var latestEconomicRevisionId = snapshot.EconomicRevisions
+        .Where(value => value.Qualifying)
+        .OrderByDescending(value => value.CompletedAtUtc)
+        .ThenByDescending(value => value.EconomicRevisionId)
+        .Select(value => (Guid?)value.EconomicRevisionId)
+        .FirstOrDefault();
+    var latestArch7aRevisionId = snapshot.Arch7a
+        .Where(value => value.IsAuthoritativeForEconomicRevision &&
+                        value.QualificationRunId.HasValue)
+        .OrderByDescending(value => value.QualificationCompletedAtUtc)
+        .ThenByDescending(value => value.QualificationRunId)
+        .Select(value => (Guid?)value.EconomicRevisionId)
+        .FirstOrDefault();
+    snapshot = snapshot with
+    {
+        PositionMarketLineage = Arch7bPositionMarketReporting.Load(
+            arguments.PositionMarketLineagePath,
+            arguments.ExpectedPositionMarketLineageSha256,
+            arguments.PositionMarketRevisionBindingPath,
+            arguments.ExpectedPositionMarketRevisionBindingSha256,
+            latestEconomicRevisionId, latestArch7aRevisionId)
+    };
     var report = OperationalReportProjector.Build(snapshot);
     var bundle = DeterministicReportingBundleWriter.Write(
         report, arguments.OutputDirectory, arguments.Overwrite);
@@ -127,6 +150,14 @@ public sealed class ReportingArguments
     public string RepositoryCommit => Required("--repository-commit");
     public string RepositoryRoot => Required("--repository-root");
     public string? RoadmapPath => values.GetValueOrDefault("--roadmap-path");
+    public string PositionMarketLineagePath =>
+        Required("--position-market-lineage-path");
+    public string ExpectedPositionMarketLineageSha256 =>
+        Required("--expected-position-market-lineage-sha256");
+    public string PositionMarketRevisionBindingPath =>
+        Required("--position-market-revision-binding-path");
+    public string ExpectedPositionMarketRevisionBindingSha256 =>
+        Required("--expected-position-market-revision-binding-sha256");
     public bool Overwrite { get; }
     public int IncludeHistory => values.TryGetValue("--include-history", out var value)
         ? int.Parse(value, CultureInfo.InvariantCulture)
@@ -189,6 +220,19 @@ public sealed class ReportingArguments
         Require(parsed.IncludeHistory is >= 1 and <= 1000,
             "REPORTING_INCLUDE_HISTORY_OUT_OF_RANGE");
         Require(parsed.AsOfUtc.Offset == TimeSpan.Zero, "REPORTING_AS_OF_NOT_UTC");
+        if (parsed.Mode == "report-operational-state")
+        {
+            Require(Path.IsPathFullyQualified(parsed.PositionMarketLineagePath),
+                "REPORTING_POSITION_MARKET_LINEAGE_PATH_NOT_ABSOLUTE");
+            Require(Path.IsPathFullyQualified(parsed.PositionMarketRevisionBindingPath),
+                "REPORTING_POSITION_MARKET_REVISION_BINDING_PATH_NOT_ABSOLUTE");
+            Require(Arch5bHashing.IsSha256(parsed.ExpectedPositionMarketLineageSha256) &&
+                    parsed.ExpectedPositionMarketLineageSha256.All(value => !char.IsUpper(value)),
+                "REPORTING_POSITION_MARKET_LINEAGE_SHA_INVALID");
+            Require(Arch5bHashing.IsSha256(parsed.ExpectedPositionMarketRevisionBindingSha256) &&
+                    parsed.ExpectedPositionMarketRevisionBindingSha256.All(value => !char.IsUpper(value)),
+                "REPORTING_POSITION_MARKET_REVISION_BINDING_SHA_INVALID");
+        }
         if (parsed.Mode == "report-institutional-metric-foundation")
             _ = parsed.RepositoryRoot;
         return parsed;
