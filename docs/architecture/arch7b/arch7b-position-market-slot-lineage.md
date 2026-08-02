@@ -59,3 +59,32 @@ The following values must never be reused from a prior run:
 The contract requires `NoOrder=true`. Contract construction and validation do not connect to PostgreSQL, LMAX, FIX, AWS, S3, Polygon, Databento or Account API. They create no Fill or PositionLedgerEvent.
 
 The synthetic tests cover the 17 required positive/negative identity cases. Passing those tests qualifies the contract implementation only. A successful E-to-F economic lineage still requires one operational market session.
+
+## Versioned runtime wiring
+
+The contract is now called by the production no-order path:
+
+- `prearm-and-import` calls `BuildAndPublishDraft` after runtime selection;
+- `assert-prearmed` and the live market-data-only recorder call
+  `RequirePrearmedDraft` before credential use or logon;
+- `publish-ready` calls `FinalizeMarket` after the canonical 49/49
+  finalizer and before ready-marker publication;
+- the PMS refresh pipeline calls `RequireImportBinding`, projects 49 to 99
+  and 99/288/288, then calls `BindAndPublishRevision` before persistence;
+- ARCH7A calls `RequireArch7aRevision` before SHADOW_ONLY qualification;
+- read-only reporting loads exact lineage and revision-binding paths/SHAs.
+
+The required files are `position-market-slot-binding-draft.json`,
+`position-market-slot-lineage.json` and
+`position-market-revision-input-binding.json`. Writers are atomic and
+create-new, except that a byte-identical revision binding is accepted for
+idempotent replay. Absolute paths and lowercase SHA-256 values are mandatory.
+
+The ready marker binds the finalized lineage. The existing persisted
+`HandoffSha256` binds the revision input file, so no schema change or
+migration is required.
+
+The runtime suite adds nine positive cases and a 23-case negative integration
+matrix. Its qualification verdict is
+`ARCH7B_POSITION_MARKET_LIVE_WIRING_QUALIFIED`; this is qualification-only,
+not historical or real-market evidence.

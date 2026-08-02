@@ -134,7 +134,11 @@ public static class OperationalReportProjector
             reconciliation,
             snapshot.ObservedCodeFacts.OrderBy(value => value.SourceTable, StringComparer.Ordinal)
                 .ThenBy(value => value.ScopeId, StringComparer.Ordinal)
-                .ThenBy(value => value.SourceExactCode, StringComparer.Ordinal).ToArray());
+                .ThenBy(value => value.SourceExactCode, StringComparer.Ordinal).ToArray())
+        {
+            PositionMarketLineage = snapshot.PositionMarketLineage ??
+                Arch7bPositionMarketReporting.Absent()
+        };
     }
 
     public static string BreakId(
@@ -249,6 +253,21 @@ public static class OperationalReportProjector
                 ReportingAuthority.Proven, "pms_shadow.intraday_slots",
                 latestSlot?.ContractVersion ?? expectation.ContractVersion,
                 slotId: latestSlot?.SlotId);
+
+        var positionMarket = snapshot.PositionMarketLineage ??
+            Arch7bPositionMarketReporting.Absent();
+        if (positionMarket.PositionMarketLineageStatus == ReportingAuthority.Absent)
+            yield return PositionMarketBreak("POSITION_MARKET_SLOT_LINEAGE_MISSING",
+                positionMarket, snapshot);
+        else if (positionMarket.PositionMarketLineageStatus == ReportingAuthority.Contradictory)
+            yield return PositionMarketBreak("POSITION_MARKET_SLOT_LINEAGE_CONTRADICTORY",
+                positionMarket, snapshot);
+        if (positionMarket.EconomicRevisionInputBindingStatus == ReportingAuthority.Absent)
+            yield return PositionMarketBreak("POSITION_MARKET_REVISION_BINDING_MISSING",
+                positionMarket, snapshot);
+        if (positionMarket.Arch7aRevisionBindingStatus == ReportingAuthority.Contradictory)
+            yield return PositionMarketBreak("POSITION_MARKET_ARCH7A_BINDING_MISMATCH",
+                positionMarket, snapshot);
 
         var latestRevision = LatestRevision(snapshot);
         if (latestRevision is not null)
@@ -406,6 +425,22 @@ public static class OperationalReportProjector
             OperationalBreakStatus.Active, revision.ManifestSha256,
             ReportingAuthority.Proven, sourceTable, OperationalReportingContract.Version,
             slotId: revision.SlotId, economicRevisionId: revision.EconomicRevisionId);
+
+    private static OperationalBreak PositionMarketBreak(
+        string code,
+        ReportingPositionMarketLineageFact lineage,
+        OperationalReportingSnapshot snapshot) =>
+        Create(code, null, OperationalFactKinds.StatusCode, "POSITION_MARKET_LINEAGE",
+            "EconomicRevision",
+            lineage.ProjectionRevisionId?.ToString("D") ?? snapshot.Database.Database,
+            snapshot.AsOfUtc, snapshot.AsOfUtc, OperationalBreakStatus.Active,
+            lineage.PositionMarketLineageEvidenceSha256 ??
+            lineage.EconomicRevisionInputBindingSha256,
+            code.Contains("MISSING", StringComparison.Ordinal)
+                ? ReportingAuthority.Absent : ReportingAuthority.Contradictory,
+            "external.position_market_lineage",
+            Arch7bPositionMarketSlotLineageContract.Version,
+            economicRevisionId: lineage.ProjectionRevisionId);
 
     private static OperationalBreak Create(
         string exactCode,

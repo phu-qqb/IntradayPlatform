@@ -60,7 +60,9 @@ public sealed record PmsShadowFreshSlotReadyMarker(
     string TargetProfileId,
     string TargetFingerprint,
     string Environment,
-    bool NoOrder);
+    bool NoOrder,
+    string? PositionMarketLineagePath = null,
+    string? PositionMarketLineageSha256 = null);
 
 public sealed record PmsShadowFreshSlotHandoffOptions(
     string HandoffRoot,
@@ -180,7 +182,8 @@ public static class PmsShadowFreshSlotReadyMarkerStore
     public static PmsShadowFreshSlotReadyMarker Build(PmsShadowFreshSlotHandoffOptions options,
         string artifactPath, string manifestPath, TimeProvider? clock = null,
         PmsShadowFreshSlotHandoffTimeline? timeline = null,
-        Func<string, string>? hashFile = null)
+        Func<string, string>? hashFile = null,
+        Arch7bContentAddressedFile? positionMarketLineage = null)
     {
         clock ??= TimeProvider.System;
         hashFile ??= Sha256;
@@ -209,6 +212,20 @@ public static class PmsShadowFreshSlotReadyMarkerStore
             clockAuthoritySnapshotSha, nameof(clockAuthoritySnapshotSha));
         PmsShadowIntradayCadenceContract.RequireSha(
             clockPostCloseSnapshotSha, nameof(clockPostCloseSnapshotSha));
+        if (positionMarketLineage is not null)
+        {
+            Arch7bPositionMarketLineageFileStore.RequireAbsolute(
+                positionMarketLineage.Path);
+            Arch7bPositionMarketLineageFileStore.RequireSha(
+                positionMarketLineage.Sha256,
+                Arch7bPositionMarketRuntimeContract.LineageNotInReadyMarker);
+            if (RequiredManifestString(manifest,
+                    "position_market_lineage_path") != positionMarketLineage.Path ||
+                RequiredManifestString(manifest,
+                    "position_market_lineage_sha256") != positionMarketLineage.Sha256)
+                throw new InvalidDataException(
+                    Arch7bPositionMarketRuntimeContract.LineageNotInMarketManifest);
+        }
         timeline?.Record(PmsShadowFreshSlotHandoffEvents.IndispensableHashingCompleted,
             artifactSha, $"elapsed_ms={elapsed.TotalMilliseconds:F3};files=2");
         if (elapsed > TimeSpan.FromSeconds(PmsShadowFreshSlotHandoffContract.IndispensableHashingSloSeconds))
@@ -219,7 +236,8 @@ public static class PmsShadowFreshSlotReadyMarkerStore
             clockAuthoritySnapshotSha, clockPostCloseSnapshotSha,
             completed, Environment.ProcessId,
             options.RepositoryCommit, options.TargetProfileId, options.TargetFingerprint,
-            PmsShadowFreshSlotHandoffContract.Environment, true);
+            PmsShadowFreshSlotHandoffContract.Environment, true,
+            positionMarketLineage?.Path, positionMarketLineage?.Sha256);
     }
 
     public static string PublishAtomic(PmsShadowFreshSlotHandoffOptions options,
@@ -289,6 +307,23 @@ public static class PmsShadowFreshSlotReadyMarkerStore
             marker.ClockPostCloseSnapshotSha256, nameof(marker.ClockPostCloseSnapshotSha256));
         PmsShadowIntradayCadenceContract.RequireSha(
             marker.TargetFingerprint, nameof(marker.TargetFingerprint));
+        if ((marker.PositionMarketLineagePath is null) !=
+            (marker.PositionMarketLineageSha256 is null))
+            throw new InvalidDataException(
+                Arch7bPositionMarketRuntimeContract.LineageNotInReadyMarker);
+        if (marker.PositionMarketLineagePath is not null)
+        {
+            Arch7bPositionMarketLineageFileStore.RequireAbsolute(
+                marker.PositionMarketLineagePath);
+            Arch7bPositionMarketLineageFileStore.RequireSha(
+                marker.PositionMarketLineageSha256!,
+                Arch7bPositionMarketRuntimeContract.LineageNotInReadyMarker);
+            if (!File.Exists(marker.PositionMarketLineagePath) ||
+                Sha256(marker.PositionMarketLineagePath) !=
+                    marker.PositionMarketLineageSha256)
+                throw new InvalidDataException(
+                    Arch7bPositionMarketRuntimeContract.LineageNotInReadyMarker);
+        }
         if (marker.CreatedAtUtc < options.SlotCloseUtc)
             throw new InvalidDataException("HANDOFF_READY_MARKER_CREATED_BEFORE_SLOT_CLOSE");
         if (!verifyFiles) return;
@@ -307,6 +342,15 @@ public static class PmsShadowFreshSlotReadyMarkerStore
                 marker.ClockPostCloseSnapshotSha256)
             throw new InvalidDataException(
                 "HANDOFF_READY_MARKER_CLOCK_AUTHORITY_MISMATCH");
+        if (marker.PositionMarketLineagePath is not null &&
+            (RequiredManifestString(document.RootElement,
+                    "position_market_lineage_path") !=
+                    marker.PositionMarketLineagePath ||
+             RequiredManifestString(document.RootElement,
+                    "position_market_lineage_sha256") !=
+                    marker.PositionMarketLineageSha256))
+            throw new InvalidDataException(
+                Arch7bPositionMarketRuntimeContract.LineageNotInReadyMarker);
     }
 
     private static string RequiredManifestString(JsonElement value, string name)

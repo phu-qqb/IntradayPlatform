@@ -472,6 +472,49 @@ public sealed class AnubisInfxOperationalReportingTests
         Assert.Equal(21, rows.Select(value => value.BreakId).Distinct().Count());
     }
 
+    [Fact]
+    public void T39_position_market_lineage_is_projected_as_proven()
+    {
+        var fact = new ReportingPositionMarketLineageFact(
+            ReportingAuthority.Proven,
+            Arch7bPositionMarketSlotLineageContract.Version, Sha, GuidFrom(2000),
+            "market-session", Sha, Sha, Sha, ReportingAuthority.Proven, Sha,
+            ReportingAuthority.Proven, RevisionId);
+        var report = Build(Healthy() with { PositionMarketLineage = fact });
+        Assert.Equal(ReportingAuthority.Proven,
+            report.PositionMarketLineage.PositionMarketLineageStatus);
+        Assert.DoesNotContain(report.Breaks, value =>
+            value.ExactCode.StartsWith("POSITION_MARKET_", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void T40_absent_position_market_lineage_has_exact_breaks()
+    {
+        var report = Build(Healthy() with
+        {
+            PositionMarketLineage = Arch7bPositionMarketReporting.Absent()
+        });
+        Assert.Contains(report.Breaks, value =>
+            value.ExactCode == "POSITION_MARKET_SLOT_LINEAGE_MISSING");
+        Assert.Contains(report.Breaks, value =>
+            value.ExactCode == "POSITION_MARKET_REVISION_BINDING_MISSING");
+    }
+
+    [Fact]
+    public void T41_contradictory_position_market_lineage_has_exact_breaks()
+    {
+        var fact = new ReportingPositionMarketLineageFact(
+            ReportingAuthority.Contradictory,
+            Arch7bPositionMarketSlotLineageContract.Version, Sha, GuidFrom(2000),
+            "market-session", Sha, Sha, Sha, ReportingAuthority.Contradictory, Sha,
+            ReportingAuthority.Contradictory, RevisionId);
+        var report = Build(Healthy() with { PositionMarketLineage = fact });
+        Assert.Contains(report.Breaks, value =>
+            value.ExactCode == "POSITION_MARKET_SLOT_LINEAGE_CONTRADICTORY");
+        Assert.Contains(report.Breaks, value =>
+            value.ExactCode == "POSITION_MARKET_ARCH7A_BINDING_MISMATCH");
+    }
+
     private static OperationalReportSet Build(OperationalReportingSnapshot? snapshot = null) =>
         OperationalReportProjector.Build(snapshot ?? Healthy());
 

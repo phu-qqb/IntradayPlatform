@@ -2,6 +2,7 @@ using System.Reflection;
 using System.Text.Json;
 using QQ.Production.Intraday.Application.CanonicalRecorder;
 using QQ.Production.Intraday.Infrastructure.Lmax.MarketDataOnly;
+using QQ.Production.Intraday.Infrastructure.PostgreSql;
 
 namespace QQ.Production.Intraday.Tools.LmaxMarketDataCaptureOnly;
 
@@ -45,6 +46,20 @@ public static class LmaxMarketDataCaptureOnlyPreflightCommand
             await WriteJson(Path.Combine(config.OutputRoot,"m2c1b_capture_command_result.json"),synthetic,cancellationToken).ConfigureAwait(false);
             Console.WriteLine(synthetic.Status);return synthetic.Status=="GO_M2C2_CAPTURE_VALIDATED"?0:1;
         }
+        string RequiredCaptureArgument(string name)=>parsed.TryGetValue(name,out var value)
+            ?value:throw new InvalidDataException($"ARCH7B_POSITION_MARKET_CAPTURE_ARGUMENT_REQUIRED:{name}");
+        var draftPath=Path.GetFullPath(RequiredCaptureArgument("position-market-draft-path"));
+        var expectedDraftSha=RequiredCaptureArgument("expected-position-market-draft-sha256");
+        var draft=Arch7bPositionMarketLineageFileStore.ReadDraft(draftPath,expectedDraftSha);
+        _=Arch7bPositionMarketLiveWiring.RequirePrearmedDraft(
+            draftPath,expectedDraftSha,
+            new PmsShadowIntradaySlotWindow(draft.SlotId,draft.SlotStartUtc,draft.SlotEndUtc,
+                DateOnly.FromDateTime(draft.SlotEndUtc.UtcDateTime)),
+            draft.MarketCaptureSessionId,draft.CoreCommit,draft.IntradayCommit,
+            config.Instruments);
+        if(config.ToolCommit!=draft.IntradayCommit)
+            throw new InvalidDataException(
+                Arch7bPositionMarketSlotLineageContract.ManifestBindingMismatch);
         var missing=RequiredCredentialLabels.Where(x=>string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable(x))).ToArray();
         if(missing.Length>0)
         {
@@ -52,7 +67,8 @@ public static class LmaxMarketDataCaptureOnlyPreflightCommand
             await WriteJson(Path.Combine(config.OutputRoot,"m2c1b_operator_run_required.json"),blocked,cancellationToken).ConfigureAwait(false);
             Console.WriteLine("GO_OPERATOR_RUN_M2C1B");return 3;
         }
-        var result=await runner.CaptureLiveAsync(config,cancellationToken).ConfigureAwait(false);
+        var result=await runner.CaptureLiveAsync(config,draft.MarketCaptureSessionId,
+            cancellationToken).ConfigureAwait(false);
         await WriteJson(Path.Combine(config.OutputRoot,"m2c1b_capture_command_result.json"),result,cancellationToken).ConfigureAwait(false);
         Console.WriteLine(result.Status);return result.Status=="GO_M2C2_CAPTURE_VALIDATED"?0:1;
     }
@@ -69,7 +85,21 @@ public static class LmaxMarketDataCaptureOnlyPreflightCommand
     }
 
     private static string OperatorCommand(string configPath)=>$"dotnet run --project tools/QQ.Production.Intraday.Tools.LmaxMarketDataCaptureOnly -- capture --config \"{configPath}\" --operator-approved-market-data-fix-logon --no-order-entry --no-account-api --no-db";
-    private static Dictionary<string,string> ParseArgs(string[] args){var result=new Dictionary<string,string>(StringComparer.OrdinalIgnoreCase);for(var i=0;i<args.Length;i++){if(!args[i].StartsWith("--",StringComparison.Ordinal))continue;var key=args[i][2..];result[key]=(i+1<args.Length&&args[i+1].StartsWith("--",StringComparison.Ordinal)==false)?args[++i]:"true";}return result;}
+    private static Dictionary<string,string> ParseArgs(string[] args)
+    {
+        var result=new Dictionary<string,string>(StringComparer.OrdinalIgnoreCase);
+        for(var i=0;i<args.Length;i++)
+        {
+            if(!args[i].StartsWith("--",StringComparison.Ordinal))continue;
+            var key=args[i][2..];
+            if(result.ContainsKey(key))
+                throw new InvalidDataException($"DUPLICATE_ARGUMENT:{args[i]}");
+            result[key]=(i+1<args.Length&&
+                !args[i+1].StartsWith("--",StringComparison.Ordinal))
+                ?args[++i]:"true";
+        }
+        return result;
+    }
     private static async Task WriteJson<T>(string path,T value,CancellationToken ct){Directory.CreateDirectory(Path.GetDirectoryName(path)!);await File.WriteAllTextAsync(path,JsonSerializer.Serialize(value,CanonicalRecorderV2Constants.JsonOptions),ct).ConfigureAwait(false);}
     private static void Usage()=>Console.Error.WriteLine("usage: lmax-market-data-capture preflight|capture --config <path> [--output <dir>] --no-order-entry --no-account-api --no-db");
 }

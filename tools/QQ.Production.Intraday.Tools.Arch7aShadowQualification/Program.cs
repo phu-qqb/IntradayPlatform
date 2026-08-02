@@ -13,6 +13,14 @@ var values = args.Chunk(2).ToDictionary(value => value[0], value =>
 var mode = Required("--mode");
 Require(mode is "preflight" or "apply-and-qualify" or "resume-and-qualify" or "read", "UNKNOWN_MODE");
 var sourceSessionId = Required("--source-session-id");
+var positionMarketRevisionBindingPath = Path.GetFullPath(
+    Required("--position-market-revision-binding-path"));
+var expectedPositionMarketRevisionBindingSha256 =
+    Required("--expected-position-market-revision-binding-sha256");
+var positionMarketRevisionBinding =
+    Arch7bPositionMarketLineageFileStore.ReadRevisionBinding(
+        positionMarketRevisionBindingPath,
+        expectedPositionMarketRevisionBindingSha256);
 var connectionString = Environment.GetEnvironmentVariable(ConnectionEnvironmentVariable);
 Require(!string.IsNullOrWhiteSpace(connectionString), $"{ConnectionEnvironmentVariable}_REQUIRED");
 var connection = new NpgsqlConnectionStringBuilder(connectionString);
@@ -33,6 +41,9 @@ var latestCandidate = projections
 var selected = EfArch7aPmsExecutionSourceReader.SelectLatestQualifyingRevision(
     projections, latestCandidate.SlotId);
 Require(selected.SourceSessionId == sourceSessionId, "ARCH7A_SOURCE_SESSION_MISMATCH");
+Arch7bPositionMarketLiveWiring.RequireArch7aRevision(
+    positionMarketRevisionBindingPath,
+    expectedPositionMarketRevisionBindingSha256, selected.ProjectionRevisionId);
 
 var slot = new Arch7aExecutionSlot(
     selected.SlotId,
@@ -89,7 +100,14 @@ var sourceManifest = new
     evaluation_as_of_utc = evaluationAsOfUtc,
     qualification_freshness = source.Freshness.ToString().ToUpperInvariant(),
     runtime_observed_at_utc = runtimeNow,
-    runtime_freshness = runtimeSource.Freshness.ToString().ToUpperInvariant()
+    runtime_freshness = runtimeSource.Freshness.ToString().ToUpperInvariant(),
+    position_market_revision_binding_contract =
+        positionMarketRevisionBinding.ContractVersion,
+    position_market_revision_binding_path = positionMarketRevisionBindingPath,
+    position_market_revision_binding_sha256 =
+        expectedPositionMarketRevisionBindingSha256,
+    position_market_lineage_evidence_sha256 =
+        positionMarketRevisionBinding.PositionMarketLineageEvidenceSha256
 };
 var planManifest = new
 {

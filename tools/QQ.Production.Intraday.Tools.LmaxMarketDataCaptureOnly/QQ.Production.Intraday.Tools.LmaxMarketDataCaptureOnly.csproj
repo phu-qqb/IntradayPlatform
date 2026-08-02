@@ -9,6 +9,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\QQ.Production.Intraday.Infrastructure.Lmax.MarketDataOnly\QQ.Production.Intraday.Infrastructure.Lmax.MarketDataOnly.csproj" />
+    <ProjectReference Include="..\..\src\QQ.Production.Intraday.Infrastructure.PostgreSql\QQ.Production.Intraday.Infrastructure.PostgreSql.csproj" />
   </ItemGroup>
 
 </Project>

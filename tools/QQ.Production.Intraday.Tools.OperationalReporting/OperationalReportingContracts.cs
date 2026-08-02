@@ -36,6 +36,7 @@ public static class ReportingAuthority
     public const string Unknown = "INCONNU";
     public const string Absent = "ABSENT";
     public const string Stale = "OBSOL\u00c8TE";
+    public const string Contradictory = "CONTRADICTOIRE";
 }
 
 public static class OperationalFactKinds
@@ -311,6 +312,20 @@ public sealed record ReportingPositionSnapshotLineFact(
     DateTimeOffset SourceAsOfUtc,
     string EvidenceSha256);
 
+public sealed record ReportingPositionMarketLineageFact(
+    string PositionMarketLineageStatus,
+    string? PositionMarketLineageContract,
+    string? PositionMarketLineageEvidenceSha256,
+    Guid? SelectedPositionSnapshotId,
+    string? MarketCaptureSessionId,
+    string? RequiredPmsUniverseSha256,
+    string? RequiredMarketSymbolSetSha256,
+    string? MarketMappingSetSha256,
+    string EconomicRevisionInputBindingStatus,
+    string? EconomicRevisionInputBindingSha256,
+    string Arch7aRevisionBindingStatus,
+    Guid? ProjectionRevisionId);
+
 public sealed record OperationalReportingSnapshot(
     DateTimeOffset AsOfUtc,
     string RepositoryCommit,
@@ -330,6 +345,7 @@ public sealed record OperationalReportingSnapshot(
     public IReadOnlyList<PmsShadowSecurityMappingRow> SecurityMappingSources { get; init; } = [];
     public IReadOnlyList<ReportingPositionSnapshotLineFact> PositionSnapshotLineSources { get; init; } = [];
     public InstitutionalRepositoryStateAuthorityResult? RepositoryAuthority { get; init; }
+    public ReportingPositionMarketLineageFact? PositionMarketLineage { get; init; }
 }
 
 public sealed record OperationalSummary(
@@ -381,7 +397,11 @@ public sealed record OperationalReportSet(
     IReadOnlyList<ReportingArch7aFact> Arch7a,
     IReadOnlyList<ReportingArch7bFact> Arch7b,
     ReconciliationReport Reconciliation,
-    IReadOnlyList<ObservedOperationalCodeFact> ObservedCodeFacts);
+    IReadOnlyList<ObservedOperationalCodeFact> ObservedCodeFacts)
+{
+    public ReportingPositionMarketLineageFact PositionMarketLineage { get; init; } =
+        Arch7bPositionMarketReporting.Absent();
+}
 
 public sealed record ReportingBundleFile(string Path, long SizeBytes, string Sha256);
 

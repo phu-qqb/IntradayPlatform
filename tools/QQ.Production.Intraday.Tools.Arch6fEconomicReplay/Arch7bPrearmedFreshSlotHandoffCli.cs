@@ -84,6 +84,19 @@ public static class Arch7bPrearmedFreshSlotHandoffCli
         }
 
         var repositoryCommit = Required("--repository-commit");
+        var coreCommit = Required("--core-commit");
+        var marketCaptureSessionId = Required("--market-capture-session-id");
+        var marketDataConfigPath = Path.GetFullPath(
+            Required("--market-data-config-path"));
+        var expectedMarketDataConfigSha =
+            Required("--expected-market-data-config-sha256");
+        var requiredMarketSymbols =
+            Arch7bPositionMarketLineageFileStore.ReadRequiredMarketSymbols(
+                marketDataConfigPath, expectedMarketDataConfigSha);
+        var draftPath = Path.GetFullPath(
+            Required("--position-market-draft-path"));
+        var lineagePath = Path.GetFullPath(
+            Required("--position-market-lineage-path"));
         var options = PmsShadowFreshSlotHandoffOptions.Create(
             handoffRoot, slot, Required("--source-session-id"),
             Required("--run-id"), repositoryCommit,
@@ -97,6 +110,8 @@ public static class Arch7bPrearmedFreshSlotHandoffCli
         var captureClockPath = Path.Combine(options.SlotRoot,
             "clock_authority_capture.json");
         var hostIdentity = Environment.MachineName;
+        var expectedDraftSha = values.GetValueOrDefault(
+            "--expected-position-market-draft-sha256");
 
         if (mode == "assert-prearmed")
         {
@@ -133,15 +148,26 @@ public static class Arch7bPrearmedFreshSlotHandoffCli
                 PmsShadowCaptureClockAuthorityContract.Blocker);
             PmsShadowCaptureClockAuthorityStore.WriteAtomic(
                 captureClockPath, captureClock);
+            Require(expectedDraftSha is not null,
+                Arch7bPositionMarketRuntimeContract.DraftRequiredBeforeMarketCapture);
+            var requiredDraftSha = expectedDraftSha ?? throw new InvalidDataException(
+                Arch7bPositionMarketRuntimeContract.DraftRequiredBeforeMarketCapture);
+            var draft = Arch7bPositionMarketLiveWiring.RequirePrearmedDraft(
+                draftPath, requiredDraftSha, slot, marketCaptureSessionId,
+                coreCommit, repositoryCommit, requiredMarketSymbols);
             timeline.Record(PmsShadowFreshSlotHandoffEvents.CaptureStarted);
             Write(new
             {
-                status = "HANDOFF_PREARMED_CAPTURE_MAY_START",
+                status = Arch7bPositionMarketRuntimeContract.DraftReady,
                 options.SlotId,
                 options.RunId,
                 options.TargetProfileId,
                 options.TargetFingerprint,
                 clock_authority_snapshot_sha256 = captureClock.SnapshotSha256,
+                position_market_draft_path = draftPath,
+                position_market_draft_sha256 = expectedDraftSha,
+                draft.SelectedPositionSnapshotId,
+                draft.MarketCaptureSessionId,
                 no_order = true
             });
             return 0;
@@ -166,6 +192,13 @@ public static class Arch7bPrearmedFreshSlotHandoffCli
                 captureClock, postCloseClock);
             PmsShadowCaptureClockAuthorityValidator.RequireQualifiedForSlot(
                 clockAuthority, slot, hostIdentity, repositoryCommit);
+            Require(expectedDraftSha is not null,
+                Arch7bPositionMarketRuntimeContract.DraftRequiredBeforeMarketCapture);
+            var requiredDraftSha = expectedDraftSha ?? throw new InvalidDataException(
+                Arch7bPositionMarketRuntimeContract.DraftRequiredBeforeMarketCapture);
+            _ = Arch7bPositionMarketLiveWiring.RequirePrearmedDraft(draftPath,
+                requiredDraftSha, slot, marketCaptureSessionId, coreCommit,
+                repositoryCommit, requiredMarketSymbols);
             var selection = PmsShadowRealSlotManifestFinalizer.Finalize(
                 manifestPath, artifactPath, slot, clockAuthority,
                 hostIdentity, repositoryCommit);
@@ -174,8 +207,12 @@ public static class Arch7bPrearmedFreshSlotHandoffCli
             Require(capture.SlotId == options.SlotId &&
                 capture.SlotEndUtc == options.SlotCloseUtc,
                 "HANDOFF_MANIFEST_SLOT_MISMATCH");
+            var finalization = Arch7bPositionMarketLiveWiring.FinalizeMarket(
+                manifestPath, draftPath, expectedDraftSha, lineagePath,
+                selection, clockAuthority);
             var marker = PmsShadowFreshSlotReadyMarkerStore.Build(options,
-                artifactPath, manifestPath, timeline: timeline);
+                artifactPath, manifestPath, timeline: timeline,
+                positionMarketLineage: finalization.LineageFile);
             var status = PmsShadowFreshSlotReadyMarkerStore.PublishAtomic(options, marker, timeline);
             Write(new
             {
@@ -188,6 +225,10 @@ public static class Arch7bPrearmedFreshSlotHandoffCli
                 marker.TargetFingerprint,
                 marker.ClockAuthoritySnapshotSha256,
                 marker.ClockPostCloseSnapshotSha256,
+                marker.PositionMarketLineagePath,
+                marker.PositionMarketLineageSha256,
+                finalization.Lineage.EvidenceSha256,
+                finalization.PublishedMarketManifestSha256,
                 marker.NoOrder
             });
             return 0;
@@ -203,6 +244,9 @@ public static class Arch7bPrearmedFreshSlotHandoffCli
         var captureRoot = Path.GetFullPath(Required("--capture-root"));
         var coordinatorId = values.GetValueOrDefault("--coordinator-id")
             ?? $"arch7b-prearmed-{Environment.MachineName}";
+        Arch7bContentAddressedFile? draftAuthority = null;
+        var revisionBindingPath = Path.GetFullPath(
+            Required("--position-market-revision-binding-path"));
         var result = await new PmsShadowFreshSlotHandoffRunner(options).RunAsync(
             async cancellationToken =>
             {
@@ -253,13 +297,39 @@ public static class Arch7bPrearmedFreshSlotHandoffCli
                     "POSTGRESQL_PREFLIGHT_SCHEMA_MISSING");
                 Require(reader.GetBoolean(5),
                     "POSTGRESQL_PREFLIGHT_MIGRATION_MISSING");
+                var source = await new EfPmsShadowIntradayEconomicProjectionStore(
+                    factory).LoadSourceAsync(options.SourceSessionId,
+                    slot.SlotStartUtc, cancellationToken);
+                var published = Arch7bPositionMarketLiveWiring.BuildAndPublishDraft(
+                    draftPath, options.RunId, "1754288005", options.TargetProfileId,
+                    coreCommit, repositoryCommit, source, slot,
+                    marketCaptureSessionId, requiredMarketSymbols);
+                draftAuthority = published.File;
             },
             async (marker, observer, cancellationToken) =>
             {
+                Require(draftAuthority is not null,
+                    Arch7bPositionMarketRuntimeContract.DraftRequiredBeforeMarketCapture);
+                Require(marker.PositionMarketLineagePath is not null &&
+                    marker.PositionMarketLineageSha256 is not null,
+                    Arch7bPositionMarketRuntimeContract.LineageNotInReadyMarker);
+                var requiredDraftAuthority = draftAuthority ??
+                    throw new InvalidDataException(
+                        Arch7bPositionMarketRuntimeContract.DraftRequiredBeforeMarketCapture);
+                var requiredLineagePath = marker.PositionMarketLineagePath ??
+                    throw new InvalidDataException(
+                        Arch7bPositionMarketRuntimeContract.LineageNotInReadyMarker);
+                var requiredLineageSha = marker.PositionMarketLineageSha256 ??
+                    throw new InvalidDataException(
+                        Arch7bPositionMarketRuntimeContract.LineageNotInReadyMarker);
                 var store = new EfPmsShadowIntradaySlotStore(factory, observer);
                 var economicStore = new EfPmsShadowIntradayEconomicProjectionStore(factory);
                 var pipeline = new PmsShadowIntradayEconomicRefreshPipeline(
-                    captureRoot, options.SourceSessionId, economicStore);
+                    captureRoot, options.SourceSessionId, economicStore,
+                    new Arch7bPositionMarketImportAuthority(
+                        requiredDraftAuthority.Path, requiredDraftAuthority.Sha256,
+                        requiredLineagePath, requiredLineageSha,
+                        revisionBindingPath, marker));
                 var tick = await new PmsShadowIntradayScheduler(store, pipeline)
                     .RunClosedSlotAsync(DateTimeOffset.UtcNow, coordinatorId, cancellationToken);
                 Require(tick.Slot.SlotId == marker.SlotId,
@@ -278,6 +348,9 @@ public static class Arch7bPrearmedFreshSlotHandoffCli
             result.DetectionLatencyMilliseconds,
             result.WithinAbsoluteStartDeadline,
             target = configuredTarget.ObservableIdentity,
+            position_market_revision_binding_path = revisionBindingPath,
+            position_market_revision_binding_sha256 =
+                Arch7bPositionMarketLineageFileStore.Sha256File(revisionBindingPath),
             result.NoOrder
         });
         return 0;
