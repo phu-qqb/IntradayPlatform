@@ -1,0 +1,49 @@
+{
+  "contract": "arch7b_arch7a_rds_command_contract_forensic_v1",
+  "status": "COMPLETED",
+  "verdict": "ARCH7A_LEGACY_ARCH6D_RUNTIME_NOT_COMPATIBLE_WITH_ARCH7B_RDS_TEST",
+  "historical_blocker": "NO_GO_ARCH7B_FROZEN_ARCH7A_RDS_COMMAND_CONTRACT_MISMATCH",
+  "historical_classification": "ABORTED_FROZEN_ARCH7A_COMMAND_AND_TARGET_CONTRACT_STALE_BEFORE_ONE_SHOT",
+  "legacy": {
+    "accepted_modes": ["preflight", "apply-and-qualify", "resume-and-qualify", "read"],
+    "requested_but_unparsed_mode": "qualify-shadow",
+    "connection_environment_variable": "QQ_PMS_SHADOW_ARCH7A_CONNECTION_STRING",
+    "database": "qq_pms_shadow_arch6d_test",
+    "host_policy": "LOOPBACK_ONLY",
+    "postgresql_major": 16,
+    "migration_behavior": "MigrateAsync on write modes",
+    "source_selection": "latest qualifying revision",
+    "output": "stdout JSON"
+  },
+  "corrective_path": {
+    "contract": "arch7a_arch7b_rds_shadow_qualification_v1",
+    "mode": "qualify-shadow",
+    "target_profile": "ARCH7B_RDS_TEST",
+    "database": "qq_pms_shadow_arch7b_test",
+    "schema": "pms_shadow",
+    "postgresql_major": 18,
+    "transport": "DIRECT_VPC_PRIMARY_HOST_VERIFY_FULL_PINNED_SESSION",
+    "pooling": false,
+    "multiplexing": false,
+    "enlist": false,
+    "physical_open_maximum": 1,
+    "explicit_revision_selection": true,
+    "exact_revision_binding": true,
+    "schema_migration": false,
+    "persist_replay_readback": true,
+    "no_order": true,
+    "output": "content-addressed arch7a-shadow-qualification.json"
+  },
+  "historical_run_facts": {
+    "selected_slot": null,
+    "run_id": null,
+    "owner_id": null,
+    "future_authorization_id": null,
+    "secret_reads": 0,
+    "database_connections": 0,
+    "lmax_sessions": 0,
+    "fix_orders_fills_ledger": 0
+  },
+  "historical_evidence_sha256": "cb3e36b654209541f0a7ee40324470526a8699d97eb703dc1e6208d8c1a54e9e",
+  "historical_cleanup_sha256": "9d468dbdb5b808af1100aaa663c6fbf9ffbb08c1a829550e1813f00d7053c2b6"
+}

@@ -122,7 +122,23 @@ public sealed class EfArch7aPmsExecutionSourceReader(
         string sourceSessionId,
         Arch7aExecutionSlot slot,
         DateTimeOffset nowUtc,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default) =>
+        await ReadCoreAsync(sourceSessionId, slot, nowUtc, null, cancellationToken);
+
+    public async Task<Arch7aPmsExecutionSource> ReadExactRevisionAsync(
+        string sourceSessionId,
+        Arch7aExecutionSlot slot,
+        DateTimeOffset nowUtc,
+        Guid economicRevisionId,
+        CancellationToken cancellationToken = default) =>
+        await ReadCoreAsync(sourceSessionId, slot, nowUtc, economicRevisionId, cancellationToken);
+
+    private async Task<Arch7aPmsExecutionSource> ReadCoreAsync(
+        string sourceSessionId,
+        Arch7aExecutionSlot slot,
+        DateTimeOffset nowUtc,
+        Guid? economicRevisionId,
+        CancellationToken cancellationToken)
     {
         slot.RequireCanonical();
         if (nowUtc.Offset != TimeSpan.Zero)
@@ -130,7 +146,9 @@ public sealed class EfArch7aPmsExecutionSourceReader(
 
         var economicStore = new EfPmsShadowIntradayEconomicProjectionStore(contextFactory);
         var projections = await economicStore.ReadAllAsync(cancellationToken);
-        var selected = SelectLatestQualifyingRevision(projections, slot.SlotId);
+        var selected = economicRevisionId is null
+            ? SelectLatestQualifyingRevision(projections, slot.SlotId)
+            : SelectExactQualifyingRevision(projections, economicRevisionId.Value, slot.SlotId, sourceSessionId);
         if (!selected.SourceSessionId.Equals(sourceSessionId, StringComparison.Ordinal))
             throw new InvalidOperationException("ARCH7A_SOURCE_SESSION_REVISION_MISMATCH");
         if (selected.SlotEndUtc != slot.TargetCloseUtc || selected.SlotStartUtc != slot.EffectiveFromUtc)
@@ -292,6 +310,31 @@ public sealed class EfArch7aPmsExecutionSourceReader(
         return selected;
     }
 
+    public static PmsShadowIntradayEconomicProjection SelectExactQualifyingRevision(
+        IReadOnlyList<PmsShadowIntradayEconomicProjection> projections,
+        Guid economicRevisionId,
+        string slotId,
+        string sourceSessionId)
+    {
+        if (economicRevisionId == Guid.Empty)
+            throw new InvalidOperationException("ARCH7A_ARCH7B_ECONOMIC_REVISION_REQUIRED");
+        var selected = projections.SingleOrDefault(value =>
+                value.ProjectionRevisionId == economicRevisionId)
+            ?? throw new InvalidOperationException(
+                "ARCH7A_ARCH7B_ECONOMIC_REVISION_MISMATCH");
+        if (!selected.SlotId.Equals(slotId, StringComparison.Ordinal))
+            throw new InvalidOperationException("ARCH7A_ARCH7B_SLOT_MISMATCH");
+        if (!selected.SourceSessionId.Equals(sourceSessionId, StringComparison.Ordinal))
+            throw new InvalidOperationException(
+                "ARCH7A_ARCH7B_SOURCE_SESSION_MISMATCH");
+        if (selected.Status != "COMPLETED" || !selected.Qualifying || !selected.NoOrder ||
+            selected.RevisionNumber != 2 || selected.MarketData.Count != 99 ||
+            selected.TargetPositions.Count != 288 || selected.PositionOnlyDrifts.Count != 288 ||
+            selected.ReusedModelRunIds.Distinct().Count() != 4)
+            throw new InvalidOperationException(
+                "ARCH7A_ARCH7B_ECONOMIC_REVISION_MISMATCH");
+        return selected;
+    }
     public static string NormalizeExecutionEnvironment(string sourceEnvironment)
         => sourceEnvironment.Equals(PmsShadowStateContract.TestEnvironment, StringComparison.OrdinalIgnoreCase)
             ? "TEST"

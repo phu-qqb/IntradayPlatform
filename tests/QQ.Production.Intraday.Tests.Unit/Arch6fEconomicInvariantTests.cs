@@ -235,6 +235,43 @@ public sealed class Arch6fEconomicInvariantTests
     }
 
     [Fact]
+    public void Arch7a_exact_revision_is_not_replaced_by_a_later_revision()
+    {
+        var requestedBase = Projection(0, 1m, 'a', 'c');
+        var requested = requestedBase with { MarketData =
+            Enumerable.Repeat(requestedBase.MarketData[0], 99).ToArray() };
+        var later = Projection(1, 1.01m, 'b', 'd');
+
+        var selected = EfArch7aPmsExecutionSourceReader.SelectExactQualifyingRevision(
+            [later, requested],
+            requested.ProjectionRevisionId,
+            requested.SlotId,
+            requested.SourceSessionId);
+
+        Assert.Equal(requested.ProjectionRevisionId, selected.ProjectionRevisionId);
+    }
+
+    [Fact]
+    public void Arch7a_exact_revision_rejects_slot_and_source_session_mismatch()
+    {
+        var requestedBase = Projection(0, 1m, 'a', 'c');
+        var requested = requestedBase with { MarketData =
+            Enumerable.Repeat(requestedBase.MarketData[0], 99).ToArray() };
+
+        var slot = Assert.Throws<InvalidOperationException>(() =>
+            EfArch7aPmsExecutionSourceReader.SelectExactQualifyingRevision(
+                [requested], requested.ProjectionRevisionId, "other-slot",
+                requested.SourceSessionId));
+        Assert.Equal("ARCH7A_ARCH7B_SLOT_MISMATCH", slot.Message);
+
+        var session = Assert.Throws<InvalidOperationException>(() =>
+            EfArch7aPmsExecutionSourceReader.SelectExactQualifyingRevision(
+                [requested], requested.ProjectionRevisionId, requested.SlotId,
+                "other-session"));
+        Assert.Equal("ARCH7A_ARCH7B_SOURCE_SESSION_MISMATCH", session.Message);
+    }
+
+    [Fact]
     public void Arch7a_rejects_a_qualifying_revision_one()
     {
         var plan = Arch6cPostgreSqlPmsShadowStateTests.BuildPlan();

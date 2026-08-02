@@ -1,0 +1,42 @@
+{
+  "contract": "arch7a_arch7b_database_privilege_policy_v1",
+  "role": "qq_arch7b_position_importer",
+  "authority_status": "NOT_PROVEN_BY_AVAILABLE_GRANT_INVENTORY",
+  "available_inventory": "D:/QQFund/ARCH7B/rds-migration-20260724T150156Z/manifests/source-grants.tsv",
+  "inventory_observation": "No row for qq_arch7b_position_importer was present in the available historical inventory.",
+  "required_select": [
+    "public.__EFMigrationsHistory",
+    "pms_shadow.intraday_projection_revisions",
+    "pms_shadow.intraday_slots",
+    "pms_shadow.account_snapshots",
+    "pms_shadow.position_snapshots",
+    "pms_shadow.position_snapshot_lines",
+    "pms_shadow.working_leaves_observations",
+    "pms_shadow.model_runs",
+    "pms_shadow.security_mappings",
+    "pms_shadow.shadow_trade_intents",
+    "pms_shadow.shadow_risk_decisions",
+    "pms_shadow.shadow_parent_orders",
+    "pms_shadow.shadow_child_orders",
+    "pms_shadow.shadow_execution_qualification_runs"
+  ],
+  "required_insert": [
+    "pms_shadow.shadow_trade_intents",
+    "pms_shadow.shadow_risk_decisions",
+    "pms_shadow.shadow_parent_orders",
+    "pms_shadow.shadow_child_orders",
+    "pms_shadow.shadow_execution_qualification_runs"
+  ],
+  "required_function_execute": ["pg_catalog.pg_advisory_xact_lock(bigint)"],
+  "forbidden": [
+    "UPDATE", "DELETE", "TRUNCATE", "CREATE", "ALTER", "DROP",
+    "schema migration", "ARCH7B order tables",
+    "ARCH7B execution report tables", "ARCH7B Fill tables",
+    "ARCH7B PositionLedgerEvent tables"
+  ],
+  "minimal_proposal_only": {
+    "mutation_performed": false,
+    "action": "Grant only the listed SELECT and INSERT privileges after independent operator review; do not grant ownership, DDL, UPDATE, DELETE, TRUNCATE, or ARCH7B lifecycle table access."
+  },
+  "verdict": "NO_GO_ARCH7B_ARCH7A_DATABASE_PRIVILEGE_AUTHORITY_MISSING"
+}

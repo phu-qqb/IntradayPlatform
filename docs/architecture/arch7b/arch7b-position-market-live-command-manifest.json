@@ -1,6 +1,6 @@
 {
-  "contract": "arch7b_position_market_live_command_manifest_v1",
-  "status": "REQUIRES_OPERATIONAL_MARKET_SESSION",
+  "contract": "arch7b_position_market_live_command_manifest_v2",
+  "status": "REQUIRES_POST_MERGE_PRIMARY_QUALIFICATION",
   "rules": {
     "absolute_paths": true,
     "lowercase_sha256": true,
@@ -8,7 +8,8 @@
     "implicit_historical_root": false,
     "historical_defaults": false,
     "silent_reconstruction": false,
-    "no_order": true
+    "no_order": true,
+    "rds_secret_reads_maximum": 2
   },
   "commands": [
     {
@@ -63,9 +64,30 @@
       "owner": "arch7a-qualification",
       "executable": "QQ.Production.Intraday.Tools.Arch7aShadowQualification",
       "mode": "qualify-shadow",
+      "contract": "arch7a_arch7b_rds_shadow_qualification_v1",
       "arguments": {
+        "--mode": "qualify-shadow",
+        "--economic-revision-id": "REGENERATE_JUST_BEFORE_LIVE_RUN",
+        "--slot-id": "REGENERATE_JUST_BEFORE_LIVE_RUN",
+        "--source-session-id": "REGENERATE_JUST_BEFORE_LIVE_RUN",
         "--position-market-revision-binding-path": "REGENERATE_JUST_BEFORE_LIVE_RUN",
-        "--expected-position-market-revision-binding-sha256": "REGENERATE_JUST_BEFORE_LIVE_RUN"
+        "--expected-position-market-revision-binding-sha256": "REGENERATE_JUST_BEFORE_LIVE_RUN",
+        "--target-profile-id": "ARCH7B_RDS_TEST",
+        "--expected-environment": "TEST",
+        "--expected-database": "qq_pms_shadow_arch7b_test",
+        "--expected-schema": "pms_shadow",
+        "--expected-postgres-major": "18",
+        "--require-tls": "true",
+        "--allow-loopback": "false",
+        "--root-certificate": "D:\\QQFund\\ARCH7B\\primary-direct-vpc-20260729T1115Z\\amazon-rds-eu-west-2-root-ca-rsa2048-g1.pem",
+        "--expected-root-certificate-sha256": "17976078e32d253e3d77a464933d96804357a7d61206e0ecdd38145a64f67527",
+        "--expected-target-fingerprint": "72fa569ee28e4dec6272db0d69c7594b2be8853e9607dff3e78066378a0b5ee4",
+        "--repository-commit": "REGENERATE_JUST_BEFORE_LIVE_RUN",
+        "--output-directory": "REGENERATE_JUST_BEFORE_LIVE_RUN",
+        "--connection-secret-reference": "env:QQ_ARCH7B_POSITION_IMPORT_FAST_PATH",
+        "--role": "qq_arch7b_position_importer",
+        "--no-order": "true",
+        "--validate-command-contract-only": "false"
       }
     },
     {
