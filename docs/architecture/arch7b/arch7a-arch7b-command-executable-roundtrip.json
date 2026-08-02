@@ -1,0 +1,21 @@
+{
+  "contract": "arch7a_arch7b_command_executable_roundtrip_v1",
+  "status": "ARCH7A_ARCH7B_COMMAND_EXECUTABLE_ROUNDTRIP_QUALIFIED",
+  "candidate_runtime_commit": "d14a54ff54a443eda7574b41f932dd698d26f688",
+  "candidate_runtime_tree": "1089af4ecaf018fafe0a291e35a64ffd9b585f12",
+  "published_executable": "QQ.Production.Intraday.Tools.Arch7aShadowQualification.exe",
+  "published_executable_sha256": "7e8c9f090aa68671c936b2f398fdbc8220c6b36b3c1a6ea8e5342e437ab8c583",
+  "published_dll_sha256": "1a6713e93ebbba3950264923aee57cd3ab9444c2edc3824e2906cc27e692e95c",
+  "command_manifest_contract": "arch7b_position_market_live_command_manifest_v2",
+  "command_manifest_sha256": "a3bc2f548cac8dfbe2e28a07613bf9906359c9b25fc167a7734806a7edc585e7",
+  "parser_result": "QUALIFIED",
+  "target_contract_result": "QUALIFIED",
+  "legacy_manifest_selected": false,
+  "legacy_arch6d_defaults_present": false,
+  "validation_only": true,
+  "secret_reads": 0,
+  "database_connections": 0,
+  "database_writes": 0,
+  "operational_output_created": false,
+  "no_order": true
+}

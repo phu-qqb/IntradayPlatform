@@ -1,0 +1,113 @@
+{
+  "contract": "arch7b_arch7a_rds_runtime_candidate_v1",
+  "status": "CORRECTIVE_PR_CANDIDATE_BLOCKED_ON_DATABASE_PRIVILEGE_AUTHORITY",
+  "base_freeze": {
+    "version": "v5",
+    "root": "D:\\QQFund\\ARCH7B\\final-offline-operational-freeze-f5c7c784-20260802T160630Z",
+    "intraday_commit": "f5c7c7840edbcca7f614f767579cf78ba45a319c",
+    "intraday_tree": "2ac51781aef47f176b1231afeb807db9c5f9a6b1",
+    "freeze_zip_sha256": "d7283f89fda85ab800a5e52622826aaca84e3b06989124736c77f9fcc3482dc6"
+  },
+  "candidate_runtime": {
+    "commit": "d14a54ff54a443eda7574b41f932dd698d26f688",
+    "tree": "1089af4ecaf018fafe0a291e35a64ffd9b585f12",
+    "executable_sha256": "7e8c9f090aa68671c936b2f398fdbc8220c6b36b3c1a6ea8e5342e437ab8c583",
+    "dll_sha256": "1a6713e93ebbba3950264923aee57cd3ab9444c2edc3824e2906cc27e692e95c"
+  },
+  "command_manifest": {
+    "contract": "arch7b_position_market_live_command_manifest_v2",
+    "sha256": "a3bc2f548cac8dfbe2e28a07613bf9906359c9b25fc167a7734806a7edc585e7"
+  },
+  "target_contract": {
+    "profile": "ARCH7B_RDS_TEST",
+    "environment": "TEST",
+    "database": "qq_pms_shadow_arch7b_test",
+    "schema": "pms_shadow",
+    "postgresql_major": 18,
+    "transport": "DIRECT_VPC_PRIMARY_HOST_VERIFY_FULL_PINNED_SESSION",
+    "tls": "VerifyFull",
+    "allow_loopback": false,
+    "target_fingerprint": "72fa569ee28e4dec6272db0d69c7594b2be8853e9607dff3e78066378a0b5ee4",
+    "root_certificate_sha256": "17976078e32d253e3d77a464933d96804357a7d61206e0ecdd38145a64f67527"
+  },
+  "migration_contract": {
+    "exact_count": 8,
+    "ids": [
+      "20260721152240_InitialPostgreSqlPmsShadowState",
+      "20260721175549_CorrectGitCommitIdentityContract",
+      "20260722110000_AddIntradayShadowSlots",
+      "20260722231500_AddIntradayEconomicProjectionRevisions",
+      "20260722234500_CorrectIntradayMarketPriceScaleInvariant",
+      "20260723000000_AddArch7aShadowExecutionAfterArch6fEconomicRevisions",
+      "20260723010000_CorrectArch7aSerializationReplayAndChildPriceScale",
+      "20260723085240_AddArch7bLmaxDemoKnownOrderLifecycle"
+    ],
+    "pending_model_changes": false,
+    "runtime_migration_calls": 0
+  },
+  "privilege_contract": {
+    "contract": "arch7a_arch7b_database_privilege_policy_v1",
+    "sha256": "c6c8b72b78cfc352e6f62d7e757ff1d21646f85661952808a383e9747c7430f5",
+    "role": "qq_arch7b_position_importer",
+    "authority_proven": false,
+    "blocker": "NO_GO_ARCH7B_ARCH7A_DATABASE_PRIVILEGE_AUTHORITY_MISSING"
+  },
+  "credential_lifecycle_contract": {
+    "sha256": "696d6e6434a5e9708ff4b525cd5c3f88276cad6e6ea4d8611ee9f16287a73c47",
+    "topology": "EXPLICIT_CHILD_PRELOADED_ENVIRONMENT_ALLOWLIST",
+    "secret_reads_by_arch7a": 0,
+    "third_secret_read": false,
+    "credential_serialized": false
+  },
+  "command_executable_roundtrip": {
+    "status": "ARCH7A_ARCH7B_COMMAND_EXECUTABLE_ROUNDTRIP_QUALIFIED",
+    "evidence_sha256": "67af874d6eca315e9cee5481b60ae5578653327bfe6e07a57be7dc1743f8efa7",
+    "secret_reads": 0,
+    "database_connections": 0,
+    "database_writes": 0
+  },
+  "tests": {
+    "targeted": "51/51",
+    "regressions_arch6f_arch7a_arch7b_reporting": "751/751",
+    "migrations_pending_model_pinned_session": "58/58",
+    "release_build_errors": 0,
+    "release_build_nu1903": 16,
+    "release_build_cs8601": 5,
+    "new_warnings": 0,
+    "new_file_format": "PASS",
+    "git_diff_check": "PASS",
+    "security_scans": "PASS"
+  },
+  "historic_blocker_append_only": {
+    "verdict": "NO_GO_ARCH7B_FROZEN_ARCH7A_RDS_COMMAND_CONTRACT_MISMATCH",
+    "classification": "ABORTED_FROZEN_ARCH7A_COMMAND_AND_TARGET_CONTRACT_STALE_BEFORE_ONE_SHOT",
+    "evidence_sha256": "cb3e36b654209541f0a7ee40324470526a8699d97eb703dc1e6208d8c1a54e9e",
+    "cleanup_sha256": "9d468dbdb5b808af1100aaa663c6fbf9ffbb08c1a829550e1813f00d7053c2b6"
+  },
+  "blockers": [
+    "NO_GO_ARCH7B_ARCH7A_DATABASE_PRIVILEGE_AUTHORITY_MISSING"
+  ],
+  "no_order_invariants": {
+    "no_fix_logon": true,
+    "no_broker_send": true,
+    "no_fill": true,
+    "no_position_ledger_event": true,
+    "network_ledger_count": 0,
+    "account_api": false,
+    "databento": false,
+    "real_account": false
+  },
+  "safety": {
+    "secret_reads": 0,
+    "database_connections": 0,
+    "database_writes": 0,
+    "live_slots": 0,
+    "lmax_sessions": 0,
+    "fix_operations": 0,
+    "orders": 0,
+    "fills": 0,
+    "position_ledger_events": 0,
+    "aws_mutations": 0,
+    "one_shot_state": 0
+  }
+}
