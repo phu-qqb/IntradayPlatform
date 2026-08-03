@@ -19,6 +19,8 @@ public static class Program
             RequireModeSafety(options, mode);
             if (mode == "fake-child")
                 return await Arch7bQualificationFakeChild.RunAsync(options).ConfigureAwait(false);
+            if (mode == "fake-native-child")
+                return await Arch7bNativeQualificationChild.RunAsync(options).ConfigureAwait(false);
             object result = mode switch
             {
                 "qualify-static-authorities" => await QualifyStaticAsync(options).ConfigureAwait(false),
@@ -28,7 +30,9 @@ public static class Program
                 "validate-live-execution-contract" => ValidateLiveExecutionContract(options),
                 "simulate-live-command-execution" => await SimulateLiveCommandExecutionAsync(options).ConfigureAwait(false),
                 "materialize-live-execution-candidate-packet" => await MaterializeLiveCandidateAsync(options).ConfigureAwait(false),
-                "run-one-shot" => await RunOneShotAsync(options).ConfigureAwait(false),
+                "validate-live-template-v2" => Arch7bProgramV2Modes.ValidateLiveTemplate(options),
+                "qualify-live-runtime-v2" => await Arch7bProgramV2Modes.QualifyLiveRuntimeAsync(options).ConfigureAwait(false),
+                "run-one-shot" => await Arch7bProgramV2Modes.RunOneShotAsync(options).ConfigureAwait(false),
                 _ => throw new Arch7bQualificationException(Arch7bBlockers.SupervisorModeUnknown, mode)
             };
             Console.WriteLine(JsonSerializer.Serialize(result, JsonOptions));

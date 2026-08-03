@@ -296,9 +296,11 @@ public static class Arch7bOneShotAuthorityLoader
 
     public static void RequireInside(string root, string path)
     {
-        var fullRoot = Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
+        var normalizedRoot = Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar);
+        var fullRoot = normalizedRoot + Path.DirectorySeparatorChar;
         var candidate = Path.GetFullPath(path);
-        if (!candidate.StartsWith(fullRoot, StringComparison.OrdinalIgnoreCase))
+        if (!candidate.Equals(normalizedRoot, StringComparison.OrdinalIgnoreCase) &&
+            !candidate.StartsWith(fullRoot, StringComparison.OrdinalIgnoreCase))
             throw new Arch7bQualificationException(Arch7bBlockers.CleanupPathOutsideRunRoot, candidate);
     }
 
