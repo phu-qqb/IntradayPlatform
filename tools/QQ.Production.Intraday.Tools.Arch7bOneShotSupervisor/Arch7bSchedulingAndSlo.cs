@@ -1,3 +1,4 @@
+using System.Globalization;
 using QQ.Production.Intraday.Infrastructure.PostgreSql;
 
 namespace QQ.Production.Intraday.Tools.Arch7bOneShotSupervisor;
@@ -32,7 +33,15 @@ public sealed class Arch7bGlobalSloRegistry
     {
         this.entries = entries.OrderBy(value => value.SloId, StringComparer.Ordinal).ToArray();
         Validate(this.entries);
+        var canonical = string.Join('\n', this.entries.Select(value => string.Create(CultureInfo.InvariantCulture,
+            $"{value.SloId}|{value.Stage}|{value.Threshold}|{value.Unit}|{value.Comparator}|" +
+            $"{value.StartEvent}|{value.EndEvent}|{value.ClockDomain}|{value.SourceRepository}|" +
+            $"{value.SourceCommit}|{value.SourceFile}|{value.SourceSymbol}|{value.SourceFileSha256}|" +
+            $"{value.BlockerCode}|{value.Metric}")));
+        EvidenceSha256 = Arch7bOneShotContracts.Sha256(canonical);
     }
+
+    public string EvidenceSha256 { get; }
 
     public IReadOnlyList<Arch7bSloDefinition> Entries => entries;
 

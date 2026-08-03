@@ -30,14 +30,22 @@ public static class Program
         }
         catch (Arch7bQualificationException exception)
         {
-            Console.Error.WriteLine(JsonSerializer.Serialize(new { status = "NO_GO", blocker = exception.BlockerCode,
-                detail = exception.Message }, JsonOptions));
+            Console.Error.WriteLine(JsonSerializer.Serialize(new
+            {
+                status = "NO_GO",
+                blocker = exception.BlockerCode,
+                detail = exception.Message
+            }, JsonOptions));
             return 2;
         }
         catch (Exception exception)
         {
-            Console.Error.WriteLine(JsonSerializer.Serialize(new { status = "NO_GO",
-                blocker = "ARCH7B_ONE_SHOT_SUPERVISOR_UNEXPECTED_FAILURE", detail = exception.Message }, JsonOptions));
+            Console.Error.WriteLine(JsonSerializer.Serialize(new
+            {
+                status = "NO_GO",
+                blocker = "ARCH7B_ONE_SHOT_SUPERVISOR_UNEXPECTED_FAILURE",
+                detail = exception.Message
+            }, JsonOptions));
             return 1;
         }
     }
@@ -71,6 +79,7 @@ public static class Program
             sloRegistry = Arch7bOneShotContracts.GlobalSloRegistryVersion,
             sloCount = registry.Entries.Count,
             globalSloCount = registry.Entries.Count(value => value.SloId.StartsWith("GLOBAL_", StringComparison.Ordinal)),
+            sloRegistryEvidenceSha256 = registry.EvidenceSha256,
             chronology = Arch7bOneShotContracts.CrossRepositoryChronologyVersion,
             chronology.StageCount,
             chronology.EdgeCount,
@@ -98,6 +107,7 @@ public static class Program
             oneShotIdentity = (string?)null,
             chronology.StageCount,
             chronology.EdgeCount,
+            sloRegistryEvidenceSha256 = registry.EvidenceSha256,
             chronology.PreSlotCriticalPathSloSeconds,
             requiredPreparationMarginSeconds = margin,
             maximumSlots = Arch7bOneShotContracts.MaximumSlots,
@@ -116,8 +126,13 @@ public static class Program
         var seedOffset = ParseNonNegative(options.GetValueOrDefault("seed-offset"), 0);
         var qualification = await Arch7bSimulationQualifier.RunAsync(runs, campaigns, runsPerCampaign, seedOffset)
             .ConfigureAwait(false);
-        return new { verdict = "ARCH7B_ONE_SHOT_SYNTHETIC_QUALIFIED", qualificationOnly = true,
-            qualification, safety = Arch7bNoLiveSafetyCounters.Zero };
+        return new
+        {
+            verdict = "ARCH7B_ONE_SHOT_SYNTHETIC_QUALIFIED",
+            qualificationOnly = true,
+            qualification,
+            safety = Arch7bNoLiveSafetyCounters.Zero
+        };
     }
 
     private static async Task<object> MaterializeAsync(IReadOnlyDictionary<string, string> options)
@@ -132,8 +147,13 @@ public static class Program
             Required(options, "intraday-commit"), Required(options, "intraday-tree"),
             Required(options, "executable"), Required(options, "intraday-repository"), core, simulations,
             roundtrips).ConfigureAwait(false);
-        return new { verdict = Arch7bOneShotContracts.SuccessVerdict, qualificationOnly = true, files,
-            safety = Arch7bNoLiveSafetyCounters.Zero };
+        return new
+        {
+            verdict = Arch7bOneShotContracts.SuccessVerdict,
+            qualificationOnly = true,
+            files,
+            safety = Arch7bNoLiveSafetyCounters.Zero
+        };
     }
 
     private static void RequireQualificationOnly(IReadOnlyDictionary<string, string> options)

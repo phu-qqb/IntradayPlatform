@@ -15,6 +15,7 @@ public sealed record Arch7bCandidatePacket(
     IReadOnlyList<Arch7bSloDefinition> SloRegistry,
     int GlobalSloCount,
     int LocalSloCount,
+    string SloRegistryEvidenceSha256,
     int PreSlotCriticalPathSloSeconds,
     int RequiredPreparationMarginSeconds,
     Arch7bChronologyValidation Chronology,
@@ -72,7 +73,8 @@ public static class Arch7bCandidatePacketWriter
                     $"{value.Key}:{value.Value}"))
             .Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray();
         var canonical = string.Join('\n', intradayCommit, intradayTree, coreBinding.EvidenceSha256,
-            chronology.EvidenceSha256, simulations.EvidenceSha256, executableSha, string.Join('|', roundtrips));
+            registry.EvidenceSha256, chronology.EvidenceSha256, simulations.EvidenceSha256, executableSha,
+            string.Join('|', roundtrips));
         var packet = new Arch7bCandidatePacket(Arch7bOneShotContracts.SupervisorEvidenceVersion,
             new(Arch7bOneShotContracts.IntradayRepository, intradayCommit, intradayTree),
             new(Arch7bOneShotContracts.CoreRepository, coreBinding.CoreCommit, coreBinding.CoreTree),
@@ -80,7 +82,7 @@ public static class Arch7bCandidatePacketWriter
             "PmsShadowIntradayCadenceContract", registry.Entries,
             registry.Entries.Count(value => value.SloId.StartsWith("GLOBAL_", StringComparison.Ordinal)),
             registry.Entries.Count(value => !value.SloId.StartsWith("GLOBAL_", StringComparison.Ordinal)),
-            chronology.PreSlotCriticalPathSloSeconds, margin, chronology,
+            registry.EvidenceSha256, chronology.PreSlotCriticalPathSloSeconds, margin, chronology,
             Arch7bOneShotContracts.TerminalCleanupSupervisorVersion,
             Arch7bTerminalCleanupSupervisor.RequiredResourceTypes.Count,
             coreBinding, Arch7bOneShotContracts.LiveSupervisorVersion, simulations, roundtrips,
@@ -137,6 +139,7 @@ public static class Arch7bCandidatePacketWriter
         - Core: `{packet.Core.Commit}` / `{packet.Core.Tree}`
         - Calendar: `{packet.CalendarAuthority}` from `{packet.CalendarSource}`
         - SLOs: {packet.SloRegistry.Count} ({packet.GlobalSloCount} global, {packet.LocalSloCount} sourced)
+        - SLO registry SHA-256: `{packet.SloRegistryEvidenceSha256}`
         - Pre-slot critical path: {packet.PreSlotCriticalPathSloSeconds} seconds
         - Required preparation margin: {packet.RequiredPreparationMarginSeconds} seconds
         - Chronology: {packet.Chronology.StageCount} stages / {packet.Chronology.EdgeCount} edges / DAG={packet.Chronology.IsValid}

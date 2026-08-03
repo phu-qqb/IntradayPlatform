@@ -38,6 +38,7 @@ public sealed class Arch7bOneShotSupervisorTests
 
         Assert.Equal(4, global.Length);
         Assert.All(global, value => Assert.Equal(candidateCommit, value.SourceCommit));
+        Assert.True(Arch7bOneShotContracts.IsSha256(registry.EvidenceSha256));
         Assert.True(registry.Entries.Count > 20);
         Assert.All(registry.Entries, value =>
         {
