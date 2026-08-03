@@ -318,6 +318,16 @@ public sealed record Arch7aArch7bShadowQualificationEvidence(
     string SlotId,
     string SourceSessionId,
     string PositionMarketRevisionBindingSha256,
+    string SessionUser,
+    string QualificationRole,
+    bool SetRoleAuthorityVerified,
+    bool SetRoleVerified,
+    bool ResetRoleVerified,
+    int TempSchemaBeforeSetRole,
+    int TempSchemaAfterSetRole,
+    int TempSchemaAfterQualification,
+    int TempSchemaAfterResetRole,
+    string AmbientPrivilegeStatus,
     string PlanSha256,
     string NettingSha256,
     int TradeIntentCount,
@@ -383,6 +393,7 @@ public static class Arch7aArch7bShadowQualificationRunner
         _ = supervisor.StartOpen();
         Exception? primaryFailure = null;
         QualificationResult? result = null;
+        Arch7aArch7bRoleScopeEvidence? roleEvidence = null;
         try
         {
             _ = await supervisor.WaitForOpenAsync();
@@ -390,6 +401,8 @@ public static class Arch7aArch7bShadowQualificationRunner
             var factory = new PinnedContextFactory(
                 new Arch7bPostgreSqlPinnedDbContextFactory(runtime), lease);
 
+            await using var roleScope = await Arch7aArch7bRoleScope.EnterAsync(
+                lease.Connection, cancellationToken);
             await using (var context =
                          await factory.CreateDbContextAsync(cancellationToken))
             {
@@ -449,6 +462,10 @@ public static class Arch7aArch7bShadowQualificationRunner
                 "ARCH7A_ARCH7B_REPLAY_NOT_IDENTICAL");
             var readback = await ReadbackAsync(
                 factory, selected.ProjectionRevisionId, plan, cancellationToken);
+            await roleScope.AssertNoTemporarySchemaAsync(cancellationToken);
+            await roleScope.ResetAsync(CancellationToken.None);
+            roleEvidence = roleScope.Evidence();
+            await roleScope.DisposeAsync();
             result = new(plan, persisted, replay, readback);
         }
         catch (Exception exception)
@@ -470,6 +487,12 @@ public static class Arch7aArch7bShadowQualificationRunner
             "ARCH7A_ARCH7B_PINNED_SESSION_INVARIANT_FAILED");
         var completed = result ??
             throw new InvalidOperationException("ARCH7A_ARCH7B_RESULT_MISSING");
+        var completedRole = roleEvidence ??
+            throw new InvalidOperationException("ARCH7A_ARCH7B_ROLE_EVIDENCE_MISSING");
+        Require(completedRole.SetRoleAuthorityVerified &&
+                completedRole.SetRoleVerified && completedRole.ResetRoleVerified &&
+                completedRole.NoTemporarySchemaCreated,
+            "ARCH7A_ARCH7B_ROLE_SCOPE_INCOMPLETE");
         var evidence = new Arch7aArch7bShadowQualificationEvidence(
             Arch7aArch7bShadowQualificationArguments.ContractVersion,
             "ARCH7A_ARCH7B_SHADOW_QUALIFICATION_COMPLETED",
@@ -481,6 +504,16 @@ public static class Arch7aArch7bShadowQualificationRunner
             arguments.SlotId,
             arguments.SourceSessionId,
             arguments.ExpectedPositionMarketRevisionBindingSha256,
+            completedRole.SessionUser,
+            completedRole.QualificationRole,
+            completedRole.SetRoleAuthorityVerified,
+            completedRole.SetRoleVerified,
+            completedRole.ResetRoleVerified,
+            completedRole.TempSchemaBeforeSetRole,
+            completedRole.TempSchemaAfterSetRole,
+            completedRole.TempSchemaAfterQualification,
+            completedRole.TempSchemaAfterResetRole,
+            "AMBIENT_PUBLIC_PRIVILEGE_ACCEPTED_NOT_DIRECTLY_GRANTED",
             completed.Plan.PlanSha256,
             completed.Plan.Netting.NettingSha256,
             completed.Plan.Units.Count,

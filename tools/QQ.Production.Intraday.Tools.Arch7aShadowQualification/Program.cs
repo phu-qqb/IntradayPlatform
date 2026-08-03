@@ -8,6 +8,12 @@ using QQ.Production.Intraday.Infrastructure.PostgreSql;
 
 using QQ.Production.Intraday.Tools.Arch7aShadowQualification;
 
+if (Arch7aArch7bPrivilegeAuthorityRunner.IsAuthorityMode(args))
+{
+    await Arch7aArch7bPrivilegeAuthorityRunner.RunAsync(args);
+    return;
+}
+
 if (Arch7aArch7bShadowQualificationArguments.IsQualifyShadow(args))
 {
     await Arch7aArch7bShadowQualificationRunner.RunAsync(args);
