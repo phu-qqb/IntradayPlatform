@@ -6,6 +6,19 @@ using QQ.Production.Intraday.Application;
 using QQ.Production.Intraday.Domain;
 using QQ.Production.Intraday.Infrastructure.PostgreSql;
 
+using QQ.Production.Intraday.Tools.Arch7aShadowQualification;
+
+if (Arch7aArch7bPrivilegeAuthorityRunner.IsAuthorityMode(args))
+{
+    await Arch7aArch7bPrivilegeAuthorityRunner.RunAsync(args);
+    return;
+}
+
+if (Arch7aArch7bShadowQualificationArguments.IsQualifyShadow(args))
+{
+    await Arch7aArch7bShadowQualificationRunner.RunAsync(args);
+    return;
+}
 const string ConnectionEnvironmentVariable = "QQ_PMS_SHADOW_ARCH7A_CONNECTION_STRING";
 var values = args.Chunk(2).ToDictionary(value => value[0], value =>
     value.Length == 2 ? value[1] : throw new InvalidOperationException($"ARGUMENT_VALUE_MISSING:{value[0]}"),

@@ -712,7 +712,9 @@ public sealed class EfPmsShadowIntradayEconomicProjectionStore(
     {
         await using var context = await contextFactory.CreateDbContextAsync(cancellationToken);
         var connection = context.Database.GetDbConnection();
-        await connection.OpenAsync(cancellationToken);
+        var ownsConnectionLifecycle = connection.State != ConnectionState.Open;
+        if (ownsConnectionLifecycle)
+            await connection.OpenAsync(cancellationToken);
         try
         {
             await using var command = connection.CreateCommand();
@@ -724,7 +726,11 @@ public sealed class EfPmsShadowIntradayEconomicProjectionStore(
                 result.Add(JsonSerializer.Deserialize<PmsShadowIntradayEconomicProjection>(reader.GetString(0), Json)!);
             return result;
         }
-        finally { await connection.CloseAsync(); }
+        finally
+        {
+            if (ownsConnectionLifecycle)
+                await connection.CloseAsync();
+        }
     }
 
     private static PmsShadowEconomicApplyOutcome Outcome(PmsShadowEconomicApplyResult result,

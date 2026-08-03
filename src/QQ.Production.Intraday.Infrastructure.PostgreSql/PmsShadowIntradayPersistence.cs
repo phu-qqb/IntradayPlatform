@@ -110,7 +110,9 @@ public sealed class EfPmsShadowIntradaySlotStore : IPmsShadowIntradaySlotStore
     {
         await using var context = await contextFactory.CreateDbContextAsync(cancellationToken);
         var connection = context.Database.GetDbConnection();
-        await connection.OpenAsync(cancellationToken);
+        var ownsConnectionLifecycle = connection.State != ConnectionState.Open;
+        if (ownsConnectionLifecycle)
+            await connection.OpenAsync(cancellationToken);
         try
         {
             await using var command = connection.CreateCommand();
@@ -122,7 +124,8 @@ public sealed class EfPmsShadowIntradaySlotStore : IPmsShadowIntradaySlotStore
         }
         finally
         {
-            await connection.CloseAsync();
+            if (ownsConnectionLifecycle)
+                await connection.CloseAsync();
         }
     }
 
