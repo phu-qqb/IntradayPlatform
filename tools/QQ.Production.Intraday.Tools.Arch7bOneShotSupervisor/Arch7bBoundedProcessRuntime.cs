@@ -201,6 +201,7 @@ public sealed class Arch7bOneShotProcessRunnerV2
                 if (!process.HasExited) await process.WaitForExitAsync(token).ConfigureAwait(false);
                 foreach (var marker in new[] { Path.Combine(runRoot, processKey + ".ready"),
                              Path.Combine(runRoot, processKey + ".COMPLETE.signal"),
+                             Path.Combine(runRoot, processKey + ".COMPLETE.signal.tmp"),
                              Path.Combine(runRoot, processKey + ".ready.tmp") })
                     if (File.Exists(marker)) File.Delete(marker);
                 return Arch7bOneShotContracts.Sha256(resourceId + ":released");
@@ -234,8 +235,10 @@ public sealed class Arch7bOneShotProcessRunnerV2
             throw new Arch7bQualificationException(Arch7bV2Blockers.LongLivedProcessStateInvalid, processKey);
         registry.Signal(processKey, "COMPLETE");
         var signalPath = Path.Combine(runRoot, processKey + ".COMPLETE.signal");
-        await File.WriteAllTextAsync(signalPath, "COMPLETE", new UTF8Encoding(false), cancellationToken)
+        var signalTemporary = signalPath + ".tmp";
+        await File.WriteAllTextAsync(signalTemporary, "COMPLETE", new UTF8Encoding(false), cancellationToken)
             .ConfigureAwait(false);
+        File.Move(signalTemporary, signalPath);
         handle.Timeout.CancelAfter(TimeSpan.FromSeconds(command.TimeoutSeconds));
         try
         {
@@ -248,6 +251,9 @@ public sealed class Arch7bOneShotProcessRunnerV2
         }
         await registry.StopAsync(processKey, cancellationToken).ConfigureAwait(false);
         if (File.Exists(signalPath)) File.Delete(signalPath);
+        if (handle.Process.ExitCode != 0)
+            throw new Arch7bQualificationException(Arch7bBlockers.ChildProcessFailedUncatalogued,
+                command.CommandId);
         var outputs = await Task.WhenAll(handle.StandardOutput, handle.StandardError).ConfigureAwait(false);
         var result = await adapters.Require(command.AdapterId).AdaptAsync(outputs[0].Text, command,
             runRoot, cancellationToken).ConfigureAwait(false);

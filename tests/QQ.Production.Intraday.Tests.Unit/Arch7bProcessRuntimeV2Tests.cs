@@ -117,6 +117,25 @@ public sealed class Arch7bProcessRuntimeV2Tests
                 ["PGPASSWORD"], false)).BlockerCode);
     }
 
+    [Fact]
+    public async Task Long_lived_completion_signal_is_atomic_across_repeated_processes()
+    {
+        for (var index = 0; index < 20; index++)
+        {
+            var result = await Arch7bV2ProcessQualifier.RunSingleAsync(SupervisorExecutable(),
+                $"atomic-completion-{index:D2}");
+
+            Assert.True(result.Passed);
+            Assert.Equal(Arch7bOneShotContracts.ExpectedFinalBlocker, result.FinalBlocker);
+            Assert.Equal(40, result.Stages.Count);
+            Assert.Equal(2, result.LongLivedProcesses.Count);
+            Assert.All(result.LongLivedProcesses,
+                process => Assert.Equal(Arch7bLongLivedProcessState.Cleaned, process.State));
+            Assert.Equal(0, result.ResidualProcessCount);
+            Assert.Equal(0, result.ResidualMarkerCount);
+        }
+    }
+
     private static string Root(string suffix) => Path.Combine(Path.GetTempPath(),
         "qq-arch7b-v2-process-tests", suffix + "-" + Guid.NewGuid().ToString("N"));
 
