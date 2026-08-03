@@ -31,6 +31,7 @@
     <ProjectReference Include="..\..\tools\QQ.Production.Intraday.Tools.LmaxReadOnlyActivation\QQ.Production.Intraday.Tools.LmaxReadOnlyActivation.csproj" />
     <ProjectReference Include="..\..\src\QQ.Production.Intraday.Infrastructure.PostgreSql\QQ.Production.Intraday.Infrastructure.PostgreSql.csproj" />
     <ProjectReference Include="..\..\tools\QQ.Production.Intraday.Tools.OperationalReporting\QQ.Production.Intraday.Tools.OperationalReporting.csproj" />
+    <ProjectReference Include="..\..\tools\QQ.Production.Intraday.Tools.Arch7bOneShotSupervisor\QQ.Production.Intraday.Tools.Arch7bOneShotSupervisor.csproj" />
   </ItemGroup>
 
 </Project>
