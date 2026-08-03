@@ -1,9 +1,24 @@
 {
   "contract": "arch7a_arch7b_database_privilege_policy_v1",
-  "role": "qq_arch7b_position_importer",
-  "authority_status": "NOT_PROVEN_BY_AVAILABLE_GRANT_INVENTORY",
-  "available_inventory": "D:/QQFund/ARCH7B/rds-migration-20260724T150156Z/manifests/source-grants.tsv",
-  "inventory_observation": "No row for qq_arch7b_position_importer was present in the available historical inventory.",
+  "login_role": "qq_arch7b_position_importer",
+  "qualification_role": "qq_arch7a_shadow_qualifier",
+  "authority_status": "QUALIFIED_WITH_AMBIENT_PUBLIC_PRIVILEGES",
+  "sql_packet": {
+    "path": "deploy/postgresql/arch7b/arch7a-shadow-qualifier-privileges-v1.sql",
+    "sha256": "483f26c37e2be7d1e623ddee26aeb07edaf6e7c14ec9d05e50afc5c6c0e71fe2",
+    "dry_run_status": "ARCH7A_PRIVILEGE_PACKET_DRY_RUN_ROLLED_BACK",
+    "apply_status": "ARCH7A_PRIVILEGE_AUTHORITY_APPLIED_AND_VERIFIED",
+    "transaction_committed": true,
+    "public_modified": false
+  },
+  "role_contract": {
+    "qualification_role_nologin": true,
+    "qualification_role_attributes_exact": true,
+    "membership": "qq_arch7b_position_importer -> qq_arch7a_shadow_qualifier",
+    "inherit": false,
+    "set": true,
+    "admin": false
+  },
   "required_select": [
     "public.__EFMigrationsHistory",
     "pms_shadow.intraday_projection_revisions",
@@ -27,16 +42,83 @@
     "pms_shadow.shadow_child_orders",
     "pms_shadow.shadow_execution_qualification_runs"
   ],
-  "required_function_execute": ["pg_catalog.pg_advisory_xact_lock(bigint)"],
+  "required_function_execute": {
+    "function": "pg_catalog.pg_advisory_xact_lock(bigint)",
+    "direct_grant_added": false,
+    "effective": true,
+    "source": "PUBLIC",
+    "function_acl_modified": false
+  },
   "forbidden": [
     "UPDATE", "DELETE", "TRUNCATE", "CREATE", "ALTER", "DROP",
     "schema migration", "ARCH7B order tables",
     "ARCH7B execution report tables", "ARCH7B Fill tables",
     "ARCH7B PositionLedgerEvent tables"
   ],
-  "minimal_proposal_only": {
-    "mutation_performed": false,
-    "action": "Grant only the listed SELECT and INSERT privileges after independent operator review; do not grant ownership, DDL, UPDATE, DELETE, TRUNCATE, or ARCH7B lifecycle table access."
+  "readback": {
+    "exact": true,
+    "direct_schema_grants": 1,
+    "direct_table_grants": 19,
+    "direct_function_grants": 0,
+    "no_direct_temp_login": true,
+    "no_direct_temp_qualification_role": true,
+    "no_temp_via_other_membership": true,
+    "ambient_public_temp": true,
+    "effective_temp_login": true,
+    "effective_temp_qualification_role": true,
+    "ambient_public_schema_usage": true,
+    "effective_public_schema_usage": true,
+    "no_qualification_role_ownership": true,
+    "no_login_role_ownership": true,
+    "no_default_privileges": true,
+    "no_schema_create": true,
+    "no_forbidden_arch7b_qualification_role_privileges": true,
+    "no_forbidden_arch7b_login_write_privileges": true,
+    "ambient_privilege_status": "AMBIENT_PUBLIC_PRIVILEGE_ACCEPTED_NOT_DIRECTLY_GRANTED"
   },
-  "verdict": "NO_GO_ARCH7B_ARCH7A_DATABASE_PRIVILEGE_AUTHORITY_MISSING"
+  "same_session_role_probe": {
+    "transaction": "READ ONLY / ROLLBACK",
+    "before_set_role": {
+      "session_user": "qq_arch7b_position_importer",
+      "current_user": "qq_arch7b_position_importer",
+      "pg_my_temp_schema": 0
+    },
+    "after_set_role": {
+      "session_user": "qq_arch7b_position_importer",
+      "current_user": "qq_arch7a_shadow_qualifier",
+      "pg_my_temp_schema": 0
+    },
+    "after_reset_role": {
+      "session_user": "qq_arch7b_position_importer",
+      "current_user": "qq_arch7b_position_importer",
+      "pg_my_temp_schema": 0
+    }
+  },
+  "runtime_qualification": {
+    "status": "BLOCKED_BEFORE_DATABASE_CONNECTION_ON_REQUIRED_POSITION_MARKET_REVISION_BINDING",
+    "blocker": "ARCH7B_POSITION_MARKET_REVISION_BINDING_REQUIRED",
+    "latest_rds_revision_id": "91eae733-cd6d-b886-b8f7-d9f3b020f1c4",
+    "latest_rds_slot_id": "pms-shadow-15m-20260724T1030Z",
+    "historical_candidate_classification": "TEMPORAL_AUTHORITY_INVALID",
+    "invented_or_reconstructed_binding": false
+  },
+  "tests": {
+    "targeted": "45/45",
+    "relevant_regressions": "880/880",
+    "release_build_errors": 0,
+    "release_build_known_nu1903_warnings": 16,
+    "pending_model_changes": false
+  },
+  "safety": {
+    "no_public_mutation": true,
+    "no_new_login": true,
+    "no_new_secret": true,
+    "no_migration": true,
+    "no_iam_or_network_mutation": true,
+    "no_fix_logon": true,
+    "no_order": true,
+    "no_fill": true,
+    "no_position_ledger_event": true
+  },
+  "verdict": "ARCH7B_ARCH7A_DATABASE_PRIVILEGE_AUTHORITY_QUALIFIED_WITH_AMBIENT_PUBLIC_PRIVILEGES"
 }

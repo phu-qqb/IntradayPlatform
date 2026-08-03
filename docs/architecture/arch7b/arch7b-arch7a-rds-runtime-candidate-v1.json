@@ -1,6 +1,6 @@
 {
   "contract": "arch7b_arch7a_rds_runtime_candidate_v1",
-  "status": "CORRECTIVE_PR_CANDIDATE_BLOCKED_ON_DATABASE_PRIVILEGE_AUTHORITY",
+  "status": "DATABASE_PRIVILEGE_AUTHORITY_QUALIFIED_RUNTIME_POSITION_MARKET_BINDING_REQUIRED",
   "base_freeze": {
     "version": "v5",
     "root": "D:\\QQFund\\ARCH7B\\final-offline-operational-freeze-f5c7c784-20260802T160630Z",
@@ -9,10 +9,10 @@
     "freeze_zip_sha256": "d7283f89fda85ab800a5e52622826aaca84e3b06989124736c77f9fcc3482dc6"
   },
   "candidate_runtime": {
-    "commit": "d14a54ff54a443eda7574b41f932dd698d26f688",
-    "tree": "1089af4ecaf018fafe0a291e35a64ffd9b585f12",
-    "executable_sha256": "7e8c9f090aa68671c936b2f398fdbc8220c6b36b3c1a6ea8e5342e437ab8c583",
-    "dll_sha256": "1a6713e93ebbba3950264923aee57cd3ab9444c2edc3824e2906cc27e692e95c"
+    "commit": "c5d0f265add98e019fe97a9e1cbe4fcf0e7292b6",
+    "tree": "bc206df96c7a6f3f98d1ca267cd36ea3e4be9840",
+    "executable_sha256": "612cd05793a0ac26414c6f905bce23acfd700558c6aee5c00176606468e2027f",
+    "dll_sha256": "6be9d6a3fabb347bb8b2bec41d94cb316eae3c77ac938400bb875d7515c4716f"
   },
   "command_manifest": {
     "contract": "arch7b_position_market_live_command_manifest_v2",
@@ -47,10 +47,17 @@
   },
   "privilege_contract": {
     "contract": "arch7a_arch7b_database_privilege_policy_v1",
-    "sha256": "c6c8b72b78cfc352e6f62d7e757ff1d21646f85661952808a383e9747c7430f5",
-    "role": "qq_arch7b_position_importer",
-    "authority_proven": false,
-    "blocker": "NO_GO_ARCH7B_ARCH7A_DATABASE_PRIVILEGE_AUTHORITY_MISSING"
+    "sha256": "2770681076726c9c54a26ad596e4307356d83353ec98828a83e9bc7f534fa3bd",
+    "login_role": "qq_arch7b_position_importer",
+    "qualification_role": "qq_arch7a_shadow_qualifier",
+    "sql_packet_sha256": "483f26c37e2be7d1e623ddee26aeb07edaf6e7c14ec9d05e50afc5c6c0e71fe2",
+    "authority_proven": true,
+    "ambient_public_privileges_accepted": true,
+    "public_modified": false,
+    "direct_schema_grants": 1,
+    "direct_table_grants": 19,
+    "direct_function_grants": 0,
+    "verdict": "ARCH7B_ARCH7A_DATABASE_PRIVILEGE_AUTHORITY_QUALIFIED_WITH_AMBIENT_PUBLIC_PRIVILEGES"
   },
   "credential_lifecycle_contract": {
     "sha256": "696d6e6434a5e9708ff4b525cd5c3f88276cad6e6ea4d8611ee9f16287a73c47",
@@ -67,8 +74,8 @@
     "database_writes": 0
   },
   "tests": {
-    "targeted": "51/51",
-    "regressions_arch6f_arch7a_arch7b_reporting": "751/751",
+    "targeted": "45/45",
+    "regressions_arch6f_arch7a_arch7b_reporting": "880/880",
     "migrations_pending_model_pinned_session": "58/58",
     "release_build_errors": 0,
     "release_build_nu1903": 16,
@@ -84,8 +91,14 @@
     "evidence_sha256": "cb3e36b654209541f0a7ee40324470526a8699d97eb703dc1e6208d8c1a54e9e",
     "cleanup_sha256": "9d468dbdb5b808af1100aaa663c6fbf9ffbb08c1a829550e1813f00d7053c2b6"
   },
+  "runtime_input_status": {
+    "latest_rds_revision_id": "91eae733-cd6d-b886-b8f7-d9f3b020f1c4",
+    "latest_rds_slot_id": "pms-shadow-15m-20260724T1030Z",
+    "classification": "TEMPORAL_AUTHORITY_INVALID",
+    "invented_or_reconstructed_binding": false
+  },
   "blockers": [
-    "NO_GO_ARCH7B_ARCH7A_DATABASE_PRIVILEGE_AUTHORITY_MISSING"
+    "ARCH7B_POSITION_MARKET_REVISION_BINDING_REQUIRED"
   ],
   "no_order_invariants": {
     "no_fix_logon": true,
@@ -109,5 +122,6 @@
     "position_ledger_events": 0,
     "aws_mutations": 0,
     "one_shot_state": 0
-  }
+  },
+  "next_action": "Generate a fresh position-market lineage and revision input binding under a separately authorized no-order operational slot before running qualify-shadow."
 }
