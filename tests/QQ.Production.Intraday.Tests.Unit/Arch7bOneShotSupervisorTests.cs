@@ -32,9 +32,12 @@ public sealed class Arch7bOneShotSupervisorTests
     [Fact]
     public void Slo_registry_aggregates_sourced_values_and_four_global_values_without_contradictions()
     {
-        var registry = Arch7bGlobalSloRegistry.CreateDefault();
+        const string candidateCommit = "1234567890123456789012345678901234567890";
+        var registry = Arch7bGlobalSloRegistry.CreateDefault(supervisorSourceCommit: candidateCommit);
+        var global = registry.Entries.Where(value => value.SloId.StartsWith("GLOBAL_", StringComparison.Ordinal)).ToArray();
 
-        Assert.Equal(4, registry.Entries.Count(value => value.SloId.StartsWith("GLOBAL_", StringComparison.Ordinal)));
+        Assert.Equal(4, global.Length);
+        Assert.All(global, value => Assert.Equal(candidateCommit, value.SourceCommit));
         Assert.True(registry.Entries.Count > 20);
         Assert.All(registry.Entries, value =>
         {

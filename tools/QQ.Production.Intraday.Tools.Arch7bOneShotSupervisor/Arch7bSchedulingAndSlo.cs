@@ -39,7 +39,8 @@ public sealed class Arch7bGlobalSloRegistry
     public Arch7bSloDefinition Required(string sloId) => entries.SingleOrDefault(value => value.SloId == sloId)
         ?? throw new Arch7bQualificationException(Arch7bBlockers.CriticalPathSloMissing, sloId);
 
-    public static Arch7bGlobalSloRegistry CreateDefault(IReadOnlyDictionary<string, string>? sourceHashes = null)
+    public static Arch7bGlobalSloRegistry CreateDefault(IReadOnlyDictionary<string, string>? sourceHashes = null,
+        string? supervisorSourceCommit = null)
     {
         sourceHashes ??= new Dictionary<string, string>(StringComparer.Ordinal);
         string Hash(string path) => sourceHashes.TryGetValue(path, out var hash) ? hash : new string('0', 64);
@@ -47,6 +48,7 @@ public sealed class Arch7bGlobalSloRegistry
         const string core = Arch7bOneShotContracts.CoreRepository;
         const string iCommit = Arch7bOneShotContracts.IntradayBaseCommit;
         const string cCommit = Arch7bOneShotContracts.CoreCommit;
+        var supervisorCommit = supervisorSourceCommit ?? iCommit;
         const string clockFile = "src/QQ.Production.Intraday.Infrastructure.PostgreSql/PmsShadowCaptureClockAuthority.cs";
         const string handoffFile = "src/QQ.Production.Intraday.Infrastructure.PostgreSql/PmsShadowFreshSlotHandoff.cs";
         const string importFile = "src/QQ.Production.Intraday.Infrastructure.PostgreSql/Arch7bFreshPositionImportFastPath.cs";
@@ -78,10 +80,10 @@ public sealed class Arch7bGlobalSloRegistry
             Entry("FAST_SEAL_ACQUISITION_MANIFEST_SECONDS", "CORE_FAST_SEAL", 3, "seconds", coreRoot + "bracket-fast-seal.mjs", "acquisition_manifest_seconds", Hash(coreRoot + "bracket-fast-seal.mjs"), "ARCH7B_FAST_SEAL_DEADLINE_EXCEEDED", "acquisition_manifest", core, cCommit),
             Entry("FAST_SEAL_QUALIFICATION_SUMMARY_SECONDS", "CORE_FAST_SEAL", 5, "seconds", coreRoot + "bracket-fast-seal.mjs", "qualification_summary_seconds", Hash(coreRoot + "bracket-fast-seal.mjs"), "ARCH7B_FAST_SEAL_DEADLINE_EXCEEDED", "qualification_summary", core, cCommit),
             Entry("FAST_SEAL_FINAL_EVIDENCE_INDEX_SECONDS", "CORE_FAST_SEAL", 8, "seconds", coreRoot + "bracket-fast-seal.mjs", "final_evidence_index_seconds", Hash(coreRoot + "bracket-fast-seal.mjs"), "ARCH7B_FAST_SEAL_DEADLINE_EXCEEDED", "evidence_index", core, cCommit),
-            Entry("GLOBAL_MINIMUM_PREPARATION_MARGIN_SECONDS", "SLOT_SELECTED", GlobalMinimumPreparationMarginSeconds, "seconds", supervisorFile, nameof(GlobalMinimumPreparationMarginSeconds), Hash(supervisorFile), Arch7bBlockers.PreparationMarginInsufficient, "preparation_margin", intraday, iCommit),
-            Entry("GLOBAL_PREPARATION_SAFETY_RESERVE_SECONDS", "SLOT_SELECTED", GlobalPreparationSafetyReserveSeconds, "seconds", supervisorFile, nameof(GlobalPreparationSafetyReserveSeconds), Hash(supervisorFile), Arch7bBlockers.PreparationMarginInsufficient, "preparation_reserve", intraday, iCommit),
-            Entry("GLOBAL_TERMINAL_CLEANUP_DEADLINE_SECONDS", "TERMINAL_CLEANUP", GlobalTerminalCleanupDeadlineSeconds, "seconds", supervisorFile, nameof(GlobalTerminalCleanupDeadlineSeconds), Hash(supervisorFile), Arch7bBlockers.CleanupDeadlineExceeded, "cleanup_duration", intraday, iCommit),
-            Entry("GLOBAL_SCHEDULER_MAXIMUM_WAKE_LATENESS_MILLISECONDS", "SLOT_LOCKED", GlobalSchedulerMaximumWakeLatenessMilliseconds, "milliseconds", supervisorFile, nameof(GlobalSchedulerMaximumWakeLatenessMilliseconds), Hash(supervisorFile), Arch7bBlockers.SchedulerWakeLatenessExceeded, "wake_lateness", intraday, iCommit)
+            Entry("GLOBAL_MINIMUM_PREPARATION_MARGIN_SECONDS", "SLOT_SELECTED", GlobalMinimumPreparationMarginSeconds, "seconds", supervisorFile, nameof(GlobalMinimumPreparationMarginSeconds), Hash(supervisorFile), Arch7bBlockers.PreparationMarginInsufficient, "preparation_margin", intraday, supervisorCommit),
+            Entry("GLOBAL_PREPARATION_SAFETY_RESERVE_SECONDS", "SLOT_SELECTED", GlobalPreparationSafetyReserveSeconds, "seconds", supervisorFile, nameof(GlobalPreparationSafetyReserveSeconds), Hash(supervisorFile), Arch7bBlockers.PreparationMarginInsufficient, "preparation_reserve", intraday, supervisorCommit),
+            Entry("GLOBAL_TERMINAL_CLEANUP_DEADLINE_SECONDS", "TERMINAL_CLEANUP", GlobalTerminalCleanupDeadlineSeconds, "seconds", supervisorFile, nameof(GlobalTerminalCleanupDeadlineSeconds), Hash(supervisorFile), Arch7bBlockers.CleanupDeadlineExceeded, "cleanup_duration", intraday, supervisorCommit),
+            Entry("GLOBAL_SCHEDULER_MAXIMUM_WAKE_LATENESS_MILLISECONDS", "SLOT_LOCKED", GlobalSchedulerMaximumWakeLatenessMilliseconds, "milliseconds", supervisorFile, nameof(GlobalSchedulerMaximumWakeLatenessMilliseconds), Hash(supervisorFile), Arch7bBlockers.SchedulerWakeLatenessExceeded, "wake_lateness", intraday, supervisorCommit)
         };
         return new(values);
     }

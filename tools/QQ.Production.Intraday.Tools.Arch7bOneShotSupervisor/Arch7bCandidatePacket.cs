@@ -38,6 +38,9 @@ public sealed record Arch7bCandidatePacketFiles(string JsonPath, string JsonSha2
 
 public static class Arch7bCandidatePacketWriter
 {
+    private const string SupervisorProjectRoot =
+        "tools/QQ.Production.Intraday.Tools.Arch7bOneShotSupervisor/";
+
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         WriteIndented = true,
@@ -53,7 +56,7 @@ public static class Arch7bCandidatePacketWriter
         Directory.CreateDirectory(outputRoot);
         var sourceHashes = await ResolveSourceHashesAsync(intradayRepositoryPath, coreBinding, cancellationToken)
             .ConfigureAwait(false);
-        var registry = Arch7bGlobalSloRegistry.CreateDefault(sourceHashes);
+        var registry = Arch7bGlobalSloRegistry.CreateDefault(sourceHashes, intradayCommit);
         var chronology = Arch7bCrossRepositoryChronology.Validate(Arch7bCrossRepositoryChronology.CreateDefault(), registry);
         if (!chronology.IsValid) throw new InvalidDataException(string.Join(',', chronology.Blockers));
         var margin = Math.Max(Arch7bGlobalSloRegistry.GlobalMinimumPreparationMarginSeconds,
@@ -64,6 +67,9 @@ public static class Arch7bCandidatePacketWriter
         var dependencyClosure = registry.Entries.Select(value => $"{value.SourceRepository}:{value.SourceCommit}:{value.SourceFile}:{value.SourceFileSha256}")
             .Concat(coreBinding.Commands.SelectMany(value => value.Sources)
                 .Select(value => $"{Arch7bOneShotContracts.CoreRepository}:{Arch7bOneShotContracts.CoreCommit}:{value.SourceFile}:{value.SourceFileSha256}"))
+            .Concat(sourceHashes.Where(value => value.Key.StartsWith(SupervisorProjectRoot, StringComparison.Ordinal))
+                .Select(value => $"{Arch7bOneShotContracts.IntradayRepository}:{intradayCommit}:" +
+                    $"{value.Key}:{value.Value}"))
             .Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray();
         var canonical = string.Join('\n', intradayCommit, intradayTree, coreBinding.EvidenceSha256,
             chronology.EvidenceSha256, simulations.EvidenceSha256, executableSha, string.Join('|', roundtrips));
@@ -108,6 +114,17 @@ public static class Arch7bCandidatePacketWriter
             var bytes = await File.ReadAllBytesAsync(path, cancellationToken).ConfigureAwait(false);
             hashes[sourceFile] = Convert.ToHexStringLower(SHA256.HashData(bytes));
         }
+
+        var supervisorDirectory = Path.Combine(intradayRepositoryPath,
+            SupervisorProjectRoot.Replace('/', Path.DirectorySeparatorChar));
+        foreach (var path in Directory.EnumerateFiles(supervisorDirectory, "*", SearchOption.TopDirectoryOnly))
+        {
+            var sourceFile = Path.GetRelativePath(intradayRepositoryPath, path)
+                .Replace(Path.DirectorySeparatorChar, '/');
+            var bytes = await File.ReadAllBytesAsync(path, cancellationToken).ConfigureAwait(false);
+            hashes[sourceFile] = Convert.ToHexStringLower(SHA256.HashData(bytes));
+        }
+
         if (hashes.Values.Any(value => !Arch7bOneShotContracts.IsSha256(value)))
             throw new InvalidDataException("SOURCE_AUTHORITY_SHA256_INVALID");
         return hashes;
