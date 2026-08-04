@@ -120,6 +120,7 @@ public sealed record Arch7bOneShotCommandTemplate(
     bool CausesCapture,
     bool ReadsSecret,
     IReadOnlyList<string> SecretVariableNames,
+    IReadOnlyList<Arch7bSealedNonSecretEnvironmentVariable> NonSecretEnvironment,
     string? LongLivedProcessKey,
     string EvidenceSha256);
 
@@ -188,6 +189,7 @@ public sealed record Arch7bOneShotMaterializedCommand(
     bool CausesCapture,
     bool ReadsSecret,
     IReadOnlyList<string> SecretVariableNames,
+    IReadOnlyList<Arch7bSealedNonSecretEnvironmentVariable> NonSecretEnvironment,
     string? LongLivedProcessKey,
     string AuthorityPath,
     string AuthorityFileSha256,
@@ -224,6 +226,8 @@ public sealed class Arch7bOneShotCommandMaterializer
         var workingDirectory = RequireAuthority(authorities, template.WorkingDirectoryAuthorityId, runRoot);
         var arguments = template.ArgumentTemplates.Select(argument => Resolve(argument, factStore,
             authorities, runRoot, observedUtc)).ToArray();
+        var nonSecretEnvironment = Arch7bSealedNonSecretEnvironment.ValidateTemplate(
+            template.NonSecretEnvironment, authorities);
         if (arguments.Any(Arch7bV2ArgumentSafety.IsSecretArgumentValue))
             throw new Arch7bQualificationException(Arch7bBlockers.SecretInArgument, template.CommandId);
         var commandCore = string.Join('\n', Arch7bV2Contracts.MaterializedCommandVersion,
@@ -232,7 +236,9 @@ public sealed class Arch7bOneShotCommandMaterializer
             template.AdapterContractVersion, template.ExpectedNativeOutputContract, template.TimeoutSeconds,
             template.StandardOutputLimitBytes, template.StandardErrorLimitBytes, template.CleanupResourceType,
             template.CausesRdsRead, template.CausesCapture, template.ReadsSecret,
-            string.Join('|', template.SecretVariableNames), template.LongLivedProcessKey ?? string.Empty);
+            string.Join('|', template.SecretVariableNames),
+            Arch7bSealedNonSecretEnvironment.Canonical(nonSecretEnvironment),
+            template.LongLivedProcessKey ?? string.Empty);
         var evidenceSha = Arch7bOneShotContracts.Sha256(commandCore);
         var directory = Path.Combine(Path.GetFullPath(runRoot), "commands", template.StageId, template.CommandId);
         Directory.CreateDirectory(directory);
@@ -246,7 +252,7 @@ public sealed class Arch7bOneShotCommandMaterializer
             template.AdapterId, template.AdapterContractVersion, template.ExpectedNativeOutputContract,
             template.TimeoutSeconds, template.StandardOutputLimitBytes, template.StandardErrorLimitBytes,
             template.CleanupResourceType, template.CausesRdsRead, template.CausesCapture,
-            template.ReadsSecret, template.SecretVariableNames, template.LongLivedProcessKey,
+            template.ReadsSecret, template.SecretVariableNames, nonSecretEnvironment, template.LongLivedProcessKey,
             authorityPath, string.Empty, evidenceSha);
         var bytes = JsonSerializer.SerializeToUtf8Bytes(provisional, Arch7bJson.CanonicalOptions);
         await File.WriteAllBytesAsync(authorityPath, bytes, cancellationToken).ConfigureAwait(false);

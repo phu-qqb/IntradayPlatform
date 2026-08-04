@@ -98,7 +98,7 @@ public static class Arch7bCrossRepositoryBrokerQualifier
     {
         var root = Path.Combine(Path.GetTempPath(), "qq-arch7b-cross-repo-broker",
             suffix + "-" + Guid.NewGuid().ToString("N"));
-        var fixture = Arch7bV2QualificationFactory.Create(supervisorExecutable, root);
+        var fixture = Arch7bV2QualificationFactory.Create(supervisorExecutable, root, dotnetRoot: dotnetRoot);
         var adapters = new Arch7bRealCommandAdapterRegistry();
         var authority = new Arch7bCoreRdsSecretBrokerStaticAuthority(
             coreCommit, coreTree, module, ShaFile(module), cli, ShaFile(cli), nodeExecutable,

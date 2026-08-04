@@ -6,6 +6,8 @@ public static class Arch7bV2Contracts
     public const string LiveFactStoreVersion = "arch7b_one_shot_live_fact_store_v1";
     public const string CommandTemplateVersion = "arch7b_one_shot_command_template_v1";
     public const string MaterializedCommandVersion = "arch7b_one_shot_materialized_command_v1";
+    public const string MaterializedCommandNonSecretEnvironmentVersion =
+        "arch7b_materialized_command_non_secret_environment_v1";
     public const string LongLivedProcessRegistryVersion = "arch7b_one_shot_long_lived_process_registry_v1";
     public const string SecretEnvironmentInjectionVersion = "arch7b_one_shot_secret_environment_injection_v1";
     public const string ChildResultAdapterVersion = "arch7b_one_shot_child_result_adapter_v1";
@@ -50,6 +52,14 @@ public static class Arch7bV2Blockers
     public const string StagePredecessorMissing = "ARCH7B_ONE_SHOT_STAGE_PREDECESSOR_MISSING";
     public const string OperatorAuthorizationMissing = "ARCH7B_OPERATOR_AUTHORIZATION_FILE_MISSING";
     public const string OperatorAuthorizationExpired = "ARCH7B_OPERATOR_AUTHORIZATION_EXPIRED";
+    public const string CommandNonSecretEnvironmentAuthorityMissing =
+        "ARCH7B_COMMAND_NON_SECRET_ENVIRONMENT_AUTHORITY_MISSING";
+    public const string CommandNonSecretEnvironmentVariableForbidden =
+        "ARCH7B_COMMAND_NON_SECRET_ENVIRONMENT_VARIABLE_FORBIDDEN";
+    public const string CommandDotnetRootAuthorityMismatch =
+        "ARCH7B_COMMAND_DOTNET_ROOT_AUTHORITY_MISMATCH";
+    public const string CommandDotnetExecutableShaMismatch =
+        "ARCH7B_COMMAND_DOTNET_EXECUTABLE_SHA_MISMATCH";
 }
 
 public static class Arch7bV2ArgumentSafety

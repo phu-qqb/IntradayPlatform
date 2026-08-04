@@ -197,6 +197,8 @@ public static class Arch7bLiveTemplateValidator
             if (command.ExecutionKind is Arch7bExecutionKind.ChildInvoke or
                 Arch7bExecutionKind.ChildStartLongLived or Arch7bExecutionKind.ChildStop)
                 _ = adapters.Require(command.AdapterId);
+            _ = Arch7bSealedNonSecretEnvironment.ValidateTemplate(command.NonSecretEnvironment,
+                value.FileAuthorities);
         }
         var commandSet = Arch7bOneShotContracts.Sha256(string.Join('\n', value.CommandTemplates
             .Select(command => command.EvidenceSha256)));

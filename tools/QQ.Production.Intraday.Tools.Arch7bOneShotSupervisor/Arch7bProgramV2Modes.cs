@@ -144,9 +144,17 @@ public static class Arch7bProgramV2Modes
         var runs = Positive(options.GetValueOrDefault("runs"), 20);
         var campaigns = NonNegative(options.GetValueOrDefault("campaigns"), 10);
         var runsPerCampaign = Positive(options.GetValueOrDefault("runs-per-campaign"), 3);
+        var dotnetRoot = options.GetValueOrDefault("dotnet-root") ?? Environment.GetEnvironmentVariable("DOTNET_ROOT");
+        if (!string.IsNullOrWhiteSpace(dotnetRoot) && options.ContainsKey("expected-dotnet-executable-sha256"))
+        {
+            var dotnetExecutable = Path.Combine(FullPath(dotnetRoot),
+                OperatingSystem.IsWindows() ? "dotnet.exe" : "dotnet");
+            if (!File.Exists(dotnetExecutable) || FileSha(dotnetExecutable) !=
+                Sha(options, "expected-dotnet-executable-sha256"))
+                throw new Arch7bQualificationException(Arch7bV2Blockers.CommandDotnetExecutableShaMismatch);
+        }
         var qualification = await Arch7bCrossRepositoryBrokerQualifier.RunAsync(
-            executable, coreRepository, nodeExecutable,
-            options.GetValueOrDefault("dotnet-root") ?? Environment.GetEnvironmentVariable("DOTNET_ROOT"),
+            executable, coreRepository, nodeExecutable, dotnetRoot,
             Commit(options, "core-commit"), Commit(options, "core-tree"),
             runs, campaigns, runsPerCampaign).ConfigureAwait(false);
         var expectedTotal = checked(runs + campaigns * runsPerCampaign);

@@ -76,8 +76,8 @@ public static class Arch7bBoundedStreamReader
 public sealed class Arch7bOneShotProcessRunnerV2
 {
     private static readonly string[] InheritedSystemVariables = OperatingSystem.IsWindows()
-        ? ["SystemRoot", "WINDIR", "TEMP", "TMP", "DOTNET_ROOT", "COMSPEC", "PATHEXT"]
-        : ["HOME", "TMPDIR", "DOTNET_ROOT"];
+        ? ["SystemRoot", "WINDIR", "TEMP", "TMP", "COMSPEC", "PATHEXT"]
+        : ["HOME", "TMPDIR"];
     private static readonly string[] ForbiddenOutputSignatures =
     [
         "ARCH7B_SECRET_SENTINEL", "SecretString", "password=", "Password=",
@@ -299,6 +299,9 @@ public sealed class Arch7bOneShotProcessRunnerV2
             var inherited = Environment.GetEnvironmentVariable(name);
             if (!string.IsNullOrEmpty(inherited)) value.Environment[name] = inherited;
         }
+        Arch7bSealedNonSecretEnvironment.ValidateMaterialized(command.NonSecretEnvironment);
+        foreach (var variable in command.NonSecretEnvironment)
+            value.Environment[variable.VariableName] = variable.Value;
         foreach (var pair in secrets.Values)
         {
             if (!command.SecretVariableNames.Contains(pair.Key, StringComparer.Ordinal))

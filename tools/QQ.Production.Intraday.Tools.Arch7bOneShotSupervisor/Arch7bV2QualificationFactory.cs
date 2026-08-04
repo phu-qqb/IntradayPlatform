@@ -60,7 +60,7 @@ public static class Arch7bV2QualificationFactory
     ];
 
     public static Arch7bV2QualificationFixture Create(string executablePath, string runRoot,
-        string? failureStage = null, string failureBehavior = "success")
+        string? failureStage = null, string failureBehavior = "success", string? dotnetRoot = null)
     {
         executablePath = Path.GetFullPath(executablePath);
         runRoot = Path.GetFullPath(runRoot);
@@ -72,7 +72,21 @@ public static class Arch7bV2QualificationFactory
             ["supervisor_working_directory"] = new("supervisor_working_directory", workingDirectory,
                 Arch7bOneShotContracts.Sha256("directory:" + workingDirectory), true, false)
         };
-        var commands = Profiles.Select(profile => CreateCommand(profile, failureStage, failureBehavior)).ToArray();
+        if (!string.IsNullOrWhiteSpace(dotnetRoot))
+        {
+            dotnetRoot = Path.GetFullPath(dotnetRoot);
+            var dotnetExecutable = Path.Combine(dotnetRoot, "dotnet.exe");
+            if (!Directory.Exists(dotnetRoot) || !File.Exists(dotnetExecutable))
+                throw new Arch7bQualificationException(Arch7bV2Blockers.CommandNonSecretEnvironmentAuthorityMissing);
+            authorities["dotnet_root"] = new("dotnet_root", dotnetRoot,
+                Arch7bOneShotContracts.Sha256("arch7b_dotnet_root_authority_v1" + "\n" + dotnetRoot), true, false);
+            authorities["dotnet_executable"] = new("dotnet_executable", dotnetExecutable,
+                Convert.ToHexStringLower(SHA256.HashData(File.ReadAllBytes(dotnetExecutable))), true, false);
+        }
+        var nonSecretEnvironment = string.IsNullOrWhiteSpace(dotnetRoot) ? [] :
+            Arch7bSealedNonSecretEnvironment.ForDotnetRoot(authorities);
+        var commands = Profiles.Select(profile => CreateCommand(profile, failureStage, failureBehavior,
+            nonSecretEnvironment)).ToArray();
         var commandSet = Arch7bOneShotContracts.Sha256(string.Join('\n', commands.Select(value => value.EvidenceSha256)));
         var adapters = new Arch7bRealCommandAdapterRegistry();
         var registry = Arch7bGlobalSloRegistry.CreateDefault();
@@ -121,7 +135,8 @@ public static class Arch7bV2QualificationFactory
     }
 
     private static Arch7bOneShotCommandTemplate CreateCommand(CommandProfile profile,
-        string? failureStage, string failureBehavior)
+        string? failureStage, string failureBehavior,
+        IReadOnlyList<Arch7bSealedNonSecretEnvironmentVariable> nonSecretEnvironment)
     {
         var commandId = "offline-" + profile.Stage.ToLowerInvariant().Replace('_', '-');
         var behavior = profile.Stage == failureStage ? failureBehavior : "success";
@@ -146,12 +161,13 @@ public static class Arch7bV2QualificationFactory
             profile.Stage, profile.Kind, "supervisor_executable", string.Join('|', arguments.Select(value => value.Value)),
             "supervisor_working_directory", profile.Adapter, Arch7bV2Contracts.ChildResultAdapterVersion,
             profile.Contract, 30, 1_048_576, 1_048_576, "qualification-child-process",
-            profile.RdsRead, profile.Capture, false, profile.ProcessKey ?? string.Empty);
+            profile.RdsRead, profile.Capture, false,
+            Arch7bSealedNonSecretEnvironment.Canonical(nonSecretEnvironment), profile.ProcessKey ?? string.Empty);
         return new(Arch7bV2Contracts.CommandTemplateVersion, commandId, profile.Stage, profile.Kind,
             "supervisor_executable", arguments, "supervisor_working_directory", profile.Adapter,
             Arch7bV2Contracts.ChildResultAdapterVersion, profile.Contract, 30, 1_048_576, 1_048_576,
-            "qualification-child-process", profile.RdsRead, profile.Capture, false, [], profile.ProcessKey,
-            Arch7bOneShotContracts.Sha256(canonical));
+            "qualification-child-process", profile.RdsRead, profile.Capture, false, [], nonSecretEnvironment,
+            profile.ProcessKey, Arch7bOneShotContracts.Sha256(canonical));
     }
 
     private static IReadOnlyList<Arch7bOneShotStageContract> CreateStageContracts()
