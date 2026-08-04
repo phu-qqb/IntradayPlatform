@@ -1,0 +1,113 @@
+{
+  "contract_version": "arch7b_core_broker_intraday_supervisor_binding_candidate_v1",
+  "verdict": "ARCH7B_CORE_BROKER_AND_INTRADAY_SUPERVISOR_CROSS_REPO_BINDING_READY",
+  "repository": "phu-qqb/IntradayPlatform",
+  "pull_request": 53,
+  "branch": "codex/arch7b-enable-one-shot-live-execution",
+  "base_commit": "3ed8c928eb33063a900ac0d8fa4262c1fe349546",
+  "base_tree": "07f5fe41cf5a9c4cf3947a585152b9c32fad9e85",
+  "old_head": "db98db4dbfc4fe66620a9b148b7f1c70beb08120",
+  "old_tree": "27ff89650ac20fcc639f09e4eebcfd5289b8479d",
+  "implementation_candidate_head": "7986a0a1d79f7d84bd2d1ab3e4958cc863c16c44",
+  "implementation_candidate_tree": "0e44081e064622c697a78472a98ee0edd5001d67",
+  "packet_commit_binding": "commit_containing_this_file",
+  "core_implementation_head": "711b504750090562750c3f9426f3d9477835c441",
+  "core_implementation_tree": "8f59ce71f7e5a49180c21fed6afb58340c86e7be",
+  "broker_binding": {
+    "client_contract": "arch7b_core_rds_secret_broker_client_v1",
+    "process_authority": "arch7b_core_rds_secret_broker_process_authority_v1",
+    "protocol": "arch7b_rds_secret_child_protocol_v1",
+    "plan": "arch7b_rds_secret_child_command_plan_v1",
+    "terminal_transition": "arch7b_rds_secret_broker_terminal_readonly_transition_v1",
+    "framing": "STRICT_CANONICAL_UTF8_JSONL",
+    "maximum_frame_bytes": 1048576,
+    "maximum_commands": 4,
+    "maximum_retries": 0,
+    "portable_dotnet_root": "OPTIONAL_EXPLICIT_SHA_BOUND_NON_SECRET_ENVIRONMENT"
+  },
+  "materialization": {
+    "after_slot_lock": true,
+    "after_one_shot_identities": true,
+    "after_rds_read_one": true,
+    "before_rds_read_two": true,
+    "absolute_paths": true,
+    "immediate_sha_readback": true,
+    "schemas_not_future_values": true,
+    "command_plan_sha": "RUN_SCOPED_AND_TERMINAL_CHAIN_VALIDATED",
+    "raw_secret_in_plan": false
+  },
+  "routing": [
+    {"sequence": 1, "stage": "POSITION_APPLY", "adapter": "position-import-v1", "phase": "POST_BRACKET"},
+    {"sequence": 2, "stage": "PMS_IMPORT", "adapter": "pms-economic-replay-v1", "phase": "POST_BRACKET"},
+    {"sequence": 3, "stage": "ARCH7A_QUALIFY_SHADOW", "adapter": "arch7a-shadow-v1", "phase": "POST_BRACKET"},
+    {"sequence": 4, "stage": "REPORTING", "adapter": "operational-reporting-v1", "phase": "TERMINAL_READONLY"}
+  ],
+  "pms_normalization": {
+    "contract": "arch7b_pms_password_only_broker_connection_contract_v1",
+    "secret_source": "QQ_ARCH7B_POSITION_IMPORT_FAST_PATH",
+    "non_secret_target_source": "PmsShadowPostgreSqlTargetContract",
+    "full_connection_string_fallback": false,
+    "loopback_fallback": false,
+    "password_in_arguments": false,
+    "password_in_evidence": false
+  },
+  "payload_handling": {
+    "native_payload_scope": "BROKER_CLIENT_TO_SINGLE_ADAPTER_IN_MEMORY_ONLY",
+    "persistable_response_excludes_payload": true,
+    "fact_store_excludes_payload": true,
+    "terminal_evidence_excludes_payload": true,
+    "transient_payload_persistence_count": 0
+  },
+  "local_qualification": {
+    "cross_repository_independent": "20/20 PASS",
+    "cross_repository_campaigns": "10/10 PASS x 3",
+    "sequence_one_to_four": "50/50 PASS",
+    "four_adapters": "50/50 PASS",
+    "terminal_cleanup": "50/50 PASS",
+    "arch7b_regressions": "637/637 PASS",
+    "release_build_errors": 0,
+    "pending_model_changes": false,
+    "migration_count": 8,
+    "known_warning_family": "NU1903 System.Security.Cryptography.Xml 9.0.0"
+  },
+  "primary_qualification": {
+    "instance": "i-05535ebe6ce80a57b",
+    "runtime_root": "D:\\QQFund\\ARCH7B\\runtime\\cross-repo-binding-711b5047-7986a0a-r6",
+    "command_id": "0eadeb4b-f3f1-49c2-bf39-b51c3cfac90e",
+    "supervisor_dll_sha256": "78070ee73463ead2fa267af5fc79f74b7822e1379415b596a05b905585f20513",
+    "package_sha256": "211e37662ddb84f623af59ce112cdafcc0ff9a438b7f3f086e85cf4deac20c68",
+    "full_rehearsals": "3/3 PASS",
+    "sequence_one_to_four": "3/3 PASS",
+    "four_adapters": "3/3 PASS",
+    "terminal_cleanup": "3/3 PASS",
+    "evidence_sha256": "cee11a6d8665fae6703a6fa87572529352e92671a35d99e79b0c13ddc3c7be8e",
+    "residual_process_count": 0,
+    "residual_transfer_file_count": 0
+  },
+  "dependency_closure": {
+    "unresolved_references": 0,
+    "unknown_credential_authority": 0,
+    "full_connection_string_broker_consumers": 0,
+    "unbound_broker_phase": 0,
+    "transient_payload_persistence_count": 0,
+    "historical_prompt_dependency": false
+  },
+  "safety": {
+    "real_secret_reads": 0,
+    "database_connections": 0,
+    "database_writes": 0,
+    "selected_live_slots": 0,
+    "portal_http": 0,
+    "market_data_live": 0,
+    "fix_logons": 0,
+    "orders": 0,
+    "fills": 0,
+    "ledger_events": 0,
+    "account_api": 0,
+    "polygon": 0,
+    "databento": 0,
+    "aws_or_s3_mutations": 0,
+    "operational_one_shot_state": 0
+  },
+  "merge_authorized": false
+}
