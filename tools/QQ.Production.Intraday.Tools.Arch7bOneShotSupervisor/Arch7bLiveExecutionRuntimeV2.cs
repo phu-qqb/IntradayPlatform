@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 
 namespace QQ.Production.Intraday.Tools.Arch7bOneShotSupervisor;
 
@@ -33,18 +34,21 @@ public sealed record Arch7bV2ExecutionEvidence(
     Arch7bNoLiveSafetyCounters Safety,
     string EvidenceSha256);
 
-public sealed class Arch7bOneShotLiveExecutionRuntimeV2
+public sealed partial class Arch7bOneShotLiveExecutionRuntimeV2
 {
     private readonly Arch7bOneShotCommandMaterializer materializer;
     private readonly Arch7bOneShotProcessRunnerV2 runner;
     private readonly Arch7bRealCommandAdapterRegistry adapters;
+    private readonly IArch7bCoreRdsSecretBrokerClient? brokerClient;
 
     public Arch7bOneShotLiveExecutionRuntimeV2(Arch7bOneShotCommandMaterializer materializer,
-        Arch7bOneShotProcessRunnerV2 runner, Arch7bRealCommandAdapterRegistry adapters)
+        Arch7bOneShotProcessRunnerV2 runner, Arch7bRealCommandAdapterRegistry adapters,
+        IArch7bCoreRdsSecretBrokerClient? brokerClient = null)
     {
         this.materializer = materializer;
         this.runner = runner;
         this.adapters = adapters;
+        this.brokerClient = brokerClient;
     }
 
     public async Task<Arch7bV2ExecutionEvidence> RunAsync(
@@ -94,7 +98,13 @@ public sealed class Arch7bOneShotLiveExecutionRuntimeV2
                 string? resultSha = null;
                 var produced = new List<string>();
                 var resultCode = "SUCCESS";
-                switch (stageContract.StageId)
+                var brokerHandled = brokerClient is not null && await TryExecuteBrokerStageAsync(
+                    stageContract, template, facts, budget, runRoot, startedAt, produced,
+                    value => commandSha = value, value => resultSha = value,
+                    value => resultCode = value, cancellationToken).ConfigureAwait(false);
+                if (!brokerHandled)
+                {
+                    switch (stageContract.StageId)
                 {
                     case "STATIC_AUTHORITY_VALIDATION":
                         produced.Add(facts.Append("static_authority_validation", currentStage,
@@ -164,6 +174,7 @@ public sealed class Arch7bOneShotLiveExecutionRuntimeV2
                             value => resultCode = value, cancellationToken).ConfigureAwait(false);
                         break;
                 }
+                }
                 if (currentStage == "BRACKET_T0") bracketStarted = true;
                 if (currentStage == "FINAL_WORKING_ORDER_PREFLIGHT")
                 {
@@ -198,11 +209,33 @@ public sealed class Arch7bOneShotLiveExecutionRuntimeV2
                 stageEvidence.LastOrDefault()?.EvidenceSha256);
             finalBlocker = primary.FirstBlockerCode;
         }
+        var brokerCleanupComplete = true;
+        if (brokerClient is not null)
+        {
+            try
+            {
+                if (brokerClient.IsRunning)
+                    _ = await brokerClient.ShutdownAsync(CancellationToken.None).ConfigureAwait(false);
+                await brokerClient.DisposeAsync().ConfigureAwait(false);
+            }
+            catch (Exception cleanupFailure)
+            {
+                brokerCleanupComplete = false;
+                if (primary is null)
+                {
+                    primary = new(Arch7bCoreRdsSecretBrokerBlockers.CleanupIncomplete,
+                        currentStage, currentStage, cleanupFailure.GetType().Name,
+                        Arch7bOneShotContracts.Sha256(cleanupFailure.Message),
+                        stageEvidence.LastOrDefault()?.EvidenceSha256);
+                    finalBlocker = primary.FirstBlockerCode;
+                }
+            }
+        }
         var cleanupReport = await cleanup.CleanupAllAsync(finalBlocker, cancellationToken).ConfigureAwait(false);
         var residualProcesses = longLived.ResidualCount;
         var residualMarkers = Directory.EnumerateFiles(runRoot, "*.ready", SearchOption.AllDirectories).Count();
         var finalBudget = Snapshot(budget);
-        var passed = primary is null && cleanupReport.Complete && residualProcesses == 0 &&
+        var passed = primary is null && brokerCleanupComplete && cleanupReport.Complete && residualProcesses == 0 &&
             residualMarkers == 0 && stageEvidence.Count == Arch7bStages.All.Count &&
             finalBlocker == Arch7bOneShotContracts.ExpectedFinalBlocker && finalBudget is
             { Slots: 1, RdsReads: 2, Captures: 1, Retries: 0 };

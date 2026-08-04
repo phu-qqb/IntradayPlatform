@@ -4,6 +4,14 @@ namespace QQ.Production.Intraday.Tools.Arch7bOneShotSupervisor;
 
 public static class Arch7bProgramV2Modes
 {
+    private const string Arch7bRdsTestProfile = "ARCH7B_RDS_TEST";
+    private const string Arch7bRdsTestFingerprint =
+        "72fa569ee28e4dec6272db0d69c7594b2be8853e9607dff3e78066378a0b5ee4";
+    private const string Arch7bPositionImporterSecretArn =
+        "arn:aws:secretsmanager:eu-west-2:761018894194:secret:" +
+        "qq/fund-platform/test/rds/arch7b-position-importer-oVmKT5";
+    private const string Arch7bDemoAccountId = "1754288005";
+
     public static object ValidateLiveTemplate(IReadOnlyDictionary<string, string> options)
     {
         var executable = FullPath(Required(options, "executable"));
@@ -116,11 +124,106 @@ public static class Arch7bProgramV2Modes
             mustBeFile: true, template.Value.RootCaAuthoritySha256);
 
         var adapters = new Arch7bRealCommandAdapterRegistry();
+        var brokerClient = BuildBrokerClient(options, template.Value, adapters);
         var runtime = new Arch7bOneShotLiveExecutionRuntimeV2(new(),
-            new Arch7bOneShotProcessRunnerV2(adapters), adapters);
+            new Arch7bOneShotProcessRunnerV2(adapters), adapters, brokerClient);
         return await runtime.RunAsync(template.Value, authority.Value, authorization.Value,
             template.FileSha256, runRoot, TimeProvider.System, new Arch7bCoreOwnedSecretLease())
             .ConfigureAwait(false);
+    }
+
+    public static async Task<object> QualifyCoreBrokerCrossRepositoryAsync(
+        IReadOnlyDictionary<string, string> options)
+    {
+        var executable = FullPath(Required(options, "executable"));
+        var coreRepository = FullPath(Required(options, "core-repository"));
+        var nodeExecutable = FullPath(Required(options, "node-executable"));
+        RequireFile(executable, "executable");
+        RequireDirectory(coreRepository, "core-repository");
+        RequireFile(nodeExecutable, "node-executable");
+        var runs = Positive(options.GetValueOrDefault("runs"), 20);
+        var campaigns = NonNegative(options.GetValueOrDefault("campaigns"), 10);
+        var runsPerCampaign = Positive(options.GetValueOrDefault("runs-per-campaign"), 3);
+        var qualification = await Arch7bCrossRepositoryBrokerQualifier.RunAsync(
+            executable, coreRepository, nodeExecutable,
+            Commit(options, "core-commit"), Commit(options, "core-tree"),
+            runs, campaigns, runsPerCampaign).ConfigureAwait(false);
+        var expectedTotal = checked(runs + campaigns * runsPerCampaign);
+        if (qualification.IndependentPasses != runs ||
+            qualification.CampaignPasses != campaigns ||
+            qualification.SequenceOneToFourPasses != expectedTotal ||
+            qualification.FourAdapterPasses != expectedTotal ||
+            qualification.TerminalCleanupPasses != expectedTotal ||
+            qualification.TransientPayloadPersistenceCount != 0 ||
+            qualification.SecretLeakCount != 0 ||
+            qualification.ResidualProcessCount != 0 ||
+            qualification.Safety != Arch7bNoLiveSafetyCounters.Zero)
+            throw new Arch7bQualificationException(
+                Arch7bBlockers.ChildProcessFailedUncatalogued);
+        return new
+        {
+            verdict = "ARCH7B_CORE_BROKER_INTRADAY_SUPERVISOR_CROSS_REPO_QUALIFIED",
+            qualificationOnly = true,
+            qualification,
+            safety = Arch7bNoLiveSafetyCounters.Zero,
+            operationalOneShotStateCount = 0
+        };
+    }
+
+    private static Arch7bCoreRdsSecretBrokerClient BuildBrokerClient(
+        IReadOnlyDictionary<string, string> options,
+        Arch7bOneShotLivePlanTemplate template,
+        Arch7bRealCommandAdapterRegistry adapters)
+    {
+        RequireExact(options, "target-profile", Arch7bRdsTestProfile);
+        RequireExact(options, "target-fingerprint", Arch7bRdsTestFingerprint);
+        RequireExact(options, "secret-arn", Arch7bPositionImporterSecretArn);
+        RequireExact(options, "account-id", Arch7bDemoAccountId);
+        var module = BoundFile(options, "core-broker-module",
+            "expected-core-broker-module-sha256");
+        var cli = BoundFile(options, "core-broker-cli",
+            "expected-core-broker-cli-sha256");
+        var node = BoundFile(options, "node-executable",
+            "expected-node-executable-sha256");
+        var executable = BoundFile(options, "executable",
+            "expected-intraday-binary-sha256");
+        var staticAuthority = new Arch7bCoreRdsSecretBrokerStaticAuthority(
+            template.CoreCommit, template.CoreTree,
+            module.Path, module.Sha256, cli.Path, cli.Sha256,
+            node.Path, node.Sha256, template.RuntimeInventorySha256,
+            executable.Sha256, Arch7bRdsTestProfile, Arch7bRdsTestFingerprint,
+            GuidValue(options, "read1-version-id"), Arch7bPositionImporterSecretArn,
+            Arch7bDemoAccountId, false, true);
+        staticAuthority.Validate();
+        return new Arch7bCoreRdsSecretBrokerClient(staticAuthority, adapters);
+    }
+
+    private static (string Path, string Sha256) BoundFile(
+        IReadOnlyDictionary<string, string> options, string pathKey, string shaKey)
+    {
+        var path = FullPath(Required(options, pathKey));
+        RequireFile(path, pathKey);
+        var expected = Sha(options, shaKey);
+        if (FileSha(path) != expected)
+            throw new Arch7bQualificationException(
+                Arch7bV2Blockers.AuthorityBindingMismatch, pathKey);
+        return (path, expected);
+    }
+
+    private static void RequireExact(IReadOnlyDictionary<string, string> options,
+        string key, string expected)
+    {
+        if (Required(options, key) != expected)
+            throw new Arch7bQualificationException(
+                Arch7bV2Blockers.AuthorityBindingMismatch, key);
+    }
+
+    private static string GuidValue(IReadOnlyDictionary<string, string> options, string key)
+    {
+        var value = Required(options, key);
+        return Guid.TryParseExact(value, "D", out _) ? value :
+            throw new Arch7bQualificationException(
+                Arch7bV2Blockers.AuthorityBindingMismatch, key);
     }
 
     private static void BindCliAuthority(Arch7bOneShotLivePlanTemplate template,
@@ -155,6 +258,13 @@ public static class Arch7bProgramV2Modes
             throw new Arch7bQualificationException(Arch7bV2Blockers.AuthorityBindingMismatch, key);
     }
 
+
+    private static string Commit(IReadOnlyDictionary<string, string> options, string key)
+    {
+        var value = Required(options, key);
+        Arch7bCoreRdsSecretBrokerStaticAuthority.RequireCommit(value);
+        return value;
+    }
     private static string FullPath(string value)
     {
         Arch7bOneShotAuthorityLoader.RequireAbsolute(value);

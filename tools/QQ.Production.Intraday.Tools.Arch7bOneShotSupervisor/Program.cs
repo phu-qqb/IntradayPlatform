@@ -31,6 +31,8 @@ public static class Program
                 "simulate-live-command-execution" => await SimulateLiveCommandExecutionAsync(options).ConfigureAwait(false),
                 "materialize-live-execution-candidate-packet" => await MaterializeLiveCandidateAsync(options).ConfigureAwait(false),
                 "validate-live-template-v2" => Arch7bProgramV2Modes.ValidateLiveTemplate(options),
+                "qualify-core-broker-cross-repo" => await Arch7bProgramV2Modes
+                    .QualifyCoreBrokerCrossRepositoryAsync(options).ConfigureAwait(false),
                 "qualify-live-runtime-v2" => await Arch7bProgramV2Modes.QualifyLiveRuntimeAsync(options).ConfigureAwait(false),
                 "run-one-shot" => await Arch7bProgramV2Modes.RunOneShotAsync(options).ConfigureAwait(false),
                 _ => throw new Arch7bQualificationException(Arch7bBlockers.SupervisorModeUnknown, mode)

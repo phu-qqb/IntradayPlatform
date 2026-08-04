@@ -50,21 +50,49 @@ public static class Arch7bPrearmedFreshSlotHandoffCli
         string? connectionString = null;
         if (mode == "prearm-and-import")
         {
-            targetProfileId = requestedTargetProfileId;
-            connectionString = Environment.GetEnvironmentVariable(ConnectionEnvironmentVariable);
-            Require(!string.IsNullOrWhiteSpace(connectionString),
-                $"{ConnectionEnvironmentVariable}_REQUIRED");
-            target = PmsShadowPostgreSqlTargetContract.Validate(connectionString!,
-                new(
-                    Required("--expected-environment"),
-                    Required("--expected-database"),
-                    values.GetValueOrDefault("--expected-schema") ?? PmsShadowStateContract.SchemaName,
-                    int.Parse(Required("--expected-postgres-major"),
-                        CultureInfo.InvariantCulture),
-                    RequiredBoolean("--require-tls"),
-                    RequiredBoolean("--allow-loopback"),
-                    targetProfileId));
-            targetFingerprint = target.TargetFingerprint;
+            if (RequiredBoolean("--broker-password-only"))
+            {
+                targetProfileId = requestedTargetProfileId;
+                using var brokerConnection = Arch7bPmsPasswordOnlyBrokerConnection.Create(
+                    new(
+                        Required("--expected-host"),
+                        int.Parse(Required("--expected-port"), CultureInfo.InvariantCulture),
+                        Required("--expected-database"),
+                        Required("--expected-username"),
+                        Required("--expected-environment"),
+                        values.GetValueOrDefault("--expected-schema") ?? PmsShadowStateContract.SchemaName,
+                        int.Parse(Required("--expected-postgres-major"), CultureInfo.InvariantCulture),
+                        targetProfileId,
+                        Required("--expected-target-fingerprint"),
+                        Path.GetFullPath(Required("--root-certificate")),
+                        Required("--expected-root-certificate-sha256"),
+                        RequiredBoolean("--require-tls"),
+                        RequiredBoolean("--allow-loopback"),
+                        RequiredBoolean("--pooling"),
+                        RequiredBoolean("--enlist"),
+                        RequiredBoolean("--multiplexing")));
+                connectionString = brokerConnection.ConnectionString;
+                target = brokerConnection.Target;
+                targetFingerprint = target.TargetFingerprint;
+            }
+            else
+            {
+                targetProfileId = requestedTargetProfileId;
+                connectionString = Environment.GetEnvironmentVariable(ConnectionEnvironmentVariable);
+                Require(!string.IsNullOrWhiteSpace(connectionString),
+                    $"{ConnectionEnvironmentVariable}_REQUIRED");
+                target = PmsShadowPostgreSqlTargetContract.Validate(connectionString!,
+                    new(
+                        Required("--expected-environment"),
+                        Required("--expected-database"),
+                        values.GetValueOrDefault("--expected-schema") ?? PmsShadowStateContract.SchemaName,
+                        int.Parse(Required("--expected-postgres-major"),
+                            CultureInfo.InvariantCulture),
+                        RequiredBoolean("--require-tls"),
+                        RequiredBoolean("--allow-loopback"),
+                        targetProfileId));
+                targetFingerprint = target.TargetFingerprint;
+            }
         }
         else
         {
