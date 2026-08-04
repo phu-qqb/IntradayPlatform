@@ -7,8 +7,15 @@
 The Intraday implementation candidate is
 `7986a0a1d79f7d84bd2d1ab3e4958cc863c16c44` with tree
 `0e44081e064622c697a78472a98ee0edd5001d67`. The Core implementation is
-`711b504750090562750c3f9426f3d9477835c441` with tree
-`8f59ce71f7e5a49180c21fed6afb58340c86e7be`. The final Intraday PR HEAD is
+`be5e969fbeae56cf8de673023a36062a26f52e64` with tree
+`03229eb69a859927bfcd27ff2796fe3051df33c3`. The Core repository authority
+on Primary is `d58a6bf3e6b7c62c68d8a3df0924ae8f7bfa3965ea5f5a6553735a785b66be89`,
+with tracked inventory SHA-256
+`532a8774c00717bf67fa0a7e44e8eb1fa6f44a4b4135121dcbebc46985ed408d`.
+The broker module and CLI SHA-256 remain respectively
+`2ba086323683524fc018937e88a0adbd4723d8ed201efa93293b98eb81f587f2` and
+`e0bfb03b75af841a8a808b8efb0f734b128756d5c7fdc3e10e9d13a19fe886c3`:
+the functional bytes have not changed. The final Intraday PR HEAD is
 the commit containing this packet.
 
 ## Binding
