@@ -146,6 +146,7 @@ public static class Arch7bProgramV2Modes
         var runsPerCampaign = Positive(options.GetValueOrDefault("runs-per-campaign"), 3);
         var qualification = await Arch7bCrossRepositoryBrokerQualifier.RunAsync(
             executable, coreRepository, nodeExecutable,
+            options.GetValueOrDefault("dotnet-root") ?? Environment.GetEnvironmentVariable("DOTNET_ROOT"),
             Commit(options, "core-commit"), Commit(options, "core-tree"),
             runs, campaigns, runsPerCampaign).ConfigureAwait(false);
         var expectedTotal = checked(runs + campaigns * runsPerCampaign);
@@ -187,13 +188,21 @@ public static class Arch7bProgramV2Modes
             "expected-node-executable-sha256");
         var executable = BoundFile(options, "executable",
             "expected-intraday-binary-sha256");
+        var dotnetRoot = options.GetValueOrDefault("dotnet-root");
+        string? dotnetSha = null;
+        if (!string.IsNullOrWhiteSpace(dotnetRoot))
+        {
+            dotnetRoot = FullPath(dotnetRoot);
+            RequireDirectory(dotnetRoot, "dotnet-root");
+            dotnetSha = Sha(options, "expected-dotnet-executable-sha256");
+        }
         var staticAuthority = new Arch7bCoreRdsSecretBrokerStaticAuthority(
             template.CoreCommit, template.CoreTree,
             module.Path, module.Sha256, cli.Path, cli.Sha256,
             node.Path, node.Sha256, template.RuntimeInventorySha256,
             executable.Sha256, Arch7bRdsTestProfile, Arch7bRdsTestFingerprint,
             GuidValue(options, "read1-version-id"), Arch7bPositionImporterSecretArn,
-            Arch7bDemoAccountId, false, true);
+            Arch7bDemoAccountId, false, true, dotnetRoot, dotnetSha);
         staticAuthority.Validate();
         return new Arch7bCoreRdsSecretBrokerClient(staticAuthority, adapters);
     }

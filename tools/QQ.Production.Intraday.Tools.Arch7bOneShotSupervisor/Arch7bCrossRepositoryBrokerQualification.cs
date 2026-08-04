@@ -35,6 +35,7 @@ public static class Arch7bCrossRepositoryBrokerQualifier
         string supervisorExecutable,
         string coreRepository,
         string nodeExecutable,
+        string? dotnetRoot,
         string coreCommit,
         string coreTree,
         int independentRuns = 20,
@@ -49,6 +50,9 @@ public static class Arch7bCrossRepositoryBrokerQualifier
             "lmax_portal_reports_downloader", "src", "rds-secret-child-command-broker.mjs"));
         var cli = RequireFile(Path.Combine(coreRepository, "tools",
             "lmax_portal_reports_downloader", "src", "rds-secret-child-command-broker-cli.mjs"));
+        dotnetRoot = string.IsNullOrWhiteSpace(dotnetRoot) ? null : Path.GetFullPath(dotnetRoot);
+        var dotnetSha = dotnetRoot is null ? null : ShaFile(RequireFile(Path.Combine(dotnetRoot,
+            OperatingSystem.IsWindows() ? "dotnet.exe" : "dotnet")));
         Arch7bCoreRdsSecretBrokerStaticAuthority.RequireCommit(coreCommit);
         Arch7bCoreRdsSecretBrokerStaticAuthority.RequireCommit(coreTree);
         if (independentRuns < 1 || campaigns < 0 || runsPerCampaign < 1)
@@ -57,7 +61,7 @@ public static class Arch7bCrossRepositoryBrokerQualifier
         var all = new List<RunEvidence>();
         for (var index = 0; index < independentRuns; index++)
             all.Add(await RunOneAsync($"independent-{index:D2}", supervisorExecutable,
-                nodeExecutable, module, cli, coreCommit, coreTree, cancellationToken)
+                nodeExecutable, dotnetRoot, dotnetSha, module, cli, coreCommit, coreTree, cancellationToken)
                 .ConfigureAwait(false));
         var independentPasses = all.Count(value => value.Passed);
         var campaignPasses = 0;
@@ -66,7 +70,7 @@ public static class Arch7bCrossRepositoryBrokerQualifier
             var values = new List<RunEvidence>();
             for (var run = 0; run < runsPerCampaign; run++)
                 values.Add(await RunOneAsync($"campaign-{campaign:D2}-{run:D2}",
-                    supervisorExecutable, nodeExecutable, module, cli, coreCommit, coreTree,
+                    supervisorExecutable, nodeExecutable, dotnetRoot, dotnetSha, module, cli, coreCommit, coreTree,
                     cancellationToken).ConfigureAwait(false));
             if (values.All(value => value.Passed) &&
                 values.Select(value => value.RunId).Distinct(StringComparer.Ordinal).Count() == runsPerCampaign)
@@ -88,7 +92,8 @@ public static class Arch7bCrossRepositoryBrokerQualifier
     }
 
     private static async Task<RunEvidence> RunOneAsync(string suffix,
-        string supervisorExecutable, string nodeExecutable, string module, string cli,
+        string supervisorExecutable, string nodeExecutable, string? dotnetRoot, string? dotnetSha,
+        string module, string cli,
         string coreCommit, string coreTree, CancellationToken cancellationToken)
     {
         var root = Path.Combine(Path.GetTempPath(), "qq-arch7b-cross-repo-broker",
@@ -99,7 +104,8 @@ public static class Arch7bCrossRepositoryBrokerQualifier
             coreCommit, coreTree, module, ShaFile(module), cli, ShaFile(cli), nodeExecutable,
             ShaFile(nodeExecutable), fixture.Template.RuntimeInventorySha256,
             ShaFile(supervisorExecutable), "ARCH7B_RDS_TEST", TargetFingerprint,
-            Read1VersionId, SecretArn, "1754288005", true, true);
+            Read1VersionId, SecretArn, "1754288005", true, true,
+            dotnetRoot, dotnetSha);
         var client = new Arch7bCoreRdsSecretBrokerClient(authority, adapters);
         var runtime = new Arch7bOneShotLiveExecutionRuntimeV2(new(),
             new Arch7bOneShotProcessRunnerV2(adapters), adapters, client);
@@ -129,15 +135,14 @@ public static class Arch7bCrossRepositoryBrokerQualifier
         var sequence = client.LastSequence == 4 && expectedStages.Select(value => value.Stage)
             .SequenceEqual(observedStages.Select(value => value.StageId)) &&
             expectedStages.All(value => journal.Contains(value.Fact, StringComparison.Ordinal));
+        var observedByStage = observedStages.ToDictionary(value => value.StageId, StringComparer.Ordinal);
         var fourAdapters = expectedStages.All(value =>
-        {
-            var observed = observedStages.Single(stage => stage.StageId == value.Stage);
-            return fixture.Template.CommandTemplates.Single(command =>
+            observedByStage.TryGetValue(value.Stage, out var observed) &&
+            fixture.Template.CommandTemplates.Single(command =>
                        command.StageId == value.Stage).AdapterId == value.Adapter &&
                    adapters.Adapters.Any(adapter => adapter.AdapterId == value.Adapter) &&
                    observed.NormalizedChildResultSha256 is not null &&
-                   observed.ResultCode == value.Result;
-        });
+                   observed.ResultCode == value.Result);
 
         var terminal = journal.Contains("broker_terminal_evidence", StringComparison.Ordinal) &&
             !client.IsRunning && result.ResidualProcessCount == 0;

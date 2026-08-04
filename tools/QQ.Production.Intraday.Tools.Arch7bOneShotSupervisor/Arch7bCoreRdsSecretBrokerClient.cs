@@ -62,7 +62,9 @@ public sealed record Arch7bCoreRdsSecretBrokerStaticAuthority(
     string SecretArn,
     string AccountId,
     bool QualificationOnly,
-    bool NoOrder)
+    bool NoOrder,
+    string? DotnetRootPath = null,
+    string? DotnetExecutableSha256 = null)
 {
     public void Validate()
     {
@@ -76,6 +78,16 @@ public sealed record Arch7bCoreRdsSecretBrokerStaticAuthority(
         RequireFile(CoreBrokerModulePath, CoreBrokerModuleSha256);
         RequireFile(CoreBrokerCliPath, CoreBrokerCliSha256);
         RequireFile(NodeExecutablePath, NodeExecutableSha256);
+        if ((DotnetRootPath is null) != (DotnetExecutableSha256 is null))
+            Fail(Arch7bCoreRdsSecretBrokerBlockers.AuthorityInvalid, "dotnet-root-pair");
+        if (DotnetRootPath is not null)
+        {
+            if (!Path.IsPathFullyQualified(DotnetRootPath) || !Directory.Exists(DotnetRootPath))
+                Fail(Arch7bCoreRdsSecretBrokerBlockers.AuthorityInvalid, "dotnet-root");
+            var dotnetExecutable = Path.Combine(Path.GetFullPath(DotnetRootPath),
+                OperatingSystem.IsWindows() ? "dotnet.exe" : "dotnet");
+            RequireFile(dotnetExecutable, DotnetExecutableSha256!);
+        }
         if (TargetProfileId != "ARCH7B_RDS_TEST" || AccountId != "1754288005" ||
             !SecretArn.StartsWith("arn:aws:secretsmanager:", StringComparison.Ordinal) || !NoOrder)
             Fail(Arch7bCoreRdsSecretBrokerBlockers.AuthorityInvalid);
@@ -234,7 +246,9 @@ public sealed class Arch7bCoreRdsSecretBrokerPlanMaterializer(
                 ["RuntimeInventorySha256"] = staticAuthority.IntradayRuntimeInventorySha256,
                 ["ArgumentSchema"] = schemas,
                 ["SecretVariableNames"] = new JsonArray(Arch7bCoreRdsSecretBrokerContracts.SecretVariable),
-                ["NonSecretEnvironment"] = new JsonObject(),
+                ["NonSecretEnvironment"] = staticAuthority.DotnetRootPath is null
+                    ? new JsonObject()
+                    : new JsonObject { ["DOTNET_ROOT"] = Path.GetFullPath(staticAuthority.DotnetRootPath) },
                 ["NativeOutputContract"] = source.ExpectedNativeOutputContract,
                 ["TimeoutMilliseconds"] = checked(source.TimeoutSeconds * 1000),
                 ["StandardOutputMaximumBytes"] = source.StandardOutputLimitBytes,
