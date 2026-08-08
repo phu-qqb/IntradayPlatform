@@ -1,0 +1,65 @@
+{
+  "contract_version": "arch7b_pr53_artifact_identity_reconciliation_v1",
+  "old_head": "5db7bfc769e0ab77cfdc89319a4986658d4f8069",
+  "old_tree": "fcc53d5a1bdbad46f54b07eb6599b16a4a3a5a19",
+  "identities": [
+    {
+      "type": "SupervisorAssemblySha256",
+      "sha256": "f16c83b1a48f6515b239037710068b7dc339de5b1377fcc7ebd6f85ece4a7b09",
+      "producer": "primary-offline-qualification-v1",
+      "status": "SUPERSEDED"
+    },
+    {
+      "type": "SupervisorAppHostSha256",
+      "sha256": "69a49cee269e782440871482e79ffe34b37dfdb5bf8c98819c90c123b1343a01",
+      "producer": "primary-offline-qualification-v1",
+      "status": "SUPERSEDED"
+    },
+    {
+      "type": "PublishedSupervisorExecutableSha256",
+      "sha256": "0783ebad5794e11a00ce9da49b7cbc83cd9991e9e688d21cf783fb801434affb",
+      "producer": "local-publish-v1",
+      "status": "SUPERSEDED"
+    },
+    {
+      "type": "PublishedRuntimeInventorySha256",
+      "sha256": null,
+      "producer": "v1-response",
+      "status": "NOT_PROVEN_DO_NOT_SELECT"
+    },
+    {
+      "type": "CandidatePacketJsonFileSha256",
+      "path": "arch7b-one-shot-live-execution-candidate.json",
+      "bytes_sha256": "a2d258a8321b21775c1cf93e2f8c98d65d3c5e66248892724531d342114c2cc3",
+      "producer": "github-pr53-body-v1",
+      "status": "SUPERSEDED"
+    },
+    {
+      "type": "CandidatePacketMarkdownFileSha256",
+      "path": "arch7b-one-shot-live-execution-candidate.md",
+      "bytes_sha256": "33588a54310d464bcc0906875a009f70452bebf9b458032d2a032cf7355e9396",
+      "producer": "github-pr53-body-v1",
+      "status": "SUPERSEDED"
+    },
+    {
+      "type": "CandidatePacketEvidenceSha256",
+      "sha256": "87f14998412779afcbe41aa89090ff00e3296b6cace420504efe83196a97e1cb",
+      "producer": "local-v1-canonical-evidence",
+      "status": "SUPERSEDED_DISTINCT_FROM_FILE_BYTES"
+    },
+    {
+      "type": "PrimarySourceArchiveSha256",
+      "sha256": "8b0837bd2aec5df3a003cc4a44663f07707d5ca150d91ec0e472b78f92dc3109",
+      "producer": "primary-offline-qualification-v1",
+      "status": "SUPERSEDED"
+    }
+  ],
+  "resolution": {
+    "github_packet_sha_kind": "CandidatePacketJsonFileSha256",
+    "local_packet_sha_kind": "CandidatePacketEvidenceSha256",
+    "same_artifact": false,
+    "arbitrary_selection_performed": false,
+    "current_v2_identity_source": "arch7b-one-shot-live-execution-candidate-v2.json",
+    "ambiguous_current_identity_count": 0
+  }
+}

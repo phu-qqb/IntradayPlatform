@@ -1,0 +1,52 @@
+{
+  "contract_version": "arch7b_intraday_broker_consumer_contract_v1",
+  "broker_client_contract": "arch7b_core_rds_secret_broker_client_v1",
+  "secret_variable": "QQ_ARCH7B_POSITION_IMPORT_FAST_PATH",
+  "secret_shape": "PASSWORD_ONLY",
+  "full_connection_string_fallback": false,
+  "consumers": [
+    {
+      "stage": "POSITION_APPLY",
+      "command_id": "position-import-apply",
+      "phase": "POST_BRACKET",
+      "adapter_id": "position-import-v1",
+      "password_only": true,
+      "target_authority": "SEALED_ARCH7B_RDS_TEST_TARGET"
+    },
+    {
+      "stage": "PMS_IMPORT",
+      "command_id": "pms-economic-replay",
+      "phase": "POST_BRACKET",
+      "adapter_id": "pms-economic-replay-v1",
+      "password_only": true,
+      "connection_contract": "arch7b_pms_password_only_broker_connection_contract_v1",
+      "target_authority": "PmsShadowPostgreSqlTargetContract"
+    },
+    {
+      "stage": "ARCH7A_QUALIFY_SHADOW",
+      "command_id": "arch7a-qualify-shadow",
+      "phase": "POST_BRACKET",
+      "adapter_id": "arch7a-shadow-v1",
+      "password_only": true,
+      "target_authority": "SEALED_ARCH7B_RDS_TEST_TARGET"
+    },
+    {
+      "stage": "REPORTING",
+      "command_id": "operational-reporting",
+      "phase": "TERMINAL_READONLY",
+      "adapter_id": "operational-reporting-v1",
+      "password_only": true,
+      "target_authority": "SEALED_ARCH7B_RDS_TEST_READONLY_TARGET"
+    }
+  ],
+  "internal_non_secret_consumers": [
+    "runtime_selection",
+    "final_working_order_preflight"
+  ],
+  "broker_consumer_count": 4,
+  "password_only_contract_count": 4,
+  "full_connection_string_consumer_count": 0,
+  "unknown_credential_authority_count": 0,
+  "transient_native_payload_persisted": false,
+  "no_order": true
+}

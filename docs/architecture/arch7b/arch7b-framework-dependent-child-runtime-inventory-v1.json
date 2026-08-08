@@ -1,0 +1,11 @@
+{
+  "contract_version": "arch7b_framework_dependent_child_runtime_inventory_v1",
+  "command_count": 15,
+  "executable_authority_id": "supervisor_executable",
+  "framework_dependent": true,
+  "dotnet_root_required": true,
+  "dotnet_root_authority_id": "dotnet_root",
+  "dotnet_executable_authority_id": "dotnet_executable",
+  "commands": ["supervisor/fake-qualification-child", "position-import", "pms-economic-replay", "arch7a-shadow", "operational-reporting", "all other materialized supervisor child commands"],
+  "non_dotnet_commands": ["core-broker-node-command", "internal-stages"]
+}

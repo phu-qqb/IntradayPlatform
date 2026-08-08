@@ -12,15 +12,25 @@ public static class Arch7bOneShotContracts
     public const string LiveSupervisorVersion = "arch7b_one_shot_live_supervisor_v1";
     public const string CoreStaticCommandAuthorityBindingVersion = "arch7b_core_static_command_authority_binding_v1";
     public const string SupervisorEvidenceVersion = "arch7b_one_shot_supervisor_evidence_v1";
+    public const string LiveExecutionRuntimeVersion = "arch7b_one_shot_live_execution_runtime_v1";
+    public const string CommandRunnerVersion = "arch7b_one_shot_command_runner_v1";
+    public const string LiveExecutionAuthorityVersion = "arch7b_one_shot_live_execution_authority_v1";
+    public const string StageEvidenceVersion = "arch7b_one_shot_stage_evidence_v1";
+    public const string ProcessEnvironmentAuthorityVersion = "arch7b_one_shot_process_environment_authority_v1";
+    public const string CommandResultVersion = "arch7b_one_shot_command_result_v1";
+    public const string LivePlanVersion = "arch7b_one_shot_live_plan_v1";
+    public const string OperatorAuthorizationVersion = "arch7b_one_shot_operator_authorization_v1";
+    public const string ExecutionGapVersion = "arch7b_one_shot_supervisor_execution_gap_v1";
+    public const string LiveCandidatePacketVersion = "arch7b_one_shot_live_execution_candidate_v1";
 
     public const string IntradayRepository = "phu-qqb/IntradayPlatform";
     public const string IntradayBaseCommit = "6eb13a2f1bcf77f71f12efd4f4eef1b71a43c657";
     public const string IntradayBaseTree = "d325308bc0d951468fc037feb55ffdf01c347f57";
     public const string CoreRepository = "phu-qqb/QQ.Production.Core";
-    public const string CoreCommit = "9ba391dd197d51d1f44dc8c0d86ac1653f36a042";
-    public const string CoreTree = "8b9fefc4b39acf19c33ab3611bd155a2cd3f736b";
-    public const string CoreTrackedInventorySha256 = "822a056c1976416df8ae54deb26c5e4c5d0b90e632697714fd81661af0a51ed5";
-    public const string CoreRepositoryAuthoritySha256 = "f2fd3071a66a323e0862840760bf69acac4c3917a2a5b6e860f38b852d20cf";
+    public const string CoreCommit = "be5e969fbeae56cf8de673023a36062a26f52e64";
+    public const string CoreTree = "03229eb69a859927bfcd27ff2796fe3051df33c3";
+    public const string CoreTrackedInventorySha256 = "532a8774c00717bf67fa0a7e44e8eb1fa6f44a4b4135121dcbebc46985ed408d";
+    public const string CoreRepositoryAuthoritySha256 = "d58a6bf3e6b7c62c68d8a3df0924ae8f7bfa3965ea5f5a6553735a785b66be89";
 
     public const int MaximumSlots = 1;
     public const int MaximumCaptures = 1;
@@ -29,6 +39,8 @@ public static class Arch7bOneShotContracts
     public const string ExpectedFinalBlocker = "ARCH7B_WORKING_ORDER_AUTHORITY_MISSING";
     public const string SuccessVerdict = "ARCH7B_ONE_SHOT_LIVE_SUPERVISOR_CORRECTIVE_PR_READY";
     public const string StaticQualificationVerdict = "ARCH7B_ONE_SHOT_STATIC_AUTHORITIES_QUALIFIED";
+    public const string LiveRuntimeCandidateVerdict = "ARCH7B_ONE_SHOT_LIVE_EXECUTION_RUNTIME_CORRECTIVE_PR_READY";
+    public const string ExecutionGapVerdict = "ARCH7B_ONE_SHOT_GLOBAL_AUTHORITIES_MERGED_LIVE_EXECUTION_MODE_ABSENT";
 
     public static string Sha256(string value) =>
         Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(value)));
@@ -71,6 +83,31 @@ public static class Arch7bBlockers
     public const string SlotLimitExceeded = "ARCH7B_ONE_SHOT_SLOT_LIMIT_EXCEEDED";
     public const string IdentityReused = "ARCH7B_ONE_SHOT_IDENTITY_REUSED";
     public const string TerminalCleanupIncomplete = "ARCH7B_TERMINAL_CLEANUP_INCOMPLETE";
+    public const string LiveCommandAuthorityIncomplete = "ARCH7B_LIVE_COMMAND_AUTHORITY_INCOMPLETE";
+    public const string LiveAuthorityMissing = "ARCH7B_LIVE_EXECUTION_AUTHORITY_MISSING";
+    public const string LiveAuthorityExpired = "ARCH7B_LIVE_EXECUTION_AUTHORITY_EXPIRED";
+    public const string OperatorAuthorizationMismatch = "ARCH7B_OPERATOR_AUTHORIZATION_MISMATCH";
+    public const string TargetEnvironmentNotTest = "ARCH7B_TARGET_ENVIRONMENT_NOT_TEST";
+    public const string NoOrderRequired = "ARCH7B_NO_ORDER_REQUIRED";
+    public const string LiveAuthorityCommitMismatch = "ARCH7B_LIVE_AUTHORITY_COMMIT_MISMATCH";
+    public const string FreezeAuthorityMismatch = "ARCH7B_FREEZE_AUTHORITY_MISMATCH";
+    public const string CommandAuthorityMismatch = "ARCH7B_COMMAND_AUTHORITY_MISMATCH";
+    public const string QualificationModeMismatch = "ARCH7B_QUALIFICATION_MODE_MISMATCH";
+    public const string AbsolutePathRequired = "ARCH7B_ABSOLUTE_PATH_REQUIRED";
+    public const string RunRootNotEmpty = "ARCH7B_RUN_ROOT_NOT_EMPTY";
+    public const string RunRootReused = "ARCH7B_RUN_ROOT_REUSED";
+    public const string SecretInArgument = "ARCH7B_SECRET_IN_ARGUMENT";
+    public const string AmbientPathForbidden = "ARCH7B_AMBIENT_PATH_FORBIDDEN";
+    public const string ChildProcessTimeout = "ARCH7B_ONE_SHOT_CHILD_PROCESS_TIMEOUT";
+    public const string ChildProcessFailedUncatalogued = "ARCH7B_ONE_SHOT_CHILD_PROCESS_FAILED_UNCATALOGUED";
+    public const string ChildOutputInvalid = "ARCH7B_ONE_SHOT_CHILD_OUTPUT_INVALID";
+    public const string ChildOutputShaMismatch = "ARCH7B_ONE_SHOT_CHILD_OUTPUT_SHA_MISMATCH";
+    public const string ChildEvidenceMissing = "ARCH7B_ONE_SHOT_CHILD_EVIDENCE_MISSING";
+    public const string ChildOutputSecretDetected = "ARCH7B_ONE_SHOT_CHILD_OUTPUT_SECRET_DETECTED";
+    public const string SecretReadAfterBracket = "ARCH7B_SECRET_READ_AFTER_BRACKET_T0";
+    public const string StageEvidenceMissing = "ARCH7B_ONE_SHOT_STAGE_EVIDENCE_MISSING";
+    public const string StageOrderViolation = "ARCH7B_ONE_SHOT_STAGE_ORDER_VIOLATION";
+    public const string DuplicateArgument = "ARCH7B_DUPLICATE_ARGUMENT_FORBIDDEN";
 }
 
 public sealed class Arch7bQualificationException(string blockerCode, string? detail = null)

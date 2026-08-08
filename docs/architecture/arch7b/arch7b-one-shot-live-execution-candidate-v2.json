@@ -1,0 +1,141 @@
+{
+  "contract_version": "arch7b_one_shot_live_execution_candidate_v2",
+  "verdict": "ARCH7B_PR53_UPDATED_REAL_PLAN_MATERIALIZATION_AND_COMMAND_ADAPTERS_READY",
+  "repository": "phu-qqb/IntradayPlatform",
+  "pull_request": 53,
+  "base_commit": "3ed8c928eb33063a900ac0d8fa4262c1fe349546",
+  "base_tree": "07f5fe41cf5a9c4cf3947a585152b9c32fad9e85",
+  "runtime_candidate_commit": "ab0ae068353a649bfe2ce4cccd1f991f2457b042",
+  "runtime_candidate_tree": "338ab43a9a66c847aa5eb47e4453970527502e8c",
+  "packet_commit_binding": "commit_containing_this_file",
+  "candidate_packet_evidence_sha256": "d982344edcc457499df618a2493a5e1b3d9ce03931dbf656501265b2578e4f5f",
+  "contracts": {
+    "plan_template": "arch7b_one_shot_live_plan_template_v1",
+    "fact_store": "arch7b_one_shot_live_fact_store_v1",
+    "command_template": "arch7b_one_shot_command_template_v1",
+    "materialized_command": "arch7b_one_shot_materialized_command_v1",
+    "long_lived_process_registry": "arch7b_one_shot_long_lived_process_registry_v1",
+    "secret_environment_injection": "arch7b_one_shot_secret_environment_injection_v1",
+    "operator_authorization": "arch7b_one_shot_operator_authorization_v2",
+    "live_execution_authority": "arch7b_one_shot_live_execution_authority_v2"
+  },
+  "plan_materialization": {
+    "static_template_contains_live_slot": false,
+    "slot_selected_at_runtime": true,
+    "slot_lock_atomic_with_budget": true,
+    "identities_created_after_slot_lock": true,
+    "typed_placeholder_resolution": true,
+    "append_only_immutable_fact_store": true,
+    "per_invocation_command_authority": "stage-command-authority.json",
+    "chronology_stage_count": 40,
+    "command_template_count": 15,
+    "adapter_count": 14
+  },
+  "processes": {
+    "execution_kinds": [
+      "INTERNAL",
+      "CHILD_INVOKE",
+      "CHILD_START_LONG_LIVED",
+      "CHILD_AWAIT_EVIDENCE",
+      "CHILD_SIGNAL",
+      "CHILD_STOP",
+      "FILESYSTEM_GATE",
+      "EXPECTED_BLOCKER_GATE"
+    ],
+    "preloaded_rds_lease_long_lived": true,
+    "market_recorder_long_lived": true,
+    "completion_signal_publish": "atomic_temp_then_move",
+    "reverse_terminal_cleanup": true,
+    "process_tree_kill_on_timeout": true,
+    "residual_process_count": 0,
+    "residual_marker_count": 0
+  },
+  "secrets": {
+    "classification": "B",
+    "classification_name": "CORE_LEASE_PROCESS_OWNS_SECRET_AND_SPAWNS_SECRET_CHILDREN",
+    "core_commit_examined": "9ba391dd197d51d1f44dc8c0d86ac1653f36a042",
+    "supervisor_receives_secret_value": false,
+    "command_scoped_environment_allowlist": true,
+    "exact_value_stream_scan": true,
+    "raw_output_recorded": false,
+    "maximum_rds_reads": 2,
+    "arch7a_secret_reads": 0,
+    "post_bracket_secret_reads": 0,
+    "real_secret_reads_during_qualification": 0
+  },
+  "adapters": {
+    "generic_permissive_adapter": false,
+    "strict_native_contracts": true,
+    "artifact_sha_and_cardinality_validation": true,
+    "unknown_critical_fields_rejected": true,
+    "offline_rehearsal": "20/20 PASS",
+    "campaigns": "10/10 PASS x 3 runs",
+    "negative_matrix": "31/31 catalogued cases"
+  },
+  "authorities": {
+    "full_field_binding": true,
+    "operator_authorization_separate_file": true,
+    "freeze_manifest_sha_separated": true,
+    "freeze_packet_sha_separated": true,
+    "live_plan_template_sha_separated": true,
+    "command_template_set_sha_separated": true,
+    "adapter_set_sha_separated": true,
+    "cli_path_and_sha_binding": true
+  },
+  "primary_qualification": {
+    "instance_id": "i-05535ebe6ce80a57b",
+    "runtime_root": "D:\\QQFund\\ARCH7B\\runtime\\supervisor-candidate-ab0ae068-r3",
+    "qualification_command_id": "2d5ab297-8abb-4cb4-b850-b9e787710ae8",
+    "static_template_authority": "3/3 PASS",
+    "materialized_plan": "3/3 PASS",
+    "real_adapters": "3/3 PASS",
+    "long_lived_lifecycle": "3/3 PASS",
+    "primary_evidence_file_sha256": "dc3598ab8b5b4d88aac99d1852b0e0db7d1d4770673ff375b6ca766238165076"
+  },
+  "artifact_identities": {
+    "supervisor_assembly_sha256": "7357c1e2f1185b8b2f451361bdbc63ee31a8211b783432772c46c4d08cd08bd6",
+    "supervisor_apphost_sha256": "268feb5923d8e4c9fbe4e7fa5af007a622e214382d2e88adb1313b865222e06e",
+    "published_supervisor_executable_sha256": "268feb5923d8e4c9fbe4e7fa5af007a622e214382d2e88adb1313b865222e06e",
+    "published_runtime_inventory_sha256": "3c179c9560d716bd5d35fc81386527acc1e85df06e5eb49a1f2df65ee48bbe6c",
+    "published_runtime_file_count": 73,
+    "primary_source_archive_sha256": "29b8491a201e24ed69c0fb2d9b978ef7ecb7f45909e4937f797070e09e1fa36f",
+    "candidate_packet_json_file_sha256_binding": "external_after_materialization",
+    "candidate_packet_markdown_file_sha256_binding": "external_after_materialization"
+  },
+  "dependency_closure": {
+    "unresolved_references": 0,
+    "historical_prompt_dependency": false,
+    "unversioned_source_count": 0,
+    "ambiguous_artifact_identity_count": 0
+  },
+  "validation": {
+    "new_v2_tests": "20/20 PASS",
+    "new_atomic_lifecycle_iterations": "20/20 PASS",
+    "historical_runtime_security": "23/23 PASS",
+    "historical_supervisor": "38/38 PASS",
+    "relevant_regressions": "993/993 PASS",
+    "release_build_errors": 0,
+    "pending_model_changes": false,
+    "migration_count": 8,
+    "known_warning_family": "NU1903 System.Security.Cryptography.Xml 9.0.0"
+  },
+  "safety": {
+    "secret_reads": 0,
+    "database_connections": 0,
+    "database_writes": 0,
+    "live_slots": 0,
+    "portal_http": 0,
+    "live_market_data": 0,
+    "fix_logons": 0,
+    "orders": 0,
+    "fills": 0,
+    "ledger_events": 0,
+    "account_api": 0,
+    "polygon": 0,
+    "databento_api_or_download": 0,
+    "aws_or_s3_configuration_mutations": 0,
+    "operational_one_shot_state": 0
+  },
+  "expected_terminal_blocker": "ARCH7B_WORKING_ORDER_AUTHORITY_MISSING",
+  "merge_authorized": false
+}

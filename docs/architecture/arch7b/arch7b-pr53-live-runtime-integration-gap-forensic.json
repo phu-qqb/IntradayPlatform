@@ -1,0 +1,32 @@
+{
+  "contract_version": "arch7b_pr53_live_runtime_integration_gap_forensic_v1",
+  "repository": "phu-qqb/IntradayPlatform",
+  "base_commit": "3ed8c928eb33063a900ac0d8fa4262c1fe349546",
+  "inspected_head": "5db7bfc769e0ab77cfdc89319a4986658d4f8069",
+  "inspected_tree": "fcc53d5a1bdbad46f54b07eb6599b16a4a3a5a19",
+  "gaps": [
+    { "id": "A", "name": "STATIC_LIVE_PLAN", "finding": "The freeze carried a fully materialized plan and did not derive slot, lock, identities, clocks, outputs, or downstream arguments at runtime." },
+    { "id": "B", "name": "SHORT_LIVED_ONLY", "finding": "Every stage was treated as a short child invocation, which could not represent the preloaded RDS lease or Market Data recorder lifecycles." },
+    { "id": "C", "name": "SECRET_ENV_NOT_INJECTED", "finding": "SecretVariableNames were declared but BuildStartInfo copied only inherited system variables." },
+    { "id": "D", "name": "GENERIC_ENVELOPE_REQUIRED", "finding": "The runner required every native tool to emit Arch7bChildOutputEnvelope directly." },
+    { "id": "E", "name": "INCOMPLETE_AUTHORITY_BINDING", "finding": "Supervisor, runtime inventory, Core repository, tracked inventory, static authority, and CLI path bindings were incomplete." },
+    { "id": "F", "name": "FREEZE_PLAN_SHA_AMBIGUITY", "finding": "expected-freeze-manifest-sha256 was also used as the live plan file SHA." },
+    { "id": "G", "name": "OUTPUT_BOUND_AFTER_READ", "finding": "ReadToEndAsync accumulated output before enforcing limits." },
+    { "id": "H", "name": "SYNTHETIC_SECRET_SCAN_ONLY", "finding": "Only ARCH7B_SECRET_SENTINEL was scanned; exact leased values were not checked." }
+  ],
+  "secret_lifecycle_call_graph": {
+    "core_commit": "9ba391dd197d51d1f44dc8c0d86ac1653f36a042",
+    "classification": "B",
+    "classification_name": "CORE_LEASE_PROCESS_OWNS_SECRET_AND_SPAWNS_SECRET_CHILDREN",
+    "supervisor_receives_secret_value": false,
+    "core_change_required": false,
+    "evidence": [
+      "rds-secret-client.mjs reads the credential inside Core",
+      "rds-secret-lease.mjs owns and releases the in-memory value",
+      "bracket-fast-handoff-v3.mjs starts consumers through the Core lease contract",
+      "fast-seal-v3-cli.mjs consumes versioned Core authorities without exposing the value"
+    ]
+  },
+  "verdict": "ARCH7B_PR53_GENERIC_PROCESS_RUNTIME_NOT_YET_BOUND_TO_REAL_LIVE_COMMAND_GRAPH",
+  "superseded_by": "arch7b_one_shot_live_execution_runtime_v2"
+}
