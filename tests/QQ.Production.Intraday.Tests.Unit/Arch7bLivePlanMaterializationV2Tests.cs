@@ -1,4 +1,6 @@
+using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using QQ.Production.Intraday.Tools.Arch7bOneShotSupervisor;
 
 namespace QQ.Production.Intraday.Tests.Unit;
@@ -116,6 +118,141 @@ public sealed class Arch7bLivePlanMaterializationV2Tests
         Directory.Delete(fixture.RunRoot, true);
     }
 
+    [Fact]
+    public async Task Static_template_v2_is_perishable_identity_free_and_materializes_create_new_authorities()
+    {
+        var fixture = Fixture("materialization");
+        var freeze = await WriteFreezeAsync(fixture, "materialization");
+        var output = Root("materialized-authorities");
+        var now = DateTimeOffset.UtcNow;
+
+        var result = await Arch7bLiveAuthorityMaterializer.MaterializeAsync(freeze.Root, freeze.ManifestSha,
+            freeze.PacketSha, freeze.TemplateSha, "operator-materialization-a", now.AddSeconds(-1),
+            now.AddMinutes(10), output, "TEST", "1754288005", true);
+
+        Assert.True(File.Exists(result.OperatorAuthorizationPath));
+        Assert.True(File.Exists(result.LiveExecutionAuthorityPath));
+        Assert.True(File.Exists(result.ManifestPath));
+        Assert.DoesNotContain("operator_authorization_id", await File.ReadAllTextAsync(freeze.TemplatePath),
+            StringComparison.Ordinal);
+        var authorization = await Arch7bLiveAuthorityLoaderV2.LoadOperatorAsync(result.OperatorAuthorizationPath,
+            result.OperatorAuthorizationSha256);
+        var authority = await Arch7bLiveAuthorityLoaderV2.LoadAuthorityAsync(result.LiveExecutionAuthorityPath,
+            result.LiveExecutionAuthoritySha256);
+        authority.Value.Validate(freeze.Template, authorization.Value, result.TemplateSha256, DateTimeOffset.UtcNow);
+        Assert.Equal(Arch7bNoLiveSafetyCounters.Zero, result.Safety);
+
+        var error = await Assert.ThrowsAsync<Arch7bQualificationException>(() =>
+            Arch7bLiveAuthorityMaterializer.MaterializeAsync(freeze.Root, freeze.ManifestSha, freeze.PacketSha,
+                freeze.TemplateSha, "operator-materialization-b", DateTimeOffset.UtcNow.AddSeconds(-1),
+                DateTimeOffset.UtcNow.AddMinutes(10), output, "TEST", "1754288005", true));
+        Assert.Equal(Arch7bBlockers.RunRootNotEmpty, error.BlockerCode);
+        Directory.Delete(freeze.Root, true);
+        Directory.Delete(output, true);
+    }
+
+    [Fact]
+    public async Task Versioned_program_mode_materializes_the_v2_v3_v2_triplet_without_external_access()
+    {
+        var fixture = Fixture("program-mode");
+        var freeze = await WriteFreezeAsync(fixture, "program-mode");
+        var output = Root("program-mode-output");
+        var now = DateTimeOffset.UtcNow;
+        var exit = await Program.Main([
+            "--mode", "materialize-live-run-authorities",
+            "--qualification-only", "false",
+            "--freeze-root", freeze.Root,
+            "--expected-freeze-manifest-sha256", freeze.ManifestSha,
+            "--expected-freeze-packet-sha256", freeze.PacketSha,
+            "--expected-live-plan-template-sha256", freeze.TemplateSha,
+            "--operator-authorization-id", "operator-program-mode",
+            "--issued-at-utc", now.AddSeconds(-1).ToString("O"),
+            "--expires-at-utc", now.AddMinutes(10).ToString("O"),
+            "--output-root", output,
+            "--target-environment", "TEST",
+            "--account-id", "1754288005",
+            "--no-order", "true"
+        ]);
+
+        Assert.Equal(0, exit);
+        Assert.True(File.Exists(Path.Combine(output,
+            Arch7bLiveAuthorityMaterializer.OperatorAuthorizationFileName)));
+        Assert.True(File.Exists(Path.Combine(output,
+            Arch7bLiveAuthorityMaterializer.LiveExecutionAuthorityFileName)));
+        Directory.Delete(freeze.Root, true);
+        Directory.Delete(output, true);
+    }
+    [Theory]
+    [InlineData("operator_authorization_id")]
+    [InlineData("selected_slot")]
+    [InlineData("run_id")]
+    [InlineData("secret_version_id")]
+    public void Static_template_rejects_perishable_properties(string property)
+    {
+        var fixture = Fixture("perishable-" + property);
+        var node = JsonNode.Parse(JsonSerializer.Serialize(fixture.Template,
+            new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower }))!.AsObject();
+        node[property] = "forbidden";
+
+        var error = Assert.Throws<Arch7bQualificationException>(() =>
+            Arch7bLiveTemplateValidator.ValidateStaticDocument(Encoding.UTF8.GetBytes(node.ToJsonString())));
+
+        Assert.Equal(Arch7bV2Blockers.CommandTemplateInvalid, error.BlockerCode);
+    }
+
+    [Fact]
+    public async Task Expired_authorization_and_distinct_operator_ids_are_handled_fail_closed()
+    {
+        var fixture = Fixture("expiry-and-identity");
+        var freeze = await WriteFreezeAsync(fixture, "expiry-and-identity");
+        var expiredOutput = Root("expired-authority");
+        var now = DateTimeOffset.UtcNow;
+        var expired = await Assert.ThrowsAsync<Arch7bQualificationException>(() =>
+            Arch7bLiveAuthorityMaterializer.MaterializeAsync(freeze.Root, freeze.ManifestSha, freeze.PacketSha,
+                freeze.TemplateSha, "operator-expired", now.AddMinutes(-10), now.AddMinutes(-1), expiredOutput,
+                "TEST", "1754288005", true));
+        Assert.Equal(Arch7bBlockers.OperatorAuthorizationMismatch, expired.BlockerCode);
+
+        var first = await Arch7bLiveAuthorityMaterializer.MaterializeAsync(freeze.Root, freeze.ManifestSha,
+            freeze.PacketSha, freeze.TemplateSha, "operator-first", now.AddSeconds(-1), now.AddMinutes(10),
+            Root("authority-first"), "TEST", "1754288005", true);
+        var second = await Arch7bLiveAuthorityMaterializer.MaterializeAsync(freeze.Root, freeze.ManifestSha,
+            freeze.PacketSha, freeze.TemplateSha, "operator-second", now.AddSeconds(-1), now.AddMinutes(10),
+            Root("authority-second"), "TEST", "1754288005", true);
+        Assert.Equal(first.TemplateSha256, second.TemplateSha256);
+        Assert.NotEqual(first.OperatorAuthorizationSha256, second.OperatorAuthorizationSha256);
+        Assert.NotEqual(first.LiveExecutionAuthoritySha256, second.LiveExecutionAuthoritySha256);
+        Directory.Delete(freeze.Root, true);
+        Directory.Delete(Path.GetDirectoryName(first.OperatorAuthorizationPath)!, true);
+        Directory.Delete(Path.GetDirectoryName(second.OperatorAuthorizationPath)!, true);
+    }
+
+    private static async Task<(string Root, string TemplatePath, string ManifestSha, string PacketSha,
+        string TemplateSha, Arch7bOneShotLivePlanTemplate Template)> WriteFreezeAsync(
+        Arch7bV2QualificationFixture fixture, string suffix)
+    {
+        var root = Root("freeze-" + suffix);
+        Directory.CreateDirectory(root);
+        var manifestBytes = Encoding.UTF8.GetBytes("manifest-" + suffix);
+        var packetBytes = Encoding.UTF8.GetBytes("packet-" + suffix);
+        var manifestSha = Arch7bOneShotContracts.Sha256("manifest-" + suffix);
+        var packetSha = Arch7bOneShotContracts.Sha256("packet-" + suffix);
+        await File.WriteAllBytesAsync(Path.Combine(root, "arch7b-final-operational-freeze-v7-manifest.json"), manifestBytes);
+        await File.WriteAllBytesAsync(Path.Combine(root, "ARCH7B-next-operational-run-packet-v7.json"), packetBytes);
+        var template = fixture.Template with
+        {
+            FreezeManifestSha256 = manifestSha,
+            FreezePacketSha256 = packetSha,
+            EvidenceSha256 = string.Empty
+        };
+        template = template with { EvidenceSha256 = Arch7bOneShotContracts.Sha256(template.Canonical()) };
+        var templatePath = Path.Combine(root, Arch7bLiveAuthorityMaterializer.TemplateFileName);
+        var templateBytes = JsonSerializer.SerializeToUtf8Bytes(template,
+            new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower });
+        await File.WriteAllBytesAsync(templatePath, templateBytes);
+        return (root, templatePath, manifestSha, packetSha,
+            Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(templateBytes)), template);
+    }
     private static Arch7bV2QualificationFixture Fixture(string suffix) =>
         Arch7bV2QualificationFactory.Create(SupervisorExecutable(), Root(suffix));
 

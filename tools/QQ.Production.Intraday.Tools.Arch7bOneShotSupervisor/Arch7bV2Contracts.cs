@@ -2,7 +2,7 @@ namespace QQ.Production.Intraday.Tools.Arch7bOneShotSupervisor;
 
 public static class Arch7bV2Contracts
 {
-    public const string LivePlanTemplateVersion = "arch7b_one_shot_live_plan_template_v1";
+    public const string LivePlanTemplateVersion = "arch7b_one_shot_live_plan_template_v2";
     public const string LiveFactStoreVersion = "arch7b_one_shot_live_fact_store_v1";
     public const string CommandTemplateVersion = "arch7b_one_shot_command_template_v1";
     public const string MaterializedCommandVersion = "arch7b_one_shot_materialized_command_v1";
@@ -12,7 +12,7 @@ public static class Arch7bV2Contracts
     public const string SecretEnvironmentInjectionVersion = "arch7b_one_shot_secret_environment_injection_v1";
     public const string ChildResultAdapterVersion = "arch7b_one_shot_child_result_adapter_v1";
     public const string OperatorAuthorizationVersion = "arch7b_one_shot_operator_authorization_v2";
-    public const string LiveExecutionAuthorityVersion = "arch7b_one_shot_live_execution_authority_v2";
+    public const string LiveExecutionAuthorityVersion = "arch7b_one_shot_live_execution_authority_v3";
     public const string LiveExecutionRuntimeVersion = "arch7b_one_shot_live_execution_runtime_v2";
     public const string LiveCandidatePacketVersion = "arch7b_one_shot_live_execution_candidate_v2";
     public const string StageValidatorVersion = "arch7b_one_shot_stage_validator_set_v1";

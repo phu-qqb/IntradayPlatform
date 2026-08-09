@@ -5,7 +5,7 @@ namespace QQ.Production.Intraday.Tools.Arch7bOneShotSupervisor;
 
 public sealed record Arch7bV2QualificationFixture(
     Arch7bOneShotLivePlanTemplate Template,
-    Arch7bOneShotLiveExecutionAuthorityV2 Authority,
+    Arch7bOneShotLiveExecutionAuthorityV3 Authority,
     Arch7bOneShotOperatorAuthorizationV2 OperatorAuthorization,
     string TemplateFileSha256,
     string RunRoot);
@@ -106,20 +106,20 @@ public static class Arch7bV2QualificationFactory
             Arch7bOneShotContracts.CoreRepositoryAuthoritySha256,
             Arch7bOneShotContracts.CoreTrackedInventorySha256, values[3], commandSet,
             adapters.EvidenceSha256, values[4], values[5], values[6], registry.EvidenceSha256,
-            chronology.EvidenceSha256, values[7], "offline-operator-authorization", "TEST",
+            chronology.EvidenceSha256, values[7], "TEST",
             "1754288005", true, 1, 2, 1, 0, authorities, commands, stageContracts, string.Empty);
         template = template with { EvidenceSha256 = HashTemplate(template) };
         var templateBytes = JsonSerializer.SerializeToUtf8Bytes(template, Arch7bJson.CanonicalOptions);
         var templateFileSha = Convert.ToHexStringLower(SHA256.HashData(templateBytes));
         var now = DateTimeOffset.UtcNow;
         var authorization = new Arch7bOneShotOperatorAuthorizationV2(
-            Arch7bV2Contracts.OperatorAuthorizationVersion, template.OperatorAuthorizationId, "TEST",
+            Arch7bV2Contracts.OperatorAuthorizationVersion, "offline-operator-authorization", "TEST",
             "1754288005", true, 1, 2, 1, 0, now.AddMinutes(-1), now.AddHours(2), string.Empty);
         authorization = authorization with
         {
             EvidenceSha256 = Arch7bOneShotContracts.Sha256(authorization.Canonical())
         };
-        var authority = new Arch7bOneShotLiveExecutionAuthorityV2(
+        var authority = new Arch7bOneShotLiveExecutionAuthorityV3(
             Arch7bV2Contracts.LiveExecutionAuthorityVersion, template.SupervisorCommit,
             template.SupervisorTree, template.CoreCommit, template.CoreTree, template.IntradayCommit,
             template.IntradayTree, template.FreezeManifestSha256, template.FreezePacketSha256,
@@ -128,7 +128,7 @@ public static class Arch7bV2QualificationFactory
             template.CommandTemplateSetSha256, template.AdapterSetSha256,
             template.RootCaAuthoritySha256, template.PrivilegeAuthoritySha256,
             template.CalendarAuthoritySha256, template.SloRegistrySha256, template.ChronologySha256,
-            template.CleanupAuthoritySha256, template.OperatorAuthorizationId, "TEST", "1754288005",
+            template.CleanupAuthoritySha256, authorization.OperatorAuthorizationId, "TEST", "1754288005",
             true, 1, 2, 1, 0, authorities, now.AddMinutes(-1), now.AddHours(2), string.Empty);
         authority = authority with { EvidenceSha256 = Arch7bOneShotContracts.Sha256(authority.Canonical()) };
         return new(template, authority, authorization, templateFileSha, runRoot);
@@ -210,12 +210,7 @@ public static class Arch7bV2QualificationFactory
     };
 
     private static string HashTemplate(Arch7bOneShotLivePlanTemplate value) =>
-        Arch7bOneShotContracts.Sha256(string.Join('\n', value.ContractVersion, value.SupervisorCommit,
-            value.SupervisorTree, value.CoreCommit, value.CoreTree, value.IntradayCommit, value.IntradayTree,
-            value.FreezeManifestSha256, value.FreezePacketSha256, value.RuntimeInventorySha256,
-            value.StaticAuthoritySetSha256, value.CommandTemplateSetSha256, value.AdapterSetSha256,
-            value.OperatorAuthorizationId, value.TargetEnvironment, value.AccountId, value.NoOrder,
-            string.Join('|', value.StageContracts.Select(stage => stage.EvidenceSha256))));
+        Arch7bOneShotContracts.Sha256(value.Canonical());
 }
 
 public sealed record Arch7bV2ProcessQualification(

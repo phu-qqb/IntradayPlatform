@@ -35,7 +35,7 @@ public sealed record Arch7bOneShotOperatorAuthorizationV2(
     }
 }
 
-public sealed record Arch7bOneShotLiveExecutionAuthorityV2(
+public sealed record Arch7bOneShotLiveExecutionAuthorityV3(
     string ContractVersion,
     string SupervisorCommit,
     string SupervisorTree,
@@ -86,6 +86,7 @@ public sealed record Arch7bOneShotLiveExecutionAuthorityV2(
         Arch7bOneShotOperatorAuthorizationV2 authorization, string templateFileSha256,
         DateTimeOffset nowUtc)
     {
+        template.ValidateEvidence();
         authorization.Validate(nowUtc);
         Require(ContractVersion == Arch7bV2Contracts.LiveExecutionAuthorityVersion,
             Arch7bBlockers.LiveAuthorityMissing);
@@ -94,7 +95,7 @@ public sealed record Arch7bOneShotLiveExecutionAuthorityV2(
         Require(IssuedAtUtc <= nowUtc && ExpiresAtUtc > nowUtc, Arch7bBlockers.LiveAuthorityExpired);
         Require(LivePlanTemplateSha256 == templateFileSha256, Arch7bBlockers.FreezeAuthorityMismatch);
         Require(OperatorAuthorizationId == authorization.OperatorAuthorizationId &&
-            OperatorAuthorizationId == template.OperatorAuthorizationId,
+            IssuedAtUtc == authorization.IssuedAtUtc && ExpiresAtUtc == authorization.ExpiresAtUtc,
             Arch7bBlockers.OperatorAuthorizationMismatch);
         Require(TargetEnvironment == "TEST" && template.TargetEnvironment == "TEST" &&
             authorization.TargetEnvironment == "TEST", Arch7bBlockers.TargetEnvironmentNotTest);
@@ -139,12 +140,13 @@ public static class Arch7bLiveAuthorityLoaderV2
 {
     private static readonly JsonSerializerOptions Options = new()
     {
-        PropertyNameCaseInsensitive = true
+        PropertyNameCaseInsensitive = true,
+        PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower
     };
 
-    public static Task<(Arch7bOneShotLiveExecutionAuthorityV2 Value, string FileSha256)> LoadAuthorityAsync(
+    public static Task<(Arch7bOneShotLiveExecutionAuthorityV3 Value, string FileSha256)> LoadAuthorityAsync(
         string path, string expectedSha256, CancellationToken cancellationToken = default) =>
-        LoadAsync<Arch7bOneShotLiveExecutionAuthorityV2>(path, expectedSha256,
+        LoadAsync<Arch7bOneShotLiveExecutionAuthorityV3>(path, expectedSha256,
             Arch7bV2Blockers.AuthorityBindingMismatch, cancellationToken);
 
     public static Task<(Arch7bOneShotOperatorAuthorizationV2 Value, string FileSha256)> LoadOperatorAsync(
@@ -152,10 +154,15 @@ public static class Arch7bLiveAuthorityLoaderV2
         LoadAsync<Arch7bOneShotOperatorAuthorizationV2>(path, expectedSha256,
             Arch7bV2Blockers.OperatorAuthorizationMissing, cancellationToken);
 
-    public static Task<(Arch7bOneShotLivePlanTemplate Value, string FileSha256)> LoadTemplateAsync(
-        string path, string expectedSha256, CancellationToken cancellationToken = default) =>
-        LoadAsync<Arch7bOneShotLivePlanTemplate>(path, expectedSha256,
-            Arch7bBlockers.FreezeAuthorityMismatch, cancellationToken);
+    public static async Task<(Arch7bOneShotLivePlanTemplate Value, string FileSha256)> LoadTemplateAsync(
+        string path, string expectedSha256, CancellationToken cancellationToken = default)
+    {
+        var loaded = await LoadAsync<Arch7bOneShotLivePlanTemplate>(path, expectedSha256,
+            Arch7bBlockers.FreezeAuthorityMismatch, cancellationToken).ConfigureAwait(false);
+        Arch7bLiveTemplateValidator.ValidateStaticDocument(await File.ReadAllBytesAsync(path, cancellationToken)
+            .ConfigureAwait(false));
+        return loaded;
+    }
 
     private static async Task<(T Value, string FileSha256)> LoadAsync<T>(string path, string expectedSha256,
         string blocker, CancellationToken cancellationToken)
@@ -174,9 +181,45 @@ public static class Arch7bLiveAuthorityLoaderV2
 
 public static class Arch7bLiveTemplateValidator
 {
+    private static readonly string[] PerishableFields =
+    [
+        "operator_authorization_id", "selected_slot", "run_id", "owner_id", "future_authorization_id",
+        "source_session_id", "market_capture_session_id", "secret_version_id"
+    ];
+
+    public static void ValidateStaticDocument(byte[] bytes)
+    {
+        using var document = JsonDocument.Parse(bytes);
+        ValidateStaticElement(document.RootElement);
+        if (document.RootElement.GetRawText().Contains("REGENERATE_JUST_BEFORE_LIVE_RUN", StringComparison.Ordinal))
+            throw new Arch7bQualificationException(Arch7bV2Blockers.CommandTemplateInvalid,
+                "REGENERATE_JUST_BEFORE_LIVE_RUN");
+    }
+
+    private static void ValidateStaticElement(JsonElement element)
+    {
+        if (element.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var item in element.EnumerateArray()) ValidateStaticElement(item);
+            return;
+        }
+        if (element.ValueKind != JsonValueKind.Object) return;
+        foreach (var property in element.EnumerateObject())
+        {
+            var normalized = property.Name.Replace("_", string.Empty, StringComparison.Ordinal)
+                .ToLowerInvariant();
+            var forbidden = PerishableFields.FirstOrDefault(value =>
+                normalized == value.Replace("_", string.Empty, StringComparison.Ordinal));
+            if (forbidden is not null)
+                throw new Arch7bQualificationException(Arch7bV2Blockers.CommandTemplateInvalid, forbidden);
+            ValidateStaticElement(property.Value);
+        }
+    }
+
     public static void Validate(Arch7bOneShotLivePlanTemplate value,
         Arch7bRealCommandAdapterRegistry adapters)
     {
+        value.ValidateEvidence();
         if (value.ContractVersion != Arch7bV2Contracts.LivePlanTemplateVersion || !value.NoOrder ||
             value.TargetEnvironment != "TEST" || value.AccountId != "1754288005" ||
             value.StageContracts.Count != Arch7bStages.All.Count ||
@@ -204,11 +247,6 @@ public static class Arch7bLiveTemplateValidator
             .Select(command => command.EvidenceSha256)));
         if (commandSet != value.CommandTemplateSetSha256 || adapters.EvidenceSha256 != value.AdapterSetSha256)
             throw new Arch7bQualificationException(Arch7bV2Blockers.AuthorityBindingMismatch);
-        using var document = JsonDocument.Parse(JsonSerializer.SerializeToUtf8Bytes(
-            value, Arch7bJson.CanonicalOptions));
-        foreach (var property in new[] { "selected_slot", "run_id", "owner_id", "future_authorization_id",
-                     "source_session_id", "market_capture_session_id", "secret_version_id" })
-            if (document.RootElement.TryGetProperty(property, out _))
-                throw new Arch7bQualificationException(Arch7bV2Blockers.CommandTemplateInvalid, property);
+        ValidateStaticDocument(JsonSerializer.SerializeToUtf8Bytes(value, Arch7bJson.CanonicalOptions));
     }
 }

@@ -34,6 +34,7 @@ public static class Program
                 "qualify-core-broker-cross-repo" => await Arch7bProgramV2Modes
                     .QualifyCoreBrokerCrossRepositoryAsync(options).ConfigureAwait(false),
                 "qualify-live-runtime-v2" => await Arch7bProgramV2Modes.QualifyLiveRuntimeAsync(options).ConfigureAwait(false),
+                "materialize-live-run-authorities" => await Arch7bProgramV2Modes.MaterializeLiveRunAuthoritiesAsync(options).ConfigureAwait(false),
                 "run-one-shot" => await Arch7bProgramV2Modes.RunOneShotAsync(options).ConfigureAwait(false),
                 _ => throw new Arch7bQualificationException(Arch7bBlockers.SupervisorModeUnknown, mode)
             };
@@ -266,7 +267,7 @@ public static class Program
     private static void RequireModeSafety(IReadOnlyDictionary<string, string> options, string mode)
     {
         var qualificationOnly = ParseBoolean(options.GetValueOrDefault("qualification-only"), true);
-        if (mode == "run-one-shot")
+        if (mode is "run-one-shot" or "materialize-live-run-authorities")
         {
             if (qualificationOnly) throw new Arch7bQualificationException(Arch7bBlockers.QualificationModeMismatch);
         }

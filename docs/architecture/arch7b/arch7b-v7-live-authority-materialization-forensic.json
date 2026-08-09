@@ -1,0 +1,24 @@
+{
+  "contract": "arch7b_v7_live_authority_materialization_forensic_v1",
+  "classification": "STATIC_TEMPLATE_CONTAINS_PERISHABLE_OPERATOR_ID_AND_WAS_OMITTED_FROM_FREEZE",
+  "append_only_prior_verdict": "NO_GO_ARCH7B_LIVE_COMMAND_AUTHORITY_INCOMPLETE",
+  "facts": {
+    "static_checks": "PASS",
+    "aws_sts": "PASS",
+    "slot_lock_created": false,
+    "one_shot_identities_created": false,
+    "secret_reads": 0,
+    "database_connections": 0,
+    "lmax_sessions": 0,
+    "fix_orders_fills_ledger_events": 0,
+    "residual_processes": 0
+  },
+  "remediation": {
+    "static_template_contract": "arch7b_one_shot_live_plan_template_v2",
+    "perishable_operator_authorization_contract": "arch7b_one_shot_operator_authorization_v2",
+    "perishable_live_execution_authority_contract": "arch7b_one_shot_live_execution_authority_v3",
+    "materialization_mode": "materialize-live-run-authorities",
+    "freeze_mutation": false,
+    "no_order": true
+  }
+}

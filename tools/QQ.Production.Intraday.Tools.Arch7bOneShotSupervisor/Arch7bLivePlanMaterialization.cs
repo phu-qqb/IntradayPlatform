@@ -156,7 +156,6 @@ public sealed record Arch7bOneShotLivePlanTemplate(
     string SloRegistrySha256,
     string ChronologySha256,
     string CleanupAuthoritySha256,
-    string OperatorAuthorizationId,
     string TargetEnvironment,
     string AccountId,
     bool NoOrder,
@@ -167,7 +166,27 @@ public sealed record Arch7bOneShotLivePlanTemplate(
     IReadOnlyDictionary<string, Arch7bFileAuthority> FileAuthorities,
     IReadOnlyList<Arch7bOneShotCommandTemplate> CommandTemplates,
     IReadOnlyList<Arch7bOneShotStageContract> StageContracts,
-    string EvidenceSha256);
+    string EvidenceSha256)
+{
+    public string Canonical() => string.Join('\n', ContractVersion, SupervisorCommit, SupervisorTree,
+        CoreCommit, CoreTree, IntradayCommit, IntradayTree, FreezeManifestSha256, FreezePacketSha256,
+        RuntimeInventorySha256, CoreRepositoryAuthoritySha256, CoreTrackedInventorySha256,
+        StaticAuthoritySetSha256, CommandTemplateSetSha256, AdapterSetSha256, RootCaAuthoritySha256,
+        PrivilegeAuthoritySha256, CalendarAuthoritySha256, SloRegistrySha256, ChronologySha256,
+        CleanupAuthoritySha256, TargetEnvironment, AccountId, NoOrder, MaximumSlots, MaximumRdsReads,
+        MaximumCaptures, MaximumRetries,
+        string.Join('|', FileAuthorities.OrderBy(value => value.Key, StringComparer.Ordinal).Select(value =>
+            $"{value.Key}:{value.Value.AuthorityId}:{value.Value.Path}:{value.Value.Sha256}:{value.Value.MustExist}:{value.Value.MustBeInsideRunRoot}")),
+        string.Join('|', CommandTemplates.Select(value => value.EvidenceSha256)),
+        string.Join('|', StageContracts.Select(value => value.EvidenceSha256)));
+
+    public void ValidateEvidence()
+    {
+        if (EvidenceSha256 != Arch7bOneShotContracts.Sha256(Canonical()))
+            throw new Arch7bQualificationException(Arch7bV2Blockers.AuthorityBindingMismatch,
+                "live-plan-template-evidence");
+    }
+}
 
 public sealed record Arch7bOneShotMaterializedCommand(
     string ContractVersion,
