@@ -53,7 +53,7 @@ public sealed partial class Arch7bOneShotLiveExecutionRuntimeV2
 
     public async Task<Arch7bV2ExecutionEvidence> RunAsync(
         Arch7bOneShotLivePlanTemplate template,
-        Arch7bOneShotLiveExecutionAuthorityV2 authority,
+        Arch7bOneShotLiveExecutionAuthorityV3 authority,
         Arch7bOneShotOperatorAuthorizationV2 operatorAuthorization,
         string templateFileSha256,
         string runRoot,

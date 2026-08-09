@@ -78,6 +78,27 @@ public static class Arch7bProgramV2Modes
         };
     }
 
+    public static async Task<object> MaterializeLiveRunAuthoritiesAsync(
+        IReadOnlyDictionary<string, string> options)
+    {
+        var issuedAtUtc = Utc(options, "issued-at-utc");
+        var expiresAtUtc = Utc(options, "expires-at-utc");
+        var materialization = await Arch7bLiveAuthorityMaterializer.MaterializeAsync(
+            FullPath(Required(options, "freeze-root")),
+            Sha(options, "expected-freeze-manifest-sha256"),
+            Sha(options, "expected-freeze-packet-sha256"),
+            Sha(options, "expected-live-plan-template-sha256"),
+            Required(options, "operator-authorization-id"), issuedAtUtc, expiresAtUtc,
+            FullPath(Required(options, "output-root")), Required(options, "target-environment"),
+            Required(options, "account-id"), Boolean(Required(options, "no-order"))).ConfigureAwait(false);
+        return new
+        {
+            verdict = "ARCH7B_LIVE_RUN_AUTHORITIES_MATERIALIZED",
+            qualificationOnly = false,
+            materialization,
+            safety = Arch7bNoLiveSafetyCounters.Zero
+        };
+    }
     public static async Task<object> RunOneShotAsync(IReadOnlyDictionary<string, string> options)
     {
         if (!Boolean(Required(options, "no-order")))
@@ -264,6 +285,12 @@ public static class Arch7bProgramV2Modes
             throw new Arch7bQualificationException(Arch7bV2Blockers.AuthorityBindingMismatch, name);
     }
 
+    private static DateTimeOffset Utc(IReadOnlyDictionary<string, string> options, string key)
+    {
+        var value = Required(options, key);
+        return DateTimeOffset.TryParse(value, out var parsed) && parsed.Offset == TimeSpan.Zero
+            ? parsed : throw new Arch7bQualificationException(Arch7bV2Blockers.AuthorityBindingMismatch, key);
+    }
     private static string Required(IReadOnlyDictionary<string, string> options, string key) =>
         options.TryGetValue(key, out var value) && !string.IsNullOrWhiteSpace(value)
             ? value : throw new ArgumentException($"MISSING_REQUIRED_ARGUMENT:{key}");
