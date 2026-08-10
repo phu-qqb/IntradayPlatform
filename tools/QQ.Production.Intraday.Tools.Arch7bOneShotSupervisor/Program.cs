@@ -31,6 +31,18 @@ public static class Program
                 "simulate-live-command-execution" => await SimulateLiveCommandExecutionAsync(options).ConfigureAwait(false),
                 "materialize-live-execution-candidate-packet" => await MaterializeLiveCandidateAsync(options).ConfigureAwait(false),
                 "validate-live-template-v2" => Arch7bProgramV2Modes.ValidateLiveTemplate(options),
+                "materialize-operational-binding-catalog" => await Arch7bOperationalCatalogMaterializer
+                    .MaterializeAsync(Path.GetFullPath(Required(options, "source-manifest")),
+                        Path.GetFullPath(Required(options, "output-root"))).ConfigureAwait(false),
+                "materialize-operational-live-template" => await
+                    Arch7bOperationalLivePlanTemplateMaterializer.WriteAsync(
+                        Path.GetFullPath(Required(options, "source-template")),
+                        Path.GetFullPath(Required(options, "source-manifest")),
+                        Path.GetFullPath(Required(options, "output-path"))).ConfigureAwait(false),
+                "qualify-production-clock-authority" => await
+                    new Arch7bProductionClockAuthorityQualifier().RunAsync(
+                        Path.GetFullPath(Required(options, "output-root")),
+                        Required(options, "repository-commit")).ConfigureAwait(false),
                 "qualify-core-broker-cross-repo" => await Arch7bProgramV2Modes
                     .QualifyCoreBrokerCrossRepositoryAsync(options).ConfigureAwait(false),
                 "qualify-live-runtime-v2" => await Arch7bProgramV2Modes.QualifyLiveRuntimeAsync(options).ConfigureAwait(false),

@@ -341,6 +341,9 @@ public sealed class Arch7bCoreRdsSecretBrokerPlanMaterializer(
             Arch7bPlaceholderValueKind.AbsolutePath => "ABSOLUTE_PATH",
             Arch7bPlaceholderValueKind.UtcTimestamp => "UTC_TIMESTAMP",
             Arch7bPlaceholderValueKind.Integer => "INTEGER",
+            Arch7bPlaceholderValueKind.Guid => "GUID",
+            Arch7bPlaceholderValueKind.GitCommit => "GIT_COMMIT",
+            Arch7bPlaceholderValueKind.Boolean => "BOOLEAN",
             _ => "EXACT_LITERAL"
         };
         var schema = new JsonObject

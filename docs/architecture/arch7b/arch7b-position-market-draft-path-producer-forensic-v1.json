@@ -1,0 +1,13 @@
+{
+  "contract_version": "arch7b_position_market_draft_path_producer_forensic_v1",
+  "classification": "MISSING_DETERMINISTIC_RUN_SCOPED_OUTPUT_PATH_FACT",
+  "consumer_stage": "MARKET_PREARM",
+  "consumer_argument": "--position-market-draft-path",
+  "canonical_filename": "position-market-slot-binding-draft.json",
+  "actual_artifact_producer": "Arch7bPositionMarketLiveWiring.BuildAndPublishDraft",
+  "path_fact_producer_stage": "ONE_SHOT_IDENTITIES_CREATED",
+  "path_fact_type": "position_market_draft_output_path",
+  "path_contract_version": "arch7b_one_shot_run_artifact_path_v1",
+  "reservation_creates_file": false,
+  "resolution": "ADD_DETERMINISTIC_RUN_SCOPED_PATH_AUTHORITY_WITHOUT_CHANGING_THE_EXISTING_ARTIFACT_PRODUCER"
+}

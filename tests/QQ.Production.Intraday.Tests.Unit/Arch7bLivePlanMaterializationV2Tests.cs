@@ -100,12 +100,14 @@ public sealed class Arch7bLivePlanMaterializationV2Tests
     {
         var fixture = Fixture("full-runtime");
         var adapters = new Arch7bRealCommandAdapterRegistry();
+        var timeProvider = new Arch7bTestTimeProvider(DateTimeOffset.UtcNow);
         var runtime = new Arch7bOneShotLiveExecutionRuntimeV2(new(),
-            new Arch7bOneShotProcessRunnerV2(adapters), adapters);
+            new Arch7bOneShotProcessRunnerV2(adapters), adapters,
+            clockAuthorityProducer: new Arch7bTestClockAuthorityProducer(timeProvider));
 
         var result = await runtime.RunAsync(fixture.Template, fixture.Authority,
             fixture.OperatorAuthorization, fixture.TemplateFileSha256, fixture.RunRoot,
-            TimeProvider.System, new Arch7bCoreOwnedSecretLease());
+            timeProvider, new Arch7bCoreOwnedSecretLease());
 
         Assert.True(result.Passed, JsonSerializer.Serialize(result));
         Assert.Equal(40, result.Stages.Count);
@@ -115,6 +117,22 @@ public sealed class Arch7bLivePlanMaterializationV2Tests
             Assert.Equal(Arch7bLongLivedProcessState.Cleaned, value.State));
         Assert.Equal(0, result.ResidualProcessCount);
         Assert.Equal(0, result.ResidualMarkerCount);
+        foreach (var fileName in new[]
+                 {
+                     "clock_authority_preflight.json",
+                     "clock_authority_capture.json",
+                     "clock_authority_post_close.json"
+                 })
+            Assert.True(File.Exists(Path.Combine(fixture.RunRoot, fileName)), fileName);
+        var facts = File.ReadAllText(Path.Combine(fixture.RunRoot, "live-facts.jsonl"));
+        Assert.Contains("clock_authority_preflight_snapshot", facts,
+            StringComparison.Ordinal);
+        Assert.Contains("clock_authority_capture_snapshot", facts,
+            StringComparison.Ordinal);
+        Assert.Contains("clock_authority_post_close_snapshot", facts,
+            StringComparison.Ordinal);
+        Assert.Empty(Directory.EnumerateFiles(fixture.RunRoot, "*.tmp",
+            SearchOption.AllDirectories));
         Directory.Delete(fixture.RunRoot, true);
     }
 

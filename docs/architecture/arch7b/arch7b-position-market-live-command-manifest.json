@@ -23,7 +23,8 @@
         "--core-commit": "REGENERATE_JUST_BEFORE_LIVE_RUN",
         "--market-capture-session-id": "REGENERATE_JUST_BEFORE_LIVE_RUN",
         "--market-data-config-path": "REGENERATE_JUST_BEFORE_LIVE_RUN",
-        "--expected-market-data-config-sha256": "REGENERATE_JUST_BEFORE_LIVE_RUN"
+        "--expected-market-data-config-sha256": "REGENERATE_JUST_BEFORE_LIVE_RUN",
+        "--clock-authority-preflight-snapshot": "REGENERATE_JUST_BEFORE_LIVE_RUN"
       }
     },
     {
@@ -36,7 +37,8 @@
         "--core-commit": "REGENERATE_JUST_BEFORE_LIVE_RUN",
         "--market-capture-session-id": "REGENERATE_JUST_BEFORE_LIVE_RUN",
         "--market-data-config-path": "REGENERATE_JUST_BEFORE_LIVE_RUN",
-        "--expected-market-data-config-sha256": "REGENERATE_JUST_BEFORE_LIVE_RUN"
+        "--expected-market-data-config-sha256": "REGENERATE_JUST_BEFORE_LIVE_RUN",
+        "--clock-authority-capture-snapshot": "REGENERATE_JUST_BEFORE_LIVE_RUN"
       }
     },
     {
@@ -57,7 +59,8 @@
         "--expected-position-market-draft-sha256": "REGENERATE_JUST_BEFORE_LIVE_RUN",
         "--position-market-lineage-path": "REGENERATE_JUST_BEFORE_LIVE_RUN",
         "--core-commit": "REGENERATE_JUST_BEFORE_LIVE_RUN",
-        "--market-capture-session-id": "REGENERATE_JUST_BEFORE_LIVE_RUN"
+        "--market-capture-session-id": "REGENERATE_JUST_BEFORE_LIVE_RUN",
+        "--clock-authority-post-close-snapshot": "REGENERATE_JUST_BEFORE_LIVE_RUN"
       }
     },
     {

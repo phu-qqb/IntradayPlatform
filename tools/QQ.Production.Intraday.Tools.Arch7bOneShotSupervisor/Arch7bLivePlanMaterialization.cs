@@ -24,7 +24,10 @@ public enum Arch7bPlaceholderValueKind
     Sha256,
     AbsolutePath,
     UtcTimestamp,
-    Integer
+    Integer,
+    Guid,
+    GitCommit,
+    Boolean
 }
 
 public sealed record Arch7bOneShotFact(
@@ -345,6 +348,11 @@ public sealed class Arch7bOneShotCommandMaterializer
             Arch7bPlaceholderValueKind.AbsolutePath => Path.IsPathFullyQualified(value),
             Arch7bPlaceholderValueKind.UtcTimestamp => DateTimeOffset.TryParse(value, out var date) && date.Offset == TimeSpan.Zero,
             Arch7bPlaceholderValueKind.Integer => int.TryParse(value, out _),
+            Arch7bPlaceholderValueKind.Guid => System.Guid.TryParseExact(value, "D", out var guid) &&
+                guid != System.Guid.Empty,
+            Arch7bPlaceholderValueKind.GitCommit => value.Length == 40 &&
+                value.All(character => char.IsAsciiHexDigit(character) && !char.IsUpper(character)),
+            Arch7bPlaceholderValueKind.Boolean => value is "true" or "false",
             _ => false
         };
         if (!valid) throw new Arch7bQualificationException(Arch7bV2Blockers.PlaceholderTypeMismatch, value);

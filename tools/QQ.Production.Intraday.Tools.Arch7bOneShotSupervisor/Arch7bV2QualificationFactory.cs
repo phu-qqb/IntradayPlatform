@@ -1,3 +1,4 @@
+using QQ.Production.Intraday.Infrastructure.PostgreSql;
 using System.Security.Cryptography;
 using System.Text.Json;
 
@@ -200,12 +201,18 @@ public static class Arch7bV2QualificationFactory
 
     private static string[] ProducedFacts(string stage) => stage switch
     {
-        "STATIC_AUTHORITY_VALIDATION" => ["static_authority_validation", "runtime_run_root"],
+        "STATIC_AUTHORITY_VALIDATION" => ["static_authority_validation", "core_commit",
+            "intraday_commit", "runtime_run_root"],
         "CALENDAR_LOADED" => ["calendar"],
         "SLOT_SELECTED" => ["selected_slot"],
         "SLOT_LOCKED" => ["slot_lock"],
+        "CLOCK_PREFLIGHT" => ["clock_authority_preflight_snapshot"],
+        "CLOCK_CAPTURE_START" => ["clock_authority_capture_snapshot"],
+        "CLOCK_POST_CLOSE" => ["clock_authority_post_close_snapshot"],
         "ONE_SHOT_IDENTITIES_CREATED" => ["run_identity", "owner_identity",
-            "future_authorization_identity", "source_session_identity", "market_capture_session_identity"],
+            "future_authorization_identity", "source_session_identity", "market_capture_session_identity",
+            "position_market_draft_output_path", "position_market_lineage_output_path",
+            "position_market_revision_binding_output_path"],
         _ => [stage.ToLowerInvariant() + "_evidence"]
     };
 
@@ -254,20 +261,27 @@ public static class Arch7bV2ProcessQualifier
     }
 
     public static Task<Arch7bV2ExecutionEvidence> RunSingleAsync(string executablePath,
-        string suffix, CancellationToken cancellationToken = default) =>
-        RunOneAsync(executablePath, suffix, cancellationToken);
+        string suffix, CancellationToken cancellationToken = default,
+        TimeProvider? timeProvider = null,
+        IPmsShadowCaptureClockAuthorityProducer? clockAuthorityProducer = null) =>
+        RunOneAsync(executablePath, suffix, cancellationToken, timeProvider,
+            clockAuthorityProducer);
 
     private static async Task<Arch7bV2ExecutionEvidence> RunOneAsync(string executablePath,
-        string suffix, CancellationToken cancellationToken)
+        string suffix, CancellationToken cancellationToken,
+        TimeProvider? timeProvider = null,
+        IPmsShadowCaptureClockAuthorityProducer? clockAuthorityProducer = null)
     {
         var root = Path.Combine(Path.GetTempPath(), "qq-arch7b-v2-rehearsal",
             suffix + "-" + Guid.NewGuid().ToString("N"));
         var fixture = Arch7bV2QualificationFactory.Create(executablePath, root);
         var adapters = new Arch7bRealCommandAdapterRegistry();
         var runtime = new Arch7bOneShotLiveExecutionRuntimeV2(new(),
-            new Arch7bOneShotProcessRunnerV2(adapters), adapters);
+            new Arch7bOneShotProcessRunnerV2(adapters), adapters,
+            clockAuthorityProducer: clockAuthorityProducer);
         var result = await runtime.RunAsync(fixture.Template, fixture.Authority,
-            fixture.OperatorAuthorization, fixture.TemplateFileSha256, root, TimeProvider.System,
+            fixture.OperatorAuthorization, fixture.TemplateFileSha256, root,
+            timeProvider ?? TimeProvider.System,
             new Arch7bCoreOwnedSecretLease(), cancellationToken).ConfigureAwait(false);
         if (Directory.Exists(root)) Directory.Delete(root, true);
         return result;
