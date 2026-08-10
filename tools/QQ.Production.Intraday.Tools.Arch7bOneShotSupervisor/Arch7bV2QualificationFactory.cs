@@ -20,9 +20,9 @@ public static class Arch7bV2QualificationFactory
     private static readonly IReadOnlyList<CommandProfile> Profiles =
     [
         new("CORE_PREQUALIFICATION", Arch7bExecutionKind.ChildInvoke, "core-prequalification-v1",
-            "arch7b_core_runtime_prequalification_v1", "ARCH7B_CORE_RUNTIME_PREQUALIFICATION_QUALIFIED", 1),
+            "lmax_portal_core_runtime_prequalification_v1", "ARCH7B_CORE_RUNTIME_PREQUALIFICATION_QUALIFIED", 1),
         new("PORTAL_SESSION_PROVEN", Arch7bExecutionKind.ChildInvoke, "portal-session-v1",
-            "arch7b_portal_session_recovery_v1", "ARCH7B_PORTAL_SESSION_PROVEN", 1),
+            "lmax_portal_demo_session_proof_v1", "ARCH7B_PORTAL_SESSION_PROVEN", 1),
         new("RDS_READ_1", Arch7bExecutionKind.ChildInvoke, "rds-arm-orchestrator-v1",
             "arch7b_operational_orchestrator_lifecycle_v1",
             "ARCH7B_ARM_IMPORT_OPERATIONAL_ORCHESTRATOR_QUALIFIED", 2, RdsRead: true),
@@ -34,7 +34,7 @@ public static class Arch7bV2QualificationFactory
             "lmax_portal_bracketed_current_position_snapshot_v2",
             "ARCH7B_BRACKETED_GLOBAL_FLAT_POSITION_SNAPSHOT_CREATED", 3),
         new("CORE_FAST_SEAL", Arch7bExecutionKind.ChildInvoke, "core-fast-seal-v1",
-            "arch7b_lmax_bracket_fast_seal_v1", "ARCH7B_CORE_FAST_SEAL_QUALIFIED", 4),
+            "lmax_portal_bracket_fast_seal_v1", "ARCH7B_CORE_FAST_SEAL_QUALIFIED", 4),
         new("HANDOFF_V3", Arch7bExecutionKind.ChildStop, "handoff-v3",
             "arch7b_lmax_portal_core_to_intraday_preloaded_rds_secret_handoff_v3",
             "CORE_BRACKET_HANDOFF_PRELOADED_RDS_SECRET_LEASE_QUALIFIED", 3,
@@ -46,18 +46,14 @@ public static class Arch7bV2QualificationFactory
         new("MARKET_PREARM", Arch7bExecutionKind.ChildStartLongLived, "market-recorder-v1",
             "arch6f_lmax_market_data_slot_capture_v1", "ARCH7B_MARKET_CAPTURE_QUALIFIED", 2,
             "market-recorder", Capture: true),
-        new("MARKET_FINALIZATION", Arch7bExecutionKind.ChildStop, "market-recorder-v1",
-            "arch6f_lmax_market_data_slot_capture_v1", "ARCH7B_MARKET_CAPTURE_QUALIFIED", 2,
-            "market-recorder"),
-        new("PMS_IMPORT", Arch7bExecutionKind.ChildInvoke, "pms-economic-replay-v1",
-            "arch6f_economic_replay_v2", "ARCH7B_PMS_ECONOMIC_REPLAY_QUALIFIED", 2),
+        new("MARKET_FINALIZATION", Arch7bExecutionKind.ChildStop, "prearmed-handoff-v1",
+            "arch7b_prearmed_fresh_slot_handoff_cli_v1", "ARCH7B_MARKET_FINALIZATION_QUALIFIED", 2),
+        new("PMS_IMPORT", Arch7bExecutionKind.ChildInvoke, "prearmed-handoff-v1",
+            "arch7b_prearmed_fresh_slot_handoff_cli_v1", "ARCH7B_PMS_ECONOMIC_REPLAY_QUALIFIED", 2),
         new("ARCH7A_QUALIFY_SHADOW", Arch7bExecutionKind.ChildInvoke, "arch7a-shadow-v1",
-            "arch7a_arch7b_shadow_qualification_v1", "ARCH7A_SHADOW_QUALIFICATION_PERSISTED", 2),
+            "arch7a_arch7b_rds_shadow_qualification_v1", "ARCH7A_SHADOW_QUALIFICATION_PERSISTED", 2),
         new("REPORTING", Arch7bExecutionKind.ChildInvoke, "operational-reporting-v1",
-            "anubis_infx_readonly_reporting_bundle_v1", "ANUBIS_INFX_READONLY_REPORTING_BUNDLE_CREATED", 2),
-        new("FINAL_WORKING_ORDER_PREFLIGHT", Arch7bExecutionKind.ChildInvoke,
-            "working-order-preflight-v1", "arch7b_working_order_preflight_v1",
-            Arch7bOneShotContracts.ExpectedFinalBlocker, 1)
+            "anubis_infx_readonly_reporting_bundle_v1", "ANUBIS_INFX_READONLY_REPORTING_BUNDLE_CREATED", 2)
     ];
 
     public static Arch7bV2QualificationFixture Create(string executablePath, string runRoot,
@@ -181,6 +177,7 @@ public static class Arch7bV2QualificationFactory
             var kind = profile?.Kind ?? stage switch
             {
                 "BRACKET_T0" or "MARKET_CAPTURE" => Arch7bExecutionKind.ChildAwaitEvidence,
+                "FINAL_WORKING_ORDER_PREFLIGHT" => Arch7bExecutionKind.ExpectedBlockerGate,
                 "CLOCK_PREFLIGHT" or "BRACKET_P1" or "BRACKET_T1" or "BRACKET_P2" or
                     "COMPLEMENTARY_REPORTS" or "POSITION_READY" or "MARKET_READY_MARKER" =>
                     Arch7bExecutionKind.FilesystemGate,

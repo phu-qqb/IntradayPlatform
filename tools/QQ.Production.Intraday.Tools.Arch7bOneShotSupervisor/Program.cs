@@ -34,6 +34,9 @@ public static class Program
                 "materialize-operational-binding-catalog" => await Arch7bOperationalCatalogMaterializer
                     .MaterializeAsync(Path.GetFullPath(Required(options, "source-manifest")),
                         Path.GetFullPath(Required(options, "output-root"))).ConfigureAwait(false),
+                "materialize-final-stage-execution-classification" => await
+                    Arch7bFinalStageExecutionCatalog.WriteAsync(
+                        Path.GetFullPath(Required(options, "output-path"))).ConfigureAwait(false),
                 "materialize-operational-live-template" => await
                     Arch7bOperationalLivePlanTemplateMaterializer.WriteAsync(
                         Path.GetFullPath(Required(options, "source-template")),

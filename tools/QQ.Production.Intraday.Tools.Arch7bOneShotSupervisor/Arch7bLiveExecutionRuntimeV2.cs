@@ -359,6 +359,18 @@ public sealed partial class Arch7bOneShotLiveExecutionRuntimeV2
         if (stage.ExecutionKind == Arch7bExecutionKind.ExpectedBlockerGate)
         {
             resultCode(Arch7bOneShotContracts.ExpectedFinalBlocker);
+            foreach (var factType in stage.ProducedFactTypes)
+                produced.Add(facts.Append(factType, stage.StageId, new
+                {
+                    result = Arch7bOneShotContracts.ExpectedFinalBlocker,
+                    broker_send_allowed = false,
+                    order_entry_logons = 0,
+                    orders = 0,
+                    fills = 0,
+                    ledger_events = 0,
+                    no_order = true
+                }, Arch7bOneShotContracts.Sha256(stage.StageId + ":" + factType + ":" +
+                    Arch7bOneShotContracts.ExpectedFinalBlocker), observedUtc).FactSha256);
             return;
         }
         var commandTemplate = template.CommandTemplates.Single(value => value.StageId == stage.StageId);
@@ -386,11 +398,21 @@ public sealed partial class Arch7bOneShotLiveExecutionRuntimeV2
         Arch7bNormalizedChildResult normalized;
         if (stage.ExecutionKind == Arch7bExecutionKind.ChildStop)
         {
-            var processKey = command.LongLivedProcessKey ?? throw new Arch7bQualificationException(
-                Arch7bV2Blockers.LongLivedProcessStateInvalid, command.CommandId);
+            var processKey = stage.StageId == "MARKET_FINALIZATION"
+                ? "market-recorder"
+                : command.LongLivedProcessKey ?? throw new Arch7bQualificationException(
+                    Arch7bV2Blockers.LongLivedProcessStateInvalid, command.CommandId);
             longLived.Signal(processKey, "COMPLETE");
-            normalized = await runner.StopLongLivedAsync(processKey, command, runRoot, longLived,
+            var producerResult = await runner.StopLongLivedAsync(processKey, command,
+                runRoot, longLived,
                 cancellationToken).ConfigureAwait(false);
+            if (stage.StageId == "MARKET_FINALIZATION")
+            {
+                var execution = await runner.InvokeAsync(command, runRoot, cleanup,
+                    secretLease, bracketStarted, cancellationToken).ConfigureAwait(false);
+                normalized = execution.NormalizedResult;
+            }
+            else normalized = producerResult;
         }
         else
         {

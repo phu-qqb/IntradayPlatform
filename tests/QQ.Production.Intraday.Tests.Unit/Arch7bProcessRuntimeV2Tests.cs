@@ -91,8 +91,13 @@ public sealed class Arch7bProcessRuntimeV2Tests
     {
         var registry = new Arch7bRealCommandAdapterRegistry();
 
-        Assert.Equal(14, registry.Adapters.Count);
-        Assert.Equal(14, registry.Adapters.Select(value => value.AdapterId).Distinct().Count());
+        var required = Arch7bFinalStageExecutionCatalog.All
+            .Where(value => value.HasCommandTemplate)
+            .Select(value => value.AdapterId!).Distinct(StringComparer.Ordinal).ToArray();
+        Assert.All(required, adapterId => Assert.Same(
+            registry.Require(adapterId), registry.Require(adapterId)));
+        Assert.Equal(registry.Adapters.Count,
+            registry.Adapters.Select(value => value.AdapterId).Distinct().Count());
         Assert.All(registry.Adapters, value =>
         {
             Assert.Equal(Arch7bV2Contracts.ChildResultAdapterVersion, value.ContractVersion);

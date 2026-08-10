@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using QQ.Production.Intraday.Application;
+using QQ.Production.Intraday.Tools.Arch7bOneShotSupervisor;
 using QQ.Production.Intraday.Infrastructure.PostgreSql;
 
 namespace QQ.Production.Intraday.Tests.Unit;
@@ -576,6 +577,70 @@ public sealed class Arch7bBracketedGlobalFlatPositionSnapshotTests
         finally
         {
             DeleteRoot(root);
+        }
+    }
+
+    [Fact]
+    public async Task Case66_runtime_selection_is_current_run_read_only_and_adapter_qualified()
+    {
+        var runRoot = TempRoot("arch7b-runtime-selection");
+        var packageRoot = Path.Combine(runRoot, "package");
+        var outputRoot = Path.Combine(runRoot, "output");
+        try
+        {
+            var core = ValidCore();
+            var universe = Universe(Plan());
+            var snapshot = Arch7bGlobalFlatPositionSnapshotBuilder.Build(core, universe);
+            _ = Arch7bFreshPositionImportPackageWriter.Write(
+                packageRoot, core, universe, snapshot);
+            var result = Arch7bRuntimeSelectionQualificationRunner.Run(new(
+                packageRoot, outputRoot, snapshot.AccountId,
+                universe.TargetFingerprint, universe.SourceSessionId,
+                universe.SourceIngestionId, snapshot.PositionSnapshotId));
+
+            Assert.Equal(Arch7bRuntimeSelectionQualificationRunner.SuccessStatus,
+                result.Status);
+            Assert.Equal(99, result.PositionLineCount);
+            Assert.True(result.NoDatabaseRead);
+            Assert.True(result.NoDatabaseWrite);
+            Assert.True(result.NoSecretRead);
+            Assert.True(result.NoFix);
+            Assert.True(result.NoOrder);
+            var artifact = Assert.Single(result.Artifacts);
+            Assert.Equal("runtime-selection.json", Path.GetFileName(artifact.Path));
+
+            var executable = typeof(Arch7bRuntimeSelectionQualificationRunner)
+                .Assembly.Location;
+            var command = new Arch7bOneShotMaterializedCommand(
+                Arch7bV2Contracts.MaterializedCommandVersion,
+                "runtime-selection", "RUNTIME_SELECTION",
+                Arch7bExecutionKind.ChildInvoke, executable,
+                Convert.ToHexStringLower(SHA256.HashData(File.ReadAllBytes(executable))),
+                [], runRoot, "runtime-selection-v1",
+                Arch7bV2Contracts.ChildResultAdapterVersion,
+                Arch7bRuntimeSelectionAdapter.NativeContract, 30, 1_048_576,
+                1_048_576, "qualification-child-process", false, false, false,
+                [], [], null, Path.Combine(runRoot, "command-authority.json"),
+                new string('a', 64), new string('b', 64));
+            var native = JsonSerializer.Serialize(result, new JsonSerializerOptions
+            {
+                PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower
+            });
+            var normalized = await new Arch7bRuntimeSelectionAdapter().AdaptAsync(
+                native, command, runRoot);
+
+            Assert.Equal(Arch7bRuntimeSelectionQualificationRunner.SuccessStatus,
+                normalized.ResultCode);
+            Assert.Equal(artifact.Path, Assert.Single(normalized.ArtifactPaths));
+            Assert.Throws<IOException>(() =>
+                Arch7bRuntimeSelectionQualificationRunner.Run(new(
+                    packageRoot, outputRoot, snapshot.AccountId,
+                    universe.TargetFingerprint, universe.SourceSessionId,
+                    universe.SourceIngestionId, snapshot.PositionSnapshotId)));
+        }
+        finally
+        {
+            DeleteRoot(runRoot);
         }
     }
 

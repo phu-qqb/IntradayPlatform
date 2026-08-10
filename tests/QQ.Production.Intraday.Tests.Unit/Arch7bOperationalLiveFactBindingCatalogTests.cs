@@ -200,7 +200,8 @@ public sealed class Arch7bOperationalLiveFactBindingCatalogTests : IDisposable
             OperationalSkeleton(), File.ReadAllBytes(SourceManifestPath()));
         var text = JsonSerializer.Serialize(result.Template);
 
-        Assert.Equal(6, result.CommandCount);
+        Assert.Equal(Arch7bFinalStageExecutionCatalog.CommandTemplateCount,
+            result.CommandCount);
         Assert.Equal(34, result.BindingCount);
         Assert.Equal(0, result.UnresolvedBindingCount);
         Assert.Equal(0, result.SyntheticCommandCount);
@@ -299,7 +300,8 @@ public sealed class Arch7bOperationalLiveFactBindingCatalogTests : IDisposable
 
         Assert.Equal(File.ReadAllBytes(firstPath), File.ReadAllBytes(secondPath));
         Assert.Equal(first.OutputSha256, second.OutputSha256);
-        Assert.Equal(6, first.CommandCount);
+        Assert.Equal(Arch7bFinalStageExecutionCatalog.CommandTemplateCount,
+            first.CommandCount);
         Assert.Equal(34, first.BindingCount);
         Assert.Equal(0, first.RegenerateCount);
         Assert.Equal(0, first.FakeNativeChildCount);
@@ -317,13 +319,25 @@ public sealed class Arch7bOperationalLiveFactBindingCatalogTests : IDisposable
             typeof(QQ.Production.Intraday.Tools.Arch7bOneShotSupervisor.Program)
                 .Assembly.Location, Path.Combine(root, "runtime"));
         var catalog = Arch7bOperationalLiveFactBindingCatalog.Build();
-        var commands = fixture.Template.CommandTemplates.Select(command =>
-            command with
+        var commands = fixture.Template.CommandTemplates
+            .Where(command => Arch7bFinalStageExecutionCatalog.Require(command.StageId)
+                .HasCommandTemplate)
+            .Select(command =>
             {
-                ArgumentTemplates = command.ArgumentTemplates.Select(argument =>
-                    argument.Value == "fake-native-child"
-                        ? argument with { Value = "offline-qualified-child" }
-                        : argument).ToArray()
+                var entry = Arch7bFinalStageExecutionCatalog.Require(command.StageId);
+                return command with
+                {
+                    CommandId = entry.CommandId!,
+                    ExecutionKind = entry.ExecutionKind,
+                    AdapterId = entry.AdapterId!,
+                    ExpectedNativeOutputContract = entry.NativeContract!,
+                    ArgumentTemplates = command.ArgumentTemplates.Select(argument =>
+                        argument.Value == "fake-native-child"
+                            ? argument with { Value = entry.Mode! }
+                            : argument).ToArray(),
+                    EvidenceSha256 = Arch7bOneShotContracts.Sha256(
+                        "classified-prototype:" + entry.StageId)
+                };
             }).ToList();
 
         foreach (var commandCatalog in catalog)
@@ -332,21 +346,9 @@ public sealed class Arch7bOperationalLiveFactBindingCatalogTests : IDisposable
                 value.StageId == commandCatalog.StageId);
             Arch7bOneShotCommandTemplate prototype;
             if (index >= 0)
-            {
                 prototype = commands[index];
-            }
             else
-            {
-                prototype = commands.Single(value =>
-                    value.StageId == "RUNTIME_SELECTION") with
-                {
-                    StageId = commandCatalog.StageId,
-                    ExecutionKind = Arch7bExecutionKind.ChildInvoke,
-                    LongLivedProcessKey = null
-                };
-                commands.Add(prototype);
-                index = commands.Count - 1;
-            }
+                continue;
             var arguments = new List<Arch7bCommandTemplateArgument>
             {
                 new("--mode", Arch7bPlaceholderValueKind.Literal, null, -1, false),

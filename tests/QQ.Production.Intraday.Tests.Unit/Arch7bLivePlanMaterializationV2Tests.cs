@@ -16,7 +16,7 @@ public sealed class Arch7bLivePlanMaterializationV2Tests
         Arch7bLiveTemplateValidator.Validate(fixture.Template, adapters);
 
         Assert.Equal(40, fixture.Template.StageContracts.Count);
-        Assert.Equal(15, fixture.Template.CommandTemplates.Count);
+        Assert.Equal(14, fixture.Template.CommandTemplates.Count);
         Assert.Contains(fixture.Template.StageContracts, value =>
             value.ExecutionKind == Arch7bExecutionKind.ChildStartLongLived);
         Assert.Contains(fixture.Template.StageContracts, value =>
