@@ -50,6 +50,36 @@ A qualifying snapshot requires:
 
 `ARCH7B_CAPTURE_HOST_CLOCK_NOT_QUALIFIED` is the single fail-closed blocker.
 
+## Production measurement producer
+
+Measurement contract:
+`pms_shadow_capture_clock_authority_measurement_v1`.
+
+The versioned `WindowsAmazonTimeSyncClockProbe` promotes the semantics used by
+the prior Primary qualification evidence
+`D:\QQFund\ARCH7B\arch7b-core06-e2e-no-order-20260728T1315Z-909f5cc-e3c01e81-ac29f1b01b3d\clocks\ssm-clock-parameters.json`.
+That evidence queried `W32Time` and sampled Amazon Time Sync five times. The
+non-versioned helper is provenance only and is not invoked by production code.
+
+The production probe is read-only. It requires `W32Time` to be running and
+synchronized with the exact host source `169.254.169.123,0x9`, then sends five
+independent NTP client requests to Amazon Time Sync at
+`169.254.169.123:123`. Each response must be a valid server response with a
+valid stratum, zero leap indicator, and an originate timestamp matching the
+request transmit timestamp.
+
+For every sample, the versioned NTP equations are:
+
+- offset = `((T2 - T1) + (T3 - T4)) / 2`;
+- round trip = `max(0, (T4 - T1) - (T3 - T2))`.
+
+The snapshot uses the mean observed offset and mean round trip. Measurement
+uncertainty is the larger of half the maximum round trip and half the observed
+offset range. Existing snapshot thresholds remain authoritative; the producer
+does not redefine or widen them. The producer writes through
+`PmsShadowCaptureClockAuthorityStore.WriteAtomic`, reads the file back, and
+revalidates it before publishing its file and snapshot SHA-256 values.
+
 ## Slot evidence
 
 `prearm-and-import` validates an initial snapshot before

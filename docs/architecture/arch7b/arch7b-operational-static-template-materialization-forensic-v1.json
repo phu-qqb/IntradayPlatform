@@ -1,0 +1,58 @@
+{
+    "contract":  "arch7b_operational_static_template_materialization_forensic_v1",
+    "classification":  "PRODUCTION_CLOCK_PRODUCER_AND_TEMPLATE_COMPILER_IMPLEMENTED_AWAITING_PRIMARY_QUALIFICATION",
+    "v7_freeze":  {
+                      "manifest_sha256":  "e51c4c3e342c2df1da8a1137fd9c7466e21962bb17d655714926da3ae37bfaca",
+                      "packet_sha256":  "86b771c2b0dcc78eec4df8deaf020d6a677b1f2c6d46812d80d81ab259353876",
+                      "zip_sha256":  "9aed5749432a949107126e805b26c3fca05bb37afda14b07f54fd05b40d1dff2"
+                  },
+    "findings":  {
+                     "pr54_live_authority_materializer_present":  true,
+                     "template_v2_contract_present":  true,
+                     "live_execution_authority_v3_present":  true,
+                     "operational_command_count":  6,
+                     "binding_count":  34,
+                     "marker_count":  34,
+                     "missing_producer_count":  0,
+                     "production_clock_producer":  "PmsShadowCaptureClockAuthorityProducer",
+                     "production_clock_measurement_contract":  "pms_shadow_capture_clock_authority_measurement_v1",
+                     "clock_stages":  [
+                                          "CLOCK_PREFLIGHT",
+                                          "CLOCK_CAPTURE_START",
+                                          "CLOCK_POST_CLOSE"
+                                      ],
+                     "pms_import_prearm":  {
+                                               "producer_stage":  "POSITION_MARKET_DRAFT",
+                                               "completion_stage":  "PMS_IMPORT",
+                                               "core_protocol_changed":  false,
+                                               "broker_execution_count":  1,
+                                               "additional_secret_reads":  0
+                                           },
+                     "production_template_writer":  "materialize-operational-live-template",
+                     "output_policy":  "CREATE_NEW_AND_BYTE_IDENTICAL_READBACK",
+                     "regenerate_count":  0,
+                     "fake_native_child_count":  0,
+                     "synthetic_authority_count":  0,
+                     "unresolved_producer_count":  0,
+                     "primary_qualification_pending":  true
+                 },
+    "safety":  {
+                   "slot_locks":  0,
+                   "one_shot_identities":  0,
+                   "secret_reads":  0,
+                   "database_connections":  0,
+                   "lmax_sessions":  0,
+                   "fix_logons":  0,
+                   "orders":  0,
+                   "fills":  0,
+                   "ledger_events":  0,
+                   "aws_mutations":  0
+               },
+    "historical_append_only":  {
+                                   "prior_verdict":  "NO_GO_ARCH7B_SPECIFIC_LIVE_FACT_HAS_NO_REAL_PRODUCER",
+                                   "prior_blocker_argument":  "--clock-authority-preflight-snapshot",
+                                   "prior_production_snapshot_producer_count":  0,
+                                   "resolution":  "PmsShadowCaptureClockAuthorityProducer plus CLOCK_PREFLIGHT/CLOCK_CAPTURE_START/CLOCK_POST_CLOSE integration",
+                                   "resolution_state":  "IMPLEMENTED_LOCALLY_PRIMARY_QUALIFICATION_PENDING"
+                               }
+}

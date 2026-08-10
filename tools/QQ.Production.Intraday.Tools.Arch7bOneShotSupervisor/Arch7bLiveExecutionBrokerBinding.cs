@@ -2,6 +2,48 @@ using System.Text.Json.Nodes;
 
 namespace QQ.Production.Intraday.Tools.Arch7bOneShotSupervisor;
 
+internal sealed class Arch7bPendingBrokerExecutionState
+{
+    private Task<Arch7bCoreBrokerCommandResult>? pmsImport;
+    private CancellationTokenSource? pmsImportCancellation;
+
+    public string? PmsImportCommandSha256 { get; private set; }
+    public bool HasPmsImport => pmsImport is not null;
+    public Task<Arch7bCoreBrokerCommandResult> PmsImport => pmsImport ??
+        throw new Arch7bQualificationException(
+            Arch7bCoreRdsSecretBrokerBlockers.StateInvalid, "PMS_IMPORT_NOT_STARTED");
+
+    public void StartPmsImport(string commandSha256,
+        Func<CancellationToken, Task<Arch7bCoreBrokerCommandResult>> execute,
+        CancellationToken cancellationToken)
+    {
+        if (pmsImport is not null)
+            throw new Arch7bQualificationException(
+                Arch7bCoreRdsSecretBrokerBlockers.StateInvalid, "PMS_IMPORT_ALREADY_STARTED");
+        PmsImportCommandSha256 = commandSha256;
+        pmsImportCancellation = CancellationTokenSource.CreateLinkedTokenSource(
+            cancellationToken);
+        pmsImport = execute(pmsImportCancellation.Token);
+    }
+
+    public async Task<Arch7bCoreBrokerCommandResult> CompletePmsImportAsync()
+    {
+        var execution = PmsImport;
+        try
+        {
+            return await execution.ConfigureAwait(false);
+        }
+        finally
+        {
+            pmsImport = null;
+            pmsImportCancellation?.Dispose();
+            pmsImportCancellation = null;
+        }
+    }
+
+    public void CancelPending() => pmsImportCancellation?.Cancel();
+}
+
 public sealed partial class Arch7bOneShotLiveExecutionRuntimeV2
 {
     private static readonly IReadOnlyDictionary<string, string> BrokerResponseFacts =
@@ -21,6 +63,7 @@ public sealed partial class Arch7bOneShotLiveExecutionRuntimeV2
         string runRoot,
         DateTimeOffset observedUtc,
         ICollection<string> produced,
+        Arch7bPendingBrokerExecutionState pendingExecutions,
         Action<string> commandSha,
         Action<string> resultSha,
         Action<string> resultCode,
@@ -138,18 +181,32 @@ public sealed partial class Arch7bOneShotLiveExecutionRuntimeV2
                 Persistable(transition), transitionEvidence, observedUtc).FactSha256);
         }
 
-        var commandTemplate = template.CommandTemplates.Single(value => value.StageId == stage.StageId);
-        if (commandTemplate.CausesRdsRead || commandTemplate.SecretVariableNames.Count != 0)
-            throw new Arch7bQualificationException(
-                Arch7bCoreRdsSecretBrokerBlockers.PlanInvalid, stage.StageId);
-        var command = await materializer.MaterializeAsync(commandTemplate, facts,
-            template.FileAuthorities, runRoot, observedUtc, cancellationToken).ConfigureAwait(false);
-        commandSha(command.EvidenceSha256);
-        var inputFactEvidence = Arch7bOneShotContracts.Sha256(string.Join('\n',
-            stage.RequiredFactTypes.Select(value => facts.Require(value,
-                ProducerFor(template, value), observedUtc, int.MaxValue).FactSha256)));
-        var execution = await brokerClient.ExecuteAsync(command, inputFactEvidence, runRoot,
-            cancellationToken).ConfigureAwait(false);
+        Arch7bCoreBrokerCommandResult execution;
+        if (stage.StageId == "PMS_IMPORT" && pendingExecutions.HasPmsImport)
+        {
+            commandSha(pendingExecutions.PmsImportCommandSha256 ??
+                throw new Arch7bQualificationException(
+                    Arch7bCoreRdsSecretBrokerBlockers.StateInvalid, stage.StageId));
+            execution = await pendingExecutions.CompletePmsImportAsync()
+                .ConfigureAwait(false);
+        }
+        else
+        {
+            var commandTemplate = template.CommandTemplates.Single(value =>
+                value.StageId == stage.StageId);
+            if (commandTemplate.CausesRdsRead || commandTemplate.SecretVariableNames.Count != 0)
+                throw new Arch7bQualificationException(
+                    Arch7bCoreRdsSecretBrokerBlockers.PlanInvalid, stage.StageId);
+            var command = await materializer.MaterializeAsync(commandTemplate, facts,
+                template.FileAuthorities, runRoot, observedUtc, cancellationToken)
+                .ConfigureAwait(false);
+            commandSha(command.EvidenceSha256);
+            var inputFactEvidence = Arch7bOneShotContracts.Sha256(string.Join('\n',
+                stage.RequiredFactTypes.Select(value => facts.Require(value,
+                    ProducerFor(template, value), observedUtc, int.MaxValue).FactSha256)));
+            execution = await brokerClient.ExecuteAsync(command, inputFactEvidence, runRoot,
+                cancellationToken).ConfigureAwait(false);
+        }
         var response = execution.Response;
         resultSha(execution.AdaptedResult.EvidenceSha256);
         resultCode(execution.AdaptedResult.ResultCode);
@@ -193,6 +250,64 @@ public sealed partial class Arch7bOneShotLiveExecutionRuntimeV2
                 new { sequence = brokerClient.LastSequence }, terminalSha, observedUtc).FactSha256);
         }
         return true;
+    }
+
+    private async Task<string> StartPmsImportPrearmAsync(
+        Arch7bOneShotLivePlanTemplate template,
+        Arch7bOneShotLiveFactStore facts,
+        Arch7bPendingBrokerExecutionState pendingExecutions,
+        string runRoot,
+        DateTimeOffset observedUtc,
+        CancellationToken cancellationToken)
+    {
+        if (brokerClient is null || !brokerClient.IsRunning ||
+            brokerClient.Phase != "POST_BRACKET")
+            throw new Arch7bQualificationException(
+                Arch7bCoreRdsSecretBrokerBlockers.StateInvalid,
+                "POSITION_MARKET_DRAFT");
+        var commandTemplate = template.CommandTemplates.Single(value =>
+            value.StageId == "PMS_IMPORT");
+        if (commandTemplate.CausesRdsRead || commandTemplate.SecretVariableNames.Count != 0)
+            throw new Arch7bQualificationException(
+                Arch7bCoreRdsSecretBrokerBlockers.PlanInvalid, "PMS_IMPORT");
+        var command = await materializer.MaterializeAsync(commandTemplate, facts,
+            template.FileAuthorities, runRoot, observedUtc, cancellationToken)
+            .ConfigureAwait(false);
+        var inputFacts = commandTemplate.ArgumentTemplates
+            .Select(argument => (Argument: argument,
+                Placeholder: Arch7bTypedPlaceholder.Parse(argument.Value)))
+            .Where(value => value.Placeholder is { Scope: not "authority" })
+            .Select(value => facts.Require(value.Placeholder!.Value.Name,
+                value.Argument.ExpectedProducerStage ?? throw new Arch7bQualificationException(
+                    Arch7bV2Blockers.FactProducerMismatch, value.Argument.Value),
+                observedUtc, value.Argument.MaximumAgeSeconds).FactSha256)
+            .Distinct(StringComparer.Ordinal)
+            .Order(StringComparer.Ordinal);
+        var inputFactEvidence = Arch7bOneShotContracts.Sha256(string.Join('\n', inputFacts));
+        pendingExecutions.StartPmsImport(command.EvidenceSha256,
+            token => brokerClient.ExecuteAsync(command, inputFactEvidence, runRoot, token),
+            cancellationToken);
+        var execution = pendingExecutions.PmsImport;
+
+        var planned = facts.Require("position_market_draft_output_path",
+            "ONE_SHOT_IDENTITIES_CREATED", observedUtc, int.MaxValue);
+        using var document = System.Text.Json.JsonDocument.Parse(planned.ValueJson);
+        var path = document.RootElement.GetProperty("path").GetString() ?? string.Empty;
+        var deadline = DateTimeOffset.UtcNow.AddSeconds(command.TimeoutSeconds);
+        while (!File.Exists(path))
+        {
+            if (execution.IsCompleted || DateTimeOffset.UtcNow >= deadline)
+            {
+                if (execution.IsCompleted) _ = await execution.ConfigureAwait(false);
+                pendingExecutions.CancelPending();
+                throw new Arch7bQualificationException(
+                    Arch7bV2Blockers.RequiredFactMissing,
+                    "position_market_draft_artifact");
+            }
+            await Task.Delay(TimeSpan.FromMilliseconds(25), cancellationToken)
+                .ConfigureAwait(false);
+        }
+        return command.EvidenceSha256;
     }
 
     private static void RequireBrokerStageFacts(Arch7bOneShotStageContract stage,

@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using QQ.Production.Intraday.Infrastructure.PostgreSql;
 
 namespace QQ.Production.Intraday.Tools.Arch7bOneShotSupervisor;
 
@@ -40,15 +41,19 @@ public sealed partial class Arch7bOneShotLiveExecutionRuntimeV2
     private readonly Arch7bOneShotProcessRunnerV2 runner;
     private readonly Arch7bRealCommandAdapterRegistry adapters;
     private readonly IArch7bCoreRdsSecretBrokerClient? brokerClient;
+    private readonly IPmsShadowCaptureClockAuthorityProducer clockAuthorityProducer;
 
     public Arch7bOneShotLiveExecutionRuntimeV2(Arch7bOneShotCommandMaterializer materializer,
         Arch7bOneShotProcessRunnerV2 runner, Arch7bRealCommandAdapterRegistry adapters,
-        IArch7bCoreRdsSecretBrokerClient? brokerClient = null)
+        IArch7bCoreRdsSecretBrokerClient? brokerClient = null,
+        IPmsShadowCaptureClockAuthorityProducer? clockAuthorityProducer = null)
     {
         this.materializer = materializer;
         this.runner = runner;
         this.adapters = adapters;
         this.brokerClient = brokerClient;
+        this.clockAuthorityProducer = clockAuthorityProducer ??
+            new PmsShadowCaptureClockAuthorityProducer();
     }
 
     public async Task<Arch7bV2ExecutionEvidence> RunAsync(
@@ -84,6 +89,7 @@ public sealed partial class Arch7bOneShotLiveExecutionRuntimeV2
         Arch7bSlotLock? selectedSlot = null;
         string? runId = null;
         var bracketStarted = false;
+        var pendingBrokerExecutions = new Arch7bPendingBrokerExecutionState();
         var currentStage = Arch7bStages.All[0];
         Arch7bOneShotPrimaryFailureEvidence? primary = null;
         var finalBlocker = Arch7bOneShotContracts.ExpectedFinalBlocker;
@@ -100,80 +106,141 @@ public sealed partial class Arch7bOneShotLiveExecutionRuntimeV2
                 var resultCode = "SUCCESS";
                 var brokerHandled = brokerClient is not null && await TryExecuteBrokerStageAsync(
                     stageContract, template, facts, budget, runRoot, startedAt, produced,
-                    value => commandSha = value, value => resultSha = value,
+                    pendingBrokerExecutions, value => commandSha = value,
+                    value => resultSha = value,
                     value => resultCode = value, cancellationToken).ConfigureAwait(false);
                 if (!brokerHandled)
                 {
                     switch (stageContract.StageId)
-                {
-                    case "STATIC_AUTHORITY_VALIDATION":
-                        produced.Add(facts.Append("static_authority_validation", currentStage,
-                            new { authority = authority.EvidenceSha256 }, authority.EvidenceSha256,
-                            startedAt).FactSha256);
-                        produced.Add(facts.Append("runtime_run_root", currentStage,
-                            new { path = runRoot }, Arch7bOneShotContracts.Sha256(runRoot),
-                            startedAt).FactSha256);
-                        break;
-                    case "CALENDAR_LOADED":
-                        produced.Add(facts.Append("calendar", currentStage,
-                            new { authority = template.CalendarAuthoritySha256, authoritative = true },
-                            template.CalendarAuthoritySha256, startedAt).FactSha256);
-                        break;
-                    case "SLOT_SELECTED":
-                        selectedSlot = selector.SelectAndLock(startedAt, chronology.PreSlotCriticalPathSloSeconds);
-                        var selectedPath = Path.Combine(runRoot, "selected-slot.json");
-                        await WriteCreateNewAsync(selectedPath, new
-                        {
-                            contract = Arch7bOneShotContracts.OperationalSlotSelectionPolicyVersion,
-                            slot_id = selectedSlot.SlotId,
-                            observed_utc = selectedSlot.ObservedUtc,
-                            slot_start_utc = selectedSlot.SlotStartUtc,
-                            slot_end_utc = selectedSlot.SlotEndUtc,
-                            required_margin_seconds = selectedSlot.RequiredPreparationMarginSeconds
-                        }, cancellationToken).ConfigureAwait(false);
-                        produced.Add(facts.Append("selected_slot", currentStage, new
-                        {
-                            slot_id = selectedSlot.SlotId,
-                            slot_start_utc = selectedSlot.SlotStartUtc.ToString("O"),
-                            slot_end_utc = selectedSlot.SlotEndUtc.ToString("O"),
-                            path = selectedPath
-                        }, ShaFile(selectedPath), startedAt).FactSha256);
-                        break;
-                    case "SLOT_LOCKED":
-                        if (selectedSlot is null)
-                            throw new Arch7bQualificationException(
-                                Arch7bV2Blockers.RequiredFactMissing, "selected_slot");
-                        budget.RecordSlot();
-                        var lockPath = Path.Combine(runRoot, "slot-lock.json");
-                        await WriteCreateNewAsync(lockPath, selectedSlot, cancellationToken).ConfigureAwait(false);
-                        produced.Add(facts.Append("slot_lock", currentStage, new
-                        {
-                            slot_id = selectedSlot.SlotId,
-                            lock_sha256 = selectedSlot.LockSha256,
-                            path = lockPath
-                        }, ShaFile(lockPath), startedAt).FactSha256);
-                        break;
-                    case "ONE_SHOT_IDENTITIES_CREATED":
-                        _ = facts.Require("slot_lock", "SLOT_LOCKED", startedAt, int.MaxValue);
-                        runId = $"arch7b-{selectedSlot!.SlotStartUtc:yyyyMMddTHHmmssZ}-{Guid.NewGuid():N}";
-                        foreach (var item in new Dictionary<string, string>(StringComparer.Ordinal)
-                        {
-                            ["run_identity"] = runId,
-                            ["owner_identity"] = Guid.NewGuid().ToString("D"),
-                            ["future_authorization_identity"] = Guid.NewGuid().ToString("D"),
-                            ["source_session_identity"] = Guid.NewGuid().ToString("D"),
-                            ["market_capture_session_identity"] = Guid.NewGuid().ToString("D")
-                        })
-                            produced.Add(facts.Append(item.Key, currentStage, new { value = item.Value },
-                                Arch7bOneShotContracts.Sha256(item.Value), startedAt).FactSha256);
-                        break;
-                    default:
-                        await ExecuteStageAsync(stageContract, template, facts, cleanup, longLived,
-                            secretLease, budget, runRoot, bracketStarted, startedAt, produced,
-                            value => commandSha = value, value => resultSha = value,
-                            value => resultCode = value, cancellationToken).ConfigureAwait(false);
-                        break;
-                }
+                    {
+                        case "STATIC_AUTHORITY_VALIDATION":
+                            produced.Add(facts.Append("static_authority_validation", currentStage,
+                                new { authority = authority.EvidenceSha256 }, authority.EvidenceSha256,
+                                startedAt).FactSha256);
+                            produced.Add(facts.Append("core_commit", currentStage,
+                                new { value = template.CoreCommit },
+                                Arch7bOneShotContracts.Sha256(template.CoreCommit), startedAt).FactSha256);
+                            produced.Add(facts.Append("intraday_commit", currentStage,
+                                new { value = template.IntradayCommit },
+                                Arch7bOneShotContracts.Sha256(template.IntradayCommit), startedAt).FactSha256);
+                            produced.Add(facts.Append("runtime_run_root", currentStage,
+                                new { path = runRoot }, Arch7bOneShotContracts.Sha256(runRoot),
+                                startedAt).FactSha256);
+                            break;
+                        case "CALENDAR_LOADED":
+                            produced.Add(facts.Append("calendar", currentStage,
+                                new { authority = template.CalendarAuthoritySha256, authoritative = true },
+                                template.CalendarAuthoritySha256, startedAt).FactSha256);
+                            break;
+                        case "SLOT_SELECTED":
+                            selectedSlot = selector.SelectAndLock(startedAt, chronology.PreSlotCriticalPathSloSeconds);
+                            var selectedPath = Path.Combine(runRoot, "selected-slot.json");
+                            await WriteCreateNewAsync(selectedPath, new
+                            {
+                                contract = Arch7bOneShotContracts.OperationalSlotSelectionPolicyVersion,
+                                slot_id = selectedSlot.SlotId,
+                                observed_utc = selectedSlot.ObservedUtc,
+                                slot_start_utc = selectedSlot.SlotStartUtc,
+                                slot_end_utc = selectedSlot.SlotEndUtc,
+                                required_margin_seconds = selectedSlot.RequiredPreparationMarginSeconds
+                            }, cancellationToken).ConfigureAwait(false);
+                            produced.Add(facts.Append("selected_slot", currentStage, new
+                            {
+                                slot_id = selectedSlot.SlotId,
+                                slot_start_utc = selectedSlot.SlotStartUtc.ToString("O"),
+                                slot_end_utc = selectedSlot.SlotEndUtc.ToString("O"),
+                                path = selectedPath
+                            }, ShaFile(selectedPath), startedAt).FactSha256);
+                            break;
+                        case "SLOT_LOCKED":
+                            if (selectedSlot is null)
+                                throw new Arch7bQualificationException(
+                                    Arch7bV2Blockers.RequiredFactMissing, "selected_slot");
+                            budget.RecordSlot();
+                            var lockPath = Path.Combine(runRoot, "slot-lock.json");
+                            await WriteCreateNewAsync(lockPath, selectedSlot, cancellationToken).ConfigureAwait(false);
+                            produced.Add(facts.Append("slot_lock", currentStage, new
+                            {
+                                slot_id = selectedSlot.SlotId,
+                                lock_sha256 = selectedSlot.LockSha256,
+                                path = lockPath
+                            }, ShaFile(lockPath), startedAt).FactSha256);
+                            break;
+                        case "ONE_SHOT_IDENTITIES_CREATED":
+                            _ = facts.Require("slot_lock", "SLOT_LOCKED", startedAt, int.MaxValue);
+                            runId = $"arch7b-{selectedSlot!.SlotStartUtc:yyyyMMddTHHmmssZ}-{Guid.NewGuid():N}";
+                            foreach (var item in new Dictionary<string, string>(StringComparer.Ordinal)
+                            {
+                                ["run_identity"] = runId,
+                                ["owner_identity"] = Guid.NewGuid().ToString("D"),
+                                ["future_authorization_identity"] = Guid.NewGuid().ToString("D"),
+                                ["source_session_identity"] = Guid.NewGuid().ToString("D"),
+                                ["market_capture_session_identity"] = Guid.NewGuid().ToString("D")
+                            })
+                                produced.Add(facts.Append(item.Key, currentStage, new { value = item.Value },
+                                    Arch7bOneShotContracts.Sha256(item.Value), startedAt).FactSha256);
+                            var draftPath = Arch7bOneShotRunArtifactPath.ReservePositionMarketDraft(
+                                runRoot, runId);
+                            var lineagePath = Arch7bOneShotRunArtifactPath.ReservePositionMarketLineage(
+                                runRoot, runId);
+                            var revisionPath =
+                                Arch7bOneShotRunArtifactPath.ReservePositionMarketRevisionBinding(
+                                    runRoot, runId);
+                            produced.Add(facts.Append("position_market_draft_output_path", currentStage,
+                                draftPath, draftPath.EvidenceSha256, startedAt).FactSha256);
+                            produced.Add(facts.Append("position_market_lineage_output_path", currentStage,
+                                lineagePath, lineagePath.EvidenceSha256, startedAt).FactSha256);
+                            produced.Add(facts.Append("position_market_revision_binding_output_path",
+                                currentStage, revisionPath, revisionPath.EvidenceSha256,
+                                startedAt).FactSha256);
+                            break;
+                        case "CLOCK_PREFLIGHT":
+                        case "CLOCK_POST_CLOSE":
+                            await ExecuteClockAuthorityStageAsync(stageContract, template, facts,
+                                runRoot, selectedSlot, timeProvider, produced, cancellationToken)
+                                .ConfigureAwait(false);
+                            break;
+                        case "CLOCK_CAPTURE_START":
+                            await ExecuteClockAuthorityStageAsync(stageContract, template, facts,
+                                runRoot, selectedSlot, timeProvider, produced, cancellationToken)
+                                .ConfigureAwait(false);
+                            var nonClockStage = stageContract with
+                            {
+                                ProducedFactTypes = stageContract.ProducedFactTypes.Where(value =>
+                                    value != "clock_authority_capture_snapshot").ToArray()
+                            };
+                            await ExecuteStageAsync(nonClockStage, template, facts, cleanup,
+                                longLived, secretLease, budget, runRoot, bracketStarted, startedAt,
+                                produced, value => commandSha = value, value => resultSha = value,
+                                value => resultCode = value, cancellationToken).ConfigureAwait(false);
+                            break;
+                        case "POSITION_MARKET_DRAFT" when stageContract.ProducedFactTypes.Contains(
+                        "position_market_draft_artifact", StringComparer.Ordinal):
+                            if (brokerClient is not null)
+                                commandSha = await StartPmsImportPrearmAsync(template, facts,
+                                    pendingBrokerExecutions, runRoot, startedAt,
+                                    cancellationToken).ConfigureAwait(false);
+                            ExecutePositionMarketDraftStage(facts, runRoot, startedAt, produced);
+                            break;
+                        case "POSITION_MARKET_LINEAGE" when stageContract.ProducedFactTypes.Contains(
+                        "position_market_lineage_artifact", StringComparer.Ordinal):
+                            ExecutePositionMarketLineageStage(facts, runRoot, startedAt, produced);
+                            break;
+                        case "ECONOMIC_REVISION" when stageContract.ProducedFactTypes.Contains(
+                        "economic_revision_artifact", StringComparer.Ordinal):
+                            ExecuteEconomicRevisionStage(facts, runRoot, startedAt, produced);
+                            break;
+                        case "REVISION_BINDING" when stageContract.ProducedFactTypes.Contains(
+                        "position_market_revision_binding_artifact", StringComparer.Ordinal):
+                            ExecuteRevisionBindingStage(facts, runRoot, startedAt, produced);
+                            break;
+                        default:
+                            await ExecuteStageAsync(stageContract, template, facts, cleanup, longLived,
+                                secretLease, budget, runRoot, bracketStarted, startedAt, produced,
+                                value => commandSha = value, value => resultSha = value,
+                                value => resultCode = value, cancellationToken).ConfigureAwait(false);
+                            break;
+                    }
                 }
                 if (currentStage == "BRACKET_T0") bracketStarted = true;
                 if (currentStage == "FINAL_WORKING_ORDER_PREFLIGHT")
@@ -210,6 +277,7 @@ public sealed partial class Arch7bOneShotLiveExecutionRuntimeV2
             finalBlocker = primary.FirstBlockerCode;
         }
         var brokerCleanupComplete = true;
+        pendingBrokerExecutions.CancelPending();
         if (brokerClient is not null)
         {
             try
@@ -339,6 +407,189 @@ public sealed partial class Arch7bOneShotLiveExecutionRuntimeV2
                 evidence_sha256 = normalized.EvidenceSha256,
                 artifact_paths = normalized.ArtifactPaths
             }, normalized.EvidenceSha256, observedUtc).FactSha256);
+    }
+
+    internal static void ExecutePositionMarketDraftStage(Arch7bOneShotLiveFactStore facts,
+        string runRoot, DateTimeOffset observedUtc, ICollection<string> produced)
+    {
+        var pathFact = facts.Require("position_market_draft_output_path",
+            "ONE_SHOT_IDENTITIES_CREATED", observedUtc, int.MaxValue);
+        var planned = JsonSerializer.Deserialize<Arch7bOneShotRunArtifactPath>(
+            pathFact.ValueJson, Arch7bJson.CanonicalOptions)
+            ?? throw new Arch7bQualificationException(Arch7bV2Blockers.FactInvalid,
+                "position_market_draft_output_path");
+        var runId = FactValue(facts.Require("run_identity", "ONE_SHOT_IDENTITIES_CREATED",
+            observedUtc, int.MaxValue));
+        var marketCaptureSessionId = FactValue(facts.Require("market_capture_session_identity",
+            "ONE_SHOT_IDENTITIES_CREATED", observedUtc, int.MaxValue));
+        planned.Validate(runRoot, runId);
+        if (!File.Exists(planned.Path) ||
+            !string.Equals(Path.GetFileName(planned.Path),
+                Arch7bOneShotRunArtifactPath.PositionMarketDraftFilename,
+                StringComparison.Ordinal))
+            throw new Arch7bQualificationException(Arch7bV2Blockers.RequiredFactMissing,
+                "position_market_draft_artifact");
+
+        var fileSha256 = ShaFile(planned.Path);
+        var draft = Arch7bPositionMarketLineageFileStore.ReadDraft(planned.Path, fileSha256);
+        var selectedPositionSnapshotId = RequireRuntimeSelectionSnapshotId(
+            facts, runRoot, observedUtc);
+        if (!string.Equals(draft.RunId, runId, StringComparison.Ordinal) ||
+            !string.Equals(draft.MarketCaptureSessionId, marketCaptureSessionId,
+                StringComparison.Ordinal) ||
+            draft.SelectedPositionSnapshotId != selectedPositionSnapshotId)
+            throw new Arch7bQualificationException(Arch7bV2Blockers.AuthorityBindingMismatch,
+                "position_market_draft_artifact");
+
+        var evidenceSha256 = Arch7bOneShotContracts.Sha256(string.Join('\n', planned.Path,
+            fileSha256, draft.EvidenceSha256, draft.SelectedPositionSnapshotId,
+            draft.MarketCaptureSessionId));
+        var artifact = new Arch7bPositionMarketDraftArtifactFact(planned.Path, fileSha256,
+            evidenceSha256, draft.SelectedPositionSnapshotId, draft.MarketCaptureSessionId);
+        produced.Add(facts.Append("position_market_draft_artifact", "POSITION_MARKET_DRAFT",
+            artifact, evidenceSha256, observedUtc).FactSha256);
+    }
+
+    private static Guid RequireRuntimeSelectionSnapshotId(
+        Arch7bOneShotLiveFactStore facts, string runRoot, DateTimeOffset observedUtc)
+    {
+        var fact = facts.Require("runtime_selection_artifact", "RUNTIME_SELECTION",
+            observedUtc, int.MaxValue);
+        using var factDocument = JsonDocument.Parse(fact.ValueJson);
+        if (!factDocument.RootElement.TryGetProperty("artifact_paths", out var paths) ||
+            paths.ValueKind != JsonValueKind.Array || paths.GetArrayLength() != 1)
+            throw new Arch7bQualificationException(Arch7bV2Blockers.FactInvalid,
+                "runtime_selection_artifact");
+        var path = paths[0].GetString();
+        if (string.IsNullOrWhiteSpace(path))
+            throw new Arch7bQualificationException(Arch7bV2Blockers.FactInvalid,
+                "runtime_selection_artifact");
+        Arch7bOneShotAuthorityLoader.RequireAbsolute(path);
+        Arch7bOneShotAuthorityLoader.RequireInside(runRoot, path);
+        if (!File.Exists(path))
+            throw new Arch7bQualificationException(Arch7bV2Blockers.RequiredFactMissing,
+                "runtime_selection_artifact");
+        using var artifact = JsonDocument.Parse(File.ReadAllBytes(path));
+        var root = artifact.RootElement;
+        if (!root.TryGetProperty("contract", out var contract) ||
+            contract.GetString() != "arch7b_position_snapshot_runtime_selection_v1" ||
+            !root.TryGetProperty("selected_position_snapshot_id", out var snapshot) ||
+            !Guid.TryParseExact(snapshot.GetString(), "D", out var snapshotId) ||
+            snapshotId == Guid.Empty)
+            throw new Arch7bQualificationException(Arch7bV2Blockers.FactInvalid,
+                "runtime_selection_artifact");
+        return snapshotId;
+    }
+
+    private static void ExecutePositionMarketLineageStage(
+        Arch7bOneShotLiveFactStore facts, string runRoot, DateTimeOffset observedUtc,
+        ICollection<string> produced)
+    {
+        var runId = FactValue(facts.Require("run_identity", "ONE_SHOT_IDENTITIES_CREATED",
+            observedUtc, int.MaxValue));
+        var planned = PlannedPath(facts, "position_market_lineage_output_path",
+            runRoot, runId, observedUtc);
+        planned.ValidatePositionMarketLineage(runRoot, runId);
+        RequireArtifactFile(planned.Path, "position_market_lineage_artifact");
+        var fileSha256 = ShaFile(planned.Path);
+        var lineage = Arch7bPositionMarketLineageFileStore.ReadLineage(
+            planned.Path, fileSha256);
+        var draftFact = facts.Require("position_market_draft_artifact",
+            "POSITION_MARKET_DRAFT", observedUtc, int.MaxValue);
+        var draft = JsonSerializer.Deserialize<Arch7bPositionMarketDraftArtifactFact>(
+            draftFact.ValueJson, Arch7bJson.CanonicalOptions)
+            ?? throw new Arch7bQualificationException(Arch7bV2Blockers.FactInvalid,
+                draftFact.FactType);
+        if (lineage.RunId != runId ||
+            lineage.SelectedPositionSnapshotId != draft.SelectedPositionSnapshotId ||
+            lineage.MarketCaptureSessionId != draft.MarketCaptureSessionId)
+            throw new Arch7bQualificationException(
+                Arch7bV2Blockers.AuthorityBindingMismatch,
+                "position_market_lineage_artifact");
+        var artifact = new Arch7bContentAddressedArtifactFact(
+            planned.Path, fileSha256, lineage.EvidenceSha256);
+        produced.Add(facts.Append("position_market_lineage_artifact",
+            "POSITION_MARKET_LINEAGE", artifact, lineage.EvidenceSha256,
+            observedUtc).FactSha256);
+    }
+
+    private static void ExecuteEconomicRevisionStage(
+        Arch7bOneShotLiveFactStore facts, string runRoot, DateTimeOffset observedUtc,
+        ICollection<string> produced)
+    {
+        var runId = FactValue(facts.Require("run_identity", "ONE_SHOT_IDENTITIES_CREATED",
+            observedUtc, int.MaxValue));
+        var planned = PlannedPath(facts,
+            "position_market_revision_binding_output_path", runRoot, runId, observedUtc);
+        planned.ValidatePositionMarketRevisionBinding(runRoot, runId);
+        RequireArtifactFile(planned.Path, "economic_revision_artifact");
+        var fileSha256 = ShaFile(planned.Path);
+        var binding = Arch7bPositionMarketLineageFileStore.ReadRevisionBinding(
+            planned.Path, fileSha256);
+        produced.Add(facts.Append("economic_revision_artifact", "ECONOMIC_REVISION",
+            new
+            {
+                economic_revision_id = binding.ProjectionRevisionId.ToString("D"),
+                path = planned.Path,
+                sha256 = fileSha256,
+                evidence_sha256 = binding.EvidenceSha256
+            }, binding.EvidenceSha256, observedUtc).FactSha256);
+    }
+
+    private static void ExecuteRevisionBindingStage(
+        Arch7bOneShotLiveFactStore facts, string runRoot, DateTimeOffset observedUtc,
+        ICollection<string> produced)
+    {
+        var runId = FactValue(facts.Require("run_identity", "ONE_SHOT_IDENTITIES_CREATED",
+            observedUtc, int.MaxValue));
+        var planned = PlannedPath(facts,
+            "position_market_revision_binding_output_path", runRoot, runId, observedUtc);
+        planned.ValidatePositionMarketRevisionBinding(runRoot, runId);
+        RequireArtifactFile(planned.Path, "position_market_revision_binding_artifact");
+        var fileSha256 = ShaFile(planned.Path);
+        var binding = Arch7bPositionMarketLineageFileStore.ReadRevisionBinding(
+            planned.Path, fileSha256);
+        var lineage = JsonSerializer.Deserialize<Arch7bContentAddressedArtifactFact>(
+            facts.Require("position_market_lineage_artifact", "POSITION_MARKET_LINEAGE",
+                observedUtc, int.MaxValue).ValueJson, Arch7bJson.CanonicalOptions)
+            ?? throw new Arch7bQualificationException(Arch7bV2Blockers.FactInvalid,
+                "position_market_lineage_artifact");
+        if (binding.PositionMarketLineageEvidenceSha256 != lineage.EvidenceSha256)
+            throw new Arch7bQualificationException(
+                Arch7bV2Blockers.AuthorityBindingMismatch,
+                "position_market_revision_binding_artifact");
+        var artifact = new Arch7bContentAddressedArtifactFact(
+            planned.Path, fileSha256, binding.EvidenceSha256);
+        produced.Add(facts.Append("position_market_revision_binding_artifact",
+            "REVISION_BINDING", artifact, binding.EvidenceSha256,
+            observedUtc).FactSha256);
+    }
+
+    private static Arch7bOneShotRunArtifactPath PlannedPath(
+        Arch7bOneShotLiveFactStore facts, string factType, string runRoot,
+        string runId, DateTimeOffset observedUtc)
+    {
+        var fact = facts.Require(factType, "ONE_SHOT_IDENTITIES_CREATED",
+            observedUtc, int.MaxValue);
+        return JsonSerializer.Deserialize<Arch7bOneShotRunArtifactPath>(
+                   fact.ValueJson, Arch7bJson.CanonicalOptions)
+               ?? throw new Arch7bQualificationException(
+                   Arch7bV2Blockers.FactInvalid, factType);
+    }
+
+    private static void RequireArtifactFile(string path, string factType)
+    {
+        if (!File.Exists(path))
+            throw new Arch7bQualificationException(
+                Arch7bV2Blockers.RequiredFactMissing, factType);
+    }
+
+    private static string FactValue(Arch7bOneShotFact fact)
+    {
+        using var document = JsonDocument.Parse(fact.ValueJson);
+        return document.RootElement.GetProperty("value").GetString()
+            ?? throw new Arch7bQualificationException(Arch7bV2Blockers.FactInvalid,
+                fact.FactType);
     }
 
     private static void ValidateStageEntry(Arch7bOneShotStageContract stage,

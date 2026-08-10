@@ -122,8 +122,10 @@ public sealed class Arch7bProcessRuntimeV2Tests
     {
         for (var index = 0; index < 20; index++)
         {
+            var timeProvider = new Arch7bTestTimeProvider(DateTimeOffset.UtcNow);
             var result = await Arch7bV2ProcessQualifier.RunSingleAsync(SupervisorExecutable(),
-                $"atomic-completion-{index:D2}");
+                $"atomic-completion-{index:D2}", timeProvider: timeProvider,
+                clockAuthorityProducer: new Arch7bTestClockAuthorityProducer(timeProvider));
 
             Assert.True(result.Passed);
             Assert.Equal(Arch7bOneShotContracts.ExpectedFinalBlocker, result.FinalBlocker);
