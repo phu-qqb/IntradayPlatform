@@ -39,6 +39,10 @@ public static class Program
                         Path.GetFullPath(Required(options, "source-template")),
                         Path.GetFullPath(Required(options, "source-manifest")),
                         Path.GetFullPath(Required(options, "output-path"))).ConfigureAwait(false),
+                "qualify-production-clock-authority" => await
+                    new Arch7bProductionClockAuthorityQualifier().RunAsync(
+                        Path.GetFullPath(Required(options, "output-root")),
+                        Required(options, "repository-commit")).ConfigureAwait(false),
                 "qualify-core-broker-cross-repo" => await Arch7bProgramV2Modes
                     .QualifyCoreBrokerCrossRepositoryAsync(options).ConfigureAwait(false),
                 "qualify-live-runtime-v2" => await Arch7bProgramV2Modes.QualifyLiveRuntimeAsync(options).ConfigureAwait(false),
