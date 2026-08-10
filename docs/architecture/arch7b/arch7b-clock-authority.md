@@ -80,6 +80,16 @@ does not redefine or widen them. The producer writes through
 `PmsShadowCaptureClockAuthorityStore.WriteAtomic`, reads the file back, and
 revalidates it before publishing its file and snapshot SHA-256 values.
 
+## Primary qualification pacing
+
+The qualification-only harness produces three preflight/capture/post-close
+sequences. It inserts an explicit two-second cooldown between each of the nine
+NTP measurement batches, for eight delays in total. This pacing mirrors the
+naturally separated production stages and prevents the qualification harness
+from turning the Amazon Time Sync probe into an artificial burst. The delay is
+versioned in the qualification result and does not alter the production probe,
+the DAG, any threshold, or any slot timestamp.
+
 ## Slot evidence
 
 `prearm-and-import` validates an initial snapshot before

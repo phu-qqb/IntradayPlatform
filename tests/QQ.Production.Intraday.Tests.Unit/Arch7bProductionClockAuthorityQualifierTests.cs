@@ -12,8 +12,9 @@ public sealed class Arch7bProductionClockAuthorityQualifierTests
         using var temp = new TempRoot();
         var start = new DateTimeOffset(2026, 8, 10, 20, 0, 0, TimeSpan.Zero);
         var timeProvider = new Arch7bTestTimeProvider(start);
+        var pacer = new CountingPacer();
         var qualifier = new Arch7bProductionClockAuthorityQualifier(
-            new SequenceClockProducer(timeProvider), timeProvider);
+            new SequenceClockProducer(timeProvider), timeProvider, pacer);
 
         var result = await qualifier.RunAsync(temp.Path,
             "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
@@ -25,6 +26,9 @@ public sealed class Arch7bProductionClockAuthorityQualifierTests
         Assert.Equal(3, result.CaptureValidationCount);
         Assert.Equal(3, result.PostCloseValidationCount);
         Assert.Equal(3, result.PairValidationCount);
+        Assert.Equal(2_000, result.InterBatchDelayMilliseconds);
+        Assert.Equal(8, result.AppliedDelayCount);
+        Assert.Equal(8, pacer.DelayCount);
         Assert.Equal(9, Directory.GetFiles(temp.Path, "*.json",
             SearchOption.AllDirectories).Length);
         Assert.Equal(9, result.Runs.SelectMany(value => new[]
@@ -48,8 +52,9 @@ public sealed class Arch7bProductionClockAuthorityQualifierTests
         await File.WriteAllTextAsync(Path.Combine(temp.Path, "existing.txt"), "occupied");
         var start = new DateTimeOffset(2026, 8, 10, 20, 0, 0, TimeSpan.Zero);
         var timeProvider = new Arch7bTestTimeProvider(start);
+        var pacer = new CountingPacer();
         var qualifier = new Arch7bProductionClockAuthorityQualifier(
-            new SequenceClockProducer(timeProvider), timeProvider);
+            new SequenceClockProducer(timeProvider), timeProvider, pacer);
 
         var exception = await Assert.ThrowsAsync<Arch7bQualificationException>(() =>
             qualifier.RunAsync(temp.Path,
@@ -57,6 +62,18 @@ public sealed class Arch7bProductionClockAuthorityQualifierTests
 
         Assert.Equal(Arch7bV2Blockers.AuthorityBindingMismatch,
             exception.BlockerCode);
+    }
+
+    private sealed class CountingPacer : IArch7bClockQualificationPacer
+    {
+        public int DelayCount { get; private set; }
+
+        public Task DelayAsync(CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            DelayCount++;
+            return Task.CompletedTask;
+        }
     }
 
     private sealed class TempRoot : IDisposable

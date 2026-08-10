@@ -37,18 +37,37 @@ public sealed record Arch7bProductionClockQualification(
     int CaptureValidationCount,
     int PostCloseValidationCount,
     int PairValidationCount,
+    int InterBatchDelayMilliseconds,
+    int AppliedDelayCount,
     IReadOnlyList<Arch7bProductionClockQualificationRun> Runs,
     string EvidenceSha256);
 
+public interface IArch7bClockQualificationPacer
+{
+    Task DelayAsync(CancellationToken cancellationToken);
+}
+
+public sealed class Arch7bClockQualificationPacer : IArch7bClockQualificationPacer
+{
+    public const int InterBatchDelayMilliseconds = 2_000;
+
+    public Task DelayAsync(CancellationToken cancellationToken) =>
+        Task.Delay(TimeSpan.FromMilliseconds(InterBatchDelayMilliseconds),
+            cancellationToken);
+}
+
 public sealed class Arch7bProductionClockAuthorityQualifier(
     IPmsShadowCaptureClockAuthorityProducer producer,
-    TimeProvider timeProvider)
+    TimeProvider timeProvider,
+    IArch7bClockQualificationPacer pacer)
 {
-    public const string Version = "arch7b_production_clock_authority_qualification_v1";
+    public const string Version = "arch7b_production_clock_authority_qualification_v2";
     public const int RequiredRunCount = 3;
+    public const int RequiredDelayCount = (RequiredRunCount * 3) - 1;
 
     public Arch7bProductionClockAuthorityQualifier()
-        : this(new PmsShadowCaptureClockAuthorityProducer(), TimeProvider.System)
+        : this(new PmsShadowCaptureClockAuthorityProducer(), TimeProvider.System,
+            new Arch7bClockQualificationPacer())
     {
     }
 
@@ -74,9 +93,11 @@ public sealed class Arch7bProductionClockAuthorityQualifier(
             var preflight = await producer.ProduceAsync(runRoot,
                 "clock_authority_preflight.json", hostIdentity, repositoryCommit,
                 cancellationToken).ConfigureAwait(false);
+            await pacer.DelayAsync(cancellationToken).ConfigureAwait(false);
             var capture = await producer.ProduceAsync(runRoot,
                 "clock_authority_capture.json", hostIdentity, repositoryCommit,
                 cancellationToken).ConfigureAwait(false);
+            await pacer.DelayAsync(cancellationToken).ConfigureAwait(false);
 
             var slotStartUtc = capture.Snapshot.CapturedAtUtc;
             var slotEndUtc = Later(slotStartUtc, timeProvider.GetUtcNow());
@@ -116,17 +137,23 @@ public sealed class Arch7bProductionClockAuthorityQualifier(
             {
                 EvidenceSha256 = Arch7bOneShotContracts.Sha256(Canonical(provisional))
             });
+            if (runNumber < RequiredRunCount)
+                await pacer.DelayAsync(cancellationToken).ConfigureAwait(false);
         }
 
         var evidence = Arch7bOneShotContracts.Sha256(string.Join('\n', Version,
             outputRoot, hostIdentity, repositoryCommit,
             PmsShadowCaptureClockAuthorityMeasurementContract.HostClockSource,
             PmsShadowCaptureClockAuthorityMeasurementContract.ReferenceClockSource,
+            Arch7bClockQualificationPacer.InterBatchDelayMilliseconds,
+            RequiredDelayCount,
             string.Join('|', runs.Select(value => value.EvidenceSha256))));
         return new(Version, "PASS", true, outputRoot, hostIdentity, repositoryCommit,
             PmsShadowCaptureClockAuthorityMeasurementContract.HostClockSource,
             PmsShadowCaptureClockAuthorityMeasurementContract.ReferenceClockSource,
-            runs.Count, runs.Count, runs.Count, runs.Count, runs.Count, runs, evidence);
+            runs.Count, runs.Count, runs.Count, runs.Count, runs.Count,
+            Arch7bClockQualificationPacer.InterBatchDelayMilliseconds,
+            RequiredDelayCount, runs, evidence);
     }
 
     private static DateTimeOffset Later(DateTimeOffset first, DateTimeOffset second) =>
