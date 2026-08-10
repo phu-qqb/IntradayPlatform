@@ -130,12 +130,13 @@ public sealed class Arch7bProcessRuntimeV2Tests
             var timeProvider = new Arch7bTestTimeProvider(DateTimeOffset.UtcNow);
             var result = await Arch7bV2ProcessQualifier.RunSingleAsync(SupervisorExecutable(),
                 $"atomic-completion-{index:D2}", timeProvider: timeProvider,
-                clockAuthorityProducer: new Arch7bTestClockAuthorityProducer(timeProvider));
+                clockAuthorityProducer: new Arch7bTestClockAuthorityProducer(timeProvider),
+                stageWindowWaiter: new Arch7bTestStageWindowWaiter(timeProvider));
 
             Assert.True(result.Passed);
             Assert.Equal(Arch7bOneShotContracts.ExpectedFinalBlocker, result.FinalBlocker);
             Assert.Equal(40, result.Stages.Count);
-            Assert.Equal(2, result.LongLivedProcesses.Count);
+            Assert.Single(result.LongLivedProcesses);
             Assert.All(result.LongLivedProcesses,
                 process => Assert.Equal(Arch7bLongLivedProcessState.Cleaned, process.State));
             Assert.Equal(0, result.ResidualProcessCount);

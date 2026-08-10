@@ -52,22 +52,30 @@ public static class Arch7bOperationalLivePlanTemplateMaterializer
         {
             if (!commandByStage.TryGetValue(commandCatalog.StageId, out var prototype))
             {
-                if (commandCatalog.StageId != "CLOCK_CAPTURE_START" ||
-                    !commandByStage.TryGetValue("PMS_IMPORT", out var source))
+                var source = skeleton.CommandTemplates.SingleOrDefault(value =>
+                    value.CommandId == commandCatalog.CommandId);
+                if (source is null && (commandCatalog.StageId != "CLOCK_CAPTURE_START" ||
+                    !commandByStage.TryGetValue("PMS_IMPORT", out source)))
                     throw new Arch7bQualificationException(
                         Arch7bV2Blockers.CommandTemplateInvalid, commandCatalog.CommandId);
                 var entry = Arch7bFinalStageExecutionCatalog.Require(commandCatalog.StageId);
-                var arguments = new List<Arch7bCommandTemplateArgument>
+                var reusesExistingCommand = source.CommandId == commandCatalog.CommandId;
+                var arguments = reusesExistingCommand
+                    ? new List<Arch7bCommandTemplateArgument>(source.ArgumentTemplates)
+                    : new List<Arch7bCommandTemplateArgument>
+                    {
+                        new("--mode", Arch7bPlaceholderValueKind.Literal, null, -1, false),
+                        new(commandCatalog.Mode, Arch7bPlaceholderValueKind.Literal, null, -1, false)
+                    };
+                if (!reusesExistingCommand)
                 {
-                    new("--mode", Arch7bPlaceholderValueKind.Literal, null, -1, false),
-                    new(commandCatalog.Mode, Arch7bPlaceholderValueKind.Literal, null, -1, false)
-                };
-                foreach (var binding in commandCatalog.Bindings)
-                {
-                    arguments.Add(new(binding.ArgumentName,
-                        Arch7bPlaceholderValueKind.Literal, null, -1, false));
-                    arguments.Add(new(Arch7bOperationalLiveFactBindingCatalog.Marker,
-                        Arch7bPlaceholderValueKind.Literal, null, -1, false));
+                    foreach (var binding in commandCatalog.Bindings)
+                    {
+                        arguments.Add(new(binding.ArgumentName,
+                            Arch7bPlaceholderValueKind.Literal, null, -1, false));
+                        arguments.Add(new(Arch7bOperationalLiveFactBindingCatalog.Marker,
+                            Arch7bPlaceholderValueKind.Literal, null, -1, false));
+                    }
                 }
                 prototype = source with
                 {
@@ -76,7 +84,7 @@ public static class Arch7bOperationalLivePlanTemplateMaterializer
                     ExecutionKind = entry.ExecutionKind,
                     ArgumentTemplates = arguments,
                     CausesRdsRead = false,
-                    CausesCapture = false,
+                    CausesCapture = commandCatalog.StageId == "MARKET_CAPTURE",
                     LongLivedProcessKey = null,
                     EvidenceSha256 = string.Empty
                 };

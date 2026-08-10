@@ -43,10 +43,10 @@ public static class Arch7bV2QualificationFactory
             "arch7b_fresh_position_import_fast_path_v1", "ARCH7B_POSITION_IMPORT_APPLIED", 2),
         new("RUNTIME_SELECTION", Arch7bExecutionKind.ChildInvoke, "runtime-selection-v1",
             "arch7b_position_snapshot_runtime_selection_v1", "ARCH7B_RUNTIME_POSITION_SNAPSHOT_SELECTED", 1),
-        new("MARKET_PREARM", Arch7bExecutionKind.ChildStartLongLived, "market-recorder-v1",
+        new("MARKET_CAPTURE", Arch7bExecutionKind.ChildInvoke, "market-recorder-v1",
             "arch6f_lmax_market_data_slot_capture_v1", "ARCH7B_MARKET_CAPTURE_QUALIFIED", 2,
-            "market-recorder", Capture: true),
-        new("MARKET_FINALIZATION", Arch7bExecutionKind.ChildStop, "prearmed-handoff-v1",
+            Capture: true),
+        new("MARKET_FINALIZATION", Arch7bExecutionKind.ChildInvoke, "prearmed-handoff-v1",
             "arch7b_prearmed_fresh_slot_handoff_cli_v1", "ARCH7B_MARKET_FINALIZATION_QUALIFIED", 2),
         new("PMS_IMPORT", Arch7bExecutionKind.ChildInvoke, "prearmed-handoff-v1",
             "arch7b_prearmed_fresh_slot_handoff_cli_v1", "ARCH7B_PMS_ECONOMIC_REPLAY_QUALIFIED", 2),
@@ -176,7 +176,7 @@ public static class Arch7bV2QualificationFactory
             var profile = Profiles.SingleOrDefault(value => value.Stage == stage);
             var kind = profile?.Kind ?? stage switch
             {
-                "BRACKET_T0" or "MARKET_CAPTURE" => Arch7bExecutionKind.ChildAwaitEvidence,
+                "BRACKET_T0" => Arch7bExecutionKind.ChildAwaitEvidence,
                 "FINAL_WORKING_ORDER_PREFLIGHT" => Arch7bExecutionKind.ExpectedBlockerGate,
                 "CLOCK_PREFLIGHT" or "BRACKET_P1" or "BRACKET_T1" or "BRACKET_P2" or
                     "COMPLEMENTARY_REPORTS" or "POSITION_READY" or "MARKET_READY_MARKER" =>
@@ -260,14 +260,16 @@ public static class Arch7bV2ProcessQualifier
     public static Task<Arch7bV2ExecutionEvidence> RunSingleAsync(string executablePath,
         string suffix, CancellationToken cancellationToken = default,
         TimeProvider? timeProvider = null,
-        IPmsShadowCaptureClockAuthorityProducer? clockAuthorityProducer = null) =>
+        IPmsShadowCaptureClockAuthorityProducer? clockAuthorityProducer = null,
+        IArch7bStageWindowWaiter? stageWindowWaiter = null) =>
         RunOneAsync(executablePath, suffix, cancellationToken, timeProvider,
-            clockAuthorityProducer);
+            clockAuthorityProducer, stageWindowWaiter);
 
     private static async Task<Arch7bV2ExecutionEvidence> RunOneAsync(string executablePath,
         string suffix, CancellationToken cancellationToken,
         TimeProvider? timeProvider = null,
-        IPmsShadowCaptureClockAuthorityProducer? clockAuthorityProducer = null)
+        IPmsShadowCaptureClockAuthorityProducer? clockAuthorityProducer = null,
+        IArch7bStageWindowWaiter? stageWindowWaiter = null)
     {
         var root = Path.Combine(Path.GetTempPath(), "qq-arch7b-v2-rehearsal",
             suffix + "-" + Guid.NewGuid().ToString("N"));
@@ -275,7 +277,8 @@ public static class Arch7bV2ProcessQualifier
         var adapters = new Arch7bRealCommandAdapterRegistry();
         var runtime = new Arch7bOneShotLiveExecutionRuntimeV2(new(),
             new Arch7bOneShotProcessRunnerV2(adapters), adapters,
-            clockAuthorityProducer: clockAuthorityProducer);
+            clockAuthorityProducer: clockAuthorityProducer,
+            stageWindowWaiter: stageWindowWaiter);
         var result = await runtime.RunAsync(fixture.Template, fixture.Authority,
             fixture.OperatorAuthorization, fixture.TemplateFileSha256, root,
             timeProvider ?? TimeProvider.System,

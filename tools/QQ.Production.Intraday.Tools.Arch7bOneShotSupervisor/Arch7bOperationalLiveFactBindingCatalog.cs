@@ -186,9 +186,9 @@ public static class Arch7bOperationalLiveFactBindingCatalog
                         ClockSnapshot(6, "--clock-authority-capture-snapshot",
                             "clock_authority_capture_snapshot", "CLOCK_CAPTURE_START")
                     ])),
-            new Arch7bOperationalCommandBindingSet("market-data-recorder", "MARKET_PREARM",
+            new Arch7bOperationalCommandBindingSet("market-data-recorder", "MARKET_CAPTURE",
                 "QQ.Production.Intraday.Tools.LmaxMarketDataCaptureOnly", "live-market-data-only",
-                MarketBindings("market-data-recorder", "MARKET_PREARM",
+                MarketBindings("market-data-recorder", "MARKET_CAPTURE",
                     [
                         DraftArtifact(0, "--position-market-draft-path", "path"),
                         DraftArtifact(1, "--expected-position-market-draft-sha256", "sha256")

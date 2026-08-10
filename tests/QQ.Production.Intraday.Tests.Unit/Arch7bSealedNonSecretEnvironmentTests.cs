@@ -1,4 +1,4 @@
-﻿using System.Diagnostics;
+using System.Diagnostics;
 using System.Reflection;
 using System.Security.Cryptography;
 using System.Text.Json;
@@ -102,7 +102,8 @@ public sealed class Arch7bSealedNonSecretEnvironmentTests
         var timeProvider = new Arch7bTestTimeProvider(DateTimeOffset.UtcNow);
         var runtime = new Arch7bOneShotLiveExecutionRuntimeV2(new(),
             new Arch7bOneShotProcessRunnerV2(adapters), adapters,
-            clockAuthorityProducer: new Arch7bTestClockAuthorityProducer(timeProvider));
+            clockAuthorityProducer: new Arch7bTestClockAuthorityProducer(timeProvider),
+            stageWindowWaiter: new Arch7bTestStageWindowWaiter(timeProvider));
 
         var result = await runtime.RunAsync(fixture.Template, fixture.Authority,
             fixture.OperatorAuthorization, fixture.TemplateFileSha256, root,

@@ -1,6 +1,7 @@
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using QQ.Production.Intraday.Infrastructure.PostgreSql;
 using QQ.Production.Intraday.Tools.Arch7bOneShotSupervisor;
 
 namespace QQ.Production.Intraday.Tests.Unit;
@@ -101,9 +102,11 @@ public sealed class Arch7bLivePlanMaterializationV2Tests
         var fixture = Fixture("full-runtime");
         var adapters = new Arch7bRealCommandAdapterRegistry();
         var timeProvider = new Arch7bTestTimeProvider(DateTimeOffset.UtcNow);
+        var stageWindowWaiter = new Arch7bTestStageWindowWaiter(timeProvider);
         var runtime = new Arch7bOneShotLiveExecutionRuntimeV2(new(),
             new Arch7bOneShotProcessRunnerV2(adapters), adapters,
-            clockAuthorityProducer: new Arch7bTestClockAuthorityProducer(timeProvider));
+            clockAuthorityProducer: new Arch7bTestClockAuthorityProducer(timeProvider),
+            stageWindowWaiter: stageWindowWaiter);
 
         var result = await runtime.RunAsync(fixture.Template, fixture.Authority,
             fixture.OperatorAuthorization, fixture.TemplateFileSha256, fixture.RunRoot,
@@ -112,11 +115,40 @@ public sealed class Arch7bLivePlanMaterializationV2Tests
         Assert.True(result.Passed, JsonSerializer.Serialize(result));
         Assert.Equal(40, result.Stages.Count);
         Assert.Equal(new Arch7bOneShotBudgetSnapshot(1, 2, 1, 0), result.Budget);
-        Assert.Equal(2, result.LongLivedProcesses.Count);
+        Assert.Single(result.LongLivedProcesses);
         Assert.All(result.LongLivedProcesses, value =>
             Assert.Equal(Arch7bLongLivedProcessState.Cleaned, value.State));
         Assert.Equal(0, result.ResidualProcessCount);
         Assert.Equal(0, result.ResidualMarkerCount);
+        var slot = PmsShadowIntradayCadenceContract.WindowEnding(
+            result.Stages.Single(value => value.StageId == "CLOCK_POST_CLOSE")
+                .StartedAtUtc);
+        Assert.Collection(stageWindowWaiter.Waits,
+            value =>
+            {
+                Assert.Equal("CLOCK_CAPTURE_START", value.StageId);
+                Assert.Equal(slot.SlotStartUtc.AddSeconds(
+                    -Arch7bOperationalSlotSelector.CaptureClockLeadSeconds), value.TargetUtc);
+                Assert.True(value.EnforceMaximumWakeLateness);
+            },
+            value =>
+            {
+                Assert.Equal("MARKET_CAPTURE", value.StageId);
+                Assert.Equal(slot.SlotStartUtc, value.TargetUtc);
+                Assert.True(value.EnforceMaximumWakeLateness);
+            },
+            value =>
+            {
+                Assert.Equal("CLOCK_POST_CLOSE", value.StageId);
+                Assert.Equal(slot.SlotEndUtc, value.TargetUtc);
+                Assert.False(value.EnforceMaximumWakeLateness);
+            });
+        Assert.Equal(Arch7bExecutionKind.Internal, result.Stages.Single(value =>
+            value.StageId == "MARKET_PREARM").ExecutionKind);
+        Assert.Equal(Arch7bExecutionKind.ChildInvoke, result.Stages.Single(value =>
+            value.StageId == "MARKET_CAPTURE").ExecutionKind);
+        Assert.Equal(Arch7bExecutionKind.ChildInvoke, result.Stages.Single(value =>
+            value.StageId == "MARKET_FINALIZATION").ExecutionKind);
         foreach (var fileName in new[]
                  {
                      "clock_authority_preflight.json",
