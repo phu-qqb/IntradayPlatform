@@ -126,6 +126,23 @@ public static class Arch7bProgramV2Modes
         var authorization = await Arch7bLiveAuthorityLoaderV2.LoadOperatorAsync(authorizationPath,
             expectedAuthorization).ConfigureAwait(false);
 
+        var operationalManifestPath = Path.Combine(freezeRoot,
+            "arch7b-operational-execution-authority-manifest-v1.json");
+        RequireFile(operationalManifestPath, "operational-execution-authority-manifest");
+        var operationalManifestBytes = await File.ReadAllBytesAsync(operationalManifestPath)
+            .ConfigureAwait(false);
+        var operationalManifest = Arch7bOperationalExecutionAuthorityManifestParser
+            .ParseStrict(operationalManifestBytes);
+        if (operationalManifest.SourceTemplateSha256 != template.FileSha256)
+            throw new Arch7bQualificationException(
+                Arch7bV2Contracts.OperationalAuthoritySetMismatch, "source-template-sha256");
+        var requiredInventory = Arch7bRequiredOperationalExecutionAuthorityInventoryBuilder
+            .Build(template.Value);
+        var staticEvidenceRoot = runRoot + "-static-authority";
+        Arch7bOperationalExecutionAuthorityValidator.ValidateStatic(requiredInventory,
+            operationalManifest, template.Value.FileAuthorities, authority.Value.FileAuthorities,
+            Path.Combine(staticEvidenceRoot,
+                Arch7bOperationalExecutionAuthorityValidator.ValidationFileName));
         BindHash("freeze-manifest", Sha(options, "expected-freeze-manifest-sha256"),
             template.Value.FreezeManifestSha256, authority.Value.FreezeManifestSha256);
         BindHash("freeze-packet", Sha(options, "expected-freeze-packet-sha256"),

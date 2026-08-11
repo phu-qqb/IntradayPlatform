@@ -21,6 +21,44 @@ public static class Arch7bV2Contracts
     public const string SecretLifecycleClassification = "CORE_LEASE_PROCESS_OWNS_SECRET_AND_SPAWNS_SECRET_CHILDREN";
     public const string ReadyVerdict = "ARCH7B_PR53_UPDATED_REAL_PLAN_MATERIALIZATION_AND_COMMAND_ADAPTERS_READY";
     public const string AdapterSetQualified = "ARCH7B_REAL_CHILD_OUTPUT_ADAPTER_SET_QUALIFIED";
+    public const string OperationalExecutionAuthorityReferenceVersion =
+        "arch7b_operational_execution_authority_reference_v1";
+    public const string OperationalExecutionAuthorityInventoryVersion =
+        "arch7b_required_operational_execution_authority_inventory_v1";
+    public const string OperationalExecutionAuthorityEntryVersion =
+        "arch7b_operational_execution_authority_v1";
+    public const string OperationalExecutionAuthorityManifestVersion =
+        "arch7b_operational_execution_authority_manifest_v1";
+    public const string OperationalExecutionAuthorityDirectoryInventoryVersion =
+        "arch7b_operational_execution_authority_directory_inventory_v1";
+    public const string OperationalExecutionAuthorityValidationVersion =
+        "arch7b_operational_execution_authority_validation_v1";
+    public const string OperationalAuthorityMismatch =
+        "ARCH7B_OPERATIONAL_EXECUTION_AUTHORITY_MISMATCH";
+    public const string OperationalAuthorityMissing =
+        "ARCH7B_OPERATIONAL_AUTHORITY_REQUIRED_ID_MISSING";
+    public const string OperationalAuthorityUnused =
+        "ARCH7B_OPERATIONAL_AUTHORITY_UNUSED_ID_PRESENT";
+    public const string OperationalAuthorityDuplicateId =
+        "ARCH7B_OPERATIONAL_AUTHORITY_DUPLICATE_ID";
+    public const string OperationalAuthorityKindMismatch =
+        "ARCH7B_OPERATIONAL_AUTHORITY_KIND_MISMATCH";
+    public const string OperationalAuthorityPathMismatch =
+        "ARCH7B_OPERATIONAL_AUTHORITY_PATH_MISMATCH";
+    public const string OperationalAuthorityShaMismatch =
+        "ARCH7B_OPERATIONAL_AUTHORITY_SHA_MISMATCH";
+    public const string OperationalAuthoritySetMismatch =
+        "ARCH7B_OPERATIONAL_AUTHORITY_SET_MISMATCH";
+    public const string OperationalAuthorityDirectoryInventoryMismatch =
+        "ARCH7B_OPERATIONAL_AUTHORITY_DIRECTORY_INVENTORY_MISMATCH";
+    public const string OperationalAuthorityGitMismatch =
+        "ARCH7B_OPERATIONAL_AUTHORITY_GIT_MISMATCH";
+    public const string OperationalAuthorityNodeMismatch =
+        "ARCH7B_OPERATIONAL_AUTHORITY_NODE_MISMATCH";
+    public const string OperationalAuthorityDotnetMismatch =
+        "ARCH7B_OPERATIONAL_AUTHORITY_DOTNET_MISMATCH";
+    public const string OperationalAuthorityReparsePoint =
+        "ARCH7B_OPERATIONAL_AUTHORITY_REPARSE_POINT";
 }
 
 public static class Arch7bV2Blockers
