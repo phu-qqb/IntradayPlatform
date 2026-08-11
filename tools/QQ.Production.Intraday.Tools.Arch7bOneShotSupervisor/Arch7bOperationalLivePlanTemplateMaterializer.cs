@@ -93,6 +93,11 @@ public static class Arch7bOperationalLivePlanTemplateMaterializer
                 BindCommand(prototype, commandCatalog));
         }
 
+        if (!commandByStage.TryGetValue("CORE_PREQUALIFICATION", out var corePrototype))
+            throw new Arch7bQualificationException(
+                Arch7bV2Blockers.CommandTemplateInvalid, "CORE_PREQUALIFICATION");
+        replacements["CORE_PREQUALIFICATION"] = BindDirectCorePrequalification(corePrototype);
+
         var commands = skeleton.CommandTemplates
             .Where(command => expectedCommandStages.Contains(command.StageId))
             .Select(command => replacements.GetValueOrDefault(command.StageId) ?? command)
@@ -271,10 +276,18 @@ public static class Arch7bOperationalLivePlanTemplateMaterializer
                     value.PlaceholderScope != Arch7bOperationalPlaceholderScope.Authority)
                 .Select(value => value.PlaceholderName))
                 .Distinct(StringComparer.Ordinal).ToArray();
-            var stageRequired = stage.StageId == "POSITION_MARKET_DRAFT"
-                ? new[] { "runtime_selection_artifact" } : [];
-            var stageProduced = stage.StageId == "RUNTIME_SELECTION"
-                ? new[] { "runtime_selection_artifact" } : [];
+            string[] stageRequired = stage.StageId switch
+            {
+                "POSITION_MARKET_DRAFT" => ["runtime_selection_artifact"],
+                "CORE_PREQUALIFICATION" => ["core_prequalification_config"],
+                _ => []
+            };
+            string[] stageProduced = stage.StageId switch
+            {
+                "RUNTIME_SELECTION" => ["runtime_selection_artifact"],
+                "SLOT_LOCKED" => ["core_prequalification_config"],
+                _ => []
+            };
             required = required.Concat(stageRequired)
                 .Distinct(StringComparer.Ordinal).ToArray();
             var produced = stage.ProducedFactTypes.Concat(bindings.Where(value =>
@@ -299,6 +312,49 @@ public static class Arch7bOperationalLivePlanTemplateMaterializer
                 EvidenceSha256 = Arch7bOneShotContracts.Sha256(canonical)
             };
         }).ToArray();
+    }
+
+    private static Arch7bOneShotCommandTemplate BindDirectCorePrequalification(
+        Arch7bOneShotCommandTemplate prototype)
+    {
+        var provisional = prototype with
+        {
+            ExecutableAuthorityId = "node_executable",
+            WorkingDirectoryAuthorityId = "core_node_runtime",
+            ArgumentTemplates =
+            [
+                new("src/fast-seal-cli.mjs", Arch7bPlaceholderValueKind.Literal,
+                    null, -1, false),
+                new("prequalify-bracket-runtime", Arch7bPlaceholderValueKind.Literal,
+                    null, -1, false),
+                new("--config", Arch7bPlaceholderValueKind.Literal,
+                    null, -1, false),
+                new("${fact:core_prequalification_config.path}",
+                    Arch7bPlaceholderValueKind.AbsolutePath, "SLOT_LOCKED",
+                    int.MaxValue, true)
+            ],
+            EvidenceSha256 = string.Empty
+        };
+        var canonical = string.Join('\n', Arch7bV2Contracts.CommandTemplateVersion,
+            provisional.CommandId, provisional.StageId, provisional.ExecutionKind,
+            provisional.ExecutableAuthorityId,
+            string.Join('|', provisional.ArgumentTemplates.Select(value =>
+                $"{value.Value}:{value.ValueKind}:{value.ExpectedProducerStage}:" +
+                $"{value.MaximumAgeSeconds}:{value.MustBeInsideRunRoot}")),
+            provisional.WorkingDirectoryAuthorityId, provisional.AdapterId,
+            provisional.AdapterContractVersion,
+            provisional.ExpectedNativeOutputContract, provisional.TimeoutSeconds,
+            provisional.StandardOutputLimitBytes, provisional.StandardErrorLimitBytes,
+            provisional.CleanupResourceType, provisional.CausesRdsRead,
+            provisional.CausesCapture, provisional.ReadsSecret,
+            string.Join('|', provisional.SecretVariableNames),
+            Arch7bSealedNonSecretEnvironment.Canonical(
+                provisional.NonSecretEnvironment),
+            provisional.LongLivedProcessKey ?? string.Empty);
+        return provisional with
+        {
+            EvidenceSha256 = Arch7bOneShotContracts.Sha256(canonical)
+        };
     }
 
     private static int Count(string text, string value)

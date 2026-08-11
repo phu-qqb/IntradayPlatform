@@ -212,6 +212,28 @@ public sealed class Arch7bOperationalLiveFactBindingCatalogTests : IDisposable
             StringComparison.Ordinal);
         Assert.Contains("$" + "{artifact:position_market_draft_artifact.sha256}", text,
             StringComparison.Ordinal);
+        var core = result.Template.CommandTemplates.Single(value =>
+            value.StageId == "CORE_PREQUALIFICATION");
+        Assert.Equal("node_executable", core.ExecutableAuthorityId);
+        Assert.Equal("core_node_runtime", core.WorkingDirectoryAuthorityId);
+        Assert.Equal(new[]
+        {
+            "src/fast-seal-cli.mjs",
+            "prequalify-bracket-runtime",
+            "--config",
+            "$" + "{fact:core_prequalification_config.path}"
+        }, core.ArgumentTemplates.Select(value => value.Value));
+        Assert.DoesNotContain(core.ArgumentTemplates,
+            value => value.Value.Contains("npm", StringComparison.OrdinalIgnoreCase));
+        Assert.DoesNotContain(core.ArgumentTemplates,
+            value => value.Value.Contains("powershell", StringComparison.OrdinalIgnoreCase) ||
+                     value.Value.Contains("cmd.exe", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains("core_prequalification_config",
+            result.Template.StageContracts.Single(value =>
+                value.StageId == "SLOT_LOCKED").ProducedFactTypes);
+        Assert.Contains("core_prequalification_config",
+            result.Template.StageContracts.Single(value =>
+                value.StageId == "CORE_PREQUALIFICATION").RequiredFactTypes);
     }
 
     [Fact]

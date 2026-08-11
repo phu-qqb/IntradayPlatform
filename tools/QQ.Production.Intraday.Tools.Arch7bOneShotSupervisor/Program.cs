@@ -59,7 +59,7 @@ public static class Program
                 _ => throw new Arch7bQualificationException(Arch7bBlockers.SupervisorModeUnknown, mode)
             };
             Console.WriteLine(JsonSerializer.Serialize(result, JsonOptions));
-            return 0;
+            return ExitCodeFor(mode, result);
         }
         catch (Arch7bQualificationException exception)
         {
@@ -82,6 +82,20 @@ public static class Program
             return 1;
         }
     }
+
+    public static int ExitCodeFor(string mode, object result)
+    {
+        if (mode != "run-one-shot") return 0;
+        if (result is not Arch7bV2ExecutionEvidence evidence) return 1;
+        return evidence.Passed && evidence.PrimaryFailure is null &&
+               evidence.FinalBlocker == Arch7bOneShotContracts.ExpectedFinalBlocker &&
+               evidence.Cleanup.Complete && evidence.ResidualProcessCount == 0 &&
+               evidence.ResidualMarkerCount == 0 ? 0 : 2;
+    }
+
+    public static bool IsSuccessfulSsmResult(int processExitCode,
+        Arch7bV2ExecutionEvidence evidence) => processExitCode == 0 &&
+        ExitCodeFor("run-one-shot", evidence) == 0;
 
     public static IReadOnlyDictionary<string, string> Parse(IEnumerable<string> args)
     {
