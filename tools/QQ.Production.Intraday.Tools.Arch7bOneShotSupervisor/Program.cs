@@ -37,10 +37,15 @@ public static class Program
                 "materialize-final-stage-execution-classification" => await
                     Arch7bFinalStageExecutionCatalog.WriteAsync(
                         Path.GetFullPath(Required(options, "output-path"))).ConfigureAwait(false),
-                "materialize-operational-live-template" => await
-                    Arch7bOperationalLivePlanTemplateMaterializer.WriteAsync(
+                "materialize-operational-execution-authorities" => await
+                    new Arch7bOperationalExecutionAuthorityMaterializer().MaterializeFilesAsync(
                         Path.GetFullPath(Required(options, "source-template")),
-                        Path.GetFullPath(Required(options, "source-manifest")),
+                        Path.GetFullPath(Required(options, "authority-path-map")),
+                        Path.GetFullPath(Required(options, "output-root"))).ConfigureAwait(false),
+                "materialize-operational-live-template" => await
+                    Arch7bOperationalTemplateAuthorityProjection.WriteAsync(
+                        Path.GetFullPath(Required(options, "source-template")),
+                        Path.GetFullPath(Required(options, "authority-manifest")),
                         Path.GetFullPath(Required(options, "output-path"))).ConfigureAwait(false),
                 "qualify-production-clock-authority" => await
                     new Arch7bProductionClockAuthorityQualifier().RunAsync(
@@ -282,7 +287,14 @@ public static class Program
     private static void RequireModeSafety(IReadOnlyDictionary<string, string> options, string mode)
     {
         var qualificationOnly = ParseBoolean(options.GetValueOrDefault("qualification-only"), true);
-        if (mode is "run-one-shot" or "materialize-live-run-authorities")
+        var staticPreflightOnly = mode == "run-one-shot" &&
+                                  ParseBoolean(options.GetValueOrDefault("static-preflight-only"), false);
+        if (staticPreflightOnly)
+        {
+            if (!qualificationOnly)
+                throw new Arch7bQualificationException(Arch7bBlockers.QualificationModeMismatch);
+        }
+        else if (mode is "run-one-shot" or "materialize-live-run-authorities")
         {
             if (qualificationOnly) throw new Arch7bQualificationException(Arch7bBlockers.QualificationModeMismatch);
         }

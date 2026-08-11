@@ -1,0 +1,24 @@
+{
+  "contract_version": "arch7b_operational_execution_authority_resume_v1",
+  "captured_at_utc": "2026-08-11T16:14:19.1667545Z",
+  "classification": "OPERATIONAL_EXECUTION_AUTHORITY_VALIDATOR_IMPLEMENTED_TEST_MATRIX_IN_PROGRESS",
+  "repository": "phu-qqb/IntradayPlatform",
+  "branch": "codex/arch7b-materialize-operational-execution-authorities",
+  "head": "150890e7ea446694e9a69381cb94b46b3232425c",
+  "head_tree": "28bff51b2946c86975c72e08feb73b17eef1a143",
+  "modified_files": [
+    "tools/QQ.Production.Intraday.Tools.Arch7bOneShotSupervisor/Arch7bProgramV2Modes.cs",
+    "tools/QQ.Production.Intraday.Tools.Arch7bOneShotSupervisor/Arch7bV2Contracts.cs",
+    "tools/QQ.Production.Intraday.Tools.Arch7bOneShotSupervisor/Program.cs"
+  ],
+  "untracked_files": [
+    "tools/QQ.Production.Intraday.Tools.Arch7bOneShotSupervisor/Arch7bOperationalExecutionAuthorities.cs",
+    "tools/QQ.Production.Intraday.Tools.Arch7bOneShotSupervisor/Arch7bOperationalTemplateAuthorityProjection.cs"
+  ],
+  "live_values_present": false,
+  "secret_values_present": false,
+  "database_access_performed": false,
+  "lmax_access_performed": false,
+  "fix_access_performed": false,
+  "orders_sent": 0
+}
