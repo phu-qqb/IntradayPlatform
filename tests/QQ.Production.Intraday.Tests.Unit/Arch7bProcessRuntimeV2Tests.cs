@@ -91,8 +91,13 @@ public sealed class Arch7bProcessRuntimeV2Tests
     {
         var registry = new Arch7bRealCommandAdapterRegistry();
 
-        Assert.Equal(14, registry.Adapters.Count);
-        Assert.Equal(14, registry.Adapters.Select(value => value.AdapterId).Distinct().Count());
+        var required = Arch7bFinalStageExecutionCatalog.All
+            .Where(value => value.HasCommandTemplate)
+            .Select(value => value.AdapterId!).Distinct(StringComparer.Ordinal).ToArray();
+        Assert.All(required, adapterId => Assert.Same(
+            registry.Require(adapterId), registry.Require(adapterId)));
+        Assert.Equal(registry.Adapters.Count,
+            registry.Adapters.Select(value => value.AdapterId).Distinct().Count());
         Assert.All(registry.Adapters, value =>
         {
             Assert.Equal(Arch7bV2Contracts.ChildResultAdapterVersion, value.ContractVersion);
@@ -125,12 +130,13 @@ public sealed class Arch7bProcessRuntimeV2Tests
             var timeProvider = new Arch7bTestTimeProvider(DateTimeOffset.UtcNow);
             var result = await Arch7bV2ProcessQualifier.RunSingleAsync(SupervisorExecutable(),
                 $"atomic-completion-{index:D2}", timeProvider: timeProvider,
-                clockAuthorityProducer: new Arch7bTestClockAuthorityProducer(timeProvider));
+                clockAuthorityProducer: new Arch7bTestClockAuthorityProducer(timeProvider),
+                stageWindowWaiter: new Arch7bTestStageWindowWaiter(timeProvider));
 
             Assert.True(result.Passed);
             Assert.Equal(Arch7bOneShotContracts.ExpectedFinalBlocker, result.FinalBlocker);
             Assert.Equal(40, result.Stages.Count);
-            Assert.Equal(2, result.LongLivedProcesses.Count);
+            Assert.Single(result.LongLivedProcesses);
             Assert.All(result.LongLivedProcesses,
                 process => Assert.Equal(Arch7bLongLivedProcessState.Cleaned, process.State));
             Assert.Equal(0, result.ResidualProcessCount);

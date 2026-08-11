@@ -136,34 +136,28 @@ public sealed class Arch7bRealCommandAdapterRegistry
 
     public static IReadOnlyList<IArch7bChildResultAdapter> CreateDefault() =>
     [
-        Adapter("core-prequalification-v1", "arch7b_core_runtime_prequalification_v1",
-            ["ARCH7B_CORE_RUNTIME_PREQUALIFICATION_QUALIFIED"], 1),
-        Adapter("portal-session-v1", "arch7b_portal_session_recovery_v1",
-            ["ARCH7B_PORTAL_SESSION_PROVEN"], 1),
+        new Arch7bCoreRuntimePrequalificationAdapter(),
+        new Arch7bPortalSessionProofAdapter(),
         Adapter("rds-arm-orchestrator-v1", "arch7b_operational_orchestrator_lifecycle_v1",
             ["ARCH7B_ARM_IMPORT_OPERATIONAL_ORCHESTRATOR_QUALIFIED"], 2),
         Adapter("rds-preloaded-lease-v1", "arch7b_rds_secret_preloaded_lease_v1",
             ["ARCH7B_RDS_SECRET_PRELOADED_LEASE_READY"], 2),
         Adapter("lmax-bracket-v1", "lmax_portal_bracketed_current_position_snapshot_v2",
             ["ARCH7B_BRACKETED_GLOBAL_FLAT_POSITION_SNAPSHOT_CREATED"], 3),
-        Adapter("core-fast-seal-v1", "arch7b_lmax_bracket_fast_seal_v1",
+        Adapter("core-fast-seal-v1", "lmax_portal_bracket_fast_seal_v1",
             ["ARCH7B_CORE_FAST_SEAL_QUALIFIED"], 4),
         Adapter("handoff-v3", "arch7b_lmax_portal_core_to_intraday_preloaded_rds_secret_handoff_v3",
             ["CORE_BRACKET_HANDOFF_PRELOADED_RDS_SECRET_LEASE_QUALIFIED"], 3),
         Adapter("position-import-v1", "arch7b_fresh_position_import_fast_path_v1",
             ["ARCH7B_POSITION_IMPORT_APPLIED", "READY"], 2),
-        Adapter("runtime-selection-v1", "arch7b_position_snapshot_runtime_selection_v1",
-            ["ARCH7B_RUNTIME_POSITION_SNAPSHOT_SELECTED"], 1),
+        new Arch7bRuntimeSelectionAdapter(),
         Adapter("market-recorder-v1", "arch6f_lmax_market_data_slot_capture_v1",
             ["ARCH7B_MARKET_CAPTURE_QUALIFIED"], 2),
-        Adapter("pms-economic-replay-v1", "arch6f_economic_replay_v2",
-            ["ARCH7B_PMS_ECONOMIC_REPLAY_QUALIFIED"], 2),
-        Adapter("arch7a-shadow-v1", "arch7a_arch7b_shadow_qualification_v1",
+        new Arch7bPrearmedFreshSlotHandoffAdapter(),
+        Adapter("arch7a-shadow-v1", "arch7a_arch7b_rds_shadow_qualification_v1",
             ["ARCH7A_SHADOW_QUALIFICATION_PERSISTED"], 2),
         Adapter("operational-reporting-v1", "anubis_infx_readonly_reporting_bundle_v1",
-            ["ANUBIS_INFX_READONLY_REPORTING_BUNDLE_CREATED"], 2),
-        Adapter("working-order-preflight-v1", "arch7b_working_order_preflight_v1", [], 1,
-            [Arch7bOneShotContracts.ExpectedFinalBlocker])
+            ["ANUBIS_INFX_READONLY_REPORTING_BUNDLE_CREATED"], 2)
     ];
 
     private static IArch7bChildResultAdapter Adapter(string id, string contract,

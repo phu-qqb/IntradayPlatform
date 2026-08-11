@@ -4,14 +4,21 @@
 
 `ARCH7B_CORE_BROKER_AND_INTRADAY_SUPERVISOR_CROSS_REPO_BINDING_READY`
 
-The Intraday implementation candidate is
-`7986a0a1d79f7d84bd2d1ab3e4958cc863c16c44` with tree
-`0e44081e064622c697a78472a98ee0edd5001d67`. The Core implementation is
-`be5e969fbeae56cf8de673023a36062a26f52e64` with tree
-`03229eb69a859927bfcd27ff2796fe3051df33c3`. The Core repository authority
-on Primary is `d58a6bf3e6b7c62c68d8a3df0924ae8f7bfa3965ea5f5a6553735a785b66be89`,
+The Intraday functional implementation candidate is
+`08d7c7195939d7e7ee48b4567ee97e45bba417d6` with tree
+`6d339ca73c8f5e8cb957ac5d6cc08a48b6da4941`; the final authority-only rebind is
+the commit containing this packet. The Core implementation is
+`43a848ec0c609d6257a3020cb7cbe1f10443b5e6` with tree
+`f4fe2265c80288e6133f2484da3ed8819aa6c92b`. The Core repository authority
+on Primary is `44cb8bc70ac9f488bb819e24590fee3d96b1dc3d73b07ce99135a42350a8ce42`,
 with tracked inventory SHA-256
-`532a8774c00717bf67fa0a7e44e8eb1fa6f44a4b4135121dcbebc46985ed408d`.
+`f5dbca8c496456580c7d63e498866333bd0afbc68057440587c0826261709991`.
+The Portal wrapper remains
+`tools/lmax_portal_reports_downloader/src/downloader.mjs`; its Git source and
+Windows runtime SHA-256 values are respectively
+`c732eaff2912e09f0cb31d4143bd9a28f648428e195dd32937c525bd1fd56fab` and
+`7525a08daea3f830e705b253d522320d09ed7eff287d20bc4ff767ca99004f3b`.
+It exposes the exact `lmax_portal_demo_session_proof_v1` contract.
 The broker module and CLI SHA-256 remain respectively
 `2ba086323683524fc018937e88a0adbd4723d8ed201efa93293b98eb81f587f2` and
 `e0bfb03b75af841a8a808b8efb0f734b128756d5c7fdc3e10e9d13a19fe886c3`:
@@ -48,19 +55,16 @@ normalized output evidence are checked on every response.
 
 Local qualification passes 20/20 independent runs and 10/10 campaigns of
 three runs: 50/50 complete sequences, adapters, and terminal cleanups. ARCH7B
-regressions pass 637/637 and the Release build has zero errors. Pending model
+regressions pass 698/698 and the Release build has zero errors. Pending model
 changes remain false and the migration count remains eight.
 
-Primary command `0eadeb4b-f3f1-49c2-bf39-b51c3cfac90e` passes 3/3 complete
-rehearsals. The installed supervisor DLL SHA-256 is
-`78070ee73463ead2fa267af5fc79f74b7822e1379415b596a05b905585f20513`.
-Evidence SHA-256 is
-`cee11a6d8665fae6703a6fa87572529352e92671a35d99e79b0c13ddc3c7be8e`.
-Residual processes and transfer files are zero.
+The authority-only rebind must be committed before the Primary runtime can be
+content-addressed. Three Primary A-H campaigns are therefore required against
+that commit, with zero residual processes and markers, before merge.
 
 ## Safety
 
 Real secret reads, DB connections and writes, live slots, Portal HTTP, Market
 Data, FIX logons, orders, Fills, ledger events, Account API, Polygon,
 Databento, AWS/S3 mutations, and operational one-shot state are all zero. PR
-#53 remains open, draft, and unmerged.
+#56 remains open, draft, and unmerged.

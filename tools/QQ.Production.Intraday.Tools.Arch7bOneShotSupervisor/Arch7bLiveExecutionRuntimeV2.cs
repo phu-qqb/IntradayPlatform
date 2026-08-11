@@ -42,11 +42,13 @@ public sealed partial class Arch7bOneShotLiveExecutionRuntimeV2
     private readonly Arch7bRealCommandAdapterRegistry adapters;
     private readonly IArch7bCoreRdsSecretBrokerClient? brokerClient;
     private readonly IPmsShadowCaptureClockAuthorityProducer clockAuthorityProducer;
+    private readonly IArch7bStageWindowWaiter stageWindowWaiter;
 
     public Arch7bOneShotLiveExecutionRuntimeV2(Arch7bOneShotCommandMaterializer materializer,
         Arch7bOneShotProcessRunnerV2 runner, Arch7bRealCommandAdapterRegistry adapters,
         IArch7bCoreRdsSecretBrokerClient? brokerClient = null,
-        IPmsShadowCaptureClockAuthorityProducer? clockAuthorityProducer = null)
+        IPmsShadowCaptureClockAuthorityProducer? clockAuthorityProducer = null,
+        IArch7bStageWindowWaiter? stageWindowWaiter = null)
     {
         this.materializer = materializer;
         this.runner = runner;
@@ -54,6 +56,8 @@ public sealed partial class Arch7bOneShotLiveExecutionRuntimeV2
         this.brokerClient = brokerClient;
         this.clockAuthorityProducer = clockAuthorityProducer ??
             new PmsShadowCaptureClockAuthorityProducer();
+        this.stageWindowWaiter = stageWindowWaiter ??
+            new Arch7bMonotonicStageWindowWaiter();
     }
 
     public async Task<Arch7bV2ExecutionEvidence> RunAsync(
@@ -99,6 +103,8 @@ public sealed partial class Arch7bOneShotLiveExecutionRuntimeV2
             {
                 currentStage = stageContract.StageId;
                 ValidateStageEntry(stageContract, completed);
+                await WaitForStageWindowAsync(currentStage, selectedSlot, timeProvider,
+                    cancellationToken).ConfigureAwait(false);
                 var startedAt = timeProvider.GetUtcNow();
                 string? commandSha = null;
                 string? resultSha = null;
@@ -318,6 +324,27 @@ public sealed partial class Arch7bOneShotLiveExecutionRuntimeV2
             Arch7bNoLiveSafetyCounters.Zero, Arch7bOneShotContracts.Sha256(evidenceCanonical));
     }
 
+    private Task WaitForStageWindowAsync(string stageId, Arch7bSlotLock? selectedSlot,
+        TimeProvider timeProvider, CancellationToken cancellationToken)
+    {
+        if (stageId is not ("CLOCK_CAPTURE_START" or "MARKET_CAPTURE" or
+            "CLOCK_POST_CLOSE"))
+            return Task.CompletedTask;
+        if (selectedSlot is null)
+            throw new Arch7bQualificationException(
+                Arch7bV2Blockers.RequiredFactMissing, "selected_slot");
+
+        var targetUtc = stageId switch
+        {
+            "CLOCK_CAPTURE_START" => selectedSlot.SlotStartUtc.AddSeconds(
+                -Arch7bOperationalSlotSelector.CaptureClockLeadSeconds),
+            "MARKET_CAPTURE" => selectedSlot.SlotStartUtc,
+            _ => selectedSlot.SlotEndUtc
+        };
+        return stageWindowWaiter.WaitUntilAsync(stageId, targetUtc, timeProvider,
+            stageId != "CLOCK_POST_CLOSE", cancellationToken);
+    }
+
     private async Task ExecuteStageAsync(Arch7bOneShotStageContract stage,
         Arch7bOneShotLivePlanTemplate template, Arch7bOneShotLiveFactStore facts,
         Arch7bTerminalCleanupSupervisor cleanup, Arch7bOneShotLongLivedProcessRegistry longLived,
@@ -359,6 +386,18 @@ public sealed partial class Arch7bOneShotLiveExecutionRuntimeV2
         if (stage.ExecutionKind == Arch7bExecutionKind.ExpectedBlockerGate)
         {
             resultCode(Arch7bOneShotContracts.ExpectedFinalBlocker);
+            foreach (var factType in stage.ProducedFactTypes)
+                produced.Add(facts.Append(factType, stage.StageId, new
+                {
+                    result = Arch7bOneShotContracts.ExpectedFinalBlocker,
+                    broker_send_allowed = false,
+                    order_entry_logons = 0,
+                    orders = 0,
+                    fills = 0,
+                    ledger_events = 0,
+                    no_order = true
+                }, Arch7bOneShotContracts.Sha256(stage.StageId + ":" + factType + ":" +
+                    Arch7bOneShotContracts.ExpectedFinalBlocker), observedUtc).FactSha256);
             return;
         }
         var commandTemplate = template.CommandTemplates.Single(value => value.StageId == stage.StageId);
@@ -386,11 +425,21 @@ public sealed partial class Arch7bOneShotLiveExecutionRuntimeV2
         Arch7bNormalizedChildResult normalized;
         if (stage.ExecutionKind == Arch7bExecutionKind.ChildStop)
         {
-            var processKey = command.LongLivedProcessKey ?? throw new Arch7bQualificationException(
-                Arch7bV2Blockers.LongLivedProcessStateInvalid, command.CommandId);
+            var processKey = stage.StageId == "MARKET_FINALIZATION"
+                ? "market-recorder"
+                : command.LongLivedProcessKey ?? throw new Arch7bQualificationException(
+                    Arch7bV2Blockers.LongLivedProcessStateInvalid, command.CommandId);
             longLived.Signal(processKey, "COMPLETE");
-            normalized = await runner.StopLongLivedAsync(processKey, command, runRoot, longLived,
+            var producerResult = await runner.StopLongLivedAsync(processKey, command,
+                runRoot, longLived,
                 cancellationToken).ConfigureAwait(false);
+            if (stage.StageId == "MARKET_FINALIZATION")
+            {
+                var execution = await runner.InvokeAsync(command, runRoot, cleanup,
+                    secretLease, bracketStarted, cancellationToken).ConfigureAwait(false);
+                normalized = execution.NormalizedResult;
+            }
+            else normalized = producerResult;
         }
         else
         {

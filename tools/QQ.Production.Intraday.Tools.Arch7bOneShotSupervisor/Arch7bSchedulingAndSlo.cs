@@ -131,6 +131,8 @@ public sealed record Arch7bSlotLock(
 
 public sealed class Arch7bOperationalSlotSelector
 {
+    public const int CaptureClockLeadSeconds = 5;
+
     private Arch7bSlotLock? published;
 
     public Arch7bSlotLock SelectAndLock(DateTimeOffset observedUtc, int preSlotCriticalPathSloSeconds,
@@ -177,16 +179,42 @@ public sealed class Arch7bOperationalSlotSelector
     }
 
     public static async Task WaitUntilAsync(DateTimeOffset targetUtc, TimeProvider timeProvider,
+        bool enforceMaximumWakeLateness,
         CancellationToken cancellationToken = default)
     {
-        while (timeProvider.GetUtcNow() < targetUtc)
+        var observedUtc = timeProvider.GetUtcNow();
+        if (observedUtc < targetUtc)
         {
-            var remaining = targetUtc - timeProvider.GetUtcNow();
-            await Task.Delay(remaining < TimeSpan.FromSeconds(1) ? remaining : TimeSpan.FromSeconds(1),
-                timeProvider, cancellationToken).ConfigureAwait(false);
+            var requiredDelay = targetUtc - observedUtc;
+            var started = timeProvider.GetTimestamp();
+            while (timeProvider.GetElapsedTime(started) < requiredDelay)
+            {
+                var remaining = requiredDelay - timeProvider.GetElapsedTime(started);
+                await Task.Delay(remaining < TimeSpan.FromSeconds(1)
+                        ? remaining : TimeSpan.FromSeconds(1),
+                    timeProvider, cancellationToken).ConfigureAwait(false);
+            }
         }
         var lateness = timeProvider.GetUtcNow() - targetUtc;
-        if (lateness > TimeSpan.FromMilliseconds(Arch7bGlobalSloRegistry.GlobalSchedulerMaximumWakeLatenessMilliseconds))
+        if (enforceMaximumWakeLateness &&
+            lateness > TimeSpan.FromMilliseconds(
+                Arch7bGlobalSloRegistry.GlobalSchedulerMaximumWakeLatenessMilliseconds))
             throw new Arch7bQualificationException(Arch7bBlockers.SchedulerWakeLatenessExceeded);
     }
+}
+
+public interface IArch7bStageWindowWaiter
+{
+    Task WaitUntilAsync(string stageId, DateTimeOffset targetUtc,
+        TimeProvider timeProvider, bool enforceMaximumWakeLateness,
+        CancellationToken cancellationToken = default);
+}
+
+public sealed class Arch7bMonotonicStageWindowWaiter : IArch7bStageWindowWaiter
+{
+    public Task WaitUntilAsync(string stageId, DateTimeOffset targetUtc,
+        TimeProvider timeProvider, bool enforceMaximumWakeLateness,
+        CancellationToken cancellationToken = default) =>
+        Arch7bOperationalSlotSelector.WaitUntilAsync(targetUtc, timeProvider,
+            enforceMaximumWakeLateness, cancellationToken);
 }

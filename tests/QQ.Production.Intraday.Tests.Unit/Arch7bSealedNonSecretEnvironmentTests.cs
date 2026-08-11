@@ -1,4 +1,4 @@
-﻿using System.Diagnostics;
+using System.Diagnostics;
 using System.Reflection;
 using System.Security.Cryptography;
 using System.Text.Json;
@@ -102,7 +102,8 @@ public sealed class Arch7bSealedNonSecretEnvironmentTests
         var timeProvider = new Arch7bTestTimeProvider(DateTimeOffset.UtcNow);
         var runtime = new Arch7bOneShotLiveExecutionRuntimeV2(new(),
             new Arch7bOneShotProcessRunnerV2(adapters), adapters,
-            clockAuthorityProducer: new Arch7bTestClockAuthorityProducer(timeProvider));
+            clockAuthorityProducer: new Arch7bTestClockAuthorityProducer(timeProvider),
+            stageWindowWaiter: new Arch7bTestStageWindowWaiter(timeProvider));
 
         var result = await runtime.RunAsync(fixture.Template, fixture.Authority,
             fixture.OperatorAuthorization, fixture.TemplateFileSha256, root,
@@ -114,6 +115,22 @@ public sealed class Arch7bSealedNonSecretEnvironmentTests
         Assert.All(fixture.Template.CommandTemplates, command =>
             Assert.Contains(command.NonSecretEnvironment, value => value.VariableName == "DOTNET_ROOT"));
         Directory.Delete(root, true);
+    }
+
+    [Fact]
+    public async Task Process_qualifier_propagates_the_portable_dotnet_root_to_framework_dependent_children()
+    {
+        var timeProvider = new Arch7bTestTimeProvider(DateTimeOffset.UtcNow);
+        var result = await Arch7bV2ProcessQualifier.RunSingleAsync(
+            SupervisorExecutable(), "portable-dotnet-root",
+            timeProvider: timeProvider,
+            clockAuthorityProducer: new Arch7bTestClockAuthorityProducer(timeProvider),
+            stageWindowWaiter: new Arch7bTestStageWindowWaiter(timeProvider),
+            dotnetRoot: DotnetRoot());
+
+        Assert.True(result.Passed, JsonSerializer.Serialize(result));
+        Assert.Equal(0, result.ResidualProcessCount);
+        Assert.Equal(0, result.ResidualMarkerCount);
     }
 
     [Fact]

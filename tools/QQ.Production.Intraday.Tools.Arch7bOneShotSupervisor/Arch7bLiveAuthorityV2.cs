@@ -239,7 +239,14 @@ public static class Arch7bLiveTemplateValidator
                     command.CommandId);
             if (command.ExecutionKind is Arch7bExecutionKind.ChildInvoke or
                 Arch7bExecutionKind.ChildStartLongLived or Arch7bExecutionKind.ChildStop)
-                _ = adapters.Require(command.AdapterId);
+            {
+                var adapter = adapters.Require(command.AdapterId);
+                if (adapter.ContractVersion != command.AdapterContractVersion ||
+                    adapter.ExpectedNativeOutputContract !=
+                    command.ExpectedNativeOutputContract)
+                    throw new Arch7bQualificationException(
+                        Arch7bV2Blockers.ChildAdapterContractMismatch, command.CommandId);
+            }
             _ = Arch7bSealedNonSecretEnvironment.ValidateTemplate(command.NonSecretEnvironment,
                 value.FileAuthorities);
         }

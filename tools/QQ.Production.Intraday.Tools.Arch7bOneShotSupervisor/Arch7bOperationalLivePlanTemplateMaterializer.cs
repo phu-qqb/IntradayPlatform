@@ -38,6 +38,12 @@ public static class Arch7bOperationalLivePlanTemplateMaterializer
             Arch7bOperationalCatalogMaterializer.SourceManifestLabel,
             sourceCommandManifestBytes);
         var catalog = Arch7bOperationalLiveFactBindingCatalog.Build();
+        var classification = Arch7bFinalStageExecutionCatalog.All;
+        var expectedCommandStages = classification.Where(value => value.HasCommandTemplate)
+            .Select(value => value.StageId).ToHashSet(StringComparer.Ordinal);
+        var stageOrder = Arch7bStages.All.Select((stage, index) => (stage, index))
+            .ToDictionary(value => value.stage, value => value.index,
+                StringComparer.Ordinal);
         var commandByStage = skeleton.CommandTemplates.ToDictionary(
             value => value.StageId, StringComparer.Ordinal);
         var replacements = new Dictionary<string, Arch7bOneShotCommandTemplate>(
@@ -45,14 +51,60 @@ public static class Arch7bOperationalLivePlanTemplateMaterializer
         foreach (var commandCatalog in catalog)
         {
             if (!commandByStage.TryGetValue(commandCatalog.StageId, out var prototype))
-                throw new Arch7bQualificationException(
-                    Arch7bV2Blockers.CommandTemplateInvalid, commandCatalog.CommandId);
+            {
+                var source = skeleton.CommandTemplates.SingleOrDefault(value =>
+                    value.CommandId == commandCatalog.CommandId);
+                if (source is null && (commandCatalog.StageId != "CLOCK_CAPTURE_START" ||
+                    !commandByStage.TryGetValue("PMS_IMPORT", out source)))
+                    throw new Arch7bQualificationException(
+                        Arch7bV2Blockers.CommandTemplateInvalid, commandCatalog.CommandId);
+                var entry = Arch7bFinalStageExecutionCatalog.Require(commandCatalog.StageId);
+                var reusesExistingCommand = source.CommandId == commandCatalog.CommandId;
+                var arguments = reusesExistingCommand
+                    ? new List<Arch7bCommandTemplateArgument>(source.ArgumentTemplates)
+                    : new List<Arch7bCommandTemplateArgument>
+                    {
+                        new("--mode", Arch7bPlaceholderValueKind.Literal, null, -1, false),
+                        new(commandCatalog.Mode, Arch7bPlaceholderValueKind.Literal, null, -1, false)
+                    };
+                if (!reusesExistingCommand)
+                {
+                    foreach (var binding in commandCatalog.Bindings)
+                    {
+                        arguments.Add(new(binding.ArgumentName,
+                            Arch7bPlaceholderValueKind.Literal, null, -1, false));
+                        arguments.Add(new(Arch7bOperationalLiveFactBindingCatalog.Marker,
+                            Arch7bPlaceholderValueKind.Literal, null, -1, false));
+                    }
+                }
+                prototype = source with
+                {
+                    CommandId = commandCatalog.CommandId,
+                    StageId = commandCatalog.StageId,
+                    ExecutionKind = entry.ExecutionKind,
+                    ArgumentTemplates = arguments,
+                    CausesRdsRead = false,
+                    CausesCapture = commandCatalog.StageId == "MARKET_CAPTURE",
+                    LongLivedProcessKey = null,
+                    EvidenceSha256 = string.Empty
+                };
+            }
             replacements.Add(commandCatalog.StageId,
                 BindCommand(prototype, commandCatalog));
         }
 
-        var commands = skeleton.CommandTemplates.Select(command =>
-            replacements.GetValueOrDefault(command.StageId) ?? command).ToArray();
+        var commands = skeleton.CommandTemplates
+            .Where(command => expectedCommandStages.Contains(command.StageId))
+            .Select(command => replacements.GetValueOrDefault(command.StageId) ?? command)
+            .Concat(replacements.Where(value => !commandByStage.ContainsKey(value.Key))
+                .Select(value => value.Value))
+            .OrderBy(command => stageOrder[command.StageId])
+            .ToArray();
+        if (commands.Length != Arch7bFinalStageExecutionCatalog.CommandTemplateCount ||
+            !commands.Select(value => value.StageId).ToHashSet(StringComparer.Ordinal)
+                .SetEquals(expectedCommandStages))
+            throw new Arch7bQualificationException(
+                Arch7bV2Blockers.CommandTemplateInvalid, "final-stage-classification");
         var commandSet = Arch7bOneShotContracts.Sha256(string.Join('\n',
             commands.Select(value => value.EvidenceSha256)));
         var stages = BindStageContracts(skeleton.StageContracts, catalog, commands);
@@ -71,13 +123,14 @@ public static class Arch7bOperationalLivePlanTemplateMaterializer
             Arch7bJson.CanonicalOptions);
         var unresolved = text.Contains(Arch7bOperationalLiveFactBindingCatalog.Marker,
             StringComparison.Ordinal) ? 1 : 0;
-        var synthetic = Count(text, "fake-native-child") + Count(text, "fake-child");
+        var synthetic = Count(text, "fake-native-child") + Count(text, "fake-child") +
+            Count(text, "offline-qualified-child") + Count(text, "unsupported");
         if (inventory.MarkerCount != catalog.Sum(value => value.Bindings.Count) ||
             unresolved != 0 || synthetic != 0)
             throw new Arch7bQualificationException(
                 Arch7bV2Blockers.CommandTemplateInvalid, "operational-template");
         Arch7bLiveTemplateValidator.Validate(template, new Arch7bRealCommandAdapterRegistry());
-        return new(template, catalog.Count, inventory.MarkerCount, unresolved, synthetic,
+        return new(template, commands.Length, inventory.MarkerCount, unresolved, synthetic,
             Arch7bOneShotContracts.Sha256(string.Join('\n', Version,
                 template.EvidenceSha256, inventory.EvidenceSha256,
                 string.Join('|', catalog.SelectMany(value => value.Bindings)
@@ -228,8 +281,8 @@ public static class Arch7bOperationalLivePlanTemplateMaterializer
                     value.RequiredProducerStage == stage.StageId)
                 .Select(value => value.PlaceholderName)).Concat(stageProduced)
                 .Distinct(StringComparer.Ordinal).ToArray();
-            var command = commands.SingleOrDefault(value => value.StageId == stage.StageId);
-            var kind = command?.ExecutionKind ?? stage.ExecutionKind;
+            var kind = Arch7bFinalStageExecutionCatalog.Require(stage.StageId)
+                .ExecutionKind;
             var provisional = stage with
             {
                 ExecutionKind = kind,

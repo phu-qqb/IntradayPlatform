@@ -54,6 +54,21 @@ if (arguments.Mode == "qualify-repository-authority")
     return;
 }
 
+if (arguments.Mode == "qualify-runtime-selection")
+{
+    var result = Arch7bRuntimeSelectionQualificationRunner.Run(new(
+        arguments.PackageRoot,
+        arguments.OutputDirectory,
+        arguments.ExpectedAccount,
+        arguments.ExpectedTargetFingerprint,
+        arguments.ExpectedSourceSessionId,
+        arguments.ExpectedSourceIngestionId,
+        arguments.ExpectedPositionSnapshotId));
+    Console.WriteLine(JsonSerializer.Serialize(
+        result, Arch7bPositionImportArguments.Json));
+    return;
+}
+
 var gitAuthority = arguments.RequiresRepository
     ? arguments.BuildGitAuthority()
     : null;
@@ -545,6 +560,8 @@ public sealed class Arch7bPositionImportArguments
         RequiredSha("--expected-position-semantic-sha256");
     public Guid ExpectedSourceIngestionId =>
         Guid.Parse(Required("--expected-source-ingestion-id"));
+    public Guid ExpectedPositionSnapshotId =>
+        Guid.Parse(Required("--expected-position-snapshot-id"));
     public string CoreTree => RequiredSha("--core-tree", 40);
     public string IntradayRepositoryCommit =>
         RequiredSha("--intraday-repository-commit", 40);
@@ -577,7 +594,8 @@ public sealed class Arch7bPositionImportArguments
         Mode is not "qualify-pinned-postgresql-session" and
             not "qualify-database-clock" and
             not "qualify-repository-authority" and
-            not "qualify-core-to-position-consumer-offline-bridge";
+            not "qualify-core-to-position-consumer-offline-bridge" and
+            not "qualify-runtime-selection";
     public string LifecycleEvidenceDirectory => Mode switch
     {
         "arm-import" => ParentDirectory(ArmedStatePath),
@@ -598,6 +616,7 @@ public sealed class Arch7bPositionImportArguments
                     "plan-import" or "apply-import" or "qualify-database-clock" or
                     "qualify-pinned-postgresql-session" or
                     "qualify-repository-authority" or
+                    "qualify-runtime-selection" or
                     "run-fresh-position-import-fast-path" or
                     "qualify-core-to-position-consumer-offline-bridge",
             "ARCH7B_POSITION_IMPORT_MODE_REQUIRED");
@@ -636,6 +655,24 @@ public sealed class Arch7bPositionImportArguments
             _ = parsed.OutputDirectory;
             Require(parsed.BuildCommit == parsed.ExpectedRepositoryHead,
                 "ARCH7B_POSITION_IMPORT_REPOSITORY_STATE_MISMATCH");
+            return parsed;
+        }
+        if (parsed.Mode == "qualify-runtime-selection")
+        {
+            Require(!parsed.Apply && !parsed.HistoricalFixture,
+                "ARCH7B_RUNTIME_SELECTION_FLAGS_INVALID");
+            _ = parsed.PackageRoot;
+            _ = parsed.OutputDirectory;
+            _ = parsed.ExpectedAccount;
+            _ = parsed.ExpectedTargetFingerprint;
+            _ = parsed.ExpectedSourceSessionId;
+            _ = parsed.ExpectedSourceIngestionId;
+            _ = parsed.ExpectedPositionSnapshotId;
+            Require(parsed.ExpectedAccount == "1754288005",
+                "ARCH7B_RUNTIME_SELECTION_ACCOUNT_MISMATCH");
+            Require(parsed.ExpectedTargetFingerprint ==
+                    "72fa569ee28e4dec6272db0d69c7594b2be8853e9607dff3e78066378a0b5ee4",
+                "ARCH7B_RUNTIME_SELECTION_TARGET_MISMATCH");
             return parsed;
         }
         if (parsed.Mode == "qualify-core-to-position-consumer-offline-bridge")

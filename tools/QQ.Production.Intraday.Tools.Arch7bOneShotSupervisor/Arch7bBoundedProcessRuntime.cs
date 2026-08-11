@@ -214,7 +214,7 @@ public sealed class Arch7bOneShotProcessRunnerV2
         var stderr = Arch7bBoundedStreamReader.ReadAsync(process.StandardError.BaseStream,
             command.StandardErrorLimitBytes, secretValuesForScan,
             ForbiddenOutputSignatures, timeout.Token);
-        longLived.Add(processKey, new(process, stdout, stderr, timeout));
+        longLived.Add(processKey, new(process, stdout, stderr, timeout, command));
         registry.Register(processKey, command, process, expectedReadyEvidence, allowedSignals,
             terminalStage, resourceId, DateTimeOffset.UtcNow);
         var readyPath = Path.Combine(runRoot, processKey + ".ready");
@@ -255,8 +255,9 @@ public sealed class Arch7bOneShotProcessRunnerV2
             throw new Arch7bQualificationException(Arch7bBlockers.ChildProcessFailedUncatalogued,
                 command.CommandId);
         var outputs = await Task.WhenAll(handle.StandardOutput, handle.StandardError).ConfigureAwait(false);
-        var result = await adapters.Require(command.AdapterId).AdaptAsync(outputs[0].Text, command,
-            runRoot, cancellationToken).ConfigureAwait(false);
+        var producerCommand = handle.Command;
+        var result = await adapters.Require(producerCommand.AdapterId).AdaptAsync(
+            outputs[0].Text, producerCommand, runRoot, cancellationToken).ConfigureAwait(false);
         handle.Timeout.Dispose();
         longLived.Remove(processKey);
         return result;
@@ -341,5 +342,6 @@ public sealed class Arch7bOneShotProcessRunnerV2
     private sealed record LongLivedHandle(Process Process,
         Task<Arch7bBoundedProcessOutput> StandardOutput,
         Task<Arch7bBoundedProcessOutput> StandardError,
-        CancellationTokenSource Timeout);
+        CancellationTokenSource Timeout,
+        Arch7bOneShotMaterializedCommand Command);
 }

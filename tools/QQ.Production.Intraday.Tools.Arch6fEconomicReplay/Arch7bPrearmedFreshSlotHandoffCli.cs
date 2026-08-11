@@ -1,6 +1,9 @@
 using System.Data;
 using System.Globalization;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using Microsoft.EntityFrameworkCore;
 using Npgsql;
 
@@ -8,6 +11,8 @@ namespace QQ.Production.Intraday.Infrastructure.PostgreSql;
 
 public static class Arch7bPrearmedFreshSlotHandoffCli
 {
+    public const string NativeContractVersion =
+        "arch7b_prearmed_fresh_slot_handoff_cli_v1";
     private const string ConnectionEnvironmentVariable =
         "QQ_PMS_SHADOW_ARCH7B_CONNECTION_STRING";
 
@@ -197,7 +202,7 @@ public static class Arch7bPrearmedFreshSlotHandoffCli
                 draft.SelectedPositionSnapshotId,
                 draft.MarketCaptureSessionId,
                 no_order = true
-            });
+            }, captureClockPath, "clock-authority-capture");
             return 0;
         }
 
@@ -258,7 +263,7 @@ public static class Arch7bPrearmedFreshSlotHandoffCli
                 finalization.Lineage.EvidenceSha256,
                 finalization.PublishedMarketManifestSha256,
                 marker.NoOrder
-            });
+            }, lineagePath, "position-market-lineage");
             return 0;
         }
 
@@ -380,19 +385,42 @@ public static class Arch7bPrearmedFreshSlotHandoffCli
             position_market_revision_binding_sha256 =
                 Arch7bPositionMarketLineageFileStore.Sha256File(revisionBindingPath),
             result.NoOrder
-        });
+        }, revisionBindingPath, "position-market-revision-binding");
         return 0;
     }
 
     private static bool IsUtcTimeZone(string value) =>
         value is "UTC" or "Etc/UTC" or "GMT" or "Etc/GMT";
 
-    private static void Write(object value) => Console.WriteLine(JsonSerializer.Serialize(value,
-        new JsonSerializerOptions
+    private static readonly JsonSerializerOptions NativeJson = new()
+    {
+        PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower,
+        WriteIndented = true
+    };
+
+    private static void Write(object value, string artifactPath,
+        string artifactType)
+    {
+        artifactPath = Path.GetFullPath(artifactPath);
+        if (!File.Exists(artifactPath))
+            throw new InvalidDataException("HANDOFF_NATIVE_ARTIFACT_MISSING");
+        var root = JsonSerializer.SerializeToNode(value, NativeJson)?.AsObject()
+            ?? throw new InvalidDataException("HANDOFF_NATIVE_OUTPUT_INVALID");
+        root["contract"] = NativeContractVersion;
+        root["artifacts"] = new JsonArray
         {
-            PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower,
-            WriteIndented = true
-        }));
+            new JsonObject
+            {
+                ["path"] = artifactPath,
+                ["sha256"] = Arch7bPositionMarketLineageFileStore.Sha256File(
+                    artifactPath),
+                ["artifact_type"] = artifactType
+            }
+        };
+        root["evidence_sha256"] = Convert.ToHexStringLower(SHA256.HashData(
+            Encoding.UTF8.GetBytes(root.ToJsonString())));
+        Console.WriteLine(root.ToJsonString(NativeJson));
+    }
 
     private sealed class HandoffContextFactory(DbContextOptions<PmsShadowDbContext> options)
         : IDbContextFactory<PmsShadowDbContext>

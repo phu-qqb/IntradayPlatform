@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text.Json;
 using QQ.Production.Intraday.Infrastructure.PostgreSql;
+using QQ.Production.Intraday.Tools.Arch7bOneShotSupervisor;
 
 namespace QQ.Production.Intraday.Tests.Unit;
 
@@ -68,5 +69,25 @@ internal sealed class Arch7bTestClockAuthorityProducer(
             SHA256.HashData(File.ReadAllBytes(path)));
         return Task.FromResult(new PmsShadowCaptureClockAuthorityProduction(
             path, fileSha, snapshot));
+    }
+}
+
+internal sealed class Arch7bTestStageWindowWaiter(
+    Arch7bTestTimeProvider timeProvider) : IArch7bStageWindowWaiter
+{
+    private readonly List<(string StageId, DateTimeOffset TargetUtc,
+        bool EnforceMaximumWakeLateness)> waits = [];
+
+    public IReadOnlyList<(string StageId, DateTimeOffset TargetUtc,
+        bool EnforceMaximumWakeLateness)> Waits => waits;
+
+    public Task WaitUntilAsync(string stageId, DateTimeOffset targetUtc,
+        TimeProvider ignored, bool enforceMaximumWakeLateness,
+        CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        timeProvider.AdvanceTo(targetUtc);
+        waits.Add((stageId, targetUtc, enforceMaximumWakeLateness));
+        return Task.CompletedTask;
     }
 }
