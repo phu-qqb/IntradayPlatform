@@ -5,19 +5,19 @@
 `ARCH7B_CORE_BROKER_AND_INTRADAY_SUPERVISOR_CROSS_REPO_BINDING_READY`
 
 The Intraday functional implementation candidate is
-`c11e1fea47831a0f338daaaee540e62bcf2914df` with tree
-`da29040372964526e5701349b43e49ead1eb87ed`; the final authority-only rebind is
+`08d7c7195939d7e7ee48b4567ee97e45bba417d6` with tree
+`6d339ca73c8f5e8cb957ac5d6cc08a48b6da4941`; the final authority-only rebind is
 the commit containing this packet. The Core implementation is
-`cb4486c38d8b57addef34218449c17cc04bdd40d` with tree
-`a65831ee7fb0e58ac85a95a8ee59d87ee9a97600`. The Core repository authority
-on Primary is `d20f5a97876ca1267850d027b48d78d72c9e1248c414cba21410ad5f7f540ce2`,
+`43a848ec0c609d6257a3020cb7cbe1f10443b5e6` with tree
+`f4fe2265c80288e6133f2484da3ed8819aa6c92b`. The Core repository authority
+on Primary is `44cb8bc70ac9f488bb819e24590fee3d96b1dc3d73b07ce99135a42350a8ce42`,
 with tracked inventory SHA-256
-`62d876179e7178df70e084a5d55181cd90c0fb50505af2562d1ff2a3f4af1b60`.
+`f5dbca8c496456580c7d63e498866333bd0afbc68057440587c0826261709991`.
 The Portal wrapper remains
 `tools/lmax_portal_reports_downloader/src/downloader.mjs`; its Git source and
 Windows runtime SHA-256 values are respectively
-`929962b7cf40b04700929a4c199ee932bd99faa79a04afeec02b783ff896c0c3` and
-`9ca645c8333db35bedd5c4f86985c4e6781ca5e059770b29924e01fcc25e2b72`.
+`c732eaff2912e09f0cb31d4143bd9a28f648428e195dd32937c525bd1fd56fab` and
+`7525a08daea3f830e705b253d522320d09ed7eff287d20bc4ff767ca99004f3b`.
 It exposes the exact `lmax_portal_demo_session_proof_v1` contract.
 The broker module and CLI SHA-256 remain respectively
 `2ba086323683524fc018937e88a0adbd4723d8ed201efa93293b98eb81f587f2` and
