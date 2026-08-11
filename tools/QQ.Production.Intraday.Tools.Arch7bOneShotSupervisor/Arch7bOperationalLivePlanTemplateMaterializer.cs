@@ -96,7 +96,8 @@ public static class Arch7bOperationalLivePlanTemplateMaterializer
         if (!commandByStage.TryGetValue("CORE_PREQUALIFICATION", out var corePrototype))
             throw new Arch7bQualificationException(
                 Arch7bV2Blockers.CommandTemplateInvalid, "CORE_PREQUALIFICATION");
-        replacements["CORE_PREQUALIFICATION"] = BindDirectCorePrequalification(corePrototype);
+        replacements["CORE_PREQUALIFICATION"] = BindDirectCorePrequalification(
+            corePrototype, skeleton.FileAuthorities);
 
         var commands = skeleton.CommandTemplates
             .Where(command => expectedCommandStages.Contains(command.StageId))
@@ -315,7 +316,8 @@ public static class Arch7bOperationalLivePlanTemplateMaterializer
     }
 
     private static Arch7bOneShotCommandTemplate BindDirectCorePrequalification(
-        Arch7bOneShotCommandTemplate prototype)
+        Arch7bOneShotCommandTemplate prototype,
+        IReadOnlyDictionary<string, Arch7bFileAuthority> authorities)
     {
         var provisional = prototype with
         {
@@ -323,7 +325,8 @@ public static class Arch7bOperationalLivePlanTemplateMaterializer
             WorkingDirectoryAuthorityId = "core_node_runtime",
             ArgumentTemplates =
             [
-                new("src/fast-seal-cli.mjs", Arch7bPlaceholderValueKind.Literal,
+                new("tools/lmax_portal_reports_downloader/src/fast-seal-cli.mjs",
+                    Arch7bPlaceholderValueKind.Literal,
                     null, -1, false),
                 new("prequalify-bracket-runtime", Arch7bPlaceholderValueKind.Literal,
                     null, -1, false),
@@ -333,7 +336,8 @@ public static class Arch7bOperationalLivePlanTemplateMaterializer
                     Arch7bPlaceholderValueKind.AbsolutePath, "SLOT_LOCKED",
                     int.MaxValue, true)
             ],
-            EvidenceSha256 = string.Empty
+            EvidenceSha256 = string.Empty,
+            NonSecretEnvironment = Arch7bSealedNonSecretEnvironment.ForGitExecutablePath(authorities)
         };
         var canonical = string.Join('\n', Arch7bV2Contracts.CommandTemplateVersion,
             provisional.CommandId, provisional.StageId, provisional.ExecutionKind,

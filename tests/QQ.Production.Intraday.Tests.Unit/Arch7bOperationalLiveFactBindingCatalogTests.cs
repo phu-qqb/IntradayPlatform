@@ -1,3 +1,4 @@
+using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using QQ.Production.Intraday.Tools.Arch7bOneShotSupervisor;
@@ -218,7 +219,7 @@ public sealed class Arch7bOperationalLiveFactBindingCatalogTests : IDisposable
         Assert.Equal("core_node_runtime", core.WorkingDirectoryAuthorityId);
         Assert.Equal(new[]
         {
-            "src/fast-seal-cli.mjs",
+            "tools/lmax_portal_reports_downloader/src/fast-seal-cli.mjs",
             "prequalify-bracket-runtime",
             "--config",
             "$" + "{fact:core_prequalification_config.path}"
@@ -228,6 +229,11 @@ public sealed class Arch7bOperationalLiveFactBindingCatalogTests : IDisposable
         Assert.DoesNotContain(core.ArgumentTemplates,
             value => value.Value.Contains("powershell", StringComparison.OrdinalIgnoreCase) ||
                      value.Value.Contains("cmd.exe", StringComparison.OrdinalIgnoreCase));
+        var gitPath = Assert.Single(core.NonSecretEnvironment);
+        Assert.Equal("PATH", gitPath.VariableName);
+        Assert.Equal("git_executable", gitPath.SourceAuthorityId);
+        Assert.Equal(Path.GetDirectoryName(
+            result.Template.FileAuthorities["git_executable"].Path), gitPath.Value);
         Assert.Contains("core_prequalification_config",
             result.Template.StageContracts.Single(value =>
                 value.StageId == "SLOT_LOCKED").ProducedFactTypes);
@@ -340,6 +346,14 @@ public sealed class Arch7bOperationalLiveFactBindingCatalogTests : IDisposable
         var fixture = Arch7bV2QualificationFactory.Create(
             typeof(QQ.Production.Intraday.Tools.Arch7bOneShotSupervisor.Program)
                 .Assembly.Location, Path.Combine(root, "runtime"));
+        var gitExecutable = typeof(QQ.Production.Intraday.Tools.Arch7bOneShotSupervisor.Program)
+            .Assembly.Location;
+        var authorities = new Dictionary<string, Arch7bFileAuthority>(
+            fixture.Template.FileAuthorities, StringComparer.Ordinal)
+        {
+            ["git_executable"] = new("git_executable", gitExecutable,
+                Sha(gitExecutable), true, false)
+        };
         var catalog = Arch7bOperationalLiveFactBindingCatalog.Build();
         var commands = fixture.Template.CommandTemplates
             .Where(command => Arch7bFinalStageExecutionCatalog.Require(command.StageId)
@@ -393,6 +407,7 @@ public sealed class Arch7bOperationalLiveFactBindingCatalogTests : IDisposable
         }
         var provisional = fixture.Template with
         {
+            FileAuthorities = authorities,
             CommandTemplates = commands,
             EvidenceSha256 = string.Empty
         };
@@ -422,6 +437,9 @@ public sealed class Arch7bOperationalLiveFactBindingCatalogTests : IDisposable
             directory = directory.Parent;
         return directory?.FullName ?? throw new DirectoryNotFoundException();
     }
+
+    private static string Sha(string path) =>
+        Convert.ToHexStringLower(SHA256.HashData(File.ReadAllBytes(path)));
 
     public void Dispose()
     {

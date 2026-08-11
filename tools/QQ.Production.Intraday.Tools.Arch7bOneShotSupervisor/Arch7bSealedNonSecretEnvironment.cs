@@ -32,18 +32,45 @@ public static class Arch7bSealedNonSecretEnvironment
             root.Sha256, Arch7bOneShotContracts.Sha256(canonical))];
     }
 
+    public static IReadOnlyList<Arch7bSealedNonSecretEnvironmentVariable> ForGitExecutablePath(
+        IReadOnlyDictionary<string, Arch7bFileAuthority> authorities)
+    {
+        var executable = Require(authorities, "git_executable",
+            Arch7bV2Blockers.CommandNonSecretEnvironmentAuthorityMissing);
+        ValidateGitExecutableAuthority(executable);
+        var directory = Path.GetDirectoryName(Path.GetFullPath(executable.Path)) ??
+            throw new Arch7bQualificationException(
+                Arch7bV2Blockers.CommandGitExecutablePathAuthorityMismatch);
+        var canonical = string.Join('\n', Arch7bV2Contracts.MaterializedCommandNonSecretEnvironmentVersion,
+            "PATH", Arch7bNonSecretEnvironmentValueKind.AbsoluteDirectory, directory,
+            executable.AuthorityId, executable.Sha256);
+        return [new(Arch7bV2Contracts.MaterializedCommandNonSecretEnvironmentVersion, "PATH",
+            Arch7bNonSecretEnvironmentValueKind.AbsoluteDirectory, directory, executable.AuthorityId,
+            executable.Sha256, Arch7bOneShotContracts.Sha256(canonical))];
+    }
+
     public static IReadOnlyList<Arch7bSealedNonSecretEnvironmentVariable> ValidateTemplate(
         IReadOnlyList<Arch7bSealedNonSecretEnvironmentVariable> values,
         IReadOnlyDictionary<string, Arch7bFileAuthority> authorities)
     {
         if (values.Count == 0) return values;
-        if (values.Count != 1 || values[0].VariableName != "DOTNET_ROOT" ||
-            values[0].ValueKind != Arch7bNonSecretEnvironmentValueKind.AbsoluteDirectory ||
-            values[0].SourceAuthorityId != "dotnet_root")
+        if (values.Count > 2 ||
+            values.Select(value => value.VariableName).Distinct(StringComparer.Ordinal).Count() != values.Count)
             throw new Arch7bQualificationException(Arch7bV2Blockers.CommandNonSecretEnvironmentVariableForbidden);
-        var expected = ForDotnetRoot(authorities).Single();
-        if (values[0] != expected)
-            throw new Arch7bQualificationException(Arch7bV2Blockers.CommandDotnetRootAuthorityMismatch);
+        foreach (var value in values)
+        {
+            var (expected, blocker) = value.VariableName switch
+            {
+                "DOTNET_ROOT" => (ForDotnetRoot(authorities).Single(),
+                    Arch7bV2Blockers.CommandDotnetRootAuthorityMismatch),
+                "PATH" => (ForGitExecutablePath(authorities).Single(),
+                    Arch7bV2Blockers.CommandGitExecutablePathAuthorityMismatch),
+                _ => throw new Arch7bQualificationException(
+                    Arch7bV2Blockers.CommandNonSecretEnvironmentVariableForbidden)
+            };
+            if (value != expected)
+                throw new Arch7bQualificationException(blocker);
+        }
         return values;
     }
 
@@ -51,17 +78,25 @@ public static class Arch7bSealedNonSecretEnvironment
     {
         foreach (var value in values)
         {
+            var expectedSource = value.VariableName switch
+            {
+                "DOTNET_ROOT" => "dotnet_root",
+                "PATH" => "git_executable",
+                _ => null
+            };
             if (value.ContractVersion != Arch7bV2Contracts.MaterializedCommandNonSecretEnvironmentVersion ||
-                value.VariableName != "DOTNET_ROOT" ||
+                expectedSource is null || value.SourceAuthorityId != expectedSource ||
                 value.ValueKind != Arch7bNonSecretEnvironmentValueKind.AbsoluteDirectory ||
                 !Path.IsPathFullyQualified(value.Value) || !Arch7bOneShotContracts.IsSha256(value.SourceAuthoritySha256))
                 throw new Arch7bQualificationException(Arch7bV2Blockers.CommandNonSecretEnvironmentVariableForbidden);
             var canonical = string.Join('\n', value.ContractVersion, value.VariableName, value.ValueKind,
                 value.Value, value.SourceAuthorityId, value.SourceAuthoritySha256);
             if (value.EvidenceSha256 != Arch7bOneShotContracts.Sha256(canonical))
-                throw new Arch7bQualificationException(Arch7bV2Blockers.CommandDotnetRootAuthorityMismatch);
+                throw new Arch7bQualificationException(value.VariableName == "PATH"
+                    ? Arch7bV2Blockers.CommandGitExecutablePathAuthorityMismatch
+                    : Arch7bV2Blockers.CommandDotnetRootAuthorityMismatch);
         }
-        if (values.Count > 1 || values.Select(value => value.VariableName).Distinct(StringComparer.Ordinal).Count() != values.Count)
+        if (values.Count > 2 || values.Select(value => value.VariableName).Distinct(StringComparer.Ordinal).Count() != values.Count)
             throw new Arch7bQualificationException(Arch7bV2Blockers.CommandNonSecretEnvironmentVariableForbidden);
     }
 
@@ -89,6 +124,22 @@ public static class Arch7bSealedNonSecretEnvironment
         var sha = Convert.ToHexStringLower(SHA256.HashData(File.ReadAllBytes(executable.Path)));
         if (sha != executable.Sha256)
             throw new Arch7bQualificationException(Arch7bV2Blockers.CommandDotnetExecutableShaMismatch);
+    }
+
+    private static void ValidateGitExecutableAuthority(Arch7bFileAuthority executable)
+    {
+        if (!executable.MustExist || !Path.IsPathFullyQualified(executable.Path) ||
+            !File.Exists(executable.Path) || IsReparsePoint(executable.Path))
+            throw new Arch7bQualificationException(
+                Arch7bV2Blockers.CommandGitExecutablePathAuthorityMismatch);
+        var directory = Path.GetDirectoryName(Path.GetFullPath(executable.Path));
+        if (directory is null || !Directory.Exists(directory) || IsReparsePoint(directory))
+            throw new Arch7bQualificationException(
+                Arch7bV2Blockers.CommandGitExecutablePathAuthorityMismatch);
+        var sha = Convert.ToHexStringLower(SHA256.HashData(File.ReadAllBytes(executable.Path)));
+        if (sha != executable.Sha256)
+            throw new Arch7bQualificationException(
+                Arch7bV2Blockers.CommandGitExecutableShaMismatch);
     }
 
     private static bool IsReparsePoint(string path) =>

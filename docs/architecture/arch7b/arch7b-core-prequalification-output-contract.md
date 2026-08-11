@@ -7,15 +7,17 @@ node_executable, its working-directory authority is core_node_runtime, and its
 only command line is:
 
     node.exe
-    src/fast-seal-cli.mjs
+    tools/lmax_portal_reports_downloader/src/fast-seal-cli.mjs
     prequalify-bracket-runtime
     --config
     <run-root>/core-prequalification-config.json
 
 The config is created once by SLOT_LOCKED. It binds the qualified Core Git
 repository, exact Core commit and tree, a create-new output root, and the
-msedge browser channel. npm, PowerShell, cmd, shell execution, and ambient PATH
-resolution are not command routes.
+msedge browser channel. The command receives one sealed non-secret `PATH`
+entry containing only the parent directory of the exact `git_executable`
+authority and bound to that executable's SHA-256. npm, PowerShell, cmd, shell
+execution, and ambient PATH resolution are not command routes.
 
 The Core CLI owns stdout. A successful invocation emits one UTF-8 JSON
 document with exactly the top-level properties qualification and manifest.

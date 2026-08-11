@@ -1,3 +1,4 @@
+using System.Security.Cryptography;
 using QQ.Production.Intraday.Tools.Arch7bOneShotSupervisor;
 
 namespace QQ.Production.Intraday.Tests.Unit;
@@ -43,6 +44,14 @@ public sealed class Arch7bOperationalExecutionAuthorityInventoryTests
         var fixture = Arch7bV2QualificationFactory.Create(
             typeof(QQ.Production.Intraday.Tools.Arch7bOneShotSupervisor.Program)
                 .Assembly.Location, Path.Combine(root, "runtime"));
+        var gitExecutable = typeof(QQ.Production.Intraday.Tools.Arch7bOneShotSupervisor.Program)
+            .Assembly.Location;
+        var authorities = new Dictionary<string, Arch7bFileAuthority>(
+            fixture.Template.FileAuthorities, StringComparer.Ordinal)
+        {
+            ["git_executable"] = new("git_executable", gitExecutable,
+                Sha(gitExecutable), true, false)
+        };
         var catalog = Arch7bOperationalLiveFactBindingCatalog.Build();
         var commands = fixture.Template.CommandTemplates
             .Where(command => Arch7bFinalStageExecutionCatalog.Require(command.StageId)
@@ -92,6 +101,7 @@ public sealed class Arch7bOperationalExecutionAuthorityInventoryTests
         }
         var provisional = fixture.Template with
         {
+            FileAuthorities = authorities,
             CommandTemplates = commands,
             EvidenceSha256 = string.Empty
         };
@@ -108,4 +118,7 @@ public sealed class Arch7bOperationalExecutionAuthorityInventoryTests
                    "QQ.Production.Intraday.sln"))) current = current.Parent;
         return current?.FullName ?? throw new DirectoryNotFoundException("repository root");
     }
+
+    private static string Sha(string path) =>
+        Convert.ToHexStringLower(SHA256.HashData(File.ReadAllBytes(path)));
 }

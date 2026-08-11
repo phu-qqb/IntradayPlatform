@@ -104,6 +104,10 @@ public static class Arch7bV2Blockers
         "ARCH7B_COMMAND_DOTNET_ROOT_AUTHORITY_MISMATCH";
     public const string CommandDotnetExecutableShaMismatch =
         "ARCH7B_COMMAND_DOTNET_EXECUTABLE_SHA_MISMATCH";
+    public const string CommandGitExecutablePathAuthorityMismatch =
+        "ARCH7B_COMMAND_GIT_EXECUTABLE_PATH_AUTHORITY_MISMATCH";
+    public const string CommandGitExecutableShaMismatch =
+        "ARCH7B_COMMAND_GIT_EXECUTABLE_SHA_MISMATCH";
 }
 
 public static class Arch7bV2ArgumentSafety
