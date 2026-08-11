@@ -272,6 +272,7 @@ public static class Arch7bRequiredOperationalExecutionAuthorityInventoryBuilder
         KnownAuthorities = new Dictionary<string, Arch7bOperationalAuthorityKind>(StringComparer.Ordinal)
         {
             ["core_repository"] = Arch7bOperationalAuthorityKind.GitRepository,
+            ["core_node_runtime"] = Arch7bOperationalAuthorityKind.NodePackageRuntime,
             ["intraday_runtime"] = Arch7bOperationalAuthorityKind.DirectoryInventory,
             ["git_executable"] = Arch7bOperationalAuthorityKind.File,
             ["node_executable"] = Arch7bOperationalAuthorityKind.File,
@@ -285,6 +286,7 @@ public static class Arch7bRequiredOperationalExecutionAuthorityInventoryBuilder
         StaticPreSpawnAuthorities = new Dictionary<string, Arch7bOperationalAuthorityKind>(StringComparer.Ordinal)
         {
             ["core_repository"] = Arch7bOperationalAuthorityKind.GitRepository,
+            ["core_node_runtime"] = Arch7bOperationalAuthorityKind.NodePackageRuntime,
             ["intraday_runtime"] = Arch7bOperationalAuthorityKind.DirectoryInventory,
             ["git_executable"] = Arch7bOperationalAuthorityKind.File,
             ["node_executable"] = Arch7bOperationalAuthorityKind.File,
@@ -445,8 +447,6 @@ public static class Arch7bOperationalExecutionAuthorityValidator
                 case Arch7bOperationalAuthorityKind.GitRepository:
                     ValidateDirectory(source);
                     ValidateGitRepository(source, gitExecutable);
-                    if (source.AuthorityId == "core_repository")
-                        ValidateNodePackage(source, nodeExecutable);
                     break;
                 case Arch7bOperationalAuthorityKind.NodePackageRuntime:
                     ValidateDirectory(source);
@@ -884,23 +884,8 @@ public sealed class Arch7bOperationalExecutionAuthorityMaterializer
             commit = await reader.HeadAsync(cancellationToken).ConfigureAwait(false);
             tree = await reader.TreeAsync(cancellationToken).ConfigureAwait(false);
             repository = "https://github.com/phu-qqb/QQ.Production.Core.git";
-            if (id == "core_repository")
-            {
-                if (commit != template.CoreCommit || tree != template.CoreTree) throw Mismatch(id);
-                var packageRoot = System.IO.Path.Combine(path, "tools", "lmax_portal_reports_downloader");
-                var packageJson = System.IO.Path.Combine(packageRoot, "package.json");
-                var packageLock = System.IO.Path.Combine(packageRoot, "package-lock.json");
-                if (!File.Exists(packageJson) || !File.Exists(packageLock) ||
-                    !Directory.Exists(System.IO.Path.Combine(packageRoot, "node_modules")))
-                    throw Mismatch(id);
-                packageJsonSha = Arch7bOperationalExecutionAuthorityValidator.FileSha(packageJson);
-                packageLockSha = Arch7bOperationalExecutionAuthorityValidator.FileSha(packageLock);
-                runtimeClosureSha = Arch7bOperationalExecutionAuthorityValidator
-                    .DirectoryInventory(id + "-node-runtime", packageRoot).EvidenceSha256;
-                if (!authorityPaths.TryGetValue("node_executable", out var nodePath))
-                    throw Missing("node_executable");
-                runtimeVersion = RunVersion(nodePath);
-            }
+            if (id == "core_repository" &&
+                (commit != template.CoreCommit || tree != template.CoreTree)) throw Mismatch(id);
         }
         if (kind == Arch7bOperationalAuthorityKind.NodePackageRuntime)
         {
