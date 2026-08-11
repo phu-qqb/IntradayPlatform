@@ -26,6 +26,12 @@ public sealed class Arch7bOperationalExecutionAuthorityInventoryTests
         Assert.Equal(0, inventory.UnknownAuthorityKindCount);
         Assert.Equal(0, inventory.UnresolvedReferenceCount);
         Assert.Equal(inventory.RequiredAuthorityIds.Count, inventory.RequiredAuthorityIdCount);
+        foreach (var authorityId in new[]
+                 {
+                     "core_repository", "intraday_runtime", "git_executable", "node_executable",
+                     "dotnet_executable", "dotnet_root", "root_certificate", "market_data_config"
+                 })
+            Assert.Contains(authorityId, inventory.RequiredAuthorityIds);
         Assert.All(inventory.References, reference =>
             Assert.Equal(Arch7bOneShotContracts.Sha256(reference.Canonical()),
                 reference.EvidenceSha256));

@@ -287,7 +287,11 @@ public static class Arch7bRequiredOperationalExecutionAuthorityInventoryBuilder
             ["core_repository"] = Arch7bOperationalAuthorityKind.GitRepository,
             ["intraday_runtime"] = Arch7bOperationalAuthorityKind.DirectoryInventory,
             ["git_executable"] = Arch7bOperationalAuthorityKind.File,
-            ["root_certificate"] = Arch7bOperationalAuthorityKind.RootCa
+            ["node_executable"] = Arch7bOperationalAuthorityKind.File,
+            ["dotnet_executable"] = Arch7bOperationalAuthorityKind.File,
+            ["dotnet_root"] = Arch7bOperationalAuthorityKind.DotnetRuntime,
+            ["root_certificate"] = Arch7bOperationalAuthorityKind.RootCa,
+            ["market_data_config"] = Arch7bOperationalAuthorityKind.StaticConfig
         };
 
     public static Arch7bRequiredOperationalExecutionAuthorityInventory Build(
