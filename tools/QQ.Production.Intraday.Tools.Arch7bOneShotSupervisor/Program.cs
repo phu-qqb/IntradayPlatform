@@ -287,7 +287,14 @@ public static class Program
     private static void RequireModeSafety(IReadOnlyDictionary<string, string> options, string mode)
     {
         var qualificationOnly = ParseBoolean(options.GetValueOrDefault("qualification-only"), true);
-        if (mode is "run-one-shot" or "materialize-live-run-authorities")
+        var staticPreflightOnly = mode == "run-one-shot" &&
+                                  ParseBoolean(options.GetValueOrDefault("static-preflight-only"), false);
+        if (staticPreflightOnly)
+        {
+            if (!qualificationOnly)
+                throw new Arch7bQualificationException(Arch7bBlockers.QualificationModeMismatch);
+        }
+        else if (mode is "run-one-shot" or "materialize-live-run-authorities")
         {
             if (qualificationOnly) throw new Arch7bQualificationException(Arch7bBlockers.QualificationModeMismatch);
         }

@@ -5,7 +5,7 @@
 The operational authority inventory is derived from the final 40-stage,
 13-command live plan template. It is not a manually maintained list. The
 derivation closes command executables, working directories, authority
-placeholders, sealed non-secret environment bindings, and the four static
+placeholders, sealed non-secret environment bindings, and all static
 pre-spawn bindings used by `run-one-shot`.
 
 The source-of-truth types and validators live in
@@ -39,6 +39,13 @@ flags, and reparse-point flags. A path string is never accepted as directory
 content evidence.
 
 ## Pre-slot validation
+
+`run-one-shot --static-preflight-only true --qualification-only true` performs
+the native static preflight without loading a live execution authority or an
+operator authorization. It requires `--no-order true`, writes only sanitized
+validation evidence adjacent to a still-uncreated run root, and reports that
+slot selection, slot lock, one-shot identity creation, live access, residual
+processes, and residual markers are all zero.
 
 `run-one-shot` parses the raw authority manifest before dictionary
 construction and rejects duplicate JSON properties or duplicate AuthorityId

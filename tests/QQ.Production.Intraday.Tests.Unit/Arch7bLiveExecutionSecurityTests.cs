@@ -201,6 +201,20 @@ public sealed class Arch7bLiveExecutionSecurityTests
         Assert.Equal(2, exitCode);
     }
 
+    [Fact]
+    public async Task Run_one_shot_static_preflight_accepts_qualification_only_without_live_authority()
+    {
+        var exitCode = await Program.Main([
+            "--mode", "run-one-shot",
+            "--qualification-only", "true",
+            "--static-preflight-only", "true",
+            "--no-order", "true"
+        ]);
+
+        // Safety admission succeeds; input validation then reports the intentionally absent freeze root.
+        Assert.Equal(1, exitCode);
+    }
+
     private static async Task<Arch7bOneShotLiveExecutionEvidence> ExecuteAsync(string stage, string behavior)
     {
         var fixture = Fixture(behavior, stage, behavior);

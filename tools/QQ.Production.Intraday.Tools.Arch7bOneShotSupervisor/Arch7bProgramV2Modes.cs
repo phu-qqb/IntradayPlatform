@@ -106,6 +106,9 @@ public static class Arch7bProgramV2Modes
         if (!Boolean(Required(options, "no-order")))
             throw new Arch7bQualificationException(Arch7bBlockers.NoOrderRequired);
 
+        if (Boolean(options.GetValueOrDefault("static-preflight-only") ?? "false"))
+            return await RunOneShotStaticPreflightAsync(options).ConfigureAwait(false);
+
         var freezeRoot = FullPath(Required(options, "freeze-root"));
         var authorityPath = FullPath(Required(options, "live-execution-authority-path"));
         var authorizationPath = FullPath(Required(options, "operator-authorization-path"));
@@ -168,6 +171,52 @@ public static class Arch7bProgramV2Modes
         return await runtime.RunAsync(template.Value, authority.Value, authorization.Value,
             template.FileSha256, runRoot, TimeProvider.System, new Arch7bCoreOwnedSecretLease())
             .ConfigureAwait(false);
+    }
+
+    private static async Task<object> RunOneShotStaticPreflightAsync(
+        IReadOnlyDictionary<string, string> options)
+    {
+        var freezeRoot = FullPath(Required(options, "freeze-root"));
+        var runRoot = FullPath(Required(options, "run-root"));
+        var templatePath = Path.Combine(freezeRoot, "arch7b-one-shot-live-plan-template.json");
+        var operationalManifestPath = Path.Combine(freezeRoot,
+            "arch7b-operational-execution-authority-manifest-v1.json");
+        RequireDirectory(freezeRoot, "freeze-root");
+        RequireFile(templatePath, "live-plan-template");
+        RequireFile(operationalManifestPath, "operational-execution-authority-manifest");
+        if (Directory.Exists(runRoot) || File.Exists(runRoot))
+            throw new Arch7bQualificationException(Arch7bBlockers.RunRootReused);
+
+        var expectedTemplate = Sha(options, "expected-live-plan-template-sha256");
+        var template = await Arch7bLiveAuthorityLoaderV2.LoadTemplateAsync(templatePath,
+            expectedTemplate).ConfigureAwait(false);
+        var operationalManifest = Arch7bOperationalExecutionAuthorityManifestParser.ParseStrict(
+            await File.ReadAllBytesAsync(operationalManifestPath).ConfigureAwait(false));
+        var requiredInventory = Arch7bRequiredOperationalExecutionAuthorityInventoryBuilder
+            .Build(template.Value);
+        var staticEvidenceRoot = runRoot + "-static-authority";
+        if (Directory.Exists(staticEvidenceRoot) || File.Exists(staticEvidenceRoot))
+            throw new Arch7bQualificationException(Arch7bBlockers.RunRootReused);
+        var validation = Arch7bOperationalExecutionAuthorityValidator.ValidateStatic(
+            requiredInventory, operationalManifest, template.Value.FileAuthorities,
+            template.Value.FileAuthorities, Path.Combine(staticEvidenceRoot,
+                Arch7bOperationalExecutionAuthorityValidator.ValidationFileName));
+
+        return new
+        {
+            verdict = "ARCH7B_ONE_SHOT_STATIC_PREFLIGHT_QUALIFIED",
+            qualificationOnly = true,
+            stage = "STATIC_AUTHORITY_VALIDATION",
+            validation,
+            slotSelected = false,
+            slotLocked = false,
+            oneShotIdentityCreated = false,
+            liveExecutionAuthorityLoaded = false,
+            operatorAuthorizationLoaded = false,
+            residualProcessCount = 0,
+            residualMarkerCount = 0,
+            safety = Arch7bNoLiveSafetyCounters.Zero
+        };
     }
 
     public static async Task<object> QualifyCoreBrokerCrossRepositoryAsync(
