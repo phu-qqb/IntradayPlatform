@@ -231,13 +231,14 @@ public static class Arch7bV2ProcessQualifier
 {
     public static async Task<Arch7bV2ProcessQualification> RunAsync(string executablePath,
         int independentRuns, int campaigns, int runsPerCampaign,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default, string? dotnetRoot = null)
     {
         var evidence = new List<string>();
         var independentPasses = 0;
         for (var index = 0; index < independentRuns; index++)
         {
-            var result = await RunOneAsync(executablePath, $"independent-{index:D2}", cancellationToken)
+            var result = await RunOneAsync(executablePath, $"independent-{index:D2}", cancellationToken,
+                    dotnetRoot: dotnetRoot)
                 .ConfigureAwait(false);
             if (result.Passed) independentPasses++;
             evidence.Add(result.EvidenceSha256);
@@ -248,7 +249,7 @@ public static class Arch7bV2ProcessQualifier
             var values = new List<Arch7bV2ExecutionEvidence>();
             for (var run = 0; run < runsPerCampaign; run++)
                 values.Add(await RunOneAsync(executablePath, $"campaign-{campaign:D2}-{run:D2}",
-                    cancellationToken).ConfigureAwait(false));
+                    cancellationToken, dotnetRoot: dotnetRoot).ConfigureAwait(false));
             if (values.All(value => value.Passed) && values.Select(value => value.RunId).Distinct().Count() == values.Count)
                 campaignPasses++;
             evidence.AddRange(values.Select(value => value.EvidenceSha256));
@@ -261,19 +262,22 @@ public static class Arch7bV2ProcessQualifier
         string suffix, CancellationToken cancellationToken = default,
         TimeProvider? timeProvider = null,
         IPmsShadowCaptureClockAuthorityProducer? clockAuthorityProducer = null,
-        IArch7bStageWindowWaiter? stageWindowWaiter = null) =>
+        IArch7bStageWindowWaiter? stageWindowWaiter = null,
+        string? dotnetRoot = null) =>
         RunOneAsync(executablePath, suffix, cancellationToken, timeProvider,
-            clockAuthorityProducer, stageWindowWaiter);
+            clockAuthorityProducer, stageWindowWaiter, dotnetRoot);
 
     private static async Task<Arch7bV2ExecutionEvidence> RunOneAsync(string executablePath,
         string suffix, CancellationToken cancellationToken,
         TimeProvider? timeProvider = null,
         IPmsShadowCaptureClockAuthorityProducer? clockAuthorityProducer = null,
-        IArch7bStageWindowWaiter? stageWindowWaiter = null)
+        IArch7bStageWindowWaiter? stageWindowWaiter = null,
+        string? dotnetRoot = null)
     {
         var root = Path.Combine(Path.GetTempPath(), "qq-arch7b-v2-rehearsal",
             suffix + "-" + Guid.NewGuid().ToString("N"));
-        var fixture = Arch7bV2QualificationFactory.Create(executablePath, root);
+        var fixture = Arch7bV2QualificationFactory.Create(executablePath, root,
+            dotnetRoot: dotnetRoot);
         var adapters = new Arch7bRealCommandAdapterRegistry();
         var runtime = new Arch7bOneShotLiveExecutionRuntimeV2(new(),
             new Arch7bOneShotProcessRunnerV2(adapters), adapters,

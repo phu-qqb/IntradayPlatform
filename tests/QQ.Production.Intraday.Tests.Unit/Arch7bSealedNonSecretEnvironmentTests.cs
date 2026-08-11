@@ -118,6 +118,22 @@ public sealed class Arch7bSealedNonSecretEnvironmentTests
     }
 
     [Fact]
+    public async Task Process_qualifier_propagates_the_portable_dotnet_root_to_framework_dependent_children()
+    {
+        var timeProvider = new Arch7bTestTimeProvider(DateTimeOffset.UtcNow);
+        var result = await Arch7bV2ProcessQualifier.RunSingleAsync(
+            SupervisorExecutable(), "portable-dotnet-root",
+            timeProvider: timeProvider,
+            clockAuthorityProducer: new Arch7bTestClockAuthorityProducer(timeProvider),
+            stageWindowWaiter: new Arch7bTestStageWindowWaiter(timeProvider),
+            dotnetRoot: DotnetRoot());
+
+        Assert.True(result.Passed, JsonSerializer.Serialize(result));
+        Assert.Equal(0, result.ResidualProcessCount);
+        Assert.Equal(0, result.ResidualMarkerCount);
+    }
+
+    [Fact]
     public async Task Runner_builds_from_the_sealed_map_without_inheriting_dotnet_root()
     {
         var root = Root("start-info");

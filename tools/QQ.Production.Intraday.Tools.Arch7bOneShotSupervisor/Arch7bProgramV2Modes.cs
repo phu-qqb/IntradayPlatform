@@ -47,10 +47,12 @@ public static class Arch7bProgramV2Modes
         var runs = Positive(options.GetValueOrDefault("runs"), 20);
         var campaigns = NonNegative(options.GetValueOrDefault("campaigns"), 10);
         var runsPerCampaign = Positive(options.GetValueOrDefault("runs-per-campaign"), 3);
+        var dotnetRoot = options.GetValueOrDefault("dotnet-root") ??
+                         Environment.GetEnvironmentVariable("DOTNET_ROOT");
         if (runs == 1 && campaigns == 0)
         {
             var single = await Arch7bV2ProcessQualifier.RunSingleAsync(executable,
-                "single").ConfigureAwait(false);
+                "single", dotnetRoot: dotnetRoot).ConfigureAwait(false);
             return new
             {
                 verdict = single.Passed ? "PASS" : "NO_GO",
@@ -62,7 +64,7 @@ public static class Arch7bProgramV2Modes
             };
         }
         var qualification = await Arch7bV2ProcessQualifier.RunAsync(executable, runs,
-            campaigns, runsPerCampaign).ConfigureAwait(false);
+            campaigns, runsPerCampaign, dotnetRoot: dotnetRoot).ConfigureAwait(false);
         if (qualification.IndependentPasses != qualification.IndependentRuns ||
             qualification.CampaignPasses != qualification.Campaigns ||
             qualification.ResidualProcesses != 0 || qualification.ResidualMarkers != 0)
