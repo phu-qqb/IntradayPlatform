@@ -752,18 +752,14 @@ public static class Arch7bOperationalExecutionAuthorityValidator
 public sealed class Arch7bOperationalExecutionAuthorityMaterializer
 {
     public async Task<object> MaterializeFilesAsync(string templatePath,
-        string sourceManifestPath, string authorityPathMapPath, string outputRoot,
+        string authorityPathMapPath, string outputRoot,
         CancellationToken cancellationToken = default)
     {
         var templateBytes = await File.ReadAllBytesAsync(System.IO.Path.GetFullPath(templatePath),
             cancellationToken).ConfigureAwait(false);
-        var sourceManifestBytes = await File.ReadAllBytesAsync(
-            System.IO.Path.GetFullPath(sourceManifestPath), cancellationToken).ConfigureAwait(false);
-        var skeleton = JsonSerializer.Deserialize<Arch7bOneShotLivePlanTemplate>(templateBytes,
+        var template = JsonSerializer.Deserialize<Arch7bOneShotLivePlanTemplate>(templateBytes,
             Arch7bJson.CanonicalOptions) ?? throw Mismatch("source-template");
-        skeleton.ValidateEvidence();
-        var template = Arch7bOperationalLivePlanTemplateMaterializer
-            .Materialize(skeleton, sourceManifestBytes).Template;
+        template.ValidateEvidence();
         var mapBytes = await File.ReadAllBytesAsync(System.IO.Path.GetFullPath(authorityPathMapPath),
             cancellationToken).ConfigureAwait(false);
         var paths = ParsePathMapStrict(mapBytes);

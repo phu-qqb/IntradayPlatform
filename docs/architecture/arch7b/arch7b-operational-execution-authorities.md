@@ -21,13 +21,14 @@ versioned contracts:
 
 ## Materialization
 
-`materialize-operational-execution-authorities` compiles the source skeleton
-with the 13-command manifest, accepts a closed authority-to-path map and an
-empty output root. It writes
+`materialize-operational-execution-authorities` accepts the final static
+40-stage, 13-command template, a closed authority-to-path map, and an empty
+output root. It writes
 the required-reference inventory, one canonical directory inventory for each
 directory authority, and the exact authority manifest.
 
-`materialize-operational-live-template` requires that manifest. It projects
+`materialize-operational-live-template` takes the same final template and
+requires that manifest. It projects
 the complete authority set into `Template.FileAuthorities` and rejects a
 missing, unused, duplicated, conflicting, synthetic, or unresolved authority.
 The live authority copies that exact set from the validated template.

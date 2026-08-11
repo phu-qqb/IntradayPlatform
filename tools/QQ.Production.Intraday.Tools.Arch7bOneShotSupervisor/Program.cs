@@ -40,13 +40,11 @@ public static class Program
                 "materialize-operational-execution-authorities" => await
                     new Arch7bOperationalExecutionAuthorityMaterializer().MaterializeFilesAsync(
                         Path.GetFullPath(Required(options, "source-template")),
-                        Path.GetFullPath(Required(options, "source-manifest")),
                         Path.GetFullPath(Required(options, "authority-path-map")),
                         Path.GetFullPath(Required(options, "output-root"))).ConfigureAwait(false),
                 "materialize-operational-live-template" => await
                     Arch7bOperationalTemplateAuthorityProjection.WriteAsync(
                         Path.GetFullPath(Required(options, "source-template")),
-                        Path.GetFullPath(Required(options, "source-manifest")),
                         Path.GetFullPath(Required(options, "authority-manifest")),
                         Path.GetFullPath(Required(options, "output-path"))).ConfigureAwait(false),
                 "qualify-production-clock-authority" => await

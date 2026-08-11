@@ -133,9 +133,7 @@ public static class Arch7bProgramV2Modes
             .ConfigureAwait(false);
         var operationalManifest = Arch7bOperationalExecutionAuthorityManifestParser
             .ParseStrict(operationalManifestBytes);
-        if (operationalManifest.SourceTemplateSha256 != template.FileSha256)
-            throw new Arch7bQualificationException(
-                Arch7bV2Contracts.OperationalAuthoritySetMismatch, "source-template-sha256");
+
         var requiredInventory = Arch7bRequiredOperationalExecutionAuthorityInventoryBuilder
             .Build(template.Value);
         var staticEvidenceRoot = runRoot + "-static-authority";
