@@ -679,17 +679,7 @@ public static class Arch7bOperationalExecutionAuthorityValidator
 
     private static string Run(string executable, string workingDirectory, params string[] arguments)
     {
-        var start = new ProcessStartInfo
-        {
-            FileName = executable,
-            WorkingDirectory = workingDirectory,
-            UseShellExecute = false,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            CreateNoWindow = true
-        };
-        foreach (var argument in arguments) start.ArgumentList.Add(argument);
-        start.Environment["npm_config_offline"] = "true";
+        var start = CreateProcessStartInfo(executable, workingDirectory, arguments);
         using var process = Process.Start(start) ??
             throw Failure(Arch7bV2Contracts.OperationalAuthorityMismatch, "process-start");
         var output = process.StandardOutput.ReadToEnd();
@@ -704,6 +694,28 @@ public static class Arch7bOperationalExecutionAuthorityValidator
                 "process-exit-" + process.ExitCode + "-" +
                 Arch7bOneShotContracts.Sha256(output + "\n" + error));
         return output.Trim();
+    }
+
+    internal static ProcessStartInfo CreateProcessStartInfo(string executable,
+        string workingDirectory, IEnumerable<string> arguments)
+    {
+        var start = new ProcessStartInfo
+        {
+            FileName = executable,
+            WorkingDirectory = workingDirectory,
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            CreateNoWindow = true
+        };
+        foreach (var argument in arguments) start.ArgumentList.Add(argument);
+        var executableDirectory = System.IO.Path.GetDirectoryName(
+            System.IO.Path.GetFullPath(executable))!;
+        var inheritedPath = start.Environment.TryGetValue("PATH", out var pathValue)
+            ? pathValue ?? string.Empty : string.Empty;
+        start.Environment["PATH"] = executableDirectory + System.IO.Path.PathSeparator + inheritedPath;
+        start.Environment["npm_config_offline"] = "true";
+        return start;
     }
 
     private static bool IsExecutable(string path)

@@ -54,6 +54,20 @@ public sealed class Arch7bOperationalExecutionAuthorityMatrixTests : IDisposable
         { 40, "deterministic inventory manifest and evidence" }
     };
 
+    [Fact]
+    public void Bound_executable_directory_is_first_on_child_path()
+    {
+        var executable = FindExecutable("node.exe");
+        var executableDirectory = Path.GetDirectoryName(executable)!;
+
+        var start = Arch7bOperationalExecutionAuthorityValidator.CreateProcessStartInfo(
+            executable, executableDirectory, ["--version"]);
+        var firstPath = start.Environment["PATH"]!.Split(Path.PathSeparator)[0];
+
+        Assert.Equal(executableDirectory, firstPath, ignoreCase: OperatingSystem.IsWindows());
+        Assert.Equal("true", start.Environment["npm_config_offline"]);
+    }
+
     [Theory]
     [MemberData(nameof(Matrix))]
     public void Complete_authority_matrix(int id, string description)
