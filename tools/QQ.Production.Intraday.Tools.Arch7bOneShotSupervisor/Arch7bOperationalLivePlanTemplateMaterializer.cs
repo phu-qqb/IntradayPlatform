@@ -37,6 +37,13 @@ public static class Arch7bOperationalLivePlanTemplateMaterializer
         var inventory = Arch7bOperationalLiveFactBindingCatalog.InventoryMarkers(
             Arch7bOperationalCatalogMaterializer.SourceManifestLabel,
             sourceCommandManifestBytes);
+        var fileAuthorities = new Dictionary<string, Arch7bFileAuthority>(
+            skeleton.FileAuthorities, StringComparer.Ordinal);
+        fileAuthorities.Remove("msedge_executable");
+        fileAuthorities["chrome_executable"] = new("chrome_executable",
+            Arch7bSealedNonSecretEnvironment.QualifiedChromeExecutablePath,
+            Arch7bSealedNonSecretEnvironment.QualifiedChromeExecutableSha256,
+            true, false);
         var catalog = Arch7bOperationalLiveFactBindingCatalog.Build();
         var classification = Arch7bFinalStageExecutionCatalog.All;
         var expectedCommandStages = classification.Where(value => value.HasCommandTemplate)
@@ -89,15 +96,26 @@ public static class Arch7bOperationalLivePlanTemplateMaterializer
                     EvidenceSha256 = string.Empty
                 };
             }
+            if (commandCatalog.StageId is "PORTAL_SESSION_PROVEN" or "BRACKET_T2")
+                prototype = BindExplicitChrome(prototype);
             replacements.Add(commandCatalog.StageId,
                 BindCommand(prototype, commandCatalog));
         }
+
+        if (!commandByStage.TryGetValue("CORE_PREQUALIFICATION", out var corePrototype))
+            throw new Arch7bQualificationException(
+                Arch7bV2Blockers.CommandTemplateInvalid, "CORE_PREQUALIFICATION");
+        replacements["CORE_PREQUALIFICATION"] = BindDirectCorePrequalification(
+            corePrototype, fileAuthorities);
 
         var commands = skeleton.CommandTemplates
             .Where(command => expectedCommandStages.Contains(command.StageId))
             .Select(command => replacements.GetValueOrDefault(command.StageId) ?? command)
             .Concat(replacements.Where(value => !commandByStage.ContainsKey(value.Key))
                 .Select(value => value.Value))
+            .Select(command => command.StageId is "PORTAL_SESSION_PROVEN" or "BRACKET_T2"
+                ? BindExplicitChrome(command)
+                : command)
             .OrderBy(command => stageOrder[command.StageId])
             .ToArray();
         if (commands.Length != Arch7bFinalStageExecutionCatalog.CommandTemplateCount ||
@@ -110,9 +128,13 @@ public static class Arch7bOperationalLivePlanTemplateMaterializer
         var stages = BindStageContracts(skeleton.StageContracts, catalog, commands);
         var provisional = skeleton with
         {
+            CoreCommit = Arch7bOneShotContracts.CoreCommit,
+            CoreTree = Arch7bOneShotContracts.CoreTree,
+            FileAuthorities = fileAuthorities,
             CommandTemplates = commands,
             StageContracts = stages,
             CommandTemplateSetSha256 = commandSet,
+            SelectedBrowser = "CHROME_EXPLICIT_EXECUTABLE",
             EvidenceSha256 = string.Empty
         };
         var template = provisional with
@@ -271,10 +293,18 @@ public static class Arch7bOperationalLivePlanTemplateMaterializer
                     value.PlaceholderScope != Arch7bOperationalPlaceholderScope.Authority)
                 .Select(value => value.PlaceholderName))
                 .Distinct(StringComparer.Ordinal).ToArray();
-            var stageRequired = stage.StageId == "POSITION_MARKET_DRAFT"
-                ? new[] { "runtime_selection_artifact" } : [];
-            var stageProduced = stage.StageId == "RUNTIME_SELECTION"
-                ? new[] { "runtime_selection_artifact" } : [];
+            string[] stageRequired = stage.StageId switch
+            {
+                "POSITION_MARKET_DRAFT" => ["runtime_selection_artifact"],
+                "CORE_PREQUALIFICATION" => ["core_prequalification_config"],
+                _ => []
+            };
+            string[] stageProduced = stage.StageId switch
+            {
+                "RUNTIME_SELECTION" => ["runtime_selection_artifact"],
+                "SLOT_LOCKED" => ["core_prequalification_config"],
+                _ => []
+            };
             required = required.Concat(stageRequired)
                 .Distinct(StringComparer.Ordinal).ToArray();
             var produced = stage.ProducedFactTypes.Concat(bindings.Where(value =>
@@ -299,6 +329,100 @@ public static class Arch7bOperationalLivePlanTemplateMaterializer
                 EvidenceSha256 = Arch7bOneShotContracts.Sha256(canonical)
             };
         }).ToArray();
+    }
+
+    private static Arch7bOneShotCommandTemplate BindExplicitChrome(
+        Arch7bOneShotCommandTemplate prototype)
+    {
+        var arguments = new List<Arch7bCommandTemplateArgument>();
+        for (var index = 0; index < prototype.ArgumentTemplates.Count; index++)
+        {
+            var argument = prototype.ArgumentTemplates[index];
+            if (argument.Value is "--browser-channel" or "--executable-path")
+            {
+                if (++index >= prototype.ArgumentTemplates.Count)
+                    throw new Arch7bQualificationException(
+                        Arch7bV2Blockers.CommandTemplateInvalid, prototype.CommandId);
+                continue;
+            }
+            arguments.Add(argument);
+        }
+        arguments.Add(new("--executable-path", Arch7bPlaceholderValueKind.Literal,
+            null, -1, false));
+        arguments.Add(new("${authority:chrome_executable.path}",
+            Arch7bPlaceholderValueKind.AbsolutePath, null, -1, false));
+        var provisional = prototype with
+        {
+            ArgumentTemplates = arguments,
+            EvidenceSha256 = string.Empty
+        };
+        var canonical = string.Join('\n', Arch7bV2Contracts.CommandTemplateVersion,
+            provisional.CommandId, provisional.StageId, provisional.ExecutionKind,
+            provisional.ExecutableAuthorityId,
+            string.Join('|', provisional.ArgumentTemplates.Select(value =>
+                $"{value.Value}:{value.ValueKind}:{value.ExpectedProducerStage}:" +
+                $"{value.MaximumAgeSeconds}:{value.MustBeInsideRunRoot}")),
+            provisional.WorkingDirectoryAuthorityId, provisional.AdapterId,
+            provisional.AdapterContractVersion,
+            provisional.ExpectedNativeOutputContract, provisional.TimeoutSeconds,
+            provisional.StandardOutputLimitBytes, provisional.StandardErrorLimitBytes,
+            provisional.CleanupResourceType, provisional.CausesRdsRead,
+            provisional.CausesCapture, provisional.ReadsSecret,
+            string.Join('|', provisional.SecretVariableNames),
+            Arch7bSealedNonSecretEnvironment.Canonical(
+                provisional.NonSecretEnvironment),
+            provisional.LongLivedProcessKey ?? string.Empty);
+        return provisional with
+        {
+            EvidenceSha256 = Arch7bOneShotContracts.Sha256(canonical)
+        };
+    }
+
+    private static Arch7bOneShotCommandTemplate BindDirectCorePrequalification(
+        Arch7bOneShotCommandTemplate prototype,
+        IReadOnlyDictionary<string, Arch7bFileAuthority> authorities)
+    {
+        var provisional = prototype with
+        {
+            ExecutableAuthorityId = "node_executable",
+            WorkingDirectoryAuthorityId = "core_node_runtime",
+            ArgumentTemplates =
+            [
+                new("tools/lmax_portal_reports_downloader/src/fast-seal-cli.mjs",
+                    Arch7bPlaceholderValueKind.Literal,
+                    null, -1, false),
+                new("prequalify-bracket-runtime", Arch7bPlaceholderValueKind.Literal,
+                    null, -1, false),
+                new("--config", Arch7bPlaceholderValueKind.Literal,
+                    null, -1, false),
+                new("${fact:core_prequalification_config.path}",
+                    Arch7bPlaceholderValueKind.AbsolutePath, "SLOT_LOCKED",
+                    int.MaxValue, true)
+            ],
+            EvidenceSha256 = string.Empty,
+            NonSecretEnvironment = Arch7bSealedNonSecretEnvironment
+                .ForCorePrequalificationEnvironment(authorities)
+        };
+        var canonical = string.Join('\n', Arch7bV2Contracts.CommandTemplateVersion,
+            provisional.CommandId, provisional.StageId, provisional.ExecutionKind,
+            provisional.ExecutableAuthorityId,
+            string.Join('|', provisional.ArgumentTemplates.Select(value =>
+                $"{value.Value}:{value.ValueKind}:{value.ExpectedProducerStage}:" +
+                $"{value.MaximumAgeSeconds}:{value.MustBeInsideRunRoot}")),
+            provisional.WorkingDirectoryAuthorityId, provisional.AdapterId,
+            provisional.AdapterContractVersion,
+            provisional.ExpectedNativeOutputContract, provisional.TimeoutSeconds,
+            provisional.StandardOutputLimitBytes, provisional.StandardErrorLimitBytes,
+            provisional.CleanupResourceType, provisional.CausesRdsRead,
+            provisional.CausesCapture, provisional.ReadsSecret,
+            string.Join('|', provisional.SecretVariableNames),
+            Arch7bSealedNonSecretEnvironment.Canonical(
+                provisional.NonSecretEnvironment),
+            provisional.LongLivedProcessKey ?? string.Empty);
+        return provisional with
+        {
+            EvidenceSha256 = Arch7bOneShotContracts.Sha256(canonical)
+        };
     }
 
     private static int Count(string text, string value)

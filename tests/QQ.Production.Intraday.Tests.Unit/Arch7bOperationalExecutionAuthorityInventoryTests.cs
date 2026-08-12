@@ -1,3 +1,4 @@
+using System.Security.Cryptography;
 using QQ.Production.Intraday.Tools.Arch7bOneShotSupervisor;
 
 namespace QQ.Production.Intraday.Tests.Unit;
@@ -29,10 +30,23 @@ public sealed class Arch7bOperationalExecutionAuthorityInventoryTests
         foreach (var authorityId in new[]
                  {
                      "core_repository", "core_node_runtime", "intraday_runtime", "git_executable",
-                     "node_executable",
+                     "node_executable", "taskkill_executable", "chrome_executable",
                      "dotnet_executable", "dotnet_root", "root_certificate", "market_data_config"
                  })
             Assert.Contains(authorityId, inventory.RequiredAuthorityIds);
+        var taskkillReferences = inventory.References.Where(value =>
+            value.AuthorityId == "taskkill_executable").ToArray();
+        Assert.Single(taskkillReferences);
+        Assert.Equal("CORE_PREQUALIFICATION", taskkillReferences[0].ReferencingStageId);
+        Assert.Equal(Arch7bOperationalAuthorityReferenceKind.NonSecretEnvironment,
+            taskkillReferences[0].ReferenceKind);
+        var chromeReferences = inventory.References.Where(value =>
+            value.AuthorityId == "chrome_executable").ToArray();
+        Assert.Equal(3, chromeReferences.Length);
+        Assert.Contains(chromeReferences, value => value.ReferencingStageId == "PORTAL_SESSION_PROVEN");
+        Assert.Contains(chromeReferences, value => value.ReferencingStageId == "BRACKET_T2");
+        Assert.Contains(chromeReferences, value => value.ReferenceKind ==
+            Arch7bOperationalAuthorityReferenceKind.StaticPreSpawn);
         Assert.All(inventory.References, reference =>
             Assert.Equal(Arch7bOneShotContracts.Sha256(reference.Canonical()),
                 reference.EvidenceSha256));
@@ -43,6 +57,10 @@ public sealed class Arch7bOperationalExecutionAuthorityInventoryTests
         var fixture = Arch7bV2QualificationFactory.Create(
             typeof(QQ.Production.Intraday.Tools.Arch7bOneShotSupervisor.Program)
                 .Assembly.Location, Path.Combine(root, "runtime"));
+        var authorities = new Dictionary<string, Arch7bFileAuthority>(
+            fixture.Template.FileAuthorities, StringComparer.Ordinal);
+        foreach (var pair in Arch7bTaskkillTestAuthorities.Create())
+            authorities[pair.Key] = pair.Value;
         var catalog = Arch7bOperationalLiveFactBindingCatalog.Build();
         var commands = fixture.Template.CommandTemplates
             .Where(command => Arch7bFinalStageExecutionCatalog.Require(command.StageId)
@@ -92,6 +110,7 @@ public sealed class Arch7bOperationalExecutionAuthorityInventoryTests
         }
         var provisional = fixture.Template with
         {
+            FileAuthorities = authorities,
             CommandTemplates = commands,
             EvidenceSha256 = string.Empty
         };
@@ -108,4 +127,7 @@ public sealed class Arch7bOperationalExecutionAuthorityInventoryTests
                    "QQ.Production.Intraday.sln"))) current = current.Parent;
         return current?.FullName ?? throw new DirectoryNotFoundException("repository root");
     }
+
+    private static string Sha(string path) =>
+        Convert.ToHexStringLower(SHA256.HashData(File.ReadAllBytes(path)));
 }

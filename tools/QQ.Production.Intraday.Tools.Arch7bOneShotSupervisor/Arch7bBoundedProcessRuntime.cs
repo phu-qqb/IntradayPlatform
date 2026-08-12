@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 
 namespace QQ.Production.Intraday.Tools.Arch7bOneShotSupervisor;
 
@@ -11,6 +12,106 @@ public sealed record Arch7bBoundedProcessOutput(
     int SecretValueCountChecked,
     bool SecretScanPassed,
     bool RawOutputRecorded);
+
+public sealed record Arch7bChildProcessOutputReceipt(
+    string ContractVersion,
+    string CommandId,
+    string StageId,
+    int ProcessId,
+    int ExitCode,
+    DateTimeOffset StartedAtUtc,
+    DateTimeOffset CompletedAtUtc,
+    long ElapsedMilliseconds,
+    long StdoutByteCount,
+    string StdoutSha256,
+    long StderrByteCount,
+    string StderrSha256,
+    bool Utf8Validated,
+    bool SecretScanPassed,
+    int SecretValueCountChecked,
+    bool RawOutputRecorded,
+    string AdapterId,
+    string ExpectedNativeOutputContract,
+    string MaterializedCommandSha256,
+    string EvidenceSha256)
+{
+    public string Canonical() => string.Join('\n', ContractVersion, CommandId,
+        StageId, ProcessId, ExitCode, StartedAtUtc.ToString("O"),
+        CompletedAtUtc.ToString("O"), ElapsedMilliseconds, StdoutByteCount,
+        StdoutSha256, StderrByteCount, StderrSha256, Utf8Validated,
+        SecretScanPassed, SecretValueCountChecked, RawOutputRecorded, AdapterId,
+        ExpectedNativeOutputContract, MaterializedCommandSha256);
+}
+
+public sealed record Arch7bChildAdapterFailureEvidence(
+    string ContractVersion,
+    string NativeBlocker,
+    string AdapterId,
+    string ReceiptPath,
+    string ReceiptSha256,
+    string ParseClassification,
+    string ExceptionType,
+    string ExceptionMessageSha256,
+    bool RawOutputRecorded,
+    string? SecondaryReceiptWriteFailureType,
+    string? SecondaryReceiptWriteFailureMessageSha256,
+    string EvidenceSha256)
+{
+    public string Canonical() => string.Join('\n', ContractVersion, NativeBlocker,
+        AdapterId, ReceiptPath, ReceiptSha256, ParseClassification, ExceptionType,
+        ExceptionMessageSha256, RawOutputRecorded,
+        SecondaryReceiptWriteFailureType ?? string.Empty,
+        SecondaryReceiptWriteFailureMessageSha256 ?? string.Empty);
+}
+
+public static class Arch7bChildOutputClassifier
+{
+    public const string PureExpected = "A_PURE_SINGLE_JSON_EXPECTED_SHAPE";
+    public const string WrapperContamination =
+        "B_STDOUT_NPM_OR_WRAPPER_PREFIX_CONTAMINATION";
+    public const string MultipleDocuments =
+        "C_MULTIPLE_JSON_DOCUMENTS_OR_LOG_LINES";
+    public const string BomOnly = "D_UTF8_BOM_ONLY";
+    public const string ShapeMismatch = "E_CORE_NATIVE_SHAPE_MISMATCH";
+    public const string InvalidUtf8 = "F_INVALID_UTF8";
+    public const string Other = "G_OTHER_EXACTLY_PROVEN";
+
+    public static string Classify(string value)
+    {
+        if (value.StartsWith('\uFEFF')) return BomOnly;
+        try
+        {
+            using var document = JsonDocument.Parse(value);
+            return document.RootElement.ValueKind == JsonValueKind.Object &&
+                   document.RootElement.EnumerateObject().Select(item => item.Name)
+                       .Order(StringComparer.Ordinal).SequenceEqual(
+                           new[] { "manifest", "qualification" }, StringComparer.Ordinal)
+                ? PureExpected : ShapeMismatch;
+        }
+        catch (JsonException)
+        {
+            var trimmed = value.Trim();
+            if (ContainsMultipleJsonDocuments(trimmed)) return MultipleDocuments;
+            var first = trimmed.IndexOf('{');
+            var last = trimmed.LastIndexOf('}');
+            return first >= 0 && last > first &&
+                   (first != 0 || last != trimmed.Length - 1)
+                ? WrapperContamination : Other;
+        }
+    }
+
+    private static bool ContainsMultipleJsonDocuments(string value)
+    {
+        for (var index = 0; index < value.Length - 1; index++)
+        {
+            if (value[index] != '}') continue;
+            var next = index + 1;
+            while (next < value.Length && char.IsWhiteSpace(value[next])) next++;
+            if (next < value.Length && value[next] == '{') return true;
+        }
+        return false;
+    }
+}
 
 public sealed record Arch7bV2CommandExecutionResult(
     string CommandId,
@@ -24,6 +125,8 @@ public sealed record Arch7bV2CommandExecutionResult(
     Arch7bBoundedProcessOutput StandardError,
     Arch7bNormalizedChildResult NormalizedResult,
     string MaterializedCommandSha256,
+    string OutputReceiptPath,
+    string OutputReceiptSha256,
     string EvidenceSha256);
 
 public static class Arch7bBoundedStreamReader
@@ -53,8 +156,19 @@ public static class Arch7bBoundedStreamReader
             if (count > maximumBytes)
                 throw new Arch7bQualificationException(Arch7bV2Blockers.ChildOutputLimitExceeded);
             hash.AppendData(bytes, 0, read);
-            decoder.Convert(bytes, 0, read, chars, 0, chars.Length, false,
-                out var bytesUsed, out var charsUsed, out _);
+            int bytesUsed;
+            int charsUsed;
+            try
+            {
+                decoder.Convert(bytes, 0, read, chars, 0, chars.Length, false,
+                    out bytesUsed, out charsUsed, out _);
+            }
+            catch (DecoderFallbackException)
+            {
+                throw new Arch7bQualificationException(
+                    Arch7bBlockers.ChildOutputInvalid,
+                    Arch7bChildOutputClassifier.InvalidUtf8);
+            }
             if (bytesUsed != read)
                 throw new Arch7bQualificationException(Arch7bBlockers.ChildOutputInvalid, "utf8");
             var chunk = new string(chars, 0, charsUsed);
@@ -65,8 +179,18 @@ public static class Arch7bBoundedStreamReader
                 ? scan[^Math.Min(scan.Length, maximumNeedleLength - 1)..] : scan;
             text.Append(chunk);
         }
-        decoder.Convert([], 0, 0, chars, 0, chars.Length, true,
-            out _, out var flushedChars, out _);
+        int flushedChars;
+        try
+        {
+            decoder.Convert([], 0, 0, chars, 0, chars.Length, true,
+                out _, out flushedChars, out _);
+        }
+        catch (DecoderFallbackException)
+        {
+            throw new Arch7bQualificationException(
+                Arch7bBlockers.ChildOutputInvalid,
+                Arch7bChildOutputClassifier.InvalidUtf8);
+        }
         if (flushedChars > 0) text.Append(chars, 0, flushedChars);
         return new(count, Convert.ToHexStringLower(hash.GetHashAndReset()), text.ToString(),
             exactSecrets.Count, true, false);
@@ -135,17 +259,52 @@ public sealed class Arch7bOneShotProcessRunnerV2
                 await exit.ConfigureAwait(false);
                 var outputs = await Task.WhenAll(stdout, stderr).ConfigureAwait(false);
                 stopwatch.Stop();
-                var adapter = adapters.Require(command.AdapterId);
-                var normalized = await adapter.AdaptAsync(outputs[0].Text, command, runRoot,
-                    cancellationToken).ConfigureAwait(false);
                 var completedAt = DateTimeOffset.UtcNow;
+                var receiptPath = Path.Combine(
+                    Path.GetDirectoryName(command.AuthorityPath)!,
+                    "child-process-output-receipt.json");
+                string receiptSha256 = string.Empty;
+                Exception? receiptFailure = null;
+                try
+                {
+                    receiptSha256 = await WriteReceiptAsync(receiptPath, command,
+                        process, startedAt, completedAt, stopwatch.ElapsedMilliseconds,
+                        outputs[0], outputs[1], cancellationToken).ConfigureAwait(false);
+                }
+                catch (Exception failure)
+                {
+                    receiptFailure = failure;
+                }
+                var adapter = adapters.Require(command.AdapterId);
+                Arch7bNormalizedChildResult normalized;
+                try
+                {
+                    normalized = await adapter.AdaptAsync(outputs[0].Text, command,
+                        runRoot, cancellationToken).ConfigureAwait(false);
+                }
+                catch (Exception adapterFailure)
+                {
+                    await TryWriteAdapterFailureAsync(command, outputs[0].Text,
+                        receiptPath, receiptSha256, receiptFailure, adapterFailure,
+                        CancellationToken.None).ConfigureAwait(false);
+                    throw;
+                }
+                if (receiptFailure is not null)
+                    throw new Arch7bQualificationException(
+                        Arch7bV2Blockers.ChildOutputReceiptWriteFailed,
+                        Arch7bOneShotContracts.Sha256(receiptFailure.Message));
+                if (process.ExitCode != 0)
+                    throw new Arch7bQualificationException(
+                        Arch7bBlockers.ChildProcessFailedUncatalogued,
+                        command.CommandId);
                 var canonical = string.Join('\n', command.CommandId, command.StageId, process.Id,
                     process.ExitCode, startedAt.ToString("O"), completedAt.ToString("O"),
                     stopwatch.ElapsedMilliseconds, outputs[0].Sha256, outputs[1].Sha256,
-                    normalized.EvidenceSha256, command.EvidenceSha256);
+                    normalized.EvidenceSha256, command.EvidenceSha256, receiptSha256);
                 return new(command.CommandId, command.StageId, process.Id, process.ExitCode,
                     startedAt, completedAt, stopwatch.ElapsedMilliseconds, outputs[0], outputs[1],
-                    normalized, command.EvidenceSha256, Arch7bOneShotContracts.Sha256(canonical));
+                    normalized, command.EvidenceSha256, receiptPath, receiptSha256,
+                    Arch7bOneShotContracts.Sha256(canonical));
             }
             catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
             {
@@ -263,6 +422,92 @@ public sealed class Arch7bOneShotProcessRunnerV2
         return result;
     }
 
+    private static async Task<string> WriteReceiptAsync(string path,
+        Arch7bOneShotMaterializedCommand command, Process process,
+        DateTimeOffset startedAt, DateTimeOffset completedAt,
+        long elapsedMilliseconds, Arch7bBoundedProcessOutput stdout,
+        Arch7bBoundedProcessOutput stderr, CancellationToken cancellationToken)
+    {
+        var provisional = new Arch7bChildProcessOutputReceipt(
+            Arch7bV2Contracts.ChildProcessOutputReceiptVersion,
+            command.CommandId, command.StageId, process.Id, process.ExitCode,
+            startedAt, completedAt, elapsedMilliseconds, stdout.ByteCount,
+            stdout.Sha256, stderr.ByteCount, stderr.Sha256, true,
+            stdout.SecretScanPassed && stderr.SecretScanPassed,
+            Math.Max(stdout.SecretValueCountChecked,
+                stderr.SecretValueCountChecked), false, command.AdapterId,
+            command.ExpectedNativeOutputContract, command.EvidenceSha256,
+            string.Empty);
+        var receipt = provisional with
+        {
+            EvidenceSha256 = Arch7bOneShotContracts.Sha256(
+                provisional.Canonical())
+        };
+        return await WriteCreateNewAtomicAsync(path, receipt, cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    private static async Task TryWriteAdapterFailureAsync(
+        Arch7bOneShotMaterializedCommand command, string stdout,
+        string receiptPath, string receiptSha256, Exception? receiptFailure,
+        Exception adapterFailure, CancellationToken cancellationToken)
+    {
+        var blocker = adapterFailure is Arch7bQualificationException qualification
+            ? qualification.BlockerCode
+            : Arch7bBlockers.ChildOutputInvalid;
+        var provisional = new Arch7bChildAdapterFailureEvidence(
+            Arch7bV2Contracts.ChildAdapterFailureVersion, blocker,
+            command.AdapterId, receiptPath, receiptSha256,
+            Arch7bChildOutputClassifier.Classify(stdout),
+            adapterFailure.GetType().Name,
+            Arch7bOneShotContracts.Sha256(adapterFailure.Message), false,
+            receiptFailure?.GetType().Name,
+            receiptFailure is null ? null :
+                Arch7bOneShotContracts.Sha256(receiptFailure.Message),
+            string.Empty);
+        var evidence = provisional with
+        {
+            EvidenceSha256 = Arch7bOneShotContracts.Sha256(
+                provisional.Canonical())
+        };
+        try
+        {
+            await WriteCreateNewAtomicAsync(Path.Combine(
+                    Path.GetDirectoryName(command.AuthorityPath)!,
+                    "child-adapter-failure.json"), evidence, cancellationToken)
+                .ConfigureAwait(false);
+        }
+        catch
+        {
+            // The original adapter blocker remains authoritative.
+        }
+    }
+
+    private static async Task<string> WriteCreateNewAtomicAsync<T>(
+        string path, T value, CancellationToken cancellationToken)
+    {
+        var bytes = JsonSerializer.SerializeToUtf8Bytes(value,
+            Arch7bJson.CanonicalOptions);
+        var temporary = path + ".tmp-" + Guid.NewGuid().ToString("N");
+        try
+        {
+            await using (var stream = new FileStream(temporary, FileMode.CreateNew,
+                             FileAccess.Write, FileShare.None, 4096,
+                             FileOptions.Asynchronous | FileOptions.WriteThrough))
+            {
+                await stream.WriteAsync(bytes, cancellationToken)
+                    .ConfigureAwait(false);
+                await stream.FlushAsync(cancellationToken).ConfigureAwait(false);
+            }
+            File.Move(temporary, path, false);
+            return Convert.ToHexStringLower(SHA256.HashData(bytes));
+        }
+        finally
+        {
+            if (File.Exists(temporary)) File.Delete(temporary);
+        }
+    }
+
     private static void RegisterCleanup(Arch7bTerminalCleanupSupervisor cleanup, string resourceId,
         Arch7bOneShotMaterializedCommand command, Func<Process?> process)
     {
@@ -300,7 +545,8 @@ public sealed class Arch7bOneShotProcessRunnerV2
             var inherited = Environment.GetEnvironmentVariable(name);
             if (!string.IsNullOrEmpty(inherited)) value.Environment[name] = inherited;
         }
-        Arch7bSealedNonSecretEnvironment.ValidateMaterialized(command.NonSecretEnvironment);
+        Arch7bSealedNonSecretEnvironment.ValidateMaterialized(command.NonSecretEnvironment,
+            command.ExecutablePath, command.CommandId, command.StageId);
         foreach (var variable in command.NonSecretEnvironment)
             value.Environment[variable.VariableName] = variable.Value;
         foreach (var pair in secrets.Values)
@@ -328,6 +574,36 @@ public sealed class Arch7bOneShotProcessRunnerV2
             throw new Arch7bQualificationException(Arch7bBlockers.ExecutableShaMismatch, command.CommandId);
         if (command.ArgumentList.Any(Arch7bV2ArgumentSafety.IsSecretArgumentValue))
             throw new Arch7bQualificationException(Arch7bBlockers.SecretInArgument, command.CommandId);
+        ValidateBrowserAuthority(command);
+    }
+
+    private static void ValidateBrowserAuthority(Arch7bOneShotMaterializedCommand command)
+    {
+        if (command.CommandId.StartsWith("offline-", StringComparison.Ordinal)) return;
+
+        string? path = null;
+        string? sha = null;
+        if (command.StageId == "CORE_PREQUALIFICATION")
+        {
+            var configPath = Arch7bNativeAdapterJson.Option(command.ArgumentList, "--config");
+            using var config = JsonDocument.Parse(File.ReadAllBytes(configPath));
+            path = Arch7bNativeAdapterJson.String(config.RootElement,
+                "browserExecutablePath");
+            sha = Arch7bNativeAdapterJson.String(config.RootElement,
+                "expectedBrowserExecutableSha256");
+            if (config.RootElement.TryGetProperty("browserChannel", out _))
+                throw new Arch7bQualificationException(
+                    Arch7bV2Blockers.CommandTemplateInvalid, "browserChannel");
+        }
+        else if (command.StageId is "PORTAL_SESSION_PROVEN" or "BRACKET_T2")
+        {
+            path = Arch7bNativeAdapterJson.Option(command.ArgumentList,
+                "--executable-path");
+            sha = Arch7bSealedNonSecretEnvironment.QualifiedChromeExecutableSha256;
+        }
+        if (path is null || sha is null) return;
+        Arch7bSealedNonSecretEnvironment.ValidateChromeAuthority(new(
+            "chrome_executable", path, sha, true, false));
     }
 
     private static void Kill(Process process)

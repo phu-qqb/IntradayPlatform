@@ -45,13 +45,22 @@ public sealed class Arch7bCoreRuntimePrequalificationAdapterTests : IDisposable
             ["aws_sdk_secrets_manager_version"] = "3.0.0",
             ["browser_runtime"] = new JsonObject
             {
-                ["channel"] = "msedge",
-                ["version"] = "138.0.0.0"
+                ["source"] = "EXPLICIT_EXECUTABLE",
+                ["executable_path"] = Arch7bSealedNonSecretEnvironment.QualifiedChromeExecutablePath,
+                ["executable_basename"] = "chrome.exe",
+                ["executable_sha256"] = Arch7bSealedNonSecretEnvironment.QualifiedChromeExecutableSha256,
+                ["version"] = Arch7bSealedNonSecretEnvironment.QualifiedChromeVersion,
+                ["headless"] = true,
+                ["channel"] = null,
+                ["browser_download_used"] = false,
+                ["fallback_used"] = false
             },
             ["host"] = "PRIMARY",
             ["exact_test_command"] = "npm test",
-            ["tests_passed"] = 154,
-            ["tests_total"] = 154,
+            ["tests_passed"] =
+                Arch7bOneShotContracts.ExpectedCorePrequalificationTestCount,
+            ["tests_total"] =
+                Arch7bOneShotContracts.ExpectedCorePrequalificationTestCount,
             ["syntax_checks"] = "PASS",
             ["npm_audit_omit_dev_vulnerabilities"] = 0,
             ["secret_sentinel_scan"] = "PASS",
@@ -70,7 +79,7 @@ public sealed class Arch7bCoreRuntimePrequalificationAdapterTests : IDisposable
         await File.WriteAllTextAsync(Path.Combine(outputRoot,
             "core-runtime-prequalification.json"), qualification.ToJsonString());
         await File.WriteAllTextAsync(Path.Combine(outputRoot,
-            "runner-tests.stdout.log"), "tests 154\npass 154\nfail 0\n");
+            "runner-tests.stdout.log"), "tests 156\npass 156\nfail 0\n");
         await File.WriteAllTextAsync(Path.Combine(outputRoot,
             "runner-tests.stderr.log"), string.Empty);
 
@@ -122,6 +131,20 @@ public sealed class Arch7bCoreRuntimePrequalificationAdapterTests : IDisposable
         Assert.Equal(3, normalized.NativeArtifactCount);
         Assert.Equal(3, normalized.ArtifactSha256.Distinct().Count());
 
+        ((JsonObject)native["qualification"]!)["tests_passed"] = 154;
+        ((JsonObject)native["qualification"]!)["tests_total"] = 154;
+        var obsoleteCountFailure =
+            await Assert.ThrowsAsync<Arch7bQualificationException>(() =>
+                new Arch7bCoreRuntimePrequalificationAdapter(
+                    new Arch7bTestTimeProvider(now)).AdaptAsync(
+                    native.ToJsonString(), Command(outputRoot), root));
+        Assert.Equal(Arch7bV2Blockers.ChildAdapterContractMismatch,
+            obsoleteCountFailure.BlockerCode);
+
+        ((JsonObject)native["qualification"]!)["tests_passed"] =
+            Arch7bOneShotContracts.ExpectedCorePrequalificationTestCount;
+        ((JsonObject)native["qualification"]!)["tests_total"] =
+            Arch7bOneShotContracts.ExpectedCorePrequalificationTestCount;
         ((JsonObject)native["qualification"]!)["package_json_sha256"] =
             new string('9', 64);
         var failure = await Assert.ThrowsAsync<Arch7bQualificationException>(() =>
@@ -133,12 +156,20 @@ public sealed class Arch7bCoreRuntimePrequalificationAdapterTests : IDisposable
 
     private static Arch7bOneShotMaterializedCommand Command(string outputRoot)
     {
+        var configPath = Path.Combine(Path.GetDirectoryName(outputRoot)!,
+            "core-prequalification-config.json");
+        File.WriteAllText(configPath, new JsonObject
+        {
+            ["outputRoot"] = outputRoot,
+            ["browserExecutablePath"] = Arch7bSealedNonSecretEnvironment.QualifiedChromeExecutablePath,
+            ["expectedBrowserExecutableSha256"] = Arch7bSealedNonSecretEnvironment.QualifiedChromeExecutableSha256
+        }.ToJsonString());
         var executable = typeof(Arch7bCoreRuntimePrequalificationAdapter)
             .Assembly.Location;
         return new(Arch7bV2Contracts.MaterializedCommandVersion,
             "core-runtime-prequalification", "CORE_PREQUALIFICATION",
             Arch7bExecutionKind.ChildInvoke, executable, ShaFile(executable),
-            ["--output-root", outputRoot], Path.GetDirectoryName(outputRoot)!,
+            ["--config", configPath], Path.GetDirectoryName(outputRoot)!,
             "core-prequalification-v1",
             Arch7bV2Contracts.ChildResultAdapterVersion,
             Arch7bCoreRuntimePrequalificationAdapter.NativeContract,

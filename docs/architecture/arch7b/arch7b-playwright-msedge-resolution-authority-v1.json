@@ -1,0 +1,48 @@
+{
+  "contract_version": "arch7b_playwright_msedge_resolution_authority_v1",
+  "audit_scope": "CORE_NODE_RUNTIME_INSTALLED_SOURCE",
+  "ssm_command_id": "73e9af48-5a6b-4255-81f2-5ebe6f086002",
+  "package": {
+    "name": "playwright-core",
+    "version": "1.62.0",
+    "source": "lib/coreBundle.js",
+    "source_sha256": "3258d1cf334c6afc95f22aa9c292436cb976b391e0437f1359c83b84f0cb9d66",
+    "resolver": "Registry._createChromiumChannel/executablePath"
+  },
+  "variables_read_in_candidate_order": [
+    "LOCALAPPDATA",
+    "PROGRAMFILES",
+    "PROGRAMFILES(X86)",
+    "HOMEDRIVE"
+  ],
+  "candidate_prefixes_in_order": [
+    "LOCALAPPDATA",
+    "PROGRAMFILES",
+    "PROGRAMFILES(X86)",
+    "HOMEDRIVE\\Program Files",
+    "HOMEDRIVE\\Program Files (x86)"
+  ],
+  "observed_required_authorities": [
+    "PROGRAMFILES(X86)"
+  ],
+  "observed_not_required_authorities": [
+    "LOCALAPPDATA",
+    "PROGRAMFILES",
+    "HOMEDRIVE"
+  ],
+  "selected": {
+    "channel": "msedge",
+    "candidate_index": 2,
+    "path": "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
+    "sha256": "6c6729d3ade101ad8b97f9812a852a9024b7bb2a8394b5f506219dd635dc330d"
+  },
+  "source_lines": {
+    "programfiles": 33198,
+    "programfiles_x86": 33199,
+    "homedrive_program_files": 33201,
+    "homedrive_program_files_x86": 33202,
+    "repeated_range_start": 33238,
+    "repeated_range_end": 33242
+  },
+  "additional_environment_authorities_required": false
+}

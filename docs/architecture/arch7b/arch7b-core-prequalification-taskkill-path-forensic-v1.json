@@ -1,0 +1,30 @@
+{
+  "contract_version": "arch7b_core_prequalification_taskkill_path_forensic_v1",
+  "classification": "PLAYWRIGHT_EDGE_PROCESS_CLEANUP_REQUIRES_TASKKILL_BUT_SEALED_PATH_OMITS_SYSTEM32",
+  "command": "CORE_PREQUALIFICATION",
+  "executable_authority_id": "node_executable",
+  "child": {
+    "module": "tools/lmax_portal_reports_downloader/src/fast-seal-cli.mjs",
+    "mode": "prequalify-bracket-runtime"
+  },
+  "observed_sealed_path_authority_ids": [
+    "git_executable",
+    "node_executable"
+  ],
+  "observed_maximum_path_directories": 2,
+  "missing_executable": "taskkill.exe",
+  "expected_path": "C:\\Windows\\System32\\taskkill.exe",
+  "native_blocker": "PLAYWRIGHT_EDGE_CLEANUP_TASKKILL_NOT_RESOLVED",
+  "core_tests_reached": {
+    "passed": 156,
+    "total": 156
+  },
+  "safety": {
+    "secret": 0,
+    "database": 0,
+    "portal": 0,
+    "lmax": 0,
+    "fix": 0,
+    "order": 0
+  }
+}

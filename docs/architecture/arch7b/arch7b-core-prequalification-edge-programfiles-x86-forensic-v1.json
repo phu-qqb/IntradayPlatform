@@ -1,0 +1,37 @@
+{
+  "contract_version": "arch7b_core_prequalification_edge_programfiles_x86_forensic_v1",
+  "classification": "PLAYWRIGHT_EDGE_CHANNEL_RESOLUTION_REQUIRES_PROGRAMFILES_X86_BUT_CHILD_ENVIRONMENT_OMITS_IT",
+  "stage_id": "CORE_PREQUALIFICATION",
+  "candidate_runtime_commit": "3cd5014c757c4fef6559eec9b6e0cd9f0ef65cd6",
+  "node_child": {
+    "exit_code": 1,
+    "stdout_bytes": 0,
+    "stderr_bytes": 165,
+    "stderr_sha256": "abd4ed9e2c8b7e95b38f600b312744a9fa09376b71a8dc1ed49b92ab1a2e5663"
+  },
+  "taskkill_authority": {
+    "status": "PASS",
+    "path": "C:\\Windows\\System32\\taskkill.exe",
+    "sha256": "81e9649b317de9243bf7f34e436e86159ba267d86349fa47efdb71dde2fc7bc5"
+  },
+  "edge_observation": {
+    "path": "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
+    "sha256": "6c6729d3ade101ad8b97f9812a852a9024b7bb2a8394b5f506219dd635dc330d",
+    "missing_environment_variable": "ProgramFiles(x86)"
+  },
+  "safety": {
+    "secret": 0,
+    "database": 0,
+    "portal": 0,
+    "lmax": 0,
+    "fix": 0,
+    "order": 0,
+    "databento": 0
+  },
+  "residual": {
+    "node": 0,
+    "msedge": 0,
+    "taskkill": 0,
+    "markers": 0
+  }
+}

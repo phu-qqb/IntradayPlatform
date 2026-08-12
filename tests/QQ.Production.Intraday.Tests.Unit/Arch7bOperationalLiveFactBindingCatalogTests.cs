@@ -1,3 +1,4 @@
+using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using QQ.Production.Intraday.Tools.Arch7bOneShotSupervisor;
@@ -212,6 +213,52 @@ public sealed class Arch7bOperationalLiveFactBindingCatalogTests : IDisposable
             StringComparison.Ordinal);
         Assert.Contains("$" + "{artifact:position_market_draft_artifact.sha256}", text,
             StringComparison.Ordinal);
+        var core = result.Template.CommandTemplates.Single(value =>
+            value.StageId == "CORE_PREQUALIFICATION");
+        Assert.Equal("node_executable", core.ExecutableAuthorityId);
+        Assert.Equal("core_node_runtime", core.WorkingDirectoryAuthorityId);
+        Assert.Equal(new[]
+        {
+            "tools/lmax_portal_reports_downloader/src/fast-seal-cli.mjs",
+            "prequalify-bracket-runtime",
+            "--config",
+            "$" + "{fact:core_prequalification_config.path}"
+        }, core.ArgumentTemplates.Select(value => value.Value));
+        Assert.DoesNotContain(core.ArgumentTemplates,
+            value => value.Value.Contains("npm", StringComparison.OrdinalIgnoreCase));
+        Assert.DoesNotContain(core.ArgumentTemplates,
+            value => value.Value.Contains("powershell", StringComparison.OrdinalIgnoreCase) ||
+                     value.Value.Contains("cmd.exe", StringComparison.OrdinalIgnoreCase));
+        Assert.Single(core.NonSecretEnvironment);
+        var executablePath = core.NonSecretEnvironment.Single(value =>
+            value.VariableName == "PATH");
+        Assert.Equal("PATH", executablePath.VariableName);
+        Assert.Equal(Arch7bSealedNonSecretEnvironment.CorePrequalificationPathAuthorityId,
+            executablePath.SourceAuthorityId);
+        Assert.Equal(Arch7bNonSecretEnvironmentValueKind.ExecutableSearchPath,
+            executablePath.ValueKind);
+        Assert.Equal(string.Join(Path.PathSeparator, new[]
+        {
+            Path.GetDirectoryName(result.Template.FileAuthorities["git_executable"].Path),
+            Path.GetDirectoryName(result.Template.FileAuthorities["node_executable"].Path),
+            Path.GetDirectoryName(result.Template.FileAuthorities["taskkill_executable"].Path)
+        }),
+            executablePath.Value);
+        Assert.DoesNotContain(core.NonSecretEnvironment,
+            value => value.VariableName == "ProgramFiles(x86)");
+        Assert.Equal("CHROME_EXPLICIT_EXECUTABLE", result.Template.SelectedBrowser);
+        Assert.True(result.Template.FileAuthorities.ContainsKey("chrome_executable"));
+        Assert.False(result.Template.FileAuthorities.ContainsKey("msedge_executable"));
+        foreach (var stage in new[] { "PORTAL_SESSION_PROVEN", "BRACKET_T2" })
+            Assert.Contains(result.Template.CommandTemplates.Single(value =>
+                    value.StageId == stage).ArgumentTemplates,
+                value => value.Value == "${authority:chrome_executable.path}");
+        Assert.Contains("core_prequalification_config",
+            result.Template.StageContracts.Single(value =>
+                value.StageId == "SLOT_LOCKED").ProducedFactTypes);
+        Assert.Contains("core_prequalification_config",
+            result.Template.StageContracts.Single(value =>
+                value.StageId == "CORE_PREQUALIFICATION").RequiredFactTypes);
     }
 
     [Fact]
@@ -318,6 +365,10 @@ public sealed class Arch7bOperationalLiveFactBindingCatalogTests : IDisposable
         var fixture = Arch7bV2QualificationFactory.Create(
             typeof(QQ.Production.Intraday.Tools.Arch7bOneShotSupervisor.Program)
                 .Assembly.Location, Path.Combine(root, "runtime"));
+        var authorities = new Dictionary<string, Arch7bFileAuthority>(
+            fixture.Template.FileAuthorities, StringComparer.Ordinal);
+        foreach (var pair in Arch7bTaskkillTestAuthorities.Create())
+            authorities[pair.Key] = pair.Value;
         var catalog = Arch7bOperationalLiveFactBindingCatalog.Build();
         var commands = fixture.Template.CommandTemplates
             .Where(command => Arch7bFinalStageExecutionCatalog.Require(command.StageId)
@@ -371,6 +422,7 @@ public sealed class Arch7bOperationalLiveFactBindingCatalogTests : IDisposable
         }
         var provisional = fixture.Template with
         {
+            FileAuthorities = authorities,
             CommandTemplates = commands,
             EvidenceSha256 = string.Empty
         };
@@ -400,6 +452,9 @@ public sealed class Arch7bOperationalLiveFactBindingCatalogTests : IDisposable
             directory = directory.Parent;
         return directory?.FullName ?? throw new DirectoryNotFoundException();
     }
+
+    private static string Sha(string path) =>
+        Convert.ToHexStringLower(SHA256.HashData(File.ReadAllBytes(path)));
 
     public void Dispose()
     {

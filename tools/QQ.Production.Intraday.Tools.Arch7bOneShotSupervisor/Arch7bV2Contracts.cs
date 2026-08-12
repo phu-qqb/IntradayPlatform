@@ -11,6 +11,10 @@ public static class Arch7bV2Contracts
     public const string LongLivedProcessRegistryVersion = "arch7b_one_shot_long_lived_process_registry_v1";
     public const string SecretEnvironmentInjectionVersion = "arch7b_one_shot_secret_environment_injection_v1";
     public const string ChildResultAdapterVersion = "arch7b_one_shot_child_result_adapter_v1";
+    public const string ChildProcessOutputReceiptVersion =
+        "arch7b_child_process_output_receipt_v1";
+    public const string ChildAdapterFailureVersion =
+        "arch7b_child_adapter_failure_v1";
     public const string OperatorAuthorizationVersion = "arch7b_one_shot_operator_authorization_v2";
     public const string LiveExecutionAuthorityVersion = "arch7b_one_shot_live_execution_authority_v3";
     public const string LiveExecutionRuntimeVersion = "arch7b_one_shot_live_execution_runtime_v2";
@@ -80,6 +84,8 @@ public static class Arch7bV2Blockers
     public const string ProcessSignalForbidden = "ARCH7B_ONE_SHOT_PROCESS_SIGNAL_FORBIDDEN";
     public const string ChildOutputLimitExceeded = "ARCH7B_ONE_SHOT_CHILD_OUTPUT_LIMIT_EXCEEDED";
     public const string ChildOutputSecretValueDetected = "ARCH7B_ONE_SHOT_CHILD_OUTPUT_SECRET_VALUE_DETECTED";
+    public const string ChildOutputReceiptWriteFailed =
+        "ARCH7B_ONE_SHOT_CHILD_OUTPUT_RECEIPT_WRITE_FAILED";
     public const string SecretLeaseMissing = "ARCH7B_ONE_SHOT_SECRET_LEASE_MISSING";
     public const string SecretCommandScopeMismatch = "ARCH7B_ONE_SHOT_SECRET_COMMAND_SCOPE_MISMATCH";
     public const string ChildAdapterMissing = "ARCH7B_ONE_SHOT_CHILD_OUTPUT_ADAPTER_MISSING";
@@ -98,6 +104,22 @@ public static class Arch7bV2Blockers
         "ARCH7B_COMMAND_DOTNET_ROOT_AUTHORITY_MISMATCH";
     public const string CommandDotnetExecutableShaMismatch =
         "ARCH7B_COMMAND_DOTNET_EXECUTABLE_SHA_MISMATCH";
+    public const string CommandGitExecutablePathAuthorityMismatch =
+        "ARCH7B_COMMAND_GIT_EXECUTABLE_PATH_AUTHORITY_MISMATCH";
+    public const string CommandGitExecutableShaMismatch =
+        "ARCH7B_COMMAND_GIT_EXECUTABLE_SHA_MISMATCH";
+    public const string CommandNodeExecutablePathAuthorityMismatch =
+        "ARCH7B_COMMAND_NODE_EXECUTABLE_PATH_AUTHORITY_MISMATCH";
+    public const string CommandNodeExecutableShaMismatch =
+        "ARCH7B_COMMAND_NODE_EXECUTABLE_SHA_MISMATCH";
+    public const string CommandTaskkillExecutablePathAuthorityMismatch =
+        "ARCH7B_COMMAND_TASKKILL_EXECUTABLE_PATH_AUTHORITY_MISMATCH";
+    public const string CommandTaskkillExecutableShaMismatch =
+        "ARCH7B_COMMAND_TASKKILL_EXECUTABLE_SHA_MISMATCH";
+    public const string CommandChromeExecutablePathAuthorityMismatch =
+        "ARCH7B_COMMAND_CHROME_EXECUTABLE_PATH_AUTHORITY_MISMATCH";
+    public const string CommandChromeExecutableShaMismatch =
+        "ARCH7B_COMMAND_CHROME_EXECUTABLE_SHA_MISMATCH";
 }
 
 public static class Arch7bV2ArgumentSafety

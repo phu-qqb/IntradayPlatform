@@ -171,6 +171,38 @@ public sealed partial class Arch7bOneShotLiveExecutionRuntimeV2
                                 lock_sha256 = selectedSlot.LockSha256,
                                 path = lockPath
                             }, ShaFile(lockPath), startedAt).FactSha256);
+                            if (stageContract.ProducedFactTypes.Contains(
+                                    "core_prequalification_config",
+                                    StringComparer.Ordinal))
+                            {
+                                var coreRepository = template.FileAuthorities.TryGetValue(
+                                    "core_repository", out var coreRepositoryAuthority)
+                                    ? coreRepositoryAuthority.Path
+                                    : throw new Arch7bQualificationException(
+                                        Arch7bV2Blockers.AuthorityBindingMismatch,
+                                        "core_repository");
+                                var chrome = template.FileAuthorities.TryGetValue(
+                                    "chrome_executable", out var chromeAuthority)
+                                    ? chromeAuthority
+                                    : throw new Arch7bQualificationException(
+                                        Arch7bV2Blockers.AuthorityBindingMismatch,
+                                        "chrome_executable");
+                                var coreConfigPath = Path.Combine(runRoot,
+                                    "core-prequalification-config.json");
+                                await WriteCreateNewAsync(coreConfigPath, new
+                                {
+                                    repositoryRoot = coreRepository,
+                                    outputRoot = Path.Combine(runRoot,
+                                        "core-prequalification-output"),
+                                    expectedCommit = template.CoreCommit,
+                                    expectedTree = template.CoreTree,
+                                    browserExecutablePath = chrome.Path,
+                                    expectedBrowserExecutableSha256 = chrome.Sha256
+                                }, cancellationToken).ConfigureAwait(false);
+                                produced.Add(facts.Append("core_prequalification_config",
+                                    currentStage, new { path = coreConfigPath },
+                                    ShaFile(coreConfigPath), startedAt).FactSha256);
+                            }
                             break;
                         case "ONE_SHOT_IDENTITIES_CREATED":
                             _ = facts.Require("slot_lock", "SLOT_LOCKED", startedAt, int.MaxValue);

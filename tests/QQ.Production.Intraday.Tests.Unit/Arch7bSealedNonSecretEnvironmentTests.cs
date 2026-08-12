@@ -9,24 +9,37 @@ namespace QQ.Production.Intraday.Tests.Unit;
 public sealed class Arch7bSealedNonSecretEnvironmentTests
 {
     [Fact]
-    public void Dotnet_root_is_the_only_allowed_non_secret_variable_and_is_authority_bound()
+    public void Only_authority_bound_dotnet_root_and_git_node_path_are_allowed()
     {
         var authorities = DotnetAuthorities();
         var environment = Arch7bSealedNonSecretEnvironment.ForDotnetRoot(authorities);
+        var executablePath = Arch7bSealedNonSecretEnvironment
+            .ForCorePrequalificationExecutableSearchPath(authorities);
 
         Assert.Single(environment);
         Assert.Equal("DOTNET_ROOT", environment[0].VariableName);
+        Assert.Single(executablePath);
+        Assert.Equal("PATH", executablePath[0].VariableName);
+        Assert.Equal(string.Join(Path.PathSeparator,
+            Path.GetDirectoryName(authorities["git_executable"].Path),
+            Path.GetDirectoryName(authorities["node_executable"].Path),
+            Path.GetDirectoryName(authorities["taskkill_executable"].Path)), executablePath[0].Value);
+        Assert.Equal(Arch7bSealedNonSecretEnvironment.CorePrequalificationPathAuthorityId, executablePath[0].SourceAuthorityId);
+        Assert.Equal(Arch7bNonSecretEnvironmentValueKind.ExecutableSearchPath,
+            executablePath[0].ValueKind);
         Assert.Equal(Arch7bV2Contracts.MaterializedCommandNonSecretEnvironmentVersion,
             environment[0].ContractVersion);
         Assert.Empty(Arch7bSealedNonSecretEnvironment.ValidateTemplate([], authorities));
+        Assert.Single(Arch7bSealedNonSecretEnvironment.ValidateTemplate([environment[0]], authorities));
+        Assert.Single(Arch7bSealedNonSecretEnvironment.ValidateTemplate([executablePath[0]], authorities));
+        Assert.Equal(Arch7bV2Blockers.CommandNonSecretEnvironmentVariableForbidden,
+            Assert.Throws<Arch7bQualificationException>(() =>
+                Arch7bSealedNonSecretEnvironment.ValidateTemplate(
+                    [environment[0], executablePath[0]], authorities)).BlockerCode);
         Assert.Equal(Arch7bV2Blockers.CommandNonSecretEnvironmentAuthorityMissing,
             Assert.Throws<Arch7bQualificationException>(() =>
                 Arch7bSealedNonSecretEnvironment.ForDotnetRoot(
                     new Dictionary<string, Arch7bFileAuthority>())).BlockerCode);
-        Assert.Equal(Arch7bV2Blockers.CommandNonSecretEnvironmentVariableForbidden,
-            Assert.Throws<Arch7bQualificationException>(() =>
-                Arch7bSealedNonSecretEnvironment.ValidateTemplate(
-                    [environment[0] with { VariableName = "PATH" }], authorities)).BlockerCode);
         Assert.Equal(Arch7bV2Blockers.CommandNonSecretEnvironmentVariableForbidden,
             Assert.Throws<Arch7bQualificationException>(() =>
                 Arch7bSealedNonSecretEnvironment.ValidateTemplate(
@@ -35,6 +48,11 @@ public sealed class Arch7bSealedNonSecretEnvironmentTests
             Assert.Throws<Arch7bQualificationException>(() =>
                 Arch7bSealedNonSecretEnvironment.ValidateTemplate(
                     [environment[0] with { Value = Path.GetTempPath() }], authorities)).BlockerCode);
+        Assert.Equal(Arch7bV2Blockers.CommandGitExecutablePathAuthorityMismatch,
+            Assert.Throws<Arch7bQualificationException>(() =>
+                Arch7bSealedNonSecretEnvironment.ValidateTemplate(
+                    [executablePath[0] with { Value = Path.GetTempPath() }],
+                    authorities)).BlockerCode);
     }
 
     [Fact]
@@ -60,6 +78,39 @@ public sealed class Arch7bSealedNonSecretEnvironmentTests
         Assert.Equal(Arch7bV2Blockers.CommandDotnetRootAuthorityMismatch,
             Assert.Throws<Arch7bQualificationException>(() =>
                 Arch7bSealedNonSecretEnvironment.ForDotnetRoot(outside)).BlockerCode);
+    }
+
+    [Fact]
+    public void Git_path_rejects_a_wrong_executable_sha()
+    {
+        var authorities = DotnetAuthorities();
+        authorities["git_executable"] = authorities["git_executable"] with
+        {
+            Sha256 = new string('0', 64)
+        };
+
+        Assert.Equal(Arch7bV2Blockers.CommandGitExecutableShaMismatch,
+            Assert.Throws<Arch7bQualificationException>(() =>
+                Arch7bSealedNonSecretEnvironment.ForCorePrequalificationExecutableSearchPath(authorities)).BlockerCode);
+    }
+
+    [Fact]
+    public void Executable_path_rejects_a_wrong_node_sha_and_requires_the_command_executable_directory()
+    {
+        var authorities = DotnetAuthorities();
+        var executablePath = Arch7bSealedNonSecretEnvironment
+            .ForCorePrequalificationExecutableSearchPath(authorities);
+        var badSha = new Dictionary<string, Arch7bFileAuthority>(authorities, StringComparer.Ordinal)
+        {
+            ["node_executable"] = authorities["node_executable"] with { Sha256 = new string('0', 64) }
+        };
+        Assert.Equal(Arch7bV2Blockers.CommandNodeExecutableShaMismatch,
+            Assert.Throws<Arch7bQualificationException>(() => Arch7bSealedNonSecretEnvironment
+                .ForCorePrequalificationExecutableSearchPath(badSha)).BlockerCode);
+        Arch7bSealedNonSecretEnvironment.ValidateMaterialized(executablePath,
+            authorities["node_executable"].Path);
+        Assert.Throws<Arch7bQualificationException>(() => Arch7bSealedNonSecretEnvironment
+            .ValidateMaterialized(executablePath, Path.Combine(Path.GetTempPath(), "missing.exe")));
     }
 
     [Fact]
@@ -167,7 +218,11 @@ public sealed class Arch7bSealedNonSecretEnvironmentTests
         {
             ["dotnet_root"] = new("dotnet_root", root,
                 Arch7bOneShotContracts.Sha256("arch7b_dotnet_root_authority_v1\n" + root), true, false),
-            ["dotnet_executable"] = new("dotnet_executable", executable, Sha(executable), true, false)
+            ["dotnet_executable"] = new("dotnet_executable", executable, Sha(executable), true, false),
+            ["git_executable"] = Arch7bTaskkillTestAuthorities.Create()["git_executable"],
+            ["node_executable"] = Arch7bTaskkillTestAuthorities.Create()["node_executable"],
+            ["taskkill_executable"] = Arch7bTaskkillTestAuthorities.Create()["taskkill_executable"],
+            ["chrome_executable"] = Arch7bTaskkillTestAuthorities.Create()["chrome_executable"]
         };
     }
 

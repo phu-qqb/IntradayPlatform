@@ -276,6 +276,8 @@ public static class Arch7bRequiredOperationalExecutionAuthorityInventoryBuilder
             ["intraday_runtime"] = Arch7bOperationalAuthorityKind.DirectoryInventory,
             ["git_executable"] = Arch7bOperationalAuthorityKind.File,
             ["node_executable"] = Arch7bOperationalAuthorityKind.File,
+            ["taskkill_executable"] = Arch7bOperationalAuthorityKind.File,
+            ["chrome_executable"] = Arch7bOperationalAuthorityKind.File,
             ["dotnet_executable"] = Arch7bOperationalAuthorityKind.File,
             ["dotnet_root"] = Arch7bOperationalAuthorityKind.DotnetRuntime,
             ["root_certificate"] = Arch7bOperationalAuthorityKind.RootCa,
@@ -290,6 +292,7 @@ public static class Arch7bRequiredOperationalExecutionAuthorityInventoryBuilder
             ["intraday_runtime"] = Arch7bOperationalAuthorityKind.DirectoryInventory,
             ["git_executable"] = Arch7bOperationalAuthorityKind.File,
             ["node_executable"] = Arch7bOperationalAuthorityKind.File,
+            ["chrome_executable"] = Arch7bOperationalAuthorityKind.File,
             ["dotnet_executable"] = Arch7bOperationalAuthorityKind.File,
             ["dotnet_root"] = Arch7bOperationalAuthorityKind.DotnetRuntime,
             ["root_certificate"] = Arch7bOperationalAuthorityKind.RootCa,
@@ -318,10 +321,26 @@ public static class Arch7bRequiredOperationalExecutionAuthorityInventoryBuilder
                     "argument_templates:" + argument.Value, argument.MustBeInsideRunRoot);
             }
             foreach (var environment in command.NonSecretEnvironment)
-                Add(environment.SourceAuthorityId,
-                    Arch7bOperationalAuthorityReferenceKind.NonSecretEnvironment,
-                    command.CommandId, command.StageId,
-                    "non_secret_environment:" + environment.VariableName, false);
+            {
+                if (command.StageId == "CORE_PREQUALIFICATION" &&
+                    environment.VariableName == "PATH" &&
+                    environment.SourceAuthorityId ==
+                    Arch7bSealedNonSecretEnvironment.CorePrequalificationPathAuthorityId)
+                {
+                    foreach (var sourceId in Arch7bSealedNonSecretEnvironment
+                                 .CorePrequalificationPathSourceAuthorityIds)
+                        Add(sourceId, Arch7bOperationalAuthorityReferenceKind.NonSecretEnvironment,
+                            command.CommandId, command.StageId,
+                            "non_secret_environment:PATH:" + sourceId, false);
+                }
+                else
+                {
+                    Add(environment.SourceAuthorityId,
+                        Arch7bOperationalAuthorityReferenceKind.NonSecretEnvironment,
+                        command.CommandId, command.StageId,
+                        "non_secret_environment:" + environment.VariableName, false);
+                }
+            }
         }
         foreach (var pair in StaticPreSpawnAuthorities)
             Add(pair.Key, Arch7bOperationalAuthorityReferenceKind.StaticPreSpawn,
@@ -440,6 +459,10 @@ public static class Arch7bOperationalExecutionAuthorityValidator
                 case Arch7bOperationalAuthorityKind.RootCa:
                 case Arch7bOperationalAuthorityKind.StaticConfig:
                     ValidateFile(source);
+                    if (source.AuthorityId == "taskkill_executable")
+                        Arch7bSealedNonSecretEnvironment.ValidateTaskkillAuthority(source.Project());
+                    if (source.AuthorityId == "chrome_executable")
+                        Arch7bSealedNonSecretEnvironment.ValidateChromeAuthority(source.Project());
                     break;
                 case Arch7bOperationalAuthorityKind.DirectoryInventory:
                     ValidateDirectory(source);
