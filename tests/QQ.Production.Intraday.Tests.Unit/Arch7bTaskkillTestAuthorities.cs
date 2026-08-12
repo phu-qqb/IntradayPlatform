@@ -11,11 +11,15 @@ internal static class Arch7bTaskkillTestAuthorities
         var node = FindExecutable("node.exe");
         var taskkill = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.System), "taskkill.exe");
+        var msedge = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86),
+            "Microsoft", "Edge", "Application", "msedge.exe");
         return new(StringComparer.Ordinal)
         {
             ["git_executable"] = FileAuthority("git_executable", git),
             ["node_executable"] = FileAuthority("node_executable", node),
-            ["taskkill_executable"] = FileAuthority("taskkill_executable", taskkill)
+            ["taskkill_executable"] = FileAuthority("taskkill_executable", taskkill),
+            ["msedge_executable"] = FileAuthority("msedge_executable", msedge)
         };
     }
 

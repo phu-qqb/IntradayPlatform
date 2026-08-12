@@ -249,7 +249,8 @@ public sealed class Arch7bOneShotCommandMaterializer
         var arguments = template.ArgumentTemplates.Select(argument => Resolve(argument, factStore,
             authorities, runRoot, observedUtc)).ToArray();
         var nonSecretEnvironment = Arch7bSealedNonSecretEnvironment.ValidateTemplate(
-            template.NonSecretEnvironment, authorities);
+            template.NonSecretEnvironment, authorities, template.CommandId,
+            template.StageId);
         if (arguments.Any(Arch7bV2ArgumentSafety.IsSecretArgumentValue))
             throw new Arch7bQualificationException(Arch7bBlockers.SecretInArgument, template.CommandId);
         var commandCore = string.Join('\n', Arch7bV2Contracts.MaterializedCommandVersion,

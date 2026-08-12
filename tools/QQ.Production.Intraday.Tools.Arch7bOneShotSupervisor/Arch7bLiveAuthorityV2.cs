@@ -248,7 +248,7 @@ public static class Arch7bLiveTemplateValidator
                         Arch7bV2Blockers.ChildAdapterContractMismatch, command.CommandId);
             }
             _ = Arch7bSealedNonSecretEnvironment.ValidateTemplate(command.NonSecretEnvironment,
-                value.FileAuthorities);
+                value.FileAuthorities, command.CommandId, command.StageId);
         }
         var commandSet = Arch7bOneShotContracts.Sha256(string.Join('\n', value.CommandTemplates
             .Select(command => command.EvidenceSha256)));

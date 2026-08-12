@@ -14,11 +14,12 @@ only command line is:
 
 The config is created once by SLOT_LOCKED. It binds the qualified Core Git
 repository, exact Core commit and tree, a create-new output root, and the
-msedge browser channel. The command receives one sealed non-secret `PATH` entry
-containing only the parent directories of the exact `git_executable` and
-`node_executable` authorities. This lets npm child scripts resolve Node while
-preserving MiniGit resolution. PowerShell, command wrappers, shell execution,
-and ambient PATH resolution are not command routes.
+msedge browser channel. The command receives exactly two sealed non-secret
+entries: `PATH`, containing only the parent directories of the exact
+`git_executable`, `node_executable`, and `taskkill_executable` authorities; and
+`ProgramFiles(x86)`, bound to the exact `msedge_executable` authority. PowerShell,
+command wrappers, shell execution, and ambient environment resolution are not
+command routes.
 
 The Core CLI owns stdout. A successful invocation emits one UTF-8 JSON
 document with exactly the top-level properties qualification and manifest.
@@ -73,3 +74,21 @@ SHA-256 bind the IDs, absolute paths, and byte SHA-256 values of all three
 executables. The operational inventory expands that composite source into
 three required file-authority references, exclusively for
 `CORE_PREQUALIFICATION`.
+
+## Edge channel authority
+
+Playwright 1.62.0 resolves the installed `msedge` channel through
+`ProgramFiles(x86)`. `CORE_PREQUALIFICATION` therefore receives exactly one
+additional sealed variable with that name. Its value is derived from
+`Environment.SpecialFolder.ProgramFilesX86`; it is never inherited from the
+machine, user, parent process, or another command.
+
+The composite authority
+`core_prequalification_program_files_x86_authority` binds the variable name,
+the absolute Program Files (x86) directory, the `msedge_executable` authority
+ID, the exact path `Microsoft/Edge/Application/msedge.exe`, the executable byte
+SHA-256, and the environment contract version. The executable and every parent
+from `ProgramFilesX86` through `Application` must exist without reparse points.
+The path and byte SHA-256 are checked again immediately before the Node child
+starts. `PROGRAMFILES`, `HOMEDRIVE`, and ambient `ProgramFiles(x86)` values are
+not inherited or added to `InheritedSystemVariables`.

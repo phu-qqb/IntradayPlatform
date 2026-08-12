@@ -546,7 +546,7 @@ public sealed class Arch7bOneShotProcessRunnerV2
             if (!string.IsNullOrEmpty(inherited)) value.Environment[name] = inherited;
         }
         Arch7bSealedNonSecretEnvironment.ValidateMaterialized(command.NonSecretEnvironment,
-            command.ExecutablePath);
+            command.ExecutablePath, command.CommandId, command.StageId);
         foreach (var variable in command.NonSecretEnvironment)
             value.Environment[variable.VariableName] = variable.Value;
         foreach (var pair in secrets.Values)

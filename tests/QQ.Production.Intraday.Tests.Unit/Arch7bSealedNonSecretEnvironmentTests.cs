@@ -217,7 +217,8 @@ public sealed class Arch7bSealedNonSecretEnvironmentTests
             ["dotnet_executable"] = new("dotnet_executable", executable, Sha(executable), true, false),
             ["git_executable"] = Arch7bTaskkillTestAuthorities.Create()["git_executable"],
             ["node_executable"] = Arch7bTaskkillTestAuthorities.Create()["node_executable"],
-            ["taskkill_executable"] = Arch7bTaskkillTestAuthorities.Create()["taskkill_executable"]
+            ["taskkill_executable"] = Arch7bTaskkillTestAuthorities.Create()["taskkill_executable"],
+            ["msedge_executable"] = Arch7bTaskkillTestAuthorities.Create()["msedge_executable"]
         };
     }
 

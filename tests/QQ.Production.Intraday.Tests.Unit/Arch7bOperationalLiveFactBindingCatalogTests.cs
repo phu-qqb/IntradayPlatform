@@ -229,7 +229,9 @@ public sealed class Arch7bOperationalLiveFactBindingCatalogTests : IDisposable
         Assert.DoesNotContain(core.ArgumentTemplates,
             value => value.Value.Contains("powershell", StringComparison.OrdinalIgnoreCase) ||
                      value.Value.Contains("cmd.exe", StringComparison.OrdinalIgnoreCase));
-        var executablePath = Assert.Single(core.NonSecretEnvironment);
+        Assert.Equal(2, core.NonSecretEnvironment.Count);
+        var executablePath = core.NonSecretEnvironment.Single(value =>
+            value.VariableName == "PATH");
         Assert.Equal("PATH", executablePath.VariableName);
         Assert.Equal(Arch7bSealedNonSecretEnvironment.CorePrequalificationPathAuthorityId,
             executablePath.SourceAuthorityId);
@@ -242,6 +244,15 @@ public sealed class Arch7bOperationalLiveFactBindingCatalogTests : IDisposable
             Path.GetDirectoryName(result.Template.FileAuthorities["taskkill_executable"].Path)
         }),
             executablePath.Value);
+        var programFilesX86 = core.NonSecretEnvironment.Single(value =>
+            value.VariableName == "ProgramFiles(x86)");
+        Assert.Equal(Arch7bSealedNonSecretEnvironment
+            .CorePrequalificationProgramFilesX86AuthorityId,
+            programFilesX86.SourceAuthorityId);
+        Assert.Equal(Arch7bNonSecretEnvironmentValueKind.AbsoluteDirectory,
+            programFilesX86.ValueKind);
+        Assert.Equal(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86),
+            programFilesX86.Value);
         Assert.Contains("core_prequalification_config",
             result.Template.StageContracts.Single(value =>
                 value.StageId == "SLOT_LOCKED").ProducedFactTypes);
