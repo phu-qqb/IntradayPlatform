@@ -30,10 +30,16 @@ public sealed class Arch7bOperationalExecutionAuthorityInventoryTests
         foreach (var authorityId in new[]
                  {
                      "core_repository", "core_node_runtime", "intraday_runtime", "git_executable",
-                     "node_executable",
+                     "node_executable", "taskkill_executable",
                      "dotnet_executable", "dotnet_root", "root_certificate", "market_data_config"
                  })
             Assert.Contains(authorityId, inventory.RequiredAuthorityIds);
+        var taskkillReferences = inventory.References.Where(value =>
+            value.AuthorityId == "taskkill_executable").ToArray();
+        Assert.Single(taskkillReferences);
+        Assert.Equal("CORE_PREQUALIFICATION", taskkillReferences[0].ReferencingStageId);
+        Assert.Equal(Arch7bOperationalAuthorityReferenceKind.NonSecretEnvironment,
+            taskkillReferences[0].ReferenceKind);
         Assert.All(inventory.References, reference =>
             Assert.Equal(Arch7bOneShotContracts.Sha256(reference.Canonical()),
                 reference.EvidenceSha256));
@@ -44,16 +50,10 @@ public sealed class Arch7bOperationalExecutionAuthorityInventoryTests
         var fixture = Arch7bV2QualificationFactory.Create(
             typeof(QQ.Production.Intraday.Tools.Arch7bOneShotSupervisor.Program)
                 .Assembly.Location, Path.Combine(root, "runtime"));
-        var gitExecutable = typeof(QQ.Production.Intraday.Tools.Arch7bOneShotSupervisor.Program)
-            .Assembly.Location;
         var authorities = new Dictionary<string, Arch7bFileAuthority>(
-            fixture.Template.FileAuthorities, StringComparer.Ordinal)
-        {
-            ["git_executable"] = new("git_executable", gitExecutable,
-                Sha(gitExecutable), true, false),
-            ["node_executable"] = new("node_executable", gitExecutable,
-                Sha(gitExecutable), true, false)
-        };
+            fixture.Template.FileAuthorities, StringComparer.Ordinal);
+        foreach (var pair in Arch7bTaskkillTestAuthorities.Create())
+            authorities[pair.Key] = pair.Value;
         var catalog = Arch7bOperationalLiveFactBindingCatalog.Build();
         var commands = fixture.Template.CommandTemplates
             .Where(command => Arch7bFinalStageExecutionCatalog.Require(command.StageId)

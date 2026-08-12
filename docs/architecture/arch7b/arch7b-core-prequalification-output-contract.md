@@ -49,3 +49,27 @@ message SHA-256. The first child or adapter blocker remains authoritative.
 run-one-shot returns 0 only for passed native evidence with complete cleanup,
 2 for a functional NO_GO, and 1 for an unexpected failure. An SSM caller must
 require both process exit 0 and evidence.passed=true.
+
+## Taskkill cleanup authority
+
+The Edge-backed prequalification requires the Windows process cleanup utility
+after the browser closes. `CORE_PREQUALIFICATION` therefore carries exactly one
+sealed `PATH` composed, in order, from the parent directories of these file
+authorities:
+
+1. `git_executable`;
+2. `node_executable`;
+3. `taskkill_executable`.
+
+The taskkill path is derived from
+`Environment.SpecialFolder.System/taskkill.exe`. Its file and parent directory
+must exist, must not be reparse points, and the file SHA-256 is checked when the
+template is produced and immediately before the Node child starts. No ambient
+machine, user, or parent `PATH` value is inherited.
+
+The PATH evidence uses the composite authority id
+`core_prequalification_executable_search_path`. Its source SHA-256 and evidence
+SHA-256 bind the IDs, absolute paths, and byte SHA-256 values of all three
+executables. The operational inventory expands that composite source into
+three required file-authority references, exclusively for
+`CORE_PREQUALIFICATION`.

@@ -338,7 +338,7 @@ public static class Arch7bOperationalLivePlanTemplateMaterializer
             ],
             EvidenceSha256 = string.Empty,
             NonSecretEnvironment = Arch7bSealedNonSecretEnvironment
-                .ForGitAndNodeExecutablePath(authorities)
+                .ForCorePrequalificationExecutableSearchPath(authorities)
         };
         var canonical = string.Join('\n', Arch7bV2Contracts.CommandTemplateVersion,
             provisional.CommandId, provisional.StageId, provisional.ExecutionKind,

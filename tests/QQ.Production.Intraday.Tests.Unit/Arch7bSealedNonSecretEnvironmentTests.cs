@@ -14,15 +14,17 @@ public sealed class Arch7bSealedNonSecretEnvironmentTests
         var authorities = DotnetAuthorities();
         var environment = Arch7bSealedNonSecretEnvironment.ForDotnetRoot(authorities);
         var executablePath = Arch7bSealedNonSecretEnvironment
-            .ForGitAndNodeExecutablePath(authorities);
+            .ForCorePrequalificationExecutableSearchPath(authorities);
 
         Assert.Single(environment);
         Assert.Equal("DOTNET_ROOT", environment[0].VariableName);
         Assert.Single(executablePath);
         Assert.Equal("PATH", executablePath[0].VariableName);
-        Assert.Equal(string.Join(Path.PathSeparator, Path.GetDirectoryName(SupervisorExecutable()),
-            DotnetRoot()), executablePath[0].Value);
-        Assert.Equal("git_executable", executablePath[0].SourceAuthorityId);
+        Assert.Equal(string.Join(Path.PathSeparator,
+            Path.GetDirectoryName(authorities["git_executable"].Path),
+            Path.GetDirectoryName(authorities["node_executable"].Path),
+            Path.GetDirectoryName(authorities["taskkill_executable"].Path)), executablePath[0].Value);
+        Assert.Equal(Arch7bSealedNonSecretEnvironment.CorePrequalificationPathAuthorityId, executablePath[0].SourceAuthorityId);
         Assert.Equal(Arch7bNonSecretEnvironmentValueKind.ExecutableSearchPath,
             executablePath[0].ValueKind);
         Assert.Equal(Arch7bV2Contracts.MaterializedCommandNonSecretEnvironmentVersion,
@@ -85,7 +87,7 @@ public sealed class Arch7bSealedNonSecretEnvironmentTests
 
         Assert.Equal(Arch7bV2Blockers.CommandGitExecutableShaMismatch,
             Assert.Throws<Arch7bQualificationException>(() =>
-                Arch7bSealedNonSecretEnvironment.ForGitAndNodeExecutablePath(authorities)).BlockerCode);
+                Arch7bSealedNonSecretEnvironment.ForCorePrequalificationExecutableSearchPath(authorities)).BlockerCode);
     }
 
     [Fact]
@@ -93,14 +95,14 @@ public sealed class Arch7bSealedNonSecretEnvironmentTests
     {
         var authorities = DotnetAuthorities();
         var executablePath = Arch7bSealedNonSecretEnvironment
-            .ForGitAndNodeExecutablePath(authorities);
+            .ForCorePrequalificationExecutableSearchPath(authorities);
         var badSha = new Dictionary<string, Arch7bFileAuthority>(authorities, StringComparer.Ordinal)
         {
             ["node_executable"] = authorities["node_executable"] with { Sha256 = new string('0', 64) }
         };
         Assert.Equal(Arch7bV2Blockers.CommandNodeExecutableShaMismatch,
             Assert.Throws<Arch7bQualificationException>(() => Arch7bSealedNonSecretEnvironment
-                .ForGitAndNodeExecutablePath(badSha)).BlockerCode);
+                .ForCorePrequalificationExecutableSearchPath(badSha)).BlockerCode);
         Arch7bSealedNonSecretEnvironment.ValidateMaterialized(executablePath,
             authorities["node_executable"].Path);
         Assert.Throws<Arch7bQualificationException>(() => Arch7bSealedNonSecretEnvironment
@@ -213,10 +215,9 @@ public sealed class Arch7bSealedNonSecretEnvironmentTests
             ["dotnet_root"] = new("dotnet_root", root,
                 Arch7bOneShotContracts.Sha256("arch7b_dotnet_root_authority_v1\n" + root), true, false),
             ["dotnet_executable"] = new("dotnet_executable", executable, Sha(executable), true, false),
-            ["git_executable"] = new("git_executable", SupervisorExecutable(),
-                Sha(SupervisorExecutable()), true, false),
-            ["node_executable"] = new("node_executable", executable,
-                Sha(executable), true, false)
+            ["git_executable"] = Arch7bTaskkillTestAuthorities.Create()["git_executable"],
+            ["node_executable"] = Arch7bTaskkillTestAuthorities.Create()["node_executable"],
+            ["taskkill_executable"] = Arch7bTaskkillTestAuthorities.Create()["taskkill_executable"]
         };
     }
 

@@ -112,6 +112,10 @@ public static class Arch7bV2Blockers
         "ARCH7B_COMMAND_NODE_EXECUTABLE_PATH_AUTHORITY_MISMATCH";
     public const string CommandNodeExecutableShaMismatch =
         "ARCH7B_COMMAND_NODE_EXECUTABLE_SHA_MISMATCH";
+    public const string CommandTaskkillExecutablePathAuthorityMismatch =
+        "ARCH7B_COMMAND_TASKKILL_EXECUTABLE_PATH_AUTHORITY_MISMATCH";
+    public const string CommandTaskkillExecutableShaMismatch =
+        "ARCH7B_COMMAND_TASKKILL_EXECUTABLE_SHA_MISMATCH";
 }
 
 public static class Arch7bV2ArgumentSafety

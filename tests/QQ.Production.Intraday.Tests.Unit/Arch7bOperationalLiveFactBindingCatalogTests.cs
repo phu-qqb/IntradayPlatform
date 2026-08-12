@@ -231,14 +231,16 @@ public sealed class Arch7bOperationalLiveFactBindingCatalogTests : IDisposable
                      value.Value.Contains("cmd.exe", StringComparison.OrdinalIgnoreCase));
         var executablePath = Assert.Single(core.NonSecretEnvironment);
         Assert.Equal("PATH", executablePath.VariableName);
-        Assert.Equal("git_executable", executablePath.SourceAuthorityId);
+        Assert.Equal(Arch7bSealedNonSecretEnvironment.CorePrequalificationPathAuthorityId,
+            executablePath.SourceAuthorityId);
         Assert.Equal(Arch7bNonSecretEnvironmentValueKind.ExecutableSearchPath,
             executablePath.ValueKind);
         Assert.Equal(string.Join(Path.PathSeparator, new[]
         {
             Path.GetDirectoryName(result.Template.FileAuthorities["git_executable"].Path),
-            Path.GetDirectoryName(result.Template.FileAuthorities["node_executable"].Path)
-        }.Distinct(StringComparer.OrdinalIgnoreCase)),
+            Path.GetDirectoryName(result.Template.FileAuthorities["node_executable"].Path),
+            Path.GetDirectoryName(result.Template.FileAuthorities["taskkill_executable"].Path)
+        }),
             executablePath.Value);
         Assert.Contains("core_prequalification_config",
             result.Template.StageContracts.Single(value =>
@@ -352,16 +354,10 @@ public sealed class Arch7bOperationalLiveFactBindingCatalogTests : IDisposable
         var fixture = Arch7bV2QualificationFactory.Create(
             typeof(QQ.Production.Intraday.Tools.Arch7bOneShotSupervisor.Program)
                 .Assembly.Location, Path.Combine(root, "runtime"));
-        var gitExecutable = typeof(QQ.Production.Intraday.Tools.Arch7bOneShotSupervisor.Program)
-            .Assembly.Location;
         var authorities = new Dictionary<string, Arch7bFileAuthority>(
-            fixture.Template.FileAuthorities, StringComparer.Ordinal)
-        {
-            ["git_executable"] = new("git_executable", gitExecutable,
-                Sha(gitExecutable), true, false),
-            ["node_executable"] = new("node_executable", gitExecutable,
-                Sha(gitExecutable), true, false)
-        };
+            fixture.Template.FileAuthorities, StringComparer.Ordinal);
+        foreach (var pair in Arch7bTaskkillTestAuthorities.Create())
+            authorities[pair.Key] = pair.Value;
         var catalog = Arch7bOperationalLiveFactBindingCatalog.Build();
         var commands = fixture.Template.CommandTemplates
             .Where(command => Arch7bFinalStageExecutionCatalog.Require(command.StageId)
