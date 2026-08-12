@@ -171,7 +171,7 @@ public sealed class Arch7bCoreRuntimePrequalificationAdapter(
                 Arch7bBlockers.ChildOutputInvalid, AdapterId);
         var qualification = Arch7bNativeAdapterJson.Object(root, "qualification");
         var manifest = Arch7bNativeAdapterJson.Object(root, "manifest");
-        RequireQualification(qualification);
+        RequireQualification(qualification, command);
         RequireManifest(manifest, qualification);
 
         var outputRoot = ResolveOutputRoot(command);
@@ -240,7 +240,8 @@ public sealed class Arch7bCoreRuntimePrequalificationAdapter(
             paths.Count, evidence);
     }
 
-    private void RequireQualification(JsonElement value)
+    private void RequireQualification(JsonElement value,
+        Arch7bOneShotMaterializedCommand command)
     {
         Require(Arch7bNativeAdapterJson.String(value, "contract") == NativeContract,
             "qualification.contract");
@@ -277,9 +278,30 @@ public sealed class Arch7bCoreRuntimePrequalificationAdapter(
                      "aws_sdk_secrets_manager_version", "host" })
             _ = Arch7bNativeAdapterJson.String(value, name);
         var browser = Arch7bNativeAdapterJson.Object(value, "browser_runtime");
-        Require(Arch7bNativeAdapterJson.String(browser, "channel") == "msedge" &&
-                !string.IsNullOrWhiteSpace(
-                    Arch7bNativeAdapterJson.String(browser, "version")),
+        var configPath = Arch7bNativeAdapterJson.Option(command.ArgumentList, "--config");
+        using var config = JsonDocument.Parse(File.ReadAllBytes(configPath));
+        var expectedBrowserPath = Arch7bNativeAdapterJson.String(
+            config.RootElement, "browserExecutablePath");
+        var expectedBrowserSha = Arch7bNativeAdapterJson.String(
+            config.RootElement, "expectedBrowserExecutableSha256");
+        Arch7bNativeAdapterJson.RequireSha(expectedBrowserSha,
+            "expectedBrowserExecutableSha256");
+        Require(!config.RootElement.TryGetProperty("browserChannel", out _),
+            "qualification.browser_channel_forbidden");
+        Require(Arch7bNativeAdapterJson.String(browser, "source") ==
+                "EXPLICIT_EXECUTABLE" &&
+                Arch7bNativeAdapterJson.String(browser, "executable_path") ==
+                expectedBrowserPath &&
+                Arch7bNativeAdapterJson.String(browser, "executable_basename") ==
+                "chrome.exe" &&
+                Arch7bNativeAdapterJson.String(browser, "executable_sha256") ==
+                expectedBrowserSha &&
+                !string.IsNullOrWhiteSpace(Arch7bNativeAdapterJson.String(browser, "version")) &&
+                Arch7bNativeAdapterJson.Boolean(browser, "headless") &&
+                browser.TryGetProperty("channel", out var channel) &&
+                channel.ValueKind == JsonValueKind.Null &&
+                !Arch7bNativeAdapterJson.Boolean(browser, "browser_download_used") &&
+                !Arch7bNativeAdapterJson.Boolean(browser, "fallback_used"),
             "qualification.browser_runtime");
         Require(Arch7bNativeAdapterJson.String(value, "exact_test_command") == "npm test" &&
                 Arch7bNativeAdapterJson.Integer(value, "tests_passed") ==

@@ -21,12 +21,13 @@ public static class Arch7bSealedNonSecretEnvironment
 {
     public const string CorePrequalificationPathAuthorityId =
         "core_prequalification_executable_search_path";
-    public const string CorePrequalificationProgramFilesX86AuthorityId =
-        "core_prequalification_program_files_x86_authority";
+    public const string QualifiedChromeExecutablePath =
+        @"C:\Program Files\Google\Chrome\Application\chrome.exe";
+    public const string QualifiedChromeExecutableSha256 =
+        "1c8a72b0e6b5a4dd1de5ce42a7b11460753d8941baebda208360475f31eb17d2";
+    public const string QualifiedChromeVersion = "151.0.7922.110";
     public static readonly IReadOnlyList<string> CorePrequalificationPathSourceAuthorityIds =
         ["git_executable", "node_executable", "taskkill_executable"];
-    public static readonly IReadOnlyList<string> CorePrequalificationProgramFilesX86SourceAuthorityIds =
-        ["msedge_executable"];
 
     public static IReadOnlyList<Arch7bSealedNonSecretEnvironmentVariable> ForDotnetRoot(
         IReadOnlyDictionary<string, Arch7bFileAuthority> authorities)
@@ -75,28 +76,7 @@ public static class Arch7bSealedNonSecretEnvironment
     public static IReadOnlyList<Arch7bSealedNonSecretEnvironmentVariable>
         ForCorePrequalificationEnvironment(
             IReadOnlyDictionary<string, Arch7bFileAuthority> authorities) =>
-        [
-            ForCorePrequalificationExecutableSearchPath(authorities).Single(),
-            ForCorePrequalificationProgramFilesX86(authorities).Single()
-        ];
-
-    public static IReadOnlyList<Arch7bSealedNonSecretEnvironmentVariable>
-        ForCorePrequalificationProgramFilesX86(
-            IReadOnlyDictionary<string, Arch7bFileAuthority> authorities)
-    {
-        var msedge = Require(authorities, "msedge_executable",
-            Arch7bV2Blockers.CommandNonSecretEnvironmentAuthorityMissing);
-        ValidateMsEdgeAuthority(msedge);
-        var programFilesX86 = Environment.GetFolderPath(
-            Environment.SpecialFolder.ProgramFilesX86);
-        var sourceCanonical = ProgramFilesX86SourceCanonical(programFilesX86, msedge);
-        var sourceSha = Arch7bOneShotContracts.Sha256(sourceCanonical);
-        var canonical = ProgramFilesX86Canonical(programFilesX86, sourceCanonical, sourceSha);
-        return [new(Arch7bV2Contracts.MaterializedCommandNonSecretEnvironmentVersion,
-            "ProgramFiles(x86)", Arch7bNonSecretEnvironmentValueKind.AbsoluteDirectory,
-            programFilesX86, CorePrequalificationProgramFilesX86AuthorityId, sourceSha,
-            Arch7bOneShotContracts.Sha256(canonical))];
-    }
+        ForCorePrequalificationExecutableSearchPath(authorities);
 
     public static IReadOnlyList<Arch7bSealedNonSecretEnvironmentVariable> ValidateTemplate(
         IReadOnlyList<Arch7bSealedNonSecretEnvironmentVariable> values,
@@ -105,7 +85,7 @@ public static class Arch7bSealedNonSecretEnvironment
     {
         ValidateCorePrequalificationScope(values, commandId, stageId);
         if (values.Count == 0) return values;
-        if (values.Count > 2 ||
+        if (values.Count > 1 ||
             values.Select(value => value.VariableName).Distinct(StringComparer.Ordinal).Count() != values.Count)
             throw new Arch7bQualificationException(Arch7bV2Blockers.CommandNonSecretEnvironmentVariableForbidden);
         foreach (var value in values)
@@ -116,8 +96,6 @@ public static class Arch7bSealedNonSecretEnvironment
                     Arch7bV2Blockers.CommandDotnetRootAuthorityMismatch),
                 "PATH" => (ForCorePrequalificationExecutableSearchPath(authorities).Single(),
                     Arch7bV2Blockers.CommandGitExecutablePathAuthorityMismatch),
-                "ProgramFiles(x86)" => (ForCorePrequalificationProgramFilesX86(authorities).Single(),
-                    Arch7bV2Blockers.CommandMsEdgeExecutablePathAuthorityMismatch),
                 _ => throw new Arch7bQualificationException(
                     Arch7bV2Blockers.CommandNonSecretEnvironmentVariableForbidden)
             };
@@ -136,7 +114,6 @@ public static class Arch7bSealedNonSecretEnvironment
             {
                 "DOTNET_ROOT" => "dotnet_root",
                 "PATH" => CorePrequalificationPathAuthorityId,
-                "ProgramFiles(x86)" => CorePrequalificationProgramFilesX86AuthorityId,
                 _ => null
             };
             var validValue = value.VariableName switch
@@ -145,9 +122,6 @@ public static class Arch7bSealedNonSecretEnvironment
                     Path.IsPathFullyQualified(value.Value),
                 "PATH" => value.ValueKind == Arch7bNonSecretEnvironmentValueKind.ExecutableSearchPath &&
                     ValidateMaterializedCorePath(value, executablePath),
-                "ProgramFiles(x86)" => value.ValueKind ==
-                    Arch7bNonSecretEnvironmentValueKind.AbsoluteDirectory &&
-                    ValidateMaterializedProgramFilesX86(value),
                 _ => false
             };
             if (value.ContractVersion != Arch7bV2Contracts.MaterializedCommandNonSecretEnvironmentVersion ||
@@ -157,7 +131,6 @@ public static class Arch7bSealedNonSecretEnvironment
             var canonical = value.VariableName switch
             {
                 "PATH" => MaterializedPathCanonical(value, executablePath),
-                "ProgramFiles(x86)" => MaterializedProgramFilesX86Canonical(value),
                 _ => string.Join('\n', value.ContractVersion, value.VariableName, value.ValueKind,
                     value.Value, value.SourceAuthorityId, value.SourceAuthoritySha256)
             };
@@ -165,11 +138,10 @@ public static class Arch7bSealedNonSecretEnvironment
                 throw new Arch7bQualificationException(value.VariableName switch
                 {
                     "PATH" => Arch7bV2Blockers.CommandGitExecutablePathAuthorityMismatch,
-                    "ProgramFiles(x86)" => Arch7bV2Blockers.CommandMsEdgeExecutablePathAuthorityMismatch,
                     _ => Arch7bV2Blockers.CommandDotnetRootAuthorityMismatch
                 });
         }
-        if (values.Count > 2 || values.Select(value => value.VariableName)
+        if (values.Count > 1 || values.Select(value => value.VariableName)
                 .Distinct(StringComparer.Ordinal).Count() != values.Count)
             throw new Arch7bQualificationException(Arch7bV2Blockers.CommandNonSecretEnvironmentVariableForbidden);
     }
@@ -201,32 +173,35 @@ public static class Arch7bSealedNonSecretEnvironment
                 Arch7bV2Blockers.CommandTaskkillExecutableShaMismatch);
     }
 
-    internal static void ValidateMsEdgeAuthority(Arch7bFileAuthority authority,
-        string? expectedProgramFilesX86 = null, Func<string, bool>? reparsePoint = null)
+    internal static void ValidateChromeAuthority(Arch7bFileAuthority authority,
+        string? expectedPath = null, Func<string, bool>? reparsePoint = null)
     {
-        expectedProgramFilesX86 ??= Environment.GetFolderPath(
-            Environment.SpecialFolder.ProgramFilesX86);
+        expectedPath ??= QualifiedChromeExecutablePath;
         reparsePoint ??= IsReparsePoint;
-        var microsoft = Path.Combine(expectedProgramFilesX86, "Microsoft");
-        var edge = Path.Combine(microsoft, "Edge");
-        var application = Path.Combine(edge, "Application");
-        var expectedPath = Path.Combine(application, "msedge.exe");
-        var pathChain = new[] { expectedProgramFilesX86, microsoft, edge, application,
-            expectedPath };
+        var fullPath = Path.GetFullPath(authority.Path);
+        var fullExpected = Path.GetFullPath(expectedPath);
+        var pathChain = new List<string> { fullPath };
+        var parent = Path.GetDirectoryName(fullPath);
+        while (parent is not null)
+        {
+            pathChain.Add(parent);
+            var next = Path.GetDirectoryName(parent);
+            if (next == parent) break;
+            parent = next;
+        }
         if (!authority.MustExist || authority.MustBeInsideRunRoot ||
             !Path.IsPathFullyQualified(authority.Path) ||
-            !string.Equals(Path.GetFullPath(authority.Path), Path.GetFullPath(expectedPath),
+            !string.Equals(fullPath, fullExpected,
                 StringComparison.OrdinalIgnoreCase) ||
-            !string.Equals(Path.GetFileName(authority.Path), "msedge.exe",
+            !string.Equals(Path.GetFileName(authority.Path), "chrome.exe",
                 StringComparison.OrdinalIgnoreCase) ||
             !File.Exists(authority.Path) || Directory.Exists(authority.Path) ||
-            pathChain.Take(4).Any(path => !Directory.Exists(path)) ||
-            pathChain.Any(reparsePoint))
+            pathChain.Skip(1).Any(path => !Directory.Exists(path)) || pathChain.Any(reparsePoint))
             throw new Arch7bQualificationException(
-                Arch7bV2Blockers.CommandMsEdgeExecutablePathAuthorityMismatch);
+                Arch7bV2Blockers.CommandChromeExecutablePathAuthorityMismatch);
         if (FileSha(authority.Path) != authority.Sha256)
             throw new Arch7bQualificationException(
-                Arch7bV2Blockers.CommandMsEdgeExecutableShaMismatch);
+                Arch7bV2Blockers.CommandChromeExecutableShaMismatch);
     }
 
     private static bool ValidateMaterializedCorePath(
@@ -267,53 +242,6 @@ public static class Arch7bSealedNonSecretEnvironment
         {
             return string.Empty;
         }
-    }
-
-    private static bool ValidateMaterializedProgramFilesX86(
-        Arch7bSealedNonSecretEnvironmentVariable value)
-    {
-        try
-        {
-            var root = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86);
-            if (!string.Equals(Path.GetFullPath(value.Value), Path.GetFullPath(root),
-                    StringComparison.OrdinalIgnoreCase))
-                throw new Arch7bQualificationException(
-                    Arch7bV2Blockers.CommandMsEdgeExecutablePathAuthorityMismatch);
-            var path = Path.Combine(root, "Microsoft", "Edge", "Application", "msedge.exe");
-            var authority = new Arch7bFileAuthority("msedge_executable", path,
-                FileSha(path), true, false);
-            ValidateMsEdgeAuthority(authority);
-            var source = ProgramFilesX86SourceCanonical(root, authority);
-            if (value.SourceAuthoritySha256 != Arch7bOneShotContracts.Sha256(source))
-                throw new Arch7bQualificationException(
-                    Arch7bV2Blockers.CommandMsEdgeExecutableShaMismatch);
-            return true;
-        }
-        catch (Arch7bQualificationException)
-        {
-            throw;
-        }
-        catch (Exception error) when (error is IOException or UnauthorizedAccessException or
-                                      ArgumentException)
-        {
-            throw new Arch7bQualificationException(
-                Arch7bV2Blockers.CommandMsEdgeExecutablePathAuthorityMismatch);
-        }
-    }
-
-    private static string MaterializedProgramFilesX86Canonical(
-        Arch7bSealedNonSecretEnvironmentVariable value)
-    {
-        try
-        {
-            var path = Path.Combine(value.Value, "Microsoft", "Edge", "Application", "msedge.exe");
-            var authority = new Arch7bFileAuthority("msedge_executable", path,
-                FileSha(path), true, false);
-            var source = ProgramFilesX86SourceCanonical(value.Value, authority);
-            return ProgramFilesX86Canonical(value.Value, source,
-                Arch7bOneShotContracts.Sha256(source));
-        }
-        catch { return string.Empty; }
     }
 
     private static Dictionary<string, Arch7bFileAuthority> MaterializedAuthorities(
@@ -390,19 +318,6 @@ public static class Arch7bSealedNonSecretEnvironment
         string.Join('|', values.Select(value => string.Join(':', value.AuthorityId,
             Path.GetFullPath(value.Path), value.Sha256)));
 
-    private static string ProgramFilesX86SourceCanonical(string root,
-        Arch7bFileAuthority msedge) =>
-        string.Join('|', Arch7bV2Contracts.MaterializedCommandNonSecretEnvironmentVersion,
-            "ProgramFiles(x86)", Path.GetFullPath(root), msedge.AuthorityId,
-            Path.GetFullPath(msedge.Path), msedge.Sha256);
-
-    private static string ProgramFilesX86Canonical(string root, string sourceCanonical,
-        string sourceSha) =>
-        string.Join('\n', Arch7bV2Contracts.MaterializedCommandNonSecretEnvironmentVersion,
-            "ProgramFiles(x86)", Arch7bNonSecretEnvironmentValueKind.AbsoluteDirectory,
-            Path.GetFullPath(root), CorePrequalificationProgramFilesX86AuthorityId,
-            sourceSha, sourceCanonical);
-
     private static void ValidateCorePrequalificationScope(
         IReadOnlyList<Arch7bSealedNonSecretEnvironmentVariable> values,
         string? commandId, string? stageId)
@@ -415,9 +330,7 @@ public static class Arch7bSealedNonSecretEnvironment
         var isCore = commandId is null ? stageIsCore :
             stageId is null ? commandIsCore : stageIsCore && commandIsCore;
         var names = values.Select(value => value.VariableName).Order(StringComparer.Ordinal).ToArray();
-        if ((isCore && !names.SequenceEqual(new[] { "PATH", "ProgramFiles(x86)" },
-                 StringComparer.Ordinal)) ||
-            (!isCore && names.Contains("ProgramFiles(x86)", StringComparer.Ordinal)))
+        if (isCore && !names.SequenceEqual(new[] { "PATH" }, StringComparer.Ordinal))
             throw new Arch7bQualificationException(
                 Arch7bV2Blockers.CommandNonSecretEnvironmentVariableForbidden);
     }

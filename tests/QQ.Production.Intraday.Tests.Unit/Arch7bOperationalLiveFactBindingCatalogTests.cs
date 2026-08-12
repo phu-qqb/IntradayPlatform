@@ -229,7 +229,7 @@ public sealed class Arch7bOperationalLiveFactBindingCatalogTests : IDisposable
         Assert.DoesNotContain(core.ArgumentTemplates,
             value => value.Value.Contains("powershell", StringComparison.OrdinalIgnoreCase) ||
                      value.Value.Contains("cmd.exe", StringComparison.OrdinalIgnoreCase));
-        Assert.Equal(2, core.NonSecretEnvironment.Count);
+        Assert.Single(core.NonSecretEnvironment);
         var executablePath = core.NonSecretEnvironment.Single(value =>
             value.VariableName == "PATH");
         Assert.Equal("PATH", executablePath.VariableName);
@@ -244,15 +244,15 @@ public sealed class Arch7bOperationalLiveFactBindingCatalogTests : IDisposable
             Path.GetDirectoryName(result.Template.FileAuthorities["taskkill_executable"].Path)
         }),
             executablePath.Value);
-        var programFilesX86 = core.NonSecretEnvironment.Single(value =>
-            value.VariableName == "ProgramFiles(x86)");
-        Assert.Equal(Arch7bSealedNonSecretEnvironment
-            .CorePrequalificationProgramFilesX86AuthorityId,
-            programFilesX86.SourceAuthorityId);
-        Assert.Equal(Arch7bNonSecretEnvironmentValueKind.AbsoluteDirectory,
-            programFilesX86.ValueKind);
-        Assert.Equal(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86),
-            programFilesX86.Value);
+        Assert.DoesNotContain(core.NonSecretEnvironment,
+            value => value.VariableName == "ProgramFiles(x86)");
+        Assert.Equal("CHROME_EXPLICIT_EXECUTABLE", result.Template.SelectedBrowser);
+        Assert.True(result.Template.FileAuthorities.ContainsKey("chrome_executable"));
+        Assert.False(result.Template.FileAuthorities.ContainsKey("msedge_executable"));
+        foreach (var stage in new[] { "PORTAL_SESSION_PROVEN", "BRACKET_T2" })
+            Assert.Contains(result.Template.CommandTemplates.Single(value =>
+                    value.StageId == stage).ArgumentTemplates,
+                value => value.Value == "${authority:chrome_executable.path}");
         Assert.Contains("core_prequalification_config",
             result.Template.StageContracts.Single(value =>
                 value.StageId == "SLOT_LOCKED").ProducedFactTypes);

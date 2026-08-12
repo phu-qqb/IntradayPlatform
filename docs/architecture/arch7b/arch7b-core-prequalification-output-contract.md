@@ -14,12 +14,13 @@ only command line is:
 
 The config is created once by SLOT_LOCKED. It binds the qualified Core Git
 repository, exact Core commit and tree, a create-new output root, and the
-msedge browser channel. The command receives exactly two sealed non-secret
-entries: `PATH`, containing only the parent directories of the exact
-`git_executable`, `node_executable`, and `taskkill_executable` authorities; and
-`ProgramFiles(x86)`, bound to the exact `msedge_executable` authority. PowerShell,
-command wrappers, shell execution, and ambient environment resolution are not
-command routes.
+exact `browserExecutablePath` and `expectedBrowserExecutableSha256` from the
+`chrome_executable` authority. `browserChannel` is absent. The command receives
+exactly one sealed non-secret entry: `PATH`, containing only the parent
+directories of the exact `git_executable`, `node_executable`, and
+`taskkill_executable` authorities. PowerShell, command wrappers, shell
+execution, ambient browser discovery, Playwright downloads, and browser
+fallbacks are not command routes.
 
 The Core CLI owns stdout. A successful invocation emits one UTF-8 JSON
 document with exactly the top-level properties qualification and manifest.
@@ -53,9 +54,9 @@ require both process exit 0 and evidence.passed=true.
 
 ## Taskkill cleanup authority
 
-The Edge-backed prequalification requires the Windows process cleanup utility
-after the browser closes. `CORE_PREQUALIFICATION` therefore carries exactly one
-sealed `PATH` composed, in order, from the parent directories of these file
+The Chrome-backed prequalification retains the Windows process cleanup utility
+after the browser closes. `CORE_PREQUALIFICATION` carries exactly one sealed
+`PATH` composed, in order, from the parent directories of these file
 authorities:
 
 1. `git_executable`;
@@ -75,20 +76,35 @@ executables. The operational inventory expands that composite source into
 three required file-authority references, exclusively for
 `CORE_PREQUALIFICATION`.
 
-## Edge channel authority
+## Chrome executable authority
 
-Playwright 1.62.0 resolves the installed `msedge` channel through
-`ProgramFiles(x86)`. `CORE_PREQUALIFICATION` therefore receives exactly one
-additional sealed variable with that name. Its value is derived from
-`Environment.SpecialFolder.ProgramFilesX86`; it is never inherited from the
-machine, user, parent process, or another command.
+All selected ARCH7B Playwright stages use the same `chrome_executable` FILE
+authority. On the Primary it binds Chrome 151.0.7922.110 at
+`C:\Program Files\Google\Chrome\Application\chrome.exe` with SHA-256
+`1c8a72b0e6b5a4dd1de5ce42a7b11460753d8941baebda208360475f31eb17d2`.
+Playwright 1.62.0 launches it through `chromium.launch` with an explicit
+`executablePath`, `headless=true`, and no channel.
 
-The composite authority
-`core_prequalification_program_files_x86_authority` binds the variable name,
-the absolute Program Files (x86) directory, the `msedge_executable` authority
-ID, the exact path `Microsoft/Edge/Application/msedge.exe`, the executable byte
-SHA-256, and the environment contract version. The executable and every parent
-from `ProgramFilesX86` through `Application` must exist without reparse points.
-The path and byte SHA-256 are checked again immediately before the Node child
-starts. `PROGRAMFILES`, `HOMEDRIVE`, and ambient `ProgramFiles(x86)` values are
-not inherited or added to `InheritedSystemVariables`.
+The authority requires an absolute regular file named `chrome.exe`,
+`MustExist=true`, `MustBeInsideRunRoot=false`, and no reparse point on the file
+or any parent. The path and byte SHA-256 are checked when the operational
+template is materialized and again immediately before every browser spawn.
+The native `browser_runtime` output must report source
+`EXPLICIT_EXECUTABLE`, basename `chrome.exe`, the same SHA-256, a non-empty
+version, `headless=true`, and a null channel.
+
+The selected operational template contains
+`selected_browser=CHROME_EXPLICIT_EXECUTABLE`. Portal proof, auth-only recovery
+when separately authorized, bracketed snapshot, and Core prequalification all
+bind this exact executable. `msedge_executable`, `browserChannel`,
+`ProgramFiles(x86)` Edge resolution, browser downloads, PATH discovery, and
+fallback browsers are forbidden selected dependencies.
+
+## Preserved Edge forensic
+
+The append-only verdict
+`NO_GO_ARCH7B_EDGE_CANNOT_RUN_UNDER_PRIMARY_SSM_PROCESS_CONTEXT` remains
+authoritative with classification
+`EDGE_SYSTEM_SESSION_ZERO_OR_PROCESS_TOKEN_INCOMPATIBLE`. Its historical
+forensic files are retained; they are evidence, not selectable runtime
+authorities.

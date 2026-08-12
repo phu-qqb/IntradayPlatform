@@ -45,8 +45,15 @@ public sealed class Arch7bCoreRuntimePrequalificationAdapterTests : IDisposable
             ["aws_sdk_secrets_manager_version"] = "3.0.0",
             ["browser_runtime"] = new JsonObject
             {
-                ["channel"] = "msedge",
-                ["version"] = "138.0.0.0"
+                ["source"] = "EXPLICIT_EXECUTABLE",
+                ["executable_path"] = Arch7bSealedNonSecretEnvironment.QualifiedChromeExecutablePath,
+                ["executable_basename"] = "chrome.exe",
+                ["executable_sha256"] = Arch7bSealedNonSecretEnvironment.QualifiedChromeExecutableSha256,
+                ["version"] = Arch7bSealedNonSecretEnvironment.QualifiedChromeVersion,
+                ["headless"] = true,
+                ["channel"] = null,
+                ["browser_download_used"] = false,
+                ["fallback_used"] = false
             },
             ["host"] = "PRIMARY",
             ["exact_test_command"] = "npm test",
@@ -149,12 +156,20 @@ public sealed class Arch7bCoreRuntimePrequalificationAdapterTests : IDisposable
 
     private static Arch7bOneShotMaterializedCommand Command(string outputRoot)
     {
+        var configPath = Path.Combine(Path.GetDirectoryName(outputRoot)!,
+            "core-prequalification-config.json");
+        File.WriteAllText(configPath, new JsonObject
+        {
+            ["outputRoot"] = outputRoot,
+            ["browserExecutablePath"] = Arch7bSealedNonSecretEnvironment.QualifiedChromeExecutablePath,
+            ["expectedBrowserExecutableSha256"] = Arch7bSealedNonSecretEnvironment.QualifiedChromeExecutableSha256
+        }.ToJsonString());
         var executable = typeof(Arch7bCoreRuntimePrequalificationAdapter)
             .Assembly.Location;
         return new(Arch7bV2Contracts.MaterializedCommandVersion,
             "core-runtime-prequalification", "CORE_PREQUALIFICATION",
             Arch7bExecutionKind.ChildInvoke, executable, ShaFile(executable),
-            ["--output-root", outputRoot], Path.GetDirectoryName(outputRoot)!,
+            ["--config", configPath], Path.GetDirectoryName(outputRoot)!,
             "core-prequalification-v1",
             Arch7bV2Contracts.ChildResultAdapterVersion,
             Arch7bCoreRuntimePrequalificationAdapter.NativeContract,

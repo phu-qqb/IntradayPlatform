@@ -1,0 +1,53 @@
+{
+  "contract_version": "arch7b_qualified_chrome_runtime_authority_v1",
+  "authority_id": "chrome_executable",
+  "authority_kind": "FILE",
+  "selected_browser": "CHROME_EXPLICIT_EXECUTABLE",
+  "path": "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
+  "filename": "chrome.exe",
+  "sha256": "1c8a72b0e6b5a4dd1de5ce42a7b11460753d8941baebda208360475f31eb17d2",
+  "version": "151.0.7922.110",
+  "playwright_version": "1.62.0",
+  "requirements": {
+    "absolute_path": true,
+    "regular_file": true,
+    "must_exist": true,
+    "must_be_inside_run_root": false,
+    "file_reparse_point": false,
+    "parent_reparse_points": false,
+    "reread_path_before_spawn": true,
+    "reread_sha256_before_spawn": true
+  },
+  "launch": {
+    "api": "chromium.launch",
+    "executable_path_source": "EXPLICIT_EXECUTABLE",
+    "headless": true,
+    "channel": null,
+    "browser_download": false,
+    "browser_fallback": false,
+    "path_discovery": false
+  },
+  "qualified_process_context": {
+    "user": "SYSTEM",
+    "session_id": 0,
+    "known_good_ssm_command_id": "59528d53-2e7e-4681-84dd-bb7e8d105489"
+  },
+  "source_evidence": {
+    "root": "D:\\QQFund\\ARCH7B\\qualification\\edge-exit-1002-matrix-eb01fed-v1",
+    "matrix_sha256": "8c808b23322a8c4405d7565099bcd8423f1a2cdfdb42e4accf716a962a5f4e77",
+    "diff_sha256": "da97005649b8a3ac0953cf9c0f95a587938eb8492521d12ede2ea334017c1e41",
+    "terminal_sha256": "5944636bd86a7f09c16e45e92e2a208f9c3d6764f06226cd1131463c13b56e7"
+  },
+  "qualification": {
+    "launch": "3/3_PASS",
+    "devtools_ready": "3/3_PASS",
+    "browser_version": "3/3_PASS",
+    "browser_close": "3/3_PASS"
+  },
+  "cleanup": {
+    "chrome_processes": 0,
+    "node_processes": 0,
+    "markers": 0
+  },
+  "contains_secrets": false
+}

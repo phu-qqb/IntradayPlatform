@@ -116,10 +116,10 @@ public static class Arch7bV2Blockers
         "ARCH7B_COMMAND_TASKKILL_EXECUTABLE_PATH_AUTHORITY_MISMATCH";
     public const string CommandTaskkillExecutableShaMismatch =
         "ARCH7B_COMMAND_TASKKILL_EXECUTABLE_SHA_MISMATCH";
-    public const string CommandMsEdgeExecutablePathAuthorityMismatch =
-        "ARCH7B_COMMAND_MSEDGE_EXECUTABLE_PATH_AUTHORITY_MISMATCH";
-    public const string CommandMsEdgeExecutableShaMismatch =
-        "ARCH7B_COMMAND_MSEDGE_EXECUTABLE_SHA_MISMATCH";
+    public const string CommandChromeExecutablePathAuthorityMismatch =
+        "ARCH7B_COMMAND_CHROME_EXECUTABLE_PATH_AUTHORITY_MISMATCH";
+    public const string CommandChromeExecutableShaMismatch =
+        "ARCH7B_COMMAND_CHROME_EXECUTABLE_SHA_MISMATCH";
 }
 
 public static class Arch7bV2ArgumentSafety

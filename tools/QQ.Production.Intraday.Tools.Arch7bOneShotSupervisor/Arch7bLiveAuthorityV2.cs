@@ -230,6 +230,33 @@ public static class Arch7bLiveTemplateValidator
                 Arch7bExecutionKind.Internal or Arch7bExecutionKind.FilesystemGate or
                 Arch7bExecutionKind.ExpectedBlockerGate))
             throw new Arch7bQualificationException(Arch7bV2Blockers.CommandTemplateInvalid);
+        if (value.SelectedBrowser is not null)
+        {
+            if (value.SelectedBrowser != "CHROME_EXPLICIT_EXECUTABLE" ||
+                !value.FileAuthorities.ContainsKey("chrome_executable") ||
+                value.FileAuthorities.ContainsKey("msedge_executable"))
+                throw new Arch7bQualificationException(
+                    Arch7bV2Blockers.CommandTemplateInvalid, "selected_browser");
+            foreach (var stageId in new[] { "PORTAL_SESSION_PROVEN", "BRACKET_T2" })
+            {
+                var browserCommand = value.CommandTemplates.Single(command =>
+                    command.StageId == stageId);
+                var arguments = browserCommand.ArgumentTemplates.Select(argument =>
+                    argument.Value).ToArray();
+                if (arguments.Count(argument => argument == "--executable-path") != 1 ||
+                    arguments.Count(argument =>
+                        argument == "${authority:chrome_executable.path}") != 1 ||
+                    arguments.Any(argument => argument.Contains("browser-channel",
+                        StringComparison.OrdinalIgnoreCase) || argument.Contains("msedge",
+                        StringComparison.OrdinalIgnoreCase)))
+                    throw new Arch7bQualificationException(
+                        Arch7bV2Blockers.CommandTemplateInvalid, stageId);
+            }
+            if (value.CommandTemplates.SelectMany(command => command.NonSecretEnvironment)
+                .Any(variable => variable.VariableName == "ProgramFiles(x86)"))
+                throw new Arch7bQualificationException(
+                    Arch7bV2Blockers.CommandTemplateInvalid, "ProgramFiles(x86)");
+        }
         foreach (var command in value.CommandTemplates)
         {
             var stage = value.StageContracts.SingleOrDefault(item => item.StageId == command.StageId) ??

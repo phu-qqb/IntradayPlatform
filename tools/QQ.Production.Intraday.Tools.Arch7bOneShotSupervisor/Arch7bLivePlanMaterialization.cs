@@ -171,17 +171,23 @@ public sealed record Arch7bOneShotLivePlanTemplate(
     IReadOnlyList<Arch7bOneShotStageContract> StageContracts,
     string EvidenceSha256)
 {
-    public string Canonical() => string.Join('\n', ContractVersion, SupervisorCommit, SupervisorTree,
-        CoreCommit, CoreTree, IntradayCommit, IntradayTree, FreezeManifestSha256, FreezePacketSha256,
-        RuntimeInventorySha256, CoreRepositoryAuthoritySha256, CoreTrackedInventorySha256,
-        StaticAuthoritySetSha256, CommandTemplateSetSha256, AdapterSetSha256, RootCaAuthoritySha256,
-        PrivilegeAuthoritySha256, CalendarAuthoritySha256, SloRegistrySha256, ChronologySha256,
-        CleanupAuthoritySha256, TargetEnvironment, AccountId, NoOrder, MaximumSlots, MaximumRdsReads,
-        MaximumCaptures, MaximumRetries,
-        string.Join('|', FileAuthorities.OrderBy(value => value.Key, StringComparer.Ordinal).Select(value =>
-            $"{value.Key}:{value.Value.AuthorityId}:{value.Value.Path}:{value.Value.Sha256}:{value.Value.MustExist}:{value.Value.MustBeInsideRunRoot}")),
-        string.Join('|', CommandTemplates.Select(value => value.EvidenceSha256)),
-        string.Join('|', StageContracts.Select(value => value.EvidenceSha256)));
+    public string? SelectedBrowser { get; init; }
+
+    public string Canonical()
+    {
+        var canonical = string.Join('\n', ContractVersion, SupervisorCommit, SupervisorTree,
+            CoreCommit, CoreTree, IntradayCommit, IntradayTree, FreezeManifestSha256, FreezePacketSha256,
+            RuntimeInventorySha256, CoreRepositoryAuthoritySha256, CoreTrackedInventorySha256,
+            StaticAuthoritySetSha256, CommandTemplateSetSha256, AdapterSetSha256, RootCaAuthoritySha256,
+            PrivilegeAuthoritySha256, CalendarAuthoritySha256, SloRegistrySha256, ChronologySha256,
+            CleanupAuthoritySha256, TargetEnvironment, AccountId, NoOrder, MaximumSlots, MaximumRdsReads,
+            MaximumCaptures, MaximumRetries,
+            string.Join('|', FileAuthorities.OrderBy(value => value.Key, StringComparer.Ordinal).Select(value =>
+                $"{value.Key}:{value.Value.AuthorityId}:{value.Value.Path}:{value.Value.Sha256}:{value.Value.MustExist}:{value.Value.MustBeInsideRunRoot}")),
+            string.Join('|', CommandTemplates.Select(value => value.EvidenceSha256)),
+            string.Join('|', StageContracts.Select(value => value.EvidenceSha256)));
+        return SelectedBrowser is null ? canonical : string.Join('\n', canonical, SelectedBrowser);
+    }
 
     public void ValidateEvidence()
     {
@@ -331,6 +337,8 @@ public sealed class Arch7bOneShotCommandMaterializer
     {
         if (!authorities.TryGetValue(authorityId, out var authority))
             throw new Arch7bQualificationException(Arch7bV2Blockers.AuthorityBindingMismatch, authorityId);
+        if (authorityId == "chrome_executable")
+            Arch7bSealedNonSecretEnvironment.ValidateChromeAuthority(authority);
         Arch7bOneShotAuthorityLoader.RequireAbsolute(authority.Path);
         if (authority.MustBeInsideRunRoot) Arch7bOneShotAuthorityLoader.RequireInside(runRoot, authority.Path);
         if (authority.MustExist && !File.Exists(authority.Path) && !Directory.Exists(authority.Path))

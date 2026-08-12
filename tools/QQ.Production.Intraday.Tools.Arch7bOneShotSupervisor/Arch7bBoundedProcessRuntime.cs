@@ -574,6 +574,36 @@ public sealed class Arch7bOneShotProcessRunnerV2
             throw new Arch7bQualificationException(Arch7bBlockers.ExecutableShaMismatch, command.CommandId);
         if (command.ArgumentList.Any(Arch7bV2ArgumentSafety.IsSecretArgumentValue))
             throw new Arch7bQualificationException(Arch7bBlockers.SecretInArgument, command.CommandId);
+        ValidateBrowserAuthority(command);
+    }
+
+    private static void ValidateBrowserAuthority(Arch7bOneShotMaterializedCommand command)
+    {
+        if (command.CommandId.StartsWith("offline-", StringComparison.Ordinal)) return;
+
+        string? path = null;
+        string? sha = null;
+        if (command.StageId == "CORE_PREQUALIFICATION")
+        {
+            var configPath = Arch7bNativeAdapterJson.Option(command.ArgumentList, "--config");
+            using var config = JsonDocument.Parse(File.ReadAllBytes(configPath));
+            path = Arch7bNativeAdapterJson.String(config.RootElement,
+                "browserExecutablePath");
+            sha = Arch7bNativeAdapterJson.String(config.RootElement,
+                "expectedBrowserExecutableSha256");
+            if (config.RootElement.TryGetProperty("browserChannel", out _))
+                throw new Arch7bQualificationException(
+                    Arch7bV2Blockers.CommandTemplateInvalid, "browserChannel");
+        }
+        else if (command.StageId is "PORTAL_SESSION_PROVEN" or "BRACKET_T2")
+        {
+            path = Arch7bNativeAdapterJson.Option(command.ArgumentList,
+                "--executable-path");
+            sha = Arch7bSealedNonSecretEnvironment.QualifiedChromeExecutableSha256;
+        }
+        if (path is null || sha is null) return;
+        Arch7bSealedNonSecretEnvironment.ValidateChromeAuthority(new(
+            "chrome_executable", path, sha, true, false));
     }
 
     private static void Kill(Process process)

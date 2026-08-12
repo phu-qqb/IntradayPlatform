@@ -277,7 +277,7 @@ public static class Arch7bRequiredOperationalExecutionAuthorityInventoryBuilder
             ["git_executable"] = Arch7bOperationalAuthorityKind.File,
             ["node_executable"] = Arch7bOperationalAuthorityKind.File,
             ["taskkill_executable"] = Arch7bOperationalAuthorityKind.File,
-            ["msedge_executable"] = Arch7bOperationalAuthorityKind.File,
+            ["chrome_executable"] = Arch7bOperationalAuthorityKind.File,
             ["dotnet_executable"] = Arch7bOperationalAuthorityKind.File,
             ["dotnet_root"] = Arch7bOperationalAuthorityKind.DotnetRuntime,
             ["root_certificate"] = Arch7bOperationalAuthorityKind.RootCa,
@@ -292,6 +292,7 @@ public static class Arch7bRequiredOperationalExecutionAuthorityInventoryBuilder
             ["intraday_runtime"] = Arch7bOperationalAuthorityKind.DirectoryInventory,
             ["git_executable"] = Arch7bOperationalAuthorityKind.File,
             ["node_executable"] = Arch7bOperationalAuthorityKind.File,
+            ["chrome_executable"] = Arch7bOperationalAuthorityKind.File,
             ["dotnet_executable"] = Arch7bOperationalAuthorityKind.File,
             ["dotnet_root"] = Arch7bOperationalAuthorityKind.DotnetRuntime,
             ["root_certificate"] = Arch7bOperationalAuthorityKind.RootCa,
@@ -331,17 +332,6 @@ public static class Arch7bRequiredOperationalExecutionAuthorityInventoryBuilder
                         Add(sourceId, Arch7bOperationalAuthorityReferenceKind.NonSecretEnvironment,
                             command.CommandId, command.StageId,
                             "non_secret_environment:PATH:" + sourceId, false);
-                }
-                else if (command.StageId == "CORE_PREQUALIFICATION" &&
-                    environment.VariableName == "ProgramFiles(x86)" &&
-                    environment.SourceAuthorityId == Arch7bSealedNonSecretEnvironment
-                        .CorePrequalificationProgramFilesX86AuthorityId)
-                {
-                    foreach (var sourceId in Arch7bSealedNonSecretEnvironment
-                                 .CorePrequalificationProgramFilesX86SourceAuthorityIds)
-                        Add(sourceId, Arch7bOperationalAuthorityReferenceKind.NonSecretEnvironment,
-                            command.CommandId, command.StageId,
-                            "non_secret_environment:ProgramFiles(x86):" + sourceId, false);
                 }
                 else
                 {
@@ -471,8 +461,8 @@ public static class Arch7bOperationalExecutionAuthorityValidator
                     ValidateFile(source);
                     if (source.AuthorityId == "taskkill_executable")
                         Arch7bSealedNonSecretEnvironment.ValidateTaskkillAuthority(source.Project());
-                    if (source.AuthorityId == "msedge_executable")
-                        Arch7bSealedNonSecretEnvironment.ValidateMsEdgeAuthority(source.Project());
+                    if (source.AuthorityId == "chrome_executable")
+                        Arch7bSealedNonSecretEnvironment.ValidateChromeAuthority(source.Project());
                     break;
                 case Arch7bOperationalAuthorityKind.DirectoryInventory:
                     ValidateDirectory(source);

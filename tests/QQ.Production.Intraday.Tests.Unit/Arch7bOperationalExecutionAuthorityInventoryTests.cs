@@ -30,7 +30,7 @@ public sealed class Arch7bOperationalExecutionAuthorityInventoryTests
         foreach (var authorityId in new[]
                  {
                      "core_repository", "core_node_runtime", "intraday_runtime", "git_executable",
-                     "node_executable", "taskkill_executable", "msedge_executable",
+                     "node_executable", "taskkill_executable", "chrome_executable",
                      "dotnet_executable", "dotnet_root", "root_certificate", "market_data_config"
                  })
             Assert.Contains(authorityId, inventory.RequiredAuthorityIds);
@@ -40,12 +40,13 @@ public sealed class Arch7bOperationalExecutionAuthorityInventoryTests
         Assert.Equal("CORE_PREQUALIFICATION", taskkillReferences[0].ReferencingStageId);
         Assert.Equal(Arch7bOperationalAuthorityReferenceKind.NonSecretEnvironment,
             taskkillReferences[0].ReferenceKind);
-        var msedgeReferences = inventory.References.Where(value =>
-            value.AuthorityId == "msedge_executable").ToArray();
-        Assert.Single(msedgeReferences);
-        Assert.Equal("CORE_PREQUALIFICATION", msedgeReferences[0].ReferencingStageId);
-        Assert.Equal(Arch7bOperationalAuthorityReferenceKind.NonSecretEnvironment,
-            msedgeReferences[0].ReferenceKind);
+        var chromeReferences = inventory.References.Where(value =>
+            value.AuthorityId == "chrome_executable").ToArray();
+        Assert.Equal(3, chromeReferences.Length);
+        Assert.Contains(chromeReferences, value => value.ReferencingStageId == "PORTAL_SESSION_PROVEN");
+        Assert.Contains(chromeReferences, value => value.ReferencingStageId == "BRACKET_T2");
+        Assert.Contains(chromeReferences, value => value.ReferenceKind ==
+            Arch7bOperationalAuthorityReferenceKind.StaticPreSpawn);
         Assert.All(inventory.References, reference =>
             Assert.Equal(Arch7bOneShotContracts.Sha256(reference.Canonical()),
                 reference.EvidenceSha256));

@@ -30,8 +30,12 @@ public sealed class Arch7bSealedNonSecretEnvironmentTests
         Assert.Equal(Arch7bV2Contracts.MaterializedCommandNonSecretEnvironmentVersion,
             environment[0].ContractVersion);
         Assert.Empty(Arch7bSealedNonSecretEnvironment.ValidateTemplate([], authorities));
-        Assert.Equal(2, Arch7bSealedNonSecretEnvironment.ValidateTemplate(
-            [environment[0], executablePath[0]], authorities).Count);
+        Assert.Single(Arch7bSealedNonSecretEnvironment.ValidateTemplate([environment[0]], authorities));
+        Assert.Single(Arch7bSealedNonSecretEnvironment.ValidateTemplate([executablePath[0]], authorities));
+        Assert.Equal(Arch7bV2Blockers.CommandNonSecretEnvironmentVariableForbidden,
+            Assert.Throws<Arch7bQualificationException>(() =>
+                Arch7bSealedNonSecretEnvironment.ValidateTemplate(
+                    [environment[0], executablePath[0]], authorities)).BlockerCode);
         Assert.Equal(Arch7bV2Blockers.CommandNonSecretEnvironmentAuthorityMissing,
             Assert.Throws<Arch7bQualificationException>(() =>
                 Arch7bSealedNonSecretEnvironment.ForDotnetRoot(
@@ -218,7 +222,7 @@ public sealed class Arch7bSealedNonSecretEnvironmentTests
             ["git_executable"] = Arch7bTaskkillTestAuthorities.Create()["git_executable"],
             ["node_executable"] = Arch7bTaskkillTestAuthorities.Create()["node_executable"],
             ["taskkill_executable"] = Arch7bTaskkillTestAuthorities.Create()["taskkill_executable"],
-            ["msedge_executable"] = Arch7bTaskkillTestAuthorities.Create()["msedge_executable"]
+            ["chrome_executable"] = Arch7bTaskkillTestAuthorities.Create()["chrome_executable"]
         };
     }
 
