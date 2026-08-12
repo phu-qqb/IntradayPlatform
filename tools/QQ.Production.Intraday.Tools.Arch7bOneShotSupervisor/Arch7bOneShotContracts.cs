@@ -27,10 +27,11 @@ public static class Arch7bOneShotContracts
     public const string IntradayBaseCommit = "6eb13a2f1bcf77f71f12efd4f4eef1b71a43c657";
     public const string IntradayBaseTree = "d325308bc0d951468fc037feb55ffdf01c347f57";
     public const string CoreRepository = "phu-qqb/QQ.Production.Core";
-    public const string CoreCommit = "43a848ec0c609d6257a3020cb7cbe1f10443b5e6";
-    public const string CoreTree = "f4fe2265c80288e6133f2484da3ed8819aa6c92b";
-    public const string CoreTrackedInventorySha256 = "f5dbca8c496456580c7d63e498866333bd0afbc68057440587c0826261709991";
-    public const string CoreRepositoryAuthoritySha256 = "44cb8bc70ac9f488bb819e24590fee3d96b1dc3d73b07ce99135a42350a8ce42";
+    public const string CoreCommit = "97e15383fc4af3d9c2ef19f3804219e793bf29db";
+    public const string CoreTree = "755139be1ce22338f9b17dbd40c78cc4c46b24e8";
+    public const string CoreTrackedInventorySha256 = "25b72115e399294c761c393ea8bef4028b6f1b21ae5385a5085406369ed1ea7c";
+    public const string CoreRepositoryAuthoritySha256 = "e7c8eb41601f55107ba6367bbc72ef8be5581509c042088ce6727c5fd0869da2";
+    public const int ExpectedCorePrequalificationTestCount = 156;
 
     public const int MaximumSlots = 1;
     public const int MaximumCaptures = 1;

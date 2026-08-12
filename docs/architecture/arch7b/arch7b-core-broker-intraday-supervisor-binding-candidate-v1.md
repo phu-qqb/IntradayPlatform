@@ -5,14 +5,14 @@
 `ARCH7B_CORE_BROKER_AND_INTRADAY_SUPERVISOR_CROSS_REPO_BINDING_READY`
 
 The Intraday functional implementation candidate is
-`08d7c7195939d7e7ee48b4567ee97e45bba417d6` with tree
-`6d339ca73c8f5e8cb957ac5d6cc08a48b6da4941`; the final authority-only rebind is
+`83f07be60e335c47dd086f82f6469f1694f5b3af` with tree
+`fae87d0951ed6b7492546ea2834f58ddb73e4264`; the final authority-only rebind is
 the commit containing this packet. The Core implementation is
-`43a848ec0c609d6257a3020cb7cbe1f10443b5e6` with tree
-`f4fe2265c80288e6133f2484da3ed8819aa6c92b`. The Core repository authority
-on Primary is `44cb8bc70ac9f488bb819e24590fee3d96b1dc3d73b07ce99135a42350a8ce42`,
+`97e15383fc4af3d9c2ef19f3804219e793bf29db` with tree
+`755139be1ce22338f9b17dbd40c78cc4c46b24e8`. The Core repository authority
+on Primary is `e7c8eb41601f55107ba6367bbc72ef8be5581509c042088ce6727c5fd0869da2`,
 with tracked inventory SHA-256
-`f5dbca8c496456580c7d63e498866333bd0afbc68057440587c0826261709991`.
+`25b72115e399294c761c393ea8bef4028b6f1b21ae5385a5085406369ed1ea7c`.
 The Portal wrapper remains
 `tools/lmax_portal_reports_downloader/src/downloader.mjs`; its Git source and
 Windows runtime SHA-256 values are respectively
@@ -22,8 +22,13 @@ It exposes the exact `lmax_portal_demo_session_proof_v1` contract.
 The broker module and CLI SHA-256 remain respectively
 `2ba086323683524fc018937e88a0adbd4723d8ed201efa93293b98eb81f587f2` and
 `e0bfb03b75af841a8a808b8efb0f734b128756d5c7fdc3e10e9d13a19fe886c3`:
-the functional bytes have not changed. The final Intraday PR HEAD is
-the commit containing this packet.
+the broker functional bytes have not changed. Core prequalification is now
+bound to source-set SHA-256
+`1a3cd25c03fab0ee2933e6e2f86ca384e427ac7502669aefd9f21fc0a44a2709`
+and module SHA-256
+`e4c87cbd179e83454852e3f88cd721a824c28d9e167dbdab083ab2ab7241e5eb`.
+It requires exactly 156/156 tests. The final Intraday PR #58 HEAD is the commit
+containing this packet.
 
 ## Binding
 
@@ -53,13 +58,13 @@ normalized output evidence are checked on every response.
 
 ## Qualification
 
-Local qualification passes 20/20 independent runs and 10/10 campaigns of
-three runs: 50/50 complete sequences, adapters, and terminal cleanups. ARCH7B
-regressions pass 698/698 and the Release build has zero errors. Pending model
-changes remain false and the migration count remains eight.
+Local output, receipt, and exit tests pass 28/28. ARCH7B regressions pass
+757/757, the obsolete 154/154 count is rejected, and the Release build has zero
+errors. Pending model changes remain false, the migration count remains eight,
+and the warning differential is zero.
 
 The authority-only rebind must be committed before the Primary runtime can be
-content-addressed. Three Primary A-H campaigns are therefore required against
+content-addressed. Three Primary A-J campaigns are therefore required against
 that commit, with zero residual processes and markers, before merge.
 
 ## Safety
@@ -67,4 +72,4 @@ that commit, with zero residual processes and markers, before merge.
 Real secret reads, DB connections and writes, live slots, Portal HTTP, Market
 Data, FIX logons, orders, Fills, ledger events, Account API, Polygon,
 Databento, AWS/S3 mutations, and operational one-shot state are all zero. PR
-#56 remains open, draft, and unmerged.
+#58 remains open, draft, and unmerged.

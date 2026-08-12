@@ -282,8 +282,10 @@ public sealed class Arch7bCoreRuntimePrequalificationAdapter(
                     Arch7bNativeAdapterJson.String(browser, "version")),
             "qualification.browser_runtime");
         Require(Arch7bNativeAdapterJson.String(value, "exact_test_command") == "npm test" &&
-                Arch7bNativeAdapterJson.Integer(value, "tests_passed") == 154 &&
-                Arch7bNativeAdapterJson.Integer(value, "tests_total") == 154 &&
+                Arch7bNativeAdapterJson.Integer(value, "tests_passed") ==
+                Arch7bOneShotContracts.ExpectedCorePrequalificationTestCount &&
+                Arch7bNativeAdapterJson.Integer(value, "tests_total") ==
+                Arch7bOneShotContracts.ExpectedCorePrequalificationTestCount &&
                 Arch7bNativeAdapterJson.String(value, "syntax_checks") == "PASS" &&
                 Arch7bNativeAdapterJson.Integer(value,
                     "npm_audit_omit_dev_vulnerabilities") == 0 &&

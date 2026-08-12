@@ -24,6 +24,9 @@ The Core CLI owns stdout. A successful invocation emits one UTF-8 JSON
 document with exactly the top-level properties qualification and manifest.
 Wrapper banners, suffixes, multiple documents, a BOM, invalid UTF-8, and native
 shape drift are rejected. No generic JSON substring extraction is allowed.
+The adapter requires exactly `tests_passed=156` and `tests_total=156` from the
+native qualification. The superseded `154/154` count and any other value are
+rejected fail-closed.
 
 ## Process receipt
 

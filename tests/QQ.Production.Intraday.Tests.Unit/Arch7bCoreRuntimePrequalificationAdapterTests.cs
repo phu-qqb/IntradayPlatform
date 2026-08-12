@@ -50,8 +50,10 @@ public sealed class Arch7bCoreRuntimePrequalificationAdapterTests : IDisposable
             },
             ["host"] = "PRIMARY",
             ["exact_test_command"] = "npm test",
-            ["tests_passed"] = 154,
-            ["tests_total"] = 154,
+            ["tests_passed"] =
+                Arch7bOneShotContracts.ExpectedCorePrequalificationTestCount,
+            ["tests_total"] =
+                Arch7bOneShotContracts.ExpectedCorePrequalificationTestCount,
             ["syntax_checks"] = "PASS",
             ["npm_audit_omit_dev_vulnerabilities"] = 0,
             ["secret_sentinel_scan"] = "PASS",
@@ -70,7 +72,7 @@ public sealed class Arch7bCoreRuntimePrequalificationAdapterTests : IDisposable
         await File.WriteAllTextAsync(Path.Combine(outputRoot,
             "core-runtime-prequalification.json"), qualification.ToJsonString());
         await File.WriteAllTextAsync(Path.Combine(outputRoot,
-            "runner-tests.stdout.log"), "tests 154\npass 154\nfail 0\n");
+            "runner-tests.stdout.log"), "tests 156\npass 156\nfail 0\n");
         await File.WriteAllTextAsync(Path.Combine(outputRoot,
             "runner-tests.stderr.log"), string.Empty);
 
@@ -122,6 +124,20 @@ public sealed class Arch7bCoreRuntimePrequalificationAdapterTests : IDisposable
         Assert.Equal(3, normalized.NativeArtifactCount);
         Assert.Equal(3, normalized.ArtifactSha256.Distinct().Count());
 
+        ((JsonObject)native["qualification"]!)["tests_passed"] = 154;
+        ((JsonObject)native["qualification"]!)["tests_total"] = 154;
+        var obsoleteCountFailure =
+            await Assert.ThrowsAsync<Arch7bQualificationException>(() =>
+                new Arch7bCoreRuntimePrequalificationAdapter(
+                    new Arch7bTestTimeProvider(now)).AdaptAsync(
+                    native.ToJsonString(), Command(outputRoot), root));
+        Assert.Equal(Arch7bV2Blockers.ChildAdapterContractMismatch,
+            obsoleteCountFailure.BlockerCode);
+
+        ((JsonObject)native["qualification"]!)["tests_passed"] =
+            Arch7bOneShotContracts.ExpectedCorePrequalificationTestCount;
+        ((JsonObject)native["qualification"]!)["tests_total"] =
+            Arch7bOneShotContracts.ExpectedCorePrequalificationTestCount;
         ((JsonObject)native["qualification"]!)["package_json_sha256"] =
             new string('9', 64);
         var failure = await Assert.ThrowsAsync<Arch7bQualificationException>(() =>
