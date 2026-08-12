@@ -14,10 +14,11 @@ only command line is:
 
 The config is created once by SLOT_LOCKED. It binds the qualified Core Git
 repository, exact Core commit and tree, a create-new output root, and the
-msedge browser channel. The command receives one sealed non-secret `PATH`
-entry containing only the parent directory of the exact `git_executable`
-authority and bound to that executable's SHA-256. npm, PowerShell, cmd, shell
-execution, and ambient PATH resolution are not command routes.
+msedge browser channel. The command receives one sealed non-secret `PATH` entry
+containing only the parent directories of the exact `git_executable` and
+`node_executable` authorities. This lets npm child scripts resolve Node while
+preserving MiniGit resolution. PowerShell, command wrappers, shell execution,
+and ambient PATH resolution are not command routes.
 
 The Core CLI owns stdout. A successful invocation emits one UTF-8 JSON
 document with exactly the top-level properties qualification and manifest.

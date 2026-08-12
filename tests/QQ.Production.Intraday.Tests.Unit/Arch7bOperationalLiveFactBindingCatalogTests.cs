@@ -229,11 +229,17 @@ public sealed class Arch7bOperationalLiveFactBindingCatalogTests : IDisposable
         Assert.DoesNotContain(core.ArgumentTemplates,
             value => value.Value.Contains("powershell", StringComparison.OrdinalIgnoreCase) ||
                      value.Value.Contains("cmd.exe", StringComparison.OrdinalIgnoreCase));
-        var gitPath = Assert.Single(core.NonSecretEnvironment);
-        Assert.Equal("PATH", gitPath.VariableName);
-        Assert.Equal("git_executable", gitPath.SourceAuthorityId);
-        Assert.Equal(Path.GetDirectoryName(
-            result.Template.FileAuthorities["git_executable"].Path), gitPath.Value);
+        var executablePath = Assert.Single(core.NonSecretEnvironment);
+        Assert.Equal("PATH", executablePath.VariableName);
+        Assert.Equal("git_executable", executablePath.SourceAuthorityId);
+        Assert.Equal(Arch7bNonSecretEnvironmentValueKind.ExecutableSearchPath,
+            executablePath.ValueKind);
+        Assert.Equal(string.Join(Path.PathSeparator, new[]
+        {
+            Path.GetDirectoryName(result.Template.FileAuthorities["git_executable"].Path),
+            Path.GetDirectoryName(result.Template.FileAuthorities["node_executable"].Path)
+        }.Distinct(StringComparer.OrdinalIgnoreCase)),
+            executablePath.Value);
         Assert.Contains("core_prequalification_config",
             result.Template.StageContracts.Single(value =>
                 value.StageId == "SLOT_LOCKED").ProducedFactTypes);
@@ -352,6 +358,8 @@ public sealed class Arch7bOperationalLiveFactBindingCatalogTests : IDisposable
             fixture.Template.FileAuthorities, StringComparer.Ordinal)
         {
             ["git_executable"] = new("git_executable", gitExecutable,
+                Sha(gitExecutable), true, false),
+            ["node_executable"] = new("node_executable", gitExecutable,
                 Sha(gitExecutable), true, false)
         };
         var catalog = Arch7bOperationalLiveFactBindingCatalog.Build();

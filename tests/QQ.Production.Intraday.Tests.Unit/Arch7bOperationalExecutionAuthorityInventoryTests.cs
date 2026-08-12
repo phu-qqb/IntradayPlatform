@@ -50,6 +50,8 @@ public sealed class Arch7bOperationalExecutionAuthorityInventoryTests
             fixture.Template.FileAuthorities, StringComparer.Ordinal)
         {
             ["git_executable"] = new("git_executable", gitExecutable,
+                Sha(gitExecutable), true, false),
+            ["node_executable"] = new("node_executable", gitExecutable,
                 Sha(gitExecutable), true, false)
         };
         var catalog = Arch7bOperationalLiveFactBindingCatalog.Build();
