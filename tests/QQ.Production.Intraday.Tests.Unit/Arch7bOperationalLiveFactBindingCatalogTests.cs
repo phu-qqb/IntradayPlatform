@@ -203,6 +203,7 @@ public sealed class Arch7bOperationalLiveFactBindingCatalogTests : IDisposable
 
         Assert.Equal(Arch7bFinalStageExecutionCatalog.CommandTemplateCount,
             result.CommandCount);
+        Assert.Equal(13, result.CommandCount);
         Assert.Equal(34, result.BindingCount);
         Assert.Equal(0, result.UnresolvedBindingCount);
         Assert.Equal(0, result.SyntheticCommandCount);
@@ -219,7 +220,7 @@ public sealed class Arch7bOperationalLiveFactBindingCatalogTests : IDisposable
         Assert.Equal("core_node_runtime", core.WorkingDirectoryAuthorityId);
         Assert.Equal(new[]
         {
-            "tools/lmax_portal_reports_downloader/src/fast-seal-cli.mjs",
+            "src/fast-seal-cli.mjs",
             "prequalify-bracket-runtime",
             "--config",
             "$" + "{fact:core_prequalification_config.path}"

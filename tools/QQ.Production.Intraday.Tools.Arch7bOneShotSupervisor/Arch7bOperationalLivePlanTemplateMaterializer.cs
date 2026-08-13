@@ -388,7 +388,7 @@ public static class Arch7bOperationalLivePlanTemplateMaterializer
             WorkingDirectoryAuthorityId = "core_node_runtime",
             ArgumentTemplates =
             [
-                new("tools/lmax_portal_reports_downloader/src/fast-seal-cli.mjs",
+                new("src/fast-seal-cli.mjs",
                     Arch7bPlaceholderValueKind.Literal,
                     null, -1, false),
                 new("prequalify-bracket-runtime", Arch7bPlaceholderValueKind.Literal,

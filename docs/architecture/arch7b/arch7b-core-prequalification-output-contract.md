@@ -7,7 +7,7 @@ node_executable, its working-directory authority is core_node_runtime, and its
 only command line is:
 
     node.exe
-    tools/lmax_portal_reports_downloader/src/fast-seal-cli.mjs
+    src/fast-seal-cli.mjs
     prequalify-bracket-runtime
     --config
     <run-root>/core-prequalification-config.json
@@ -29,6 +29,21 @@ shape drift are rejected. No generic JSON substring extraction is allowed.
 The adapter requires exactly `tests_passed=156` and `tests_total=156` from the
 native qualification. The superseded `154/154` count and any other value are
 rejected fail-closed.
+
+## Static child entrypoint validation
+
+Before calendar loading, slot selection, and slot lock, the supervisor audits all
+13 final command templates in one pass. Every relative Node module is resolved
+against its command working-directory authority. The Core prequalification
+entrypoint must be exactly `src/fast-seal-cli.mjs`, relative to
+`core_node_runtime`; the resolved regular file must remain inside that root,
+contain no reparse point in its path, and match the byte SHA-256 recorded in the
+closed `core_node_runtime` directory inventory.
+
+Failures are classified as `ARCH7B_CHILD_ENTRYPOINT_PATH_INVALID`,
+`ARCH7B_CHILD_ENTRYPOINT_OUTSIDE_WORKING_DIRECTORY`, or
+`ARCH7B_CHILD_ENTRYPOINT_SHA_MISMATCH`. Validation evidence is written before
+any live slot can be selected or locked.
 
 ## Process receipt
 

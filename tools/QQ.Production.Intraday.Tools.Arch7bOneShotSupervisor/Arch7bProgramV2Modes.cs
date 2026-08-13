@@ -144,6 +144,8 @@ public static class Arch7bProgramV2Modes
             operationalManifest, template.Value.FileAuthorities, authority.Value.FileAuthorities,
             Path.Combine(staticEvidenceRoot,
                 Arch7bOperationalExecutionAuthorityValidator.ValidationFileName));
+        Arch7bChildEntrypointValidator.Validate(template.Value, operationalManifest,
+            Path.Combine(staticEvidenceRoot, Arch7bChildEntrypointValidator.ValidationFileName));
         BindHash("freeze-manifest", Sha(options, "expected-freeze-manifest-sha256"),
             template.Value.FreezeManifestSha256, authority.Value.FreezeManifestSha256);
         BindHash("freeze-packet", Sha(options, "expected-freeze-packet-sha256"),
@@ -201,6 +203,9 @@ public static class Arch7bProgramV2Modes
             requiredInventory, operationalManifest, template.Value.FileAuthorities,
             template.Value.FileAuthorities, Path.Combine(staticEvidenceRoot,
                 Arch7bOperationalExecutionAuthorityValidator.ValidationFileName));
+        var childEntrypoints = Arch7bChildEntrypointValidator.Validate(template.Value,
+            operationalManifest, Path.Combine(staticEvidenceRoot,
+                Arch7bChildEntrypointValidator.ValidationFileName));
 
         return new
         {
@@ -208,6 +213,7 @@ public static class Arch7bProgramV2Modes
             qualificationOnly = true,
             stage = "STATIC_AUTHORITY_VALIDATION",
             validation,
+            childEntrypoints,
             slotSelected = false,
             slotLocked = false,
             oneShotIdentityCreated = false,
