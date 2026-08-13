@@ -92,6 +92,10 @@ public static class Arch7bV2Blockers
     public const string ChildAdapterContractMismatch = "ARCH7B_ONE_SHOT_CHILD_OUTPUT_ADAPTER_CONTRACT_MISMATCH";
     public const string ChildNativeStatusUnknown = "ARCH7B_ONE_SHOT_CHILD_NATIVE_STATUS_UNKNOWN";
     public const string ChildNativeArtifactCardinality = "ARCH7B_ONE_SHOT_CHILD_NATIVE_ARTIFACT_CARDINALITY_INVALID";
+    public const string ChildEntrypointPathInvalid = "ARCH7B_CHILD_ENTRYPOINT_PATH_INVALID";
+    public const string ChildEntrypointOutsideWorkingDirectory =
+        "ARCH7B_CHILD_ENTRYPOINT_OUTSIDE_WORKING_DIRECTORY";
+    public const string ChildEntrypointShaMismatch = "ARCH7B_CHILD_ENTRYPOINT_SHA_MISMATCH";
     public const string StageSloMissing = "ARCH7B_ONE_SHOT_STAGE_SLO_MISSING";
     public const string StagePredecessorMissing = "ARCH7B_ONE_SHOT_STAGE_PREDECESSOR_MISSING";
     public const string OperatorAuthorizationMissing = "ARCH7B_OPERATOR_AUTHORIZATION_FILE_MISSING";
