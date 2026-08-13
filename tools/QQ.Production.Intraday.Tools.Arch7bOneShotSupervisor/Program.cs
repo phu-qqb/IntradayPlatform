@@ -86,6 +86,7 @@ public static class Program
     public static int ExitCodeFor(string mode, object result)
     {
         if (mode != "run-one-shot") return 0;
+        if (result is Arch7bOneShotStaticPreflightEvidence) return 0;
         if (result is not Arch7bV2ExecutionEvidence evidence) return 1;
         return evidence.Passed && evidence.PrimaryFailure is null &&
                evidence.FinalBlocker == Arch7bOneShotContracts.ExpectedFinalBlocker &&

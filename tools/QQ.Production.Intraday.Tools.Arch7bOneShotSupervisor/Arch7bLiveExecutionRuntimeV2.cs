@@ -175,12 +175,7 @@ public sealed partial class Arch7bOneShotLiveExecutionRuntimeV2
                                     "core_prequalification_config",
                                     StringComparer.Ordinal))
                             {
-                                var coreRepository = template.FileAuthorities.TryGetValue(
-                                    "core_repository", out var coreRepositoryAuthority)
-                                    ? coreRepositoryAuthority.Path
-                                    : throw new Arch7bQualificationException(
-                                        Arch7bV2Blockers.AuthorityBindingMismatch,
-                                        "core_repository");
+                                var coreNodeRepository = CoreNodeRepositoryRoot(template);
                                 var chrome = template.FileAuthorities.TryGetValue(
                                     "chrome_executable", out var chromeAuthority)
                                     ? chromeAuthority
@@ -191,7 +186,7 @@ public sealed partial class Arch7bOneShotLiveExecutionRuntimeV2
                                     "core-prequalification-config.json");
                                 await WriteCreateNewAsync(coreConfigPath, new
                                 {
-                                    repositoryRoot = coreRepository,
+                                    repositoryRoot = coreNodeRepository,
                                     outputRoot = Path.Combine(runRoot,
                                         "core-prequalification-output"),
                                     expectedCommit = template.CoreCommit,
@@ -354,6 +349,26 @@ public sealed partial class Arch7bOneShotLiveExecutionRuntimeV2
             selectedSlot?.SlotId ?? string.Empty, stageEvidence, finalBudget, finalBlocker, primary,
             cleanupReport, longLived.Evidence, residualProcesses, residualMarkers, passed,
             Arch7bNoLiveSafetyCounters.Zero, Arch7bOneShotContracts.Sha256(evidenceCanonical));
+    }
+
+    internal static string CoreNodeRepositoryRoot(Arch7bOneShotLivePlanTemplate template)
+    {
+        var packageRoot = template.FileAuthorities.TryGetValue(
+            "core_node_runtime", out var authority)
+            ? Path.GetFullPath(authority.Path).TrimEnd(
+                Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+            : throw new Arch7bQualificationException(
+                Arch7bV2Blockers.AuthorityBindingMismatch, "core_node_runtime");
+        var package = new DirectoryInfo(packageRoot);
+        if (!string.Equals(package.Name, "lmax_portal_reports_downloader",
+                StringComparison.Ordinal) ||
+            package.Parent is null ||
+            !string.Equals(package.Parent.Name, "tools", StringComparison.Ordinal) ||
+            package.Parent.Parent is null)
+            throw new Arch7bQualificationException(
+                Arch7bV2Blockers.AuthorityBindingMismatch,
+                "core_node_runtime_repository_root");
+        return package.Parent.Parent.FullName;
     }
 
     private Task WaitForStageWindowAsync(string stageId, Arch7bSlotLock? selectedSlot,

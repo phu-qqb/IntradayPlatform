@@ -2,6 +2,21 @@ using System.Security.Cryptography;
 
 namespace QQ.Production.Intraday.Tools.Arch7bOneShotSupervisor;
 
+internal sealed record Arch7bOneShotStaticPreflightEvidence(
+    string Verdict,
+    bool QualificationOnly,
+    string Stage,
+    Arch7bOperationalExecutionAuthorityValidation Validation,
+    Arch7bChildEntrypointValidation ChildEntrypoints,
+    bool SlotSelected,
+    bool SlotLocked,
+    bool OneShotIdentityCreated,
+    bool LiveExecutionAuthorityLoaded,
+    bool OperatorAuthorizationLoaded,
+    int ResidualProcessCount,
+    int ResidualMarkerCount,
+    Arch7bNoLiveSafetyCounters Safety);
+
 public static class Arch7bProgramV2Modes
 {
     private const string Arch7bRdsTestProfile = "ARCH7B_RDS_TEST";
@@ -207,22 +222,11 @@ public static class Arch7bProgramV2Modes
             operationalManifest, Path.Combine(staticEvidenceRoot,
                 Arch7bChildEntrypointValidator.ValidationFileName));
 
-        return new
-        {
-            verdict = "ARCH7B_ONE_SHOT_STATIC_PREFLIGHT_QUALIFIED",
-            qualificationOnly = true,
-            stage = "STATIC_AUTHORITY_VALIDATION",
-            validation,
-            childEntrypoints,
-            slotSelected = false,
-            slotLocked = false,
-            oneShotIdentityCreated = false,
-            liveExecutionAuthorityLoaded = false,
-            operatorAuthorizationLoaded = false,
-            residualProcessCount = 0,
-            residualMarkerCount = 0,
-            safety = Arch7bNoLiveSafetyCounters.Zero
-        };
+        return new Arch7bOneShotStaticPreflightEvidence(
+            "ARCH7B_ONE_SHOT_STATIC_PREFLIGHT_QUALIFIED", true,
+            "STATIC_AUTHORITY_VALIDATION", validation, childEntrypoints,
+            false, false, false, false, false, 0, 0,
+            Arch7bNoLiveSafetyCounters.Zero);
     }
 
     public static async Task<object> QualifyCoreBrokerCrossRepositoryAsync(

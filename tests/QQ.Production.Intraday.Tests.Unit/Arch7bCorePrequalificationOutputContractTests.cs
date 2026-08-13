@@ -148,6 +148,22 @@ public sealed class Arch7bCorePrequalificationOutputContractTests
     }
 
     [Fact]
+    public void Qualified_static_preflight_has_zero_exit_without_live_evidence()
+    {
+        var authority = new Arch7bOperationalExecutionAuthorityValidation(
+            "validation-v1", 0, 0, 0, 0, 0, 0, 0, [], new string('1', 64));
+        var entrypoints = new Arch7bChildEntrypointValidation(
+            "entrypoints-v1", 0, 0, 0, 0, [], new string('2', 64));
+        var evidence = new Arch7bOneShotStaticPreflightEvidence(
+            "ARCH7B_ONE_SHOT_STATIC_PREFLIGHT_QUALIFIED", true,
+            "STATIC_AUTHORITY_VALIDATION", authority, entrypoints,
+            false, false, false, false, false, 0, 0,
+            Arch7bNoLiveSafetyCounters.Zero);
+
+        Assert.Equal(0, Program.ExitCodeFor("run-one-shot", evidence));
+    }
+
+    [Fact]
     public void Ssm_result_requires_both_zero_exit_and_passed_evidence()
     {
         var pass = Evidence(true);

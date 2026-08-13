@@ -24,6 +24,48 @@ public sealed class Arch7bChildEntrypointValidatorTests : IDisposable
     }
 
     [Fact]
+    public void Core_prequalification_uses_repository_owning_core_node_runtime()
+    {
+        var repositoryRoot = Root("core-node-repository");
+        var packageRoot = Path.Combine(repositoryRoot, "tools",
+            "lmax_portal_reports_downloader");
+        Directory.CreateDirectory(packageRoot);
+        var fixture = Arch7bV2QualificationFactory.Create(
+            typeof(Program).Assembly.Location, Root("core-node-template"));
+        var authorities = new Dictionary<string, Arch7bFileAuthority>(
+            fixture.Template.FileAuthorities, StringComparer.Ordinal)
+        {
+            ["core_node_runtime"] = new("core_node_runtime", packageRoot,
+                new string('a', 64), true, false)
+        };
+        var template = fixture.Template with { FileAuthorities = authorities };
+
+        var actual = Arch7bOneShotLiveExecutionRuntimeV2.CoreNodeRepositoryRoot(template);
+
+        Assert.Equal(Path.GetFullPath(repositoryRoot), actual);
+        Assert.NotEqual(Path.GetFullPath(packageRoot), actual);
+    }
+
+    [Fact]
+    public void Core_node_runtime_outside_expected_package_layout_is_rejected()
+    {
+        var fixture = Arch7bV2QualificationFactory.Create(
+            typeof(Program).Assembly.Location, Root("invalid-core-node-template"));
+        var authorities = new Dictionary<string, Arch7bFileAuthority>(
+            fixture.Template.FileAuthorities, StringComparer.Ordinal)
+        {
+            ["core_node_runtime"] = new("core_node_runtime",
+                Root("invalid-core-node-layout"), new string('a', 64), true, false)
+        };
+        var template = fixture.Template with { FileAuthorities = authorities };
+
+        var error = Assert.Throws<Arch7bQualificationException>(() =>
+            Arch7bOneShotLiveExecutionRuntimeV2.CoreNodeRepositoryRoot(template));
+
+        Assert.Equal(Arch7bV2Blockers.AuthorityBindingMismatch, error.BlockerCode);
+    }
+
+    [Fact]
     public void Static_preflight_audits_all_13_commands_before_slot_selection()
     {
         var fixture = RuntimeAuthority();
