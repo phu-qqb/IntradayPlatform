@@ -96,9 +96,14 @@ public sealed partial class Arch7bOneShotLiveExecutionRuntimeV2
         var pendingBrokerExecutions = new Arch7bPendingBrokerExecutionState();
         var currentStage = Arch7bStages.All[0];
         Arch7bOneShotPrimaryFailureEvidence? primary = null;
+        Arch7bPreparedCorePrequalificationConfig? preparedCoreConfig = null;
         var finalBlocker = Arch7bOneShotContracts.ExpectedFinalBlocker;
         try
         {
+            if (template.StageContracts.Any(value => value.ProducedFactTypes.Contains(
+                    "core_prequalification_config", StringComparer.Ordinal)))
+                preparedCoreConfig = Arch7bCorePrequalificationConfigParser.Prepare(
+                    template, runRoot);
             foreach (var stageContract in template.StageContracts)
             {
                 currentStage = stageContract.StageId;
@@ -175,28 +180,36 @@ public sealed partial class Arch7bOneShotLiveExecutionRuntimeV2
                                     "core_prequalification_config",
                                     StringComparer.Ordinal))
                             {
-                                var coreNodeRepository = CoreNodeRepositoryRoot(template);
-                                var chrome = template.FileAuthorities.TryGetValue(
-                                    "chrome_executable", out var chromeAuthority)
-                                    ? chromeAuthority
-                                    : throw new Arch7bQualificationException(
-                                        Arch7bV2Blockers.AuthorityBindingMismatch,
-                                        "chrome_executable");
+                                var prepared = preparedCoreConfig ??
+                                    throw new Arch7bQualificationException(
+                                        Arch7bV2Blockers.CorePrequalificationConfigPropertySetMismatch,
+                                        "pre-slot-config-missing");
                                 var coreConfigPath = Path.Combine(runRoot,
                                     "core-prequalification-config.json");
-                                await WriteCreateNewAsync(coreConfigPath, new
-                                {
-                                    repositoryRoot = coreNodeRepository,
-                                    outputRoot = Path.Combine(runRoot,
-                                        "core-prequalification-output"),
-                                    expectedCommit = template.CoreCommit,
-                                    expectedTree = template.CoreTree,
-                                    browserExecutablePath = chrome.Path,
-                                    expectedBrowserExecutableSha256 = chrome.Sha256
-                                }, cancellationToken).ConfigureAwait(false);
+                                await WriteCreateNewBytesAsync(coreConfigPath, prepared.Bytes,
+                                    cancellationToken).ConfigureAwait(false);
+                                var writtenBytes = await File.ReadAllBytesAsync(coreConfigPath,
+                                    cancellationToken).ConfigureAwait(false);
+                                var writtenSha = Convert.ToHexStringLower(
+                                    SHA256.HashData(writtenBytes));
+                                if (writtenSha != prepared.Sha256 ||
+                                    !writtenBytes.AsSpan().SequenceEqual(prepared.Bytes))
+                                    throw new Arch7bQualificationException(
+                                        Arch7bV2Blockers.CorePrequalificationConfigPropertySetMismatch,
+                                        "post-lock-byte-mismatch");
+                                _ = Arch7bCorePrequalificationConfigParser.ParseAndValidate(
+                                    writtenBytes,
+                                    Arch7bCorePrequalificationConfigParser.Context(
+                                        template, runRoot));
                                 produced.Add(facts.Append("core_prequalification_config",
-                                    currentStage, new { path = coreConfigPath },
-                                    ShaFile(coreConfigPath), startedAt).FactSha256);
+                                    currentStage, new
+                                    {
+                                        path = coreConfigPath,
+                                        sha256 = writtenSha,
+                                        contract_version =
+                                            Arch7bCorePrequalificationConfigV1.ContractVersion,
+                                        pre_slot_evidence_sha256 = prepared.EvidenceSha256
+                                    }, writtenSha, startedAt).FactSha256);
                             }
                             break;
                         case "ONE_SHOT_IDENTITIES_CREATED":
@@ -243,7 +256,7 @@ public sealed partial class Arch7bOneShotLiveExecutionRuntimeV2
                                     value != "clock_authority_capture_snapshot").ToArray()
                             };
                             await ExecuteStageAsync(nonClockStage, template, facts, cleanup,
-                                longLived, secretLease, budget, runRoot, bracketStarted, startedAt,
+                                longLived, secretLease, budget, runRoot, preparedCoreConfig, bracketStarted, startedAt,
                                 produced, value => commandSha = value, value => resultSha = value,
                                 value => resultCode = value, cancellationToken).ConfigureAwait(false);
                             break;
@@ -269,7 +282,7 @@ public sealed partial class Arch7bOneShotLiveExecutionRuntimeV2
                             break;
                         default:
                             await ExecuteStageAsync(stageContract, template, facts, cleanup, longLived,
-                                secretLease, budget, runRoot, bracketStarted, startedAt, produced,
+                                secretLease, budget, runRoot, preparedCoreConfig, bracketStarted, startedAt, produced,
                                 value => commandSha = value, value => resultSha = value,
                                 value => resultCode = value, cancellationToken).ConfigureAwait(false);
                             break;
@@ -351,6 +364,63 @@ public sealed partial class Arch7bOneShotLiveExecutionRuntimeV2
             Arch7bNoLiveSafetyCounters.Zero, Arch7bOneShotContracts.Sha256(evidenceCanonical));
     }
 
+    internal static async Task ValidateCorePrequalificationPreSpawnAsync(
+        Arch7bOneShotMaterializedCommand command,
+        Arch7bOneShotLivePlanTemplate template,
+        string runRoot,
+        Arch7bPreparedCorePrequalificationConfig? prepared,
+        CancellationToken cancellationToken)
+    {
+        var configPath = Arch7bNativeAdapterJson.Option(command.ArgumentList, "--config");
+        var failurePath = Path.Combine(Path.GetDirectoryName(command.AuthorityPath)!,
+            "core-prequalification-pre-spawn-config-failure.json");
+        try
+        {
+            if (prepared is null)
+                throw new Arch7bQualificationException(
+                    Arch7bV2Blockers.CorePrequalificationConfigPropertySetMismatch,
+                    "pre-slot-config-missing");
+            var bytes = await File.ReadAllBytesAsync(configPath, cancellationToken)
+                .ConfigureAwait(false);
+            var sha = Convert.ToHexStringLower(SHA256.HashData(bytes));
+            if (sha != prepared.Sha256 || !bytes.AsSpan().SequenceEqual(prepared.Bytes))
+                throw new Arch7bQualificationException(
+                    Arch7bV2Blockers.CorePrequalificationConfigPropertySetMismatch,
+                    "pre-spawn-byte-mismatch");
+            _ = Arch7bCorePrequalificationConfigParser.ParseAndValidate(bytes,
+                Arch7bCorePrequalificationConfigParser.Context(template, runRoot));
+            var modulePath = Path.Combine(command.WorkingDirectory,
+                Arch7bChildEntrypointValidator.CorePrequalificationRelativeModulePath
+                    .Replace('/', Path.DirectorySeparatorChar));
+            if (!File.Exists(modulePath))
+                throw new Arch7bQualificationException(
+                    Arch7bBlockers.LiveCommandAuthorityIncomplete,
+                    "core-prequalification-module");
+        }
+        catch (Arch7bQualificationException failure)
+        {
+            var configSha = File.Exists(configPath)
+                ? Convert.ToHexStringLower(SHA256.HashData(
+                    await File.ReadAllBytesAsync(configPath, CancellationToken.None)
+                        .ConfigureAwait(false)))
+                : string.Empty;
+            var provisional = new Arch7bCorePrequalificationPreSpawnFailureEvidence(
+                "arch7b_core_prequalification_pre_spawn_config_failure_v1",
+                failure.BlockerCode, "CORE_PREQUALIFICATION", configPath,
+                configSha, prepared?.Sha256 ?? string.Empty, false, false, string.Empty);
+            var evidence = provisional with
+            {
+                EvidenceSha256 = Arch7bOneShotContracts.Sha256(string.Join('\n',
+                    provisional.ContractVersion, provisional.BlockerCode,
+                    provisional.StageId, provisional.ConfigPath, provisional.ConfigSha256,
+                    provisional.PreSlotConfigSha256, provisional.ChildProcessStarted,
+                    provisional.ChildReceiptPresent))
+            };
+            await WriteCreateNewAsync(failurePath, evidence, CancellationToken.None)
+                .ConfigureAwait(false);
+            throw;
+        }
+    }
     internal static string CoreNodeRepositoryRoot(Arch7bOneShotLivePlanTemplate template)
     {
         var packageRoot = template.FileAuthorities.TryGetValue(
@@ -396,6 +466,7 @@ public sealed partial class Arch7bOneShotLiveExecutionRuntimeV2
         Arch7bOneShotLivePlanTemplate template, Arch7bOneShotLiveFactStore facts,
         Arch7bTerminalCleanupSupervisor cleanup, Arch7bOneShotLongLivedProcessRegistry longLived,
         IArch7bOneShotSecretLease secretLease, Arch7bOneShotBudget budget, string runRoot,
+        Arch7bPreparedCorePrequalificationConfig? preparedCoreConfig,
         bool bracketStarted, DateTimeOffset observedUtc, ICollection<string> produced,
         Action<string> commandSha, Action<string> resultSha, Action<string> resultCode,
         CancellationToken cancellationToken)
@@ -457,6 +528,9 @@ public sealed partial class Arch7bOneShotLiveExecutionRuntimeV2
         var command = await materializer.MaterializeAsync(commandTemplate, facts,
             template.FileAuthorities, runRoot, observedUtc, cancellationToken).ConfigureAwait(false);
         commandSha(command.EvidenceSha256);
+        if (stage.StageId == "CORE_PREQUALIFICATION" && preparedCoreConfig is not null)
+            await ValidateCorePrequalificationPreSpawnAsync(command, template, runRoot,
+                preparedCoreConfig, cancellationToken).ConfigureAwait(false);
         if (stage.ExecutionKind == Arch7bExecutionKind.ChildStartLongLived)
         {
             var ready = Arch7bOneShotContracts.Sha256(command.CommandId + ":ready");
@@ -706,6 +780,14 @@ public sealed partial class Arch7bOneShotLiveExecutionRuntimeV2
         return "PASS";
     }
 
+    private static async Task WriteCreateNewBytesAsync(string path, ReadOnlyMemory<byte> bytes,
+        CancellationToken cancellationToken)
+    {
+        await using var stream = new FileStream(path, FileMode.CreateNew, FileAccess.Write,
+            FileShare.None, 4096, FileOptions.Asynchronous | FileOptions.WriteThrough);
+        await stream.WriteAsync(bytes, cancellationToken).ConfigureAwait(false);
+        await stream.FlushAsync(cancellationToken).ConfigureAwait(false);
+    }
     private static async Task WriteCreateNewAsync(string path, object value,
         CancellationToken cancellationToken)
     {

@@ -1,0 +1,35 @@
+{
+  "contract_version": "arch7b_csharp_to_node_config_roundtrip_audit_v1",
+  "final_command_count": 13,
+  "node_command_count": 5,
+  "scope": "JSON files created by Intraday C# and consumed by a Node CLI through --config",
+  "commands": [
+    {"stage_id":"CORE_PREQUALIFICATION","execution_class":"D_CORE_CHILD","consumer":"src/fast-seal-cli.mjs prequalify-bracket-runtime","uses_config_option":true,"intraday_csharp_creates_config":true,"config_contract":"arch7b_core_prequalification_config_v1","producer":"Arch7bCorePrequalificationConfigSerializer and Arch7bOneShotLiveExecutionRuntimeV2","consumer_parser":"Core fast-seal-cli.mjs/core-runtime-prequalification.mjs","property_names":["repositoryRoot","outputRoot","expectedCommit","expectedTree","browserExecutablePath","expectedBrowserExecutableSha256"],"naming_policy":"dedicated Utf8JsonWriter; no generic naming policy","root_authorities":{"repositoryRoot":"core_repository","working_directory":"core_node_runtime","browserExecutablePath":"chrome_executable"},"roundtrip_test":"Arch7bCorePrequalificationConfigContractTests","mismatch_found":true,"corrected":true},
+    {"stage_id":"PORTAL_SESSION_PROVEN","execution_class":"D_CORE_CHILD","consumer":"src/downloader.mjs prove-portal-session","uses_config_option":false,"intraday_csharp_creates_config":false,"mismatch_found":false,"corrected":false},
+    {"stage_id":"RDS_READ_1","execution_class":"D_CORE_CHILD","consumer":"src/arch7b-operational-orchestrator-cli.mjs qualify-arm-import-operational-orchestrator","uses_config_option":true,"intraday_csharp_creates_config":false,"config_authority":"Core command authority/broker lifecycle, not a stage config serialized by the 13-command Intraday materializer","mismatch_found":false,"corrected":false},
+    {"stage_id":"BRACKET_T2","execution_class":"D_CORE_CHILD","consumer":"src/downloader.mjs bracketed snapshot","uses_config_option":false,"intraday_csharp_creates_config":false,"mismatch_found":false,"corrected":false},
+    {"stage_id":"CORE_FAST_SEAL","execution_class":"D_CORE_CHILD","consumer":"src/fast-seal-cli.mjs run-bracket-fast-seal-and-hand-off","uses_config_option":true,"intraday_csharp_creates_config":false,"config_authority":"Core bracket/fast-seal artifact, not a generic C# serialization produced by Intraday","mismatch_found":false,"corrected":false},
+    {"stage_id":"POSITION_APPLY","execution_class":"F_BROKER_CHILD","runtime":"dotnet","uses_config_option":false,"intraday_csharp_creates_config":false},
+    {"stage_id":"RUNTIME_SELECTION","execution_class":"E_INTRADAY_CHILD","runtime":"dotnet","uses_config_option":false,"intraday_csharp_creates_config":false},
+    {"stage_id":"CLOCK_CAPTURE_START","execution_class":"E_INTRADAY_CHILD","runtime":"dotnet","uses_config_option":false,"intraday_csharp_creates_config":false},
+    {"stage_id":"MARKET_CAPTURE","execution_class":"E_INTRADAY_CHILD","runtime":"dotnet","uses_config_option":true,"intraday_csharp_creates_config":false,"config_authority":"market_data_config static freeze authority; consumer is not Node"},
+    {"stage_id":"MARKET_FINALIZATION","execution_class":"E_INTRADAY_CHILD","runtime":"dotnet","uses_config_option":false,"intraday_csharp_creates_config":false},
+    {"stage_id":"PMS_IMPORT","execution_class":"F_BROKER_CHILD","runtime":"dotnet","uses_config_option":false,"intraday_csharp_creates_config":false},
+    {"stage_id":"ARCH7A_QUALIFY_SHADOW","execution_class":"F_BROKER_CHILD","runtime":"dotnet","uses_config_option":false,"intraday_csharp_creates_config":false},
+    {"stage_id":"REPORTING","execution_class":"F_BROKER_CHILD","runtime":"dotnet","uses_config_option":false,"intraday_csharp_creates_config":false}
+  ],
+  "adjacent_non_command_template_flow": {
+    "producer": "Arch7bCoreRdsSecretBrokerClient",
+    "consumer": "src/rds-secret-child-command-broker-cli.mjs",
+    "config_contract": "arch7b_rds_secret_child_command_broker_config_v1",
+    "naming_policy": "explicit PascalCase JsonObject keys with Arch7bCanonicalJson",
+    "included_in_final_13_commands": false,
+    "same_mismatch_present": false
+  },
+  "result": {
+    "in_scope_csharp_to_node_config_count": 1,
+    "same_mismatch_count": 1,
+    "corrected_count": 1,
+    "remaining_mismatch_count": 0
+  }
+}

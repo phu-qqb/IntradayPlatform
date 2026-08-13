@@ -67,6 +67,16 @@ public static class Arch7bV2Contracts
 
 public static class Arch7bV2Blockers
 {
+    public const string CorePrequalificationConfigPropertySetMismatch =
+        "ARCH7B_CORE_PREQUALIFICATION_CONFIG_PROPERTY_SET_MISMATCH";
+    public const string CorePrequalificationConfigNamingMismatch =
+        "ARCH7B_CORE_PREQUALIFICATION_CONFIG_NAMING_MISMATCH";
+    public const string CorePrequalificationConfigRepositoryAuthorityMismatch =
+        "ARCH7B_CORE_PREQUALIFICATION_CONFIG_REPOSITORY_AUTHORITY_MISMATCH";
+    public const string CorePrequalificationConfigOutputRootInvalid =
+        "ARCH7B_CORE_PREQUALIFICATION_CONFIG_OUTPUT_ROOT_INVALID";
+    public const string CorePrequalificationConfigBrowserAuthorityMismatch =
+        "ARCH7B_CORE_PREQUALIFICATION_CONFIG_BROWSER_AUTHORITY_MISMATCH";
     public const string FactInvalid = "ARCH7B_ONE_SHOT_FACT_INVALID";
     public const string FactReplacementForbidden = "ARCH7B_ONE_SHOT_FACT_REPLACEMENT_FORBIDDEN";
     public const string RequiredFactMissing = "ARCH7B_ONE_SHOT_REQUIRED_FACT_MISSING";

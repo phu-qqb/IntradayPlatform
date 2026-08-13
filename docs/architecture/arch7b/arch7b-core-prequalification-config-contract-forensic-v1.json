@@ -1,0 +1,38 @@
+{
+  "contract_version": "arch7b_core_prequalification_config_contract_forensic_v1",
+  "classification": "GENERIC_ARCH7B_JSON_NAMING_POLICY_USED_FOR_A_CAMELCASE_CORE_NATIVE_CONFIG",
+  "preserved_verdict": "NO_GO_ARCH7B_ONE_SHOT_CHILD_OUTPUT_INVALID",
+  "precise_cause": "CORE_PREQUALIFICATION_CONFIG_CONTRACT_AND_REPOSITORY_AUTHORITY_MISMATCH",
+  "reclassified_failure_kind": "PRE_SPAWN_CONFIG_FAILURE",
+  "child_process_started": false,
+  "child_receipt_present": false,
+  "supervisor_exit": 2,
+  "generated_property_observed": "browser_executable_path",
+  "required_core_property": "browserExecutablePath",
+  "generated_repository_authority": "core_node_runtime",
+  "required_repository_authority": "core_repository",
+  "working_directory_authority": "core_node_runtime",
+  "slot_locked": true,
+  "consumed_slot": "pms-shadow-15m-20260813T0800Z",
+  "consumed_slot_start_utc": "2026-08-13T08:00:00Z",
+  "consumed_slot_end_utc": "2026-08-13T08:15:00Z",
+  "immutable_freeze": {
+    "name": "V7R5",
+    "template_sha256": "0b0deb7d00c0381db7cb870ea93f3cb40b643f513ef584a8429a2e9f34c83e91",
+    "zip_sha256": "36a58a4c78754417956d346f335d15920b5ac649acb34f52342872751eee994e",
+    "manifest_sha256": "1bdd197f3fd442e5af5fa905eee289a1dabc6f89d44e65ab714abd9a6528d26b",
+    "packet_sha256": "2c375bc00796ff918866907259377ee91c88cb7d49966f39c647d5b6071f65ff"
+  },
+  "external_operation_counts": {
+    "secret": 0,
+    "rds": 0,
+    "portal": 0,
+    "lmax": 0,
+    "fix": 0,
+    "order": 0
+  },
+  "immutability": {
+    "v7r5_preserved": true,
+    "consumed_slot_must_not_be_reused": true
+  }
+}
