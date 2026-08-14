@@ -12,6 +12,8 @@ public static class Arch7bV2Contracts
         "arch7b_target_bound_command_template_projection_v1";
     public const string TargetCommandEnvironmentValidationVersion =
         "arch7b_target_command_environment_validation_v1";
+    public const string TargetCommandProjectionCanonicalEqualityVersion =
+        "arch7b_target_command_projection_canonical_equality_v1";
     public const string LongLivedProcessRegistryVersion = "arch7b_one_shot_long_lived_process_registry_v1";
     public const string SecretEnvironmentInjectionVersion = "arch7b_one_shot_secret_environment_injection_v1";
     public const string ChildResultAdapterVersion = "arch7b_one_shot_child_result_adapter_v1";
@@ -166,6 +168,8 @@ public static class Arch7bV2Blockers
         "ARCH7B_TARGET_COMMAND_ENVIRONMENT_SOURCE_PATH_PRESENT";
     public const string TargetCommandEnvironmentEvidenceMismatch =
         "ARCH7B_TARGET_COMMAND_ENVIRONMENT_EVIDENCE_MISMATCH";
+    public const string TargetCommandProjectionContentMismatch =
+        "ARCH7B_TARGET_COMMAND_PROJECTION_CONTENT_MISMATCH";
 }
 
 public static class Arch7bV2ArgumentSafety

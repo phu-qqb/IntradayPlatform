@@ -1,3 +1,5 @@
+using System.Text;
+
 namespace QQ.Production.Intraday.Tools.Arch7bOneShotSupervisor;
 
 public sealed record Arch7bTargetBoundCommandTemplateProjection(
@@ -13,6 +15,17 @@ public sealed record Arch7bTargetCommandEnvironmentValidation(
     int CommandCount,
     int EnvironmentVariableCount,
     int ForbiddenSourceHostPathCount,
+    string EvidenceSha256);
+
+public sealed record Arch7bTargetCommandProjectionMismatchEvidence(
+    string ContractVersion,
+    int CommandIndex,
+    string CommandId,
+    string StageId,
+    string FieldName,
+    string ExpectedFieldSha256,
+    string ObservedFieldSha256,
+    bool RawSensitiveValuesPersisted,
     string EvidenceSha256);
 
 public static class Arch7bTargetBoundCommandTemplateProjector
@@ -38,10 +51,143 @@ public static class Arch7bTargetBoundCommandTemplateProjector
         Arch7bOneShotLivePlanTemplate targetTemplate)
     {
         var expected = Project(sourceCommands, targetTemplate.FileAuthorities);
-        if (!expected.CommandTemplates.SequenceEqual(targetTemplate.CommandTemplates) ||
-            expected.TargetCommandTemplateSetSha256 != targetTemplate.CommandTemplateSetSha256)
-            throw new Arch7bQualificationException(
-                Arch7bV2Blockers.TargetCommandEnvironmentMismatch);
+        RequireCanonicalProjectionEquality(expected, targetTemplate.CommandTemplates,
+            targetTemplate.CommandTemplateSetSha256);
+    }
+
+    public static void RequireCanonicalProjectionEquality(
+        Arch7bTargetBoundCommandTemplateProjection expected,
+        IReadOnlyList<Arch7bOneShotCommandTemplate> observedCommands,
+        string observedCommandTemplateSetSha256)
+    {
+        if (expected.CommandTemplates.Count != observedCommands.Count)
+            throw Mismatch(Math.Min(expected.CommandTemplates.Count, observedCommands.Count),
+                expected.CommandTemplates.ElementAtOrDefault(observedCommands.Count),
+                observedCommands.ElementAtOrDefault(expected.CommandTemplates.Count),
+                "CommandCount", expected.CommandTemplates.Count.ToString(),
+                observedCommands.Count.ToString());
+
+        for (var index = 0; index < expected.CommandTemplates.Count; index++)
+        {
+            var expectedCommand = expected.CommandTemplates[index];
+            var observedCommand = observedCommands[index];
+            var fields = Fields(expectedCommand, observedCommand);
+            var mismatch = fields.FirstOrDefault(field =>
+                !string.Equals(field.Expected, field.Observed, StringComparison.Ordinal));
+            if (mismatch.Name is not null)
+                throw Mismatch(index, expectedCommand, observedCommand, mismatch.Name,
+                    mismatch.Expected, mismatch.Observed);
+
+            var expectedCanonical = CanonicalCommand(expectedCommand);
+            var observedCanonical = CanonicalCommand(observedCommand);
+            if (!string.Equals(expectedCanonical, observedCanonical, StringComparison.Ordinal))
+                throw Mismatch(index, expectedCommand, observedCommand, "CanonicalCommand",
+                    expectedCanonical, observedCanonical);
+        }
+
+        if (!string.Equals(expected.TargetCommandTemplateSetSha256,
+                observedCommandTemplateSetSha256, StringComparison.Ordinal))
+            throw Mismatch(-1, null, null, "TargetCommandTemplateSetSha256",
+                expected.TargetCommandTemplateSetSha256, observedCommandTemplateSetSha256);
+    }
+
+    public static byte[] CanonicalCommandBytes(Arch7bOneShotCommandTemplate command) =>
+        Encoding.UTF8.GetBytes(CanonicalCommand(command));
+
+    public static string CanonicalCommand(Arch7bOneShotCommandTemplate command) =>
+        CanonicalFields(
+            command.ContractVersion,
+            command.CommandId,
+            command.StageId,
+            command.ExecutionKind.ToString(),
+            command.ExecutableAuthorityId,
+            CanonicalList(command.ArgumentTemplates.Select(CanonicalArgument)),
+            command.WorkingDirectoryAuthorityId,
+            command.AdapterId,
+            command.AdapterContractVersion,
+            command.ExpectedNativeOutputContract,
+            command.TimeoutSeconds.ToString(),
+            command.StandardOutputLimitBytes.ToString(),
+            command.StandardErrorLimitBytes.ToString(),
+            command.CleanupResourceType,
+            command.CausesRdsRead.ToString(),
+            command.CausesCapture.ToString(),
+            command.ReadsSecret.ToString(),
+            CanonicalList(command.SecretVariableNames),
+            Arch7bSealedNonSecretEnvironment.Canonical(command.NonSecretEnvironment),
+            command.LongLivedProcessKey ?? string.Empty,
+            command.EvidenceSha256);
+
+    private static IReadOnlyList<(string Name, string Expected, string Observed)> Fields(
+        Arch7bOneShotCommandTemplate expected, Arch7bOneShotCommandTemplate observed) =>
+    [
+        (nameof(expected.ContractVersion), expected.ContractVersion, observed.ContractVersion),
+        (nameof(expected.CommandId), expected.CommandId, observed.CommandId),
+        (nameof(expected.StageId), expected.StageId, observed.StageId),
+        (nameof(expected.ExecutionKind), expected.ExecutionKind.ToString(), observed.ExecutionKind.ToString()),
+        (nameof(expected.ExecutableAuthorityId), expected.ExecutableAuthorityId, observed.ExecutableAuthorityId),
+        (nameof(expected.ArgumentTemplates), CanonicalList(expected.ArgumentTemplates.Select(CanonicalArgument)), CanonicalList(observed.ArgumentTemplates.Select(CanonicalArgument))),
+        (nameof(expected.WorkingDirectoryAuthorityId), expected.WorkingDirectoryAuthorityId, observed.WorkingDirectoryAuthorityId),
+        (nameof(expected.AdapterId), expected.AdapterId, observed.AdapterId),
+        (nameof(expected.AdapterContractVersion), expected.AdapterContractVersion, observed.AdapterContractVersion),
+        (nameof(expected.ExpectedNativeOutputContract), expected.ExpectedNativeOutputContract, observed.ExpectedNativeOutputContract),
+        (nameof(expected.TimeoutSeconds), expected.TimeoutSeconds.ToString(), observed.TimeoutSeconds.ToString()),
+        (nameof(expected.StandardOutputLimitBytes), expected.StandardOutputLimitBytes.ToString(), observed.StandardOutputLimitBytes.ToString()),
+        (nameof(expected.StandardErrorLimitBytes), expected.StandardErrorLimitBytes.ToString(), observed.StandardErrorLimitBytes.ToString()),
+        (nameof(expected.CleanupResourceType), expected.CleanupResourceType, observed.CleanupResourceType),
+        (nameof(expected.CausesRdsRead), expected.CausesRdsRead.ToString(), observed.CausesRdsRead.ToString()),
+        (nameof(expected.CausesCapture), expected.CausesCapture.ToString(), observed.CausesCapture.ToString()),
+        (nameof(expected.ReadsSecret), expected.ReadsSecret.ToString(), observed.ReadsSecret.ToString()),
+        (nameof(expected.SecretVariableNames), CanonicalList(expected.SecretVariableNames), CanonicalList(observed.SecretVariableNames)),
+        (nameof(expected.NonSecretEnvironment), Arch7bSealedNonSecretEnvironment.Canonical(expected.NonSecretEnvironment), Arch7bSealedNonSecretEnvironment.Canonical(observed.NonSecretEnvironment)),
+        (nameof(expected.LongLivedProcessKey), expected.LongLivedProcessKey ?? string.Empty, observed.LongLivedProcessKey ?? string.Empty),
+        (nameof(expected.EvidenceSha256), expected.EvidenceSha256, observed.EvidenceSha256)
+    ];
+
+    private static string CanonicalArgument(Arch7bCommandTemplateArgument argument) =>
+        CanonicalFields(argument.Value, argument.ValueKind.ToString(),
+            argument.ExpectedProducerStage ?? string.Empty, argument.MaximumAgeSeconds.ToString(),
+            argument.MustBeInsideRunRoot.ToString());
+
+    private static string CanonicalList(IEnumerable<string> values)
+    {
+        var materialized = values.ToArray();
+        return CanonicalFields([materialized.Length.ToString(), .. materialized]);
+    }
+
+    private static string CanonicalFields(params string[] values) =>
+        string.Join('\n', values.Select(value => Encoding.UTF8.GetByteCount(value) + ":" + value));
+
+    private static Arch7bQualificationException Mismatch(int index,
+        Arch7bOneShotCommandTemplate? expected, Arch7bOneShotCommandTemplate? observed,
+        string fieldName, string expectedValue, string observedValue)
+    {
+        var commandId = expected?.CommandId ?? observed?.CommandId ?? "<projection-set>";
+        var stageId = expected?.StageId ?? observed?.StageId ?? "<projection-set>";
+        var provisional = new Arch7bTargetCommandProjectionMismatchEvidence(
+            Arch7bV2Contracts.TargetCommandProjectionCanonicalEqualityVersion,
+            index, commandId, stageId, fieldName,
+            Arch7bOneShotContracts.Sha256(expectedValue),
+            Arch7bOneShotContracts.Sha256(observedValue), false, string.Empty);
+        var evidence = provisional with
+        {
+            EvidenceSha256 = Arch7bOneShotContracts.Sha256(string.Join('\n',
+                provisional.ContractVersion, provisional.CommandIndex,
+                provisional.CommandId, provisional.StageId, provisional.FieldName,
+                provisional.ExpectedFieldSha256, provisional.ObservedFieldSha256,
+                provisional.RawSensitiveValuesPersisted))
+        };
+        var detail = string.Join(';',
+            $"command_index={evidence.CommandIndex}",
+            $"command_id={evidence.CommandId}",
+            $"stage_id={evidence.StageId}",
+            $"field={evidence.FieldName}",
+            $"expected_field_sha256={evidence.ExpectedFieldSha256}",
+            $"observed_field_sha256={evidence.ObservedFieldSha256}",
+            "raw_sensitive_values_persisted=false",
+            $"evidence_sha256={evidence.EvidenceSha256}");
+        return new Arch7bQualificationException(
+            Arch7bV2Blockers.TargetCommandProjectionContentMismatch, detail);
     }
 
     private static Arch7bOneShotCommandTemplate ProjectCommand(

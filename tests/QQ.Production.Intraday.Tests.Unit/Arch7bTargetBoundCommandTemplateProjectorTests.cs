@@ -226,6 +226,232 @@ public sealed class Arch7bTargetBoundCommandTemplateProjectorTests : IDisposable
         Assert.Equal(first, second);
     }
 
+    [Fact]
+    public void T22_independent_projection_records_expose_collection_reference_false_negative()
+    {
+        var first = Arch7bTargetBoundCommandTemplateProjector.Project(
+            sourceTemplate.CommandTemplates, targetAuthorities);
+        var second = Arch7bTargetBoundCommandTemplateProjector.Project(
+            sourceTemplate.CommandTemplates, targetAuthorities);
+
+        Assert.False(first.CommandTemplates.SequenceEqual(second.CommandTemplates));
+        Assert.Equal(first.TargetCommandTemplateSetSha256,
+            second.TargetCommandTemplateSetSha256);
+        Assert.Equal(
+            JsonSerializer.SerializeToUtf8Bytes(first.CommandTemplates,
+                Arch7bJson.CanonicalOptions),
+            JsonSerializer.SerializeToUtf8Bytes(second.CommandTemplates,
+                Arch7bJson.CanonicalOptions));
+        Assert.All(first.CommandTemplates.Zip(second.CommandTemplates), pair =>
+            Assert.Equal(pair.First.EvidenceSha256, pair.Second.EvidenceSha256));
+        Assert.NotSame(first.CommandTemplates[0].NonSecretEnvironment,
+            second.CommandTemplates[0].NonSecretEnvironment);
+        Assert.Equal(first.CommandTemplates[0].NonSecretEnvironment,
+            second.CommandTemplates[0].NonSecretEnvironment);
+    }
+
+    [Fact]
+    public void T23_canonical_equality_accepts_independent_projections()
+    {
+        var first = Projection();
+        var second = Projection();
+        Arch7bTargetBoundCommandTemplateProjector.RequireCanonicalProjectionEquality(
+            first, second.CommandTemplates, second.TargetCommandTemplateSetSha256);
+    }
+
+    [Fact]
+    public void T24_independent_non_secret_environment_references_are_distinct()
+    {
+        var first = Projection();
+        var second = Projection();
+        Assert.NotSame(first.CommandTemplates[0].NonSecretEnvironment,
+            second.CommandTemplates[0].NonSecretEnvironment);
+    }
+
+    [Fact]
+    public void T25_independent_command_canonical_bytes_are_identical()
+    {
+        var first = Projection();
+        var second = Projection();
+        Assert.All(first.CommandTemplates.Zip(second.CommandTemplates), pair =>
+            Assert.Equal(
+                Arch7bTargetBoundCommandTemplateProjector.CanonicalCommandBytes(pair.First),
+                Arch7bTargetBoundCommandTemplateProjector.CanonicalCommandBytes(pair.Second)));
+    }
+
+    [Fact]
+    public void T26_independent_command_evidence_is_identical()
+    {
+        var first = Projection();
+        var second = Projection();
+        Assert.Equal(first.CommandTemplates.Select(value => value.EvidenceSha256),
+            second.CommandTemplates.Select(value => value.EvidenceSha256));
+    }
+
+    [Fact]
+    public void T27_independent_command_set_sha_is_identical()
+    {
+        Assert.Equal(Projection().TargetCommandTemplateSetSha256,
+            Projection().TargetCommandTemplateSetSha256);
+    }
+
+    [Fact]
+    public void T28_path_mutation_is_rejected_by_canonical_equality()
+    {
+        var projection = Projection();
+        var command = projection.CommandTemplates[0];
+        var environment = command.NonSecretEnvironment.Select(value =>
+            value with { Value = value.Value + Path.PathSeparator + root }).ToArray();
+        AssertProjectionMismatch(projection, 0, command with { NonSecretEnvironment = environment },
+            nameof(command.NonSecretEnvironment));
+    }
+
+    [Fact]
+    public void T29_dotnet_root_mutation_is_rejected_by_canonical_equality()
+    {
+        var projection = Projection();
+        var command = projection.CommandTemplates[1];
+        var environment = command.NonSecretEnvironment.Select(value =>
+            value with { Value = root }).ToArray();
+        AssertProjectionMismatch(projection, 1, command with { NonSecretEnvironment = environment },
+            nameof(command.NonSecretEnvironment));
+    }
+
+    [Fact]
+    public void T30_argument_template_mutation_is_rejected_by_canonical_equality()
+    {
+        var projection = Projection();
+        var command = projection.CommandTemplates[2];
+        var argument = new Arch7bCommandTemplateArgument("--probe",
+            Arch7bPlaceholderValueKind.Literal, null, 0, false);
+        AssertProjectionMismatch(projection, 2, command with { ArgumentTemplates = [argument] },
+            nameof(command.ArgumentTemplates));
+    }
+
+    [Fact]
+    public void T31_secret_variable_name_mutation_is_rejected_by_canonical_equality()
+    {
+        var projection = Projection();
+        var command = projection.CommandTemplates[2];
+        AssertProjectionMismatch(projection, 2,
+            command with { SecretVariableNames = ["FORBIDDEN_SECRET"] },
+            nameof(command.SecretVariableNames));
+    }
+
+    [Fact]
+    public void T32_executable_authority_mutation_is_rejected_by_canonical_equality()
+    {
+        var projection = Projection();
+        var command = projection.CommandTemplates[2];
+        AssertProjectionMismatch(projection, 2,
+            command with { ExecutableAuthorityId = "git_executable" },
+            nameof(command.ExecutableAuthorityId));
+    }
+
+    [Fact]
+    public void T33_working_directory_mutation_is_rejected_by_canonical_equality()
+    {
+        var projection = Projection();
+        var command = projection.CommandTemplates[2];
+        AssertProjectionMismatch(projection, 2,
+            command with { WorkingDirectoryAuthorityId = "intraday_runtime" },
+            nameof(command.WorkingDirectoryAuthorityId));
+    }
+
+    [Fact]
+    public void T34_different_command_order_is_rejected_by_canonical_equality()
+    {
+        var projection = Projection();
+        var reversed = projection.CommandTemplates.Reverse().ToArray();
+        AssertProjectionMismatch(projection, reversed, projection.TargetCommandTemplateSetSha256,
+            "CommandId");
+    }
+
+    [Fact]
+    public void T35_missing_command_is_rejected_by_canonical_equality()
+    {
+        var projection = Projection();
+        AssertProjectionMismatch(projection, projection.CommandTemplates.SkipLast(1).ToArray(),
+            projection.TargetCommandTemplateSetSha256, "CommandCount");
+    }
+
+    [Fact]
+    public void T36_additional_command_is_rejected_by_canonical_equality()
+    {
+        var projection = Projection();
+        AssertProjectionMismatch(projection,
+            [.. projection.CommandTemplates, projection.CommandTemplates[^1]],
+            projection.TargetCommandTemplateSetSha256, "CommandCount");
+    }
+
+    [Fact]
+    public void T37_real_mismatch_blocker_contains_command_and_field_without_raw_values()
+    {
+        var projection = Projection();
+        var command = projection.CommandTemplates[2];
+        var exception = Assert.Throws<Arch7bQualificationException>(() =>
+            Arch7bTargetBoundCommandTemplateProjector.RequireCanonicalProjectionEquality(
+                projection,
+                projection.CommandTemplates.Select((value, index) => index == 2
+                    ? command with { ExecutableAuthorityId = "git_executable" }
+                    : value).ToArray(), projection.TargetCommandTemplateSetSha256));
+        Assert.Equal(Arch7bV2Blockers.TargetCommandProjectionContentMismatch,
+            exception.BlockerCode);
+        Assert.Contains("command_id=" + command.CommandId, exception.Message,
+            StringComparison.Ordinal);
+        Assert.Contains("field=ExecutableAuthorityId", exception.Message,
+            StringComparison.Ordinal);
+        Assert.Contains("raw_sensitive_values_persisted=false", exception.Message,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void T38_target_template_has_zero_source_host_paths_after_canonical_acceptance()
+    {
+        var projection = Projection();
+        Arch7bTargetBoundCommandTemplateProjector.RequireCanonicalProjectionEquality(
+            projection, projection.CommandTemplates, projection.TargetCommandTemplateSetSha256);
+        var json = JsonSerializer.Serialize(Project(), Arch7bJson.CanonicalOptions);
+        Assert.DoesNotContain(Path.GetDirectoryName(sourceAuthorities["git_executable"].Path)!,
+            json, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void T39_canonical_projection_reconstruction_is_byte_for_byte_deterministic()
+    {
+        var first = Projection();
+        var second = Projection();
+        Assert.Equal(JsonSerializer.SerializeToUtf8Bytes(first, Arch7bJson.CanonicalOptions),
+            JsonSerializer.SerializeToUtf8Bytes(second, Arch7bJson.CanonicalOptions));
+    }
+
+    private Arch7bTargetBoundCommandTemplateProjection Projection() =>
+        Arch7bTargetBoundCommandTemplateProjector.Project(
+            sourceTemplate.CommandTemplates, targetAuthorities);
+
+    private static void AssertProjectionMismatch(
+        Arch7bTargetBoundCommandTemplateProjection projection, int index,
+        Arch7bOneShotCommandTemplate mutation, string field)
+    {
+        var observed = projection.CommandTemplates.Select((value, current) =>
+            current == index ? mutation : value).ToArray();
+        AssertProjectionMismatch(projection, observed,
+            projection.TargetCommandTemplateSetSha256, field);
+    }
+
+    private static void AssertProjectionMismatch(
+        Arch7bTargetBoundCommandTemplateProjection projection,
+        IReadOnlyList<Arch7bOneShotCommandTemplate> observed,
+        string observedSetSha, string field)
+    {
+        var exception = Assert.Throws<Arch7bQualificationException>(() =>
+            Arch7bTargetBoundCommandTemplateProjector.RequireCanonicalProjectionEquality(
+                projection, observed, observedSetSha));
+        Assert.Equal(Arch7bV2Blockers.TargetCommandProjectionContentMismatch,
+            exception.BlockerCode);
+        Assert.Contains("field=" + field, exception.Message, StringComparison.Ordinal);
+    }
+
     private Arch7bOneShotLivePlanTemplate Project()
     {
         var projection = Arch7bTargetBoundCommandTemplateProjector.Project(
