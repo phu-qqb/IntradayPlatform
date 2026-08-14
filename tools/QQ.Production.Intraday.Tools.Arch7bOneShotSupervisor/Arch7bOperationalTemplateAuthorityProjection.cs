@@ -54,6 +54,7 @@ public static class Arch7bOperationalTemplateAuthorityProjection
         var unresolvedProducerCount = Arch7bOperationalBindingProducerAudit.Build().MissingProducerCount;
         if (regenerateCount != 0 || fakeNativeChildCount != 0 || syntheticAuthorityCount != 0 ||
             unresolvedProducerCount != 0) throw Mismatch("operational-template-counts");
+        var graph = Arch7bStageFactGraphValidator.RequireValid(template.StageContracts);
         Directory.CreateDirectory(Path.GetDirectoryName(outputPath)!);
         await using (var stream = new FileStream(outputPath, FileMode.CreateNew, FileAccess.Write,
                          FileShare.None, 4096, FileOptions.WriteThrough))
@@ -66,15 +67,27 @@ public static class Arch7bOperationalTemplateAuthorityProjection
         if (!identical) throw Mismatch("template-readback");
         var sourceSha = Convert.ToHexStringLower(SHA256.HashData(sourceTemplateBytes));
         var outputSha = Convert.ToHexStringLower(SHA256.HashData(outputBytes));
+        var inventoryPath = Path.Combine(Path.GetDirectoryName(outputPath)!,
+            Arch7bStageFactGraphValidator.InventoryFileName);
+        var inventoryBytes = Arch7bStageFactGraphValidator.SerializeInventory(graph);
+        await using (var stream = new FileStream(inventoryPath, FileMode.CreateNew,
+                         FileAccess.Write, FileShare.None, 4096, FileOptions.WriteThrough))
+        {
+            await stream.WriteAsync(inventoryBytes, cancellationToken).ConfigureAwait(false);
+            await stream.FlushAsync(cancellationToken).ConfigureAwait(false);
+        }
+        var inventorySha = Convert.ToHexStringLower(SHA256.HashData(inventoryBytes));
         var evidence = Arch7bOneShotContracts.Sha256(string.Join('\n',
             Arch7bOperationalLivePlanTemplateMaterializer.FileVersion, sourceTemplatePath,
-            sourceSha, outputPath, outputSha, template.EvidenceSha256,
+            sourceSha, outputPath, outputSha, inventoryPath, inventorySha,
+            template.EvidenceSha256, graph.EvidenceSha256,
             sourceTemplate.CommandTemplates.Count,
             Arch7bOperationalLiveFactBindingCatalog.Build().Sum(value => value.Bindings.Count),
             regenerateCount, fakeNativeChildCount,
             syntheticAuthorityCount, unresolvedProducerCount, identical));
         return new(Arch7bOperationalLivePlanTemplateMaterializer.FileVersion,
-            sourceTemplatePath, sourceSha, outputPath, outputSha, template.EvidenceSha256,
+            sourceTemplatePath, sourceSha, outputPath, outputSha,
+            inventoryPath, inventorySha, template.EvidenceSha256,
             sourceTemplate.CommandTemplates.Count,
             Arch7bOperationalLiveFactBindingCatalog.Build().Sum(value => value.Bindings.Count),
             regenerateCount,

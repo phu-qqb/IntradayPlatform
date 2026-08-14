@@ -226,6 +226,7 @@ public static class Arch7bLiveTemplateValidator
             !value.StageContracts.Select(stage => stage.StageId).SequenceEqual(Arch7bStages.All,
                 StringComparer.Ordinal))
             throw new Arch7bQualificationException(Arch7bBlockers.LiveCommandAuthorityIncomplete);
+        _ = Arch7bStageFactGraphValidator.RequireValid(value.StageContracts);
         if (value.CommandTemplates.Any(command => command.ExecutionKind is
                 Arch7bExecutionKind.Internal or Arch7bExecutionKind.FilesystemGate or
                 Arch7bExecutionKind.ExpectedBlockerGate))

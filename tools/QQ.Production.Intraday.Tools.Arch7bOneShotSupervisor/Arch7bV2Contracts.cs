@@ -71,6 +71,14 @@ public static class Arch7bV2Contracts
 
 public static class Arch7bV2Blockers
 {
+    public const string StageFactRequiredProducerMissing =
+        "ARCH7B_STAGE_FACT_REQUIRED_PRODUCER_MISSING";
+    public const string StageFactDuplicateProducer =
+        "ARCH7B_STAGE_FACT_DUPLICATE_PRODUCER";
+    public const string StageFactProducerNotBeforeConsumer =
+        "ARCH7B_STAGE_FACT_PRODUCER_NOT_BEFORE_CONSUMER";
+    public const string LegacyStageFactAliasPresent =
+        "ARCH7B_LEGACY_STAGE_FACT_ALIAS_PRESENT";
     public const string CorePrequalificationConfigPropertySetMismatch =
         "ARCH7B_CORE_PREQUALIFICATION_CONFIG_PROPERTY_SET_MISMATCH";
     public const string CorePrequalificationConfigNamingMismatch =

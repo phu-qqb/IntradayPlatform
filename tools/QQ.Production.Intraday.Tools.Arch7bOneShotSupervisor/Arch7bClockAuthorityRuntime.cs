@@ -14,17 +14,6 @@ public sealed record Arch7bClockAuthorityFact(
 
 public sealed partial class Arch7bOneShotLiveExecutionRuntimeV2
 {
-    private static readonly IReadOnlyDictionary<string, (string FileName, string FactType)>
-        ClockStages = new Dictionary<string, (string, string)>(StringComparer.Ordinal)
-        {
-            ["CLOCK_PREFLIGHT"] =
-                ("clock_authority_preflight.json", "clock_authority_preflight_snapshot"),
-            ["CLOCK_CAPTURE_START"] =
-                ("clock_authority_capture.json", "clock_authority_capture_snapshot"),
-            ["CLOCK_POST_CLOSE"] =
-                ("clock_authority_post_close.json", "clock_authority_post_close_snapshot")
-        };
-
     private async Task ExecuteClockAuthorityStageAsync(
         Arch7bOneShotStageContract stage,
         Arch7bOneShotLivePlanTemplate template,
@@ -35,9 +24,7 @@ public sealed partial class Arch7bOneShotLiveExecutionRuntimeV2
         ICollection<string> produced,
         CancellationToken cancellationToken)
     {
-        if (!ClockStages.TryGetValue(stage.StageId, out var contract))
-            throw new Arch7bQualificationException(
-                Arch7bV2Blockers.CommandTemplateInvalid, stage.StageId);
+        var contract = Arch7bClockFactContracts.RequireProducer(stage.StageId);
 
         var hostIdentity = Environment.MachineName;
         var production = await clockAuthorityProducer.ProduceAsync(
@@ -52,8 +39,8 @@ public sealed partial class Arch7bOneShotLiveExecutionRuntimeV2
             if (selectedSlot is null)
                 throw new Arch7bQualificationException(
                     Arch7bV2Blockers.RequiredFactMissing, "selected_slot");
-            var preflight = PmsShadowCaptureClockAuthorityStore.Read(
-                Path.Combine(runRoot, ClockStages["CLOCK_PREFLIGHT"].FileName));
+            var preflight = PmsShadowCaptureClockAuthorityStore.Read(Path.Combine(
+                runRoot, Arch7bClockFactContracts.RequireProducer("CLOCK_PREFLIGHT").FileName));
             RequireIndependentSameSource(preflight, snapshot);
             if (snapshot.CapturedAtUtc > selectedSlot.SlotStartUtc)
                 throw new InvalidDataException(
@@ -64,8 +51,8 @@ public sealed partial class Arch7bOneShotLiveExecutionRuntimeV2
             if (selectedSlot is null)
                 throw new Arch7bQualificationException(
                     Arch7bV2Blockers.RequiredFactMissing, "selected_slot");
-            var capture = PmsShadowCaptureClockAuthorityStore.Read(
-                Path.Combine(runRoot, ClockStages["CLOCK_CAPTURE_START"].FileName));
+            var capture = PmsShadowCaptureClockAuthorityStore.Read(Path.Combine(
+                runRoot, Arch7bClockFactContracts.RequireProducer("CLOCK_CAPTURE_START").FileName));
             RequireIndependentSameSource(capture, snapshot);
             PmsShadowCaptureClockAuthorityValidator.RequireQualifiedForSlot(
                 new(capture, snapshot),

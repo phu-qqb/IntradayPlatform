@@ -159,7 +159,7 @@ public static class Arch7bOperationalLiveFactBindingCatalog
                             "freeze/arch7b-static-authorities.json", "market_data_config",
                             "The expected hash is owned by the same static configuration authority."),
                         ClockSnapshot(7, "--clock-authority-preflight-snapshot",
-                            "clock_authority_preflight_snapshot", "CLOCK_PREFLIGHT")
+                            Arch7bClockFactContracts.PreflightFactType, "CLOCK_PREFLIGHT")
                     ])),
             new Arch7bOperationalCommandBindingSet("capture-starter", "CLOCK_CAPTURE_START",
                 "QQ.Production.Intraday.Tools.Arch6fEconomicReplay", "assert-prearmed",
@@ -184,7 +184,7 @@ public static class Arch7bOperationalLiveFactBindingCatalog
                         StaticMarketConfig(5, "--expected-market-data-config-sha256", "sha256",
                             Arch7bPlaceholderValueKind.Sha256),
                         ClockSnapshot(6, "--clock-authority-capture-snapshot",
-                            "clock_authority_capture_snapshot", "CLOCK_CAPTURE_START")
+                            Arch7bClockFactContracts.CaptureStartFactType, "CLOCK_CAPTURE_START")
                     ])),
             new Arch7bOperationalCommandBindingSet("market-data-recorder", "MARKET_CAPTURE",
                 "QQ.Production.Intraday.Tools.LmaxMarketDataCaptureOnly", "live-market-data-only",
@@ -218,7 +218,7 @@ public static class Arch7bOperationalLiveFactBindingCatalog
                             "Arch7bOneShotLiveExecutionRuntimeV2.ONE_SHOT_IDENTITIES_CREATED",
                             "The finalizer binds the lineage to the one-shot capture session."),
                         ClockSnapshot(5, "--clock-authority-post-close-snapshot",
-                            "clock_authority_post_close_snapshot", "CLOCK_POST_CLOSE")
+                            Arch7bClockFactContracts.PostCloseFactType, "CLOCK_POST_CLOSE")
                     ])),
             new Arch7bOperationalCommandBindingSet("arch7a-qualification", "ARCH7A_QUALIFY_SHADOW",
                 "QQ.Production.Intraday.Tools.Arch7aShadowQualification", "qualify-shadow",

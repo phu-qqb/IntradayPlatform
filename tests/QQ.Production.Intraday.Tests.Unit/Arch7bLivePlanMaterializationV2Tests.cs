@@ -157,12 +157,27 @@ public sealed class Arch7bLivePlanMaterializationV2Tests
                  })
             Assert.True(File.Exists(Path.Combine(fixture.RunRoot, fileName)), fileName);
         var facts = File.ReadAllText(Path.Combine(fixture.RunRoot, "live-facts.jsonl"));
-        Assert.Contains("clock_authority_preflight_snapshot", facts,
+        Assert.Contains(Arch7bClockFactContracts.PreflightFactType, facts,
             StringComparison.Ordinal);
-        Assert.Contains("clock_authority_capture_snapshot", facts,
+        Assert.Contains(Arch7bClockFactContracts.CaptureStartFactType, facts,
             StringComparison.Ordinal);
-        Assert.Contains("clock_authority_post_close_snapshot", facts,
+        Assert.Contains(Arch7bClockFactContracts.PostCloseFactType, facts,
             StringComparison.Ordinal);
+        Assert.Contains(result.Stages, value =>
+            value.StageId == "PORTAL_SESSION_PROVEN");
+        Assert.Contains(result.Stages, value =>
+            value.StageId == "MARKET_CAPTURE");
+        Assert.Contains(result.Stages, value =>
+            value.StageId == "MARKET_FINALIZATION");
+        Assert.Contains(Arch7bClockFactContracts.PreflightFactType,
+            fixture.Template.StageContracts.Single(value =>
+                value.StageId == "PORTAL_SESSION_PROVEN").RequiredFactTypes);
+        Assert.Contains(Arch7bClockFactContracts.CaptureStartFactType,
+            fixture.Template.StageContracts.Single(value =>
+                value.StageId == "MARKET_CAPTURE").RequiredFactTypes);
+        Assert.Contains(Arch7bClockFactContracts.PostCloseFactType,
+            fixture.Template.StageContracts.Single(value =>
+                value.StageId == "MARKET_FINALIZATION").RequiredFactTypes);
         Assert.Empty(Directory.EnumerateFiles(fixture.RunRoot, "*.tmp",
             SearchOption.AllDirectories));
         Directory.Delete(fixture.RunRoot, true);
