@@ -6,6 +6,7 @@ public sealed record Arch7bOperationalTemplateMaterialization(
     int BindingCount,
     int UnresolvedBindingCount,
     int SyntheticCommandCount,
+    Arch7bStageFactGraphValidation StageFactGraph,
     string EvidenceSha256);
 
 public sealed record Arch7bOperationalTemplateFileMaterialization(
@@ -14,6 +15,8 @@ public sealed record Arch7bOperationalTemplateFileMaterialization(
     string SourceTemplateSha256,
     string OutputPath,
     string OutputSha256,
+    string StageFactInventoryPath,
+    string StageFactInventorySha256,
     string TemplateEvidenceSha256,
     int CommandCount,
     int BindingCount,
@@ -151,10 +154,12 @@ public static class Arch7bOperationalLivePlanTemplateMaterializer
             unresolved != 0 || synthetic != 0)
             throw new Arch7bQualificationException(
                 Arch7bV2Blockers.CommandTemplateInvalid, "operational-template");
+        var graph = Arch7bStageFactGraphValidator.RequireValid(template.StageContracts);
         Arch7bLiveTemplateValidator.Validate(template, new Arch7bRealCommandAdapterRegistry());
-        return new(template, commands.Length, inventory.MarkerCount, unresolved, synthetic,
+        return new(template, commands.Length, inventory.MarkerCount, unresolved, synthetic, graph,
             Arch7bOneShotContracts.Sha256(string.Join('\n', Version,
                 template.EvidenceSha256, inventory.EvidenceSha256,
+                graph.EvidenceSha256,
                 string.Join('|', catalog.SelectMany(value => value.Bindings)
                     .Select(value => value.EvidenceSha256)))));
     }
@@ -211,13 +216,27 @@ public static class Arch7bOperationalLivePlanTemplateMaterializer
             System.Security.Cryptography.SHA256.HashData(sourceTemplateBytes));
         var outputSha = Convert.ToHexStringLower(
             System.Security.Cryptography.SHA256.HashData(outputBytes));
+        var inventoryPath = Path.Combine(Path.GetDirectoryName(outputPath)!,
+            Arch7bStageFactGraphValidator.InventoryFileName);
+        var inventoryBytes = Arch7bStageFactGraphValidator.SerializeInventory(
+            materialized.StageFactGraph);
+        await using (var stream = new FileStream(inventoryPath, FileMode.CreateNew,
+                         FileAccess.Write, FileShare.None, 4096, FileOptions.WriteThrough))
+        {
+            await stream.WriteAsync(inventoryBytes, cancellationToken).ConfigureAwait(false);
+            await stream.FlushAsync(cancellationToken).ConfigureAwait(false);
+        }
+        var inventorySha = Convert.ToHexStringLower(
+            System.Security.Cryptography.SHA256.HashData(inventoryBytes));
         var evidence = Arch7bOneShotContracts.Sha256(string.Join('\n', FileVersion,
             sourceTemplatePath, sourceSha, outputPath, outputSha,
+            inventoryPath, inventorySha,
             materialized.Template.EvidenceSha256, materialized.CommandCount,
             materialized.BindingCount, regenerateCount, fakeNativeChildCount,
             syntheticAuthorityCount, unresolvedProducerCount, identical));
         return new(FileVersion, sourceTemplatePath, sourceSha, outputPath, outputSha,
-            materialized.Template.EvidenceSha256, materialized.CommandCount,
+            inventoryPath, inventorySha, materialized.Template.EvidenceSha256,
+            materialized.CommandCount,
             materialized.BindingCount, regenerateCount, fakeNativeChildCount,
             syntheticAuthorityCount, unresolvedProducerCount, identical, evidence);
     }
@@ -288,8 +307,10 @@ public static class Arch7bOperationalLivePlanTemplateMaterializer
         var bindings = catalog.SelectMany(value => value.Bindings).ToArray();
         return stages.Select(stage =>
         {
-            var required = stage.RequiredFactTypes.Concat(bindings.Where(value =>
+            var required = Arch7bClockFactContracts.NormalizeRequiredFacts(
+                stage.StageId, stage.RequiredFactTypes).Concat(bindings.Where(value =>
                     value.StageId == stage.StageId &&
+                    value.RequiredProducerStage != stage.StageId &&
                     value.PlaceholderScope != Arch7bOperationalPlaceholderScope.Authority)
                 .Select(value => value.PlaceholderName))
                 .Distinct(StringComparer.Ordinal).ToArray();
@@ -307,7 +328,8 @@ public static class Arch7bOperationalLivePlanTemplateMaterializer
             };
             required = required.Concat(stageRequired)
                 .Distinct(StringComparer.Ordinal).ToArray();
-            var produced = stage.ProducedFactTypes.Concat(bindings.Where(value =>
+            var produced = Arch7bClockFactContracts.NormalizeProducedFacts(
+                stage.StageId, stage.ProducedFactTypes).Concat(bindings.Where(value =>
                     value.RequiredProducerStage == stage.StageId)
                 .Select(value => value.PlaceholderName)).Concat(stageProduced)
                 .Distinct(StringComparer.Ordinal).ToArray();

@@ -289,9 +289,10 @@ public sealed class Arch7bOperationalLiveFactBindingCatalogTests : IDisposable
             var producer = template.StageContracts.Single(value =>
                 value.StageId == binding.RequiredProducerStage);
             Assert.Contains(binding.PlaceholderName, producer.ProducedFactTypes);
-            var consumer = template.StageContracts.Single(value =>
-                value.StageId == binding.StageId);
-            Assert.Contains(binding.PlaceholderName, consumer.RequiredFactTypes);
+            if (binding.RequiredProducerStage != binding.StageId)
+                Assert.Contains(binding.PlaceholderName,
+                    template.StageContracts.Single(value =>
+                        value.StageId == binding.StageId).RequiredFactTypes);
         }
     }
 
@@ -348,6 +349,10 @@ public sealed class Arch7bOperationalLiveFactBindingCatalogTests : IDisposable
 
         Assert.Equal(File.ReadAllBytes(firstPath), File.ReadAllBytes(secondPath));
         Assert.Equal(first.OutputSha256, second.OutputSha256);
+        Assert.Equal(File.ReadAllBytes(first.StageFactInventoryPath),
+            File.ReadAllBytes(second.StageFactInventoryPath));
+        Assert.Equal(first.StageFactInventorySha256,
+            second.StageFactInventorySha256);
         Assert.Equal(Arch7bFinalStageExecutionCatalog.CommandTemplateCount,
             first.CommandCount);
         Assert.Equal(34, first.BindingCount);
@@ -359,6 +364,59 @@ public sealed class Arch7bOperationalLiveFactBindingCatalogTests : IDisposable
         await Assert.ThrowsAnyAsync<IOException>(() =>
             Arch7bOperationalLivePlanTemplateMaterializer.WriteAsync(
                 sourceTemplate, SourceManifestPath(), firstPath));
+    }
+
+    [Fact]
+    public void Operational_materializer_replaces_all_three_legacy_clock_requirements()
+    {
+        var skeleton = OperationalSkeleton();
+        var stages = skeleton.StageContracts.Select(stage =>
+        {
+            var contract = Arch7bClockFactContracts.All.SingleOrDefault(value =>
+                value.ConsumerStage == stage.StageId);
+            if (contract is null) return stage;
+            return Rehash(stage with
+            {
+                RequiredFactTypes = stage.RequiredFactTypes
+                    .Where(value => value != contract.FactType)
+                    .Append(contract.LegacyAlias).ToArray()
+            });
+        }).ToArray();
+        skeleton = Rehash(skeleton with { StageContracts = stages });
+
+        var result = Arch7bOperationalLivePlanTemplateMaterializer.Materialize(
+            skeleton, File.ReadAllBytes(SourceManifestPath()));
+
+        Assert.Equal("PASS", result.StageFactGraph.ValidationStatus);
+        Assert.Equal(0, result.StageFactGraph.LegacyAliasCount);
+        foreach (var contract in Arch7bClockFactContracts.All)
+        {
+            var consumer = result.Template.StageContracts.Single(value =>
+                value.StageId == contract.ConsumerStage);
+            Assert.Contains(contract.FactType, consumer.RequiredFactTypes);
+            Assert.DoesNotContain(contract.LegacyAlias, consumer.RequiredFactTypes);
+        }
+    }
+
+    [Fact]
+    public void Operational_materializer_rejects_legacy_alias_outside_its_consumer()
+    {
+        var skeleton = OperationalSkeleton();
+        var stages = skeleton.StageContracts.Select(stage => stage.StageId == "REPORTING"
+            ? Rehash(stage with
+            {
+                RequiredFactTypes = stage.RequiredFactTypes.Append(
+                    Arch7bClockFactContracts.LegacyPreflightFactType).ToArray()
+            })
+            : stage).ToArray();
+        skeleton = Rehash(skeleton with { StageContracts = stages });
+
+        var error = Assert.Throws<Arch7bQualificationException>(() =>
+            Arch7bOperationalLivePlanTemplateMaterializer.Materialize(
+                skeleton, File.ReadAllBytes(SourceManifestPath())));
+
+        Assert.Equal(Arch7bV2Blockers.LegacyStageFactAliasPresent,
+            error.BlockerCode);
     }
 
     private Arch7bOneShotLivePlanTemplate OperationalSkeleton()
@@ -427,6 +485,31 @@ public sealed class Arch7bOperationalLiveFactBindingCatalogTests : IDisposable
             CommandTemplates = commands,
             EvidenceSha256 = string.Empty
         };
+        return provisional with
+        {
+            EvidenceSha256 = Arch7bOneShotContracts.Sha256(provisional.Canonical())
+        };
+    }
+
+    private static Arch7bOneShotStageContract Rehash(
+        Arch7bOneShotStageContract stage)
+    {
+        var provisional = stage with { EvidenceSha256 = string.Empty };
+        return provisional with
+        {
+            EvidenceSha256 = Arch7bOneShotContracts.Sha256(string.Join('\n',
+                provisional.StageId, provisional.ExecutionKind,
+                string.Join('|', provisional.Predecessors),
+                string.Join('|', provisional.RequiredFactTypes),
+                string.Join('|', provisional.ProducedFactTypes),
+                provisional.SloId ?? string.Empty, provisional.ValidatorId))
+        };
+    }
+
+    private static Arch7bOneShotLivePlanTemplate Rehash(
+        Arch7bOneShotLivePlanTemplate template)
+    {
+        var provisional = template with { EvidenceSha256 = string.Empty };
         return provisional with
         {
             EvidenceSha256 = Arch7bOneShotContracts.Sha256(provisional.Canonical())

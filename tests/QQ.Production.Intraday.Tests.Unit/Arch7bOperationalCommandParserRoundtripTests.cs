@@ -62,11 +62,11 @@ public sealed class Arch7bOperationalCommandParserRoundtripTests : IDisposable
             new { path = Path.Combine(root, Arch7bOneShotRunArtifactPath.PositionMarketLineageFilename) }, observed);
         Add(facts, "position_market_revision_binding_output_path", "ONE_SHOT_IDENTITIES_CREATED",
             new { path = Path.Combine(root, Arch7bOneShotRunArtifactPath.PositionMarketRevisionBindingFilename) }, observed);
-        Add(facts, "clock_authority_preflight_snapshot", "CLOCK_PREFLIGHT",
+        Add(facts, Arch7bClockFactContracts.PreflightFactType, "CLOCK_PREFLIGHT",
             new { path = Path.Combine(root, "clock-preflight.json") }, observed);
-        Add(facts, "clock_authority_capture_snapshot", "CLOCK_CAPTURE_START",
+        Add(facts, Arch7bClockFactContracts.CaptureStartFactType, "CLOCK_CAPTURE_START",
             new { path = Path.Combine(root, "clock-capture.json") }, observed);
-        Add(facts, "clock_authority_post_close_snapshot", "CLOCK_POST_CLOSE",
+        Add(facts, Arch7bClockFactContracts.PostCloseFactType, "CLOCK_POST_CLOSE",
             new { path = Path.Combine(root, "clock-post-close.json") }, observed);
         Add(facts, "position_market_draft_artifact", "POSITION_MARKET_DRAFT",
             new { path = Path.Combine(root, Arch7bOneShotRunArtifactPath.PositionMarketDraftFilename), sha256 = Sha }, observed);

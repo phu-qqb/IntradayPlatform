@@ -253,7 +253,7 @@ public sealed partial class Arch7bOneShotLiveExecutionRuntimeV2
                             var nonClockStage = stageContract with
                             {
                                 ProducedFactTypes = stageContract.ProducedFactTypes.Where(value =>
-                                    value != "clock_authority_capture_snapshot").ToArray()
+                                    value != Arch7bClockFactContracts.CaptureStartFactType).ToArray()
                             };
                             await ExecuteStageAsync(nonClockStage, template, facts, cleanup,
                                 longLived, secretLease, budget, runRoot, preparedCoreConfig, bracketStarted, startedAt,
