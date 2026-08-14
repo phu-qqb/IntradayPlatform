@@ -13,7 +13,7 @@ public sealed class Arch7bProcessRuntimeV2Tests
     [InlineData("unknown-status", Arch7bV2Blockers.ChildNativeStatusUnknown)]
     [InlineData("overflow", Arch7bV2Blockers.ChildOutputLimitExceeded)]
     [InlineData("secret-value", Arch7bV2Blockers.ChildOutputSecretValueDetected)]
-    [InlineData("crash", Arch7bBlockers.ChildOutputInvalid)]
+    [InlineData("crash", Arch7bV2Blockers.ChildProcessFailed)]
     public async Task Native_adapter_and_stream_failures_preserve_the_first_exact_blocker(
         string behavior, string expectedBlocker)
     {

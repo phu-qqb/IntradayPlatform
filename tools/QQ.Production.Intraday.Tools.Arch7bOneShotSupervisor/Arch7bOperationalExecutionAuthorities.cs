@@ -167,6 +167,24 @@ public sealed record Arch7bOperationalExecutionAuthority(
         new(Arch7bV2Contracts.OperationalAuthorityShaMismatch, detail);
 }
 
+public sealed record Arch7bCoreOperationalRootRelation(
+    string ContractVersion,
+    string RepositoryPath,
+    string NodePackagePath,
+    string PackageJsonSha256,
+    string PackageLockSha256,
+    string RuntimeClosureSha256,
+    bool PlaywrightPresent,
+    bool AwsSdkPresent,
+    int ReparsePointCount,
+    string EvidenceSha256)
+{
+    public string Canonical() => string.Join('\n', ContractVersion,
+        RepositoryPath, NodePackagePath, PackageJsonSha256,
+        PackageLockSha256, RuntimeClosureSha256, PlaywrightPresent,
+        AwsSdkPresent, ReparsePointCount);
+}
+
 public sealed record Arch7bOperationalExecutionAuthorityManifest(
     string ContractVersion,
     string SourceTemplateSha256,
@@ -448,6 +466,9 @@ public static class Arch7bOperationalExecutionAuthorityValidator
                 throw Failure(Arch7bV2Contracts.OperationalAuthorityDotnetMismatch,
                     "dotnet-executable-root-binding");
         }
+        if (byId.TryGetValue("core_repository", out var coreRepository) &&
+            byId.TryGetValue("core_node_runtime", out var coreNodeRuntime))
+            ValidateCoreOperationalRootRelation(coreRepository, coreNodeRuntime);
         var items = new List<Arch7bOperationalAuthorityValidationItem>();
         foreach (var source in manifest.Authorities.OrderBy(value => value.AuthorityId,
                      StringComparer.Ordinal))
@@ -649,6 +670,64 @@ public static class Arch7bOperationalExecutionAuthorityValidator
             File.Exists(alternates) && new FileInfo(alternates).Length != 0 ||
             ContainsReparse(authority.Path))
             throw Failure(Arch7bV2Contracts.OperationalAuthorityGitMismatch, authority.AuthorityId);
+    }
+
+    public static Arch7bCoreOperationalRootRelation ValidateCoreOperationalRootRelation(
+        Arch7bOperationalExecutionAuthority repository,
+        Arch7bOperationalExecutionAuthority nodeRuntime)
+    {
+        if (repository.AuthorityId != "core_repository" ||
+            repository.AuthorityKind != Arch7bOperationalAuthorityKind.GitRepository ||
+            nodeRuntime.AuthorityId != "core_node_runtime" ||
+            nodeRuntime.AuthorityKind != Arch7bOperationalAuthorityKind.NodePackageRuntime)
+            throw Failure(Arch7bV2Blockers.CoreRuntimeRootRelationMismatch,
+                "authority-kind-or-id");
+
+        var repositoryPath = System.IO.Path.GetFullPath(repository.Path);
+        var nodePackagePath = System.IO.Path.GetFullPath(nodeRuntime.Path);
+        var expectedNodePackagePath = System.IO.Path.GetFullPath(
+            System.IO.Path.Combine(repositoryPath, "tools",
+                "lmax_portal_reports_downloader"));
+        if (!SamePath(nodePackagePath, expectedNodePackagePath))
+            throw Failure(Arch7bV2Blockers.CoreRuntimeRootRelationMismatch,
+                "node-package-not-inside-core-repository");
+
+        var packageJson = System.IO.Path.Combine(nodePackagePath, "package.json");
+        var packageLock = System.IO.Path.Combine(nodePackagePath, "package-lock.json");
+        var nodeModules = System.IO.Path.Combine(nodePackagePath, "node_modules");
+        var playwright = System.IO.Path.Combine(nodeModules, "playwright");
+        var awsSdk = System.IO.Path.Combine(nodeModules, "@aws-sdk",
+            "client-secrets-manager");
+        if (!File.Exists(packageJson) || !File.Exists(packageLock) ||
+            !Directory.Exists(nodeModules) || !Directory.Exists(playwright) ||
+            !Directory.Exists(awsSdk))
+            throw Failure(Arch7bV2Blockers.CoreRuntimeNodeClosureMissing,
+                "qualified-node-package-closure");
+        if (ContainsReparse(nodePackagePath))
+            throw Failure(Arch7bV2Blockers.CoreRuntimeNodeClosureMismatch,
+                "reparse-point");
+
+        var packageJsonSha = FileSha(packageJson);
+        var packageLockSha = FileSha(packageLock);
+        if (packageJsonSha != nodeRuntime.PackageJsonSha256 ||
+            packageLockSha != nodeRuntime.PackageLockSha256)
+            throw Failure(Arch7bV2Blockers.CoreRuntimeNodeClosureMismatch,
+                "package-authority-sha");
+        var closure = DirectoryInventory(
+            nodeRuntime.AuthorityId + "-node-runtime", nodePackagePath);
+        if (closure.EvidenceSha256 != nodeRuntime.RuntimeClosureSha256)
+            throw Failure(Arch7bV2Blockers.CoreRuntimeNodeClosureMismatch,
+                "runtime-closure-sha");
+
+        var provisional = new Arch7bCoreOperationalRootRelation(
+            Arch7bV2Contracts.CoreOperationalRootRelationVersion,
+            repositoryPath, nodePackagePath, packageJsonSha, packageLockSha,
+            closure.EvidenceSha256, true, true, 0, string.Empty);
+        return provisional with
+        {
+            EvidenceSha256 = Arch7bOneShotContracts.Sha256(
+                provisional.Canonical())
+        };
     }
 
     private static void ValidateNodePackage(Arch7bOperationalExecutionAuthority authority,

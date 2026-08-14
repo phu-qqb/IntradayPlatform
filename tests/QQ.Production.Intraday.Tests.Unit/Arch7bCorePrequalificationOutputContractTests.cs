@@ -43,7 +43,6 @@ public sealed class Arch7bCorePrequalificationOutputContractTests
 
     [Theory]
     [InlineData("malformed", 0, "{not-json")]
-    [InlineData("crash", 5, "")]
     public async Task Receipt_precedes_adapter_and_survives_adapter_failure(
         string behavior, int expectedExitCode, string expectedStdout)
     {
@@ -106,6 +105,94 @@ public sealed class Arch7bCorePrequalificationOutputContractTests
         Assert.Equal(0, result.ResidualProcessCount);
         Assert.Equal(0, result.ResidualMarkerCount);
         Directory.Delete(root, true);
+    }
+
+    [Fact]
+    public async Task Nonzero_child_exit_is_authoritative_before_adapter()
+    {
+        var root = Root("nonzero-authoritative");
+        var fixture = Arch7bV2QualificationFactory.Create(
+            SupervisorExecutable(), root, "CORE_PREQUALIFICATION", "crash");
+        var adapters = new Arch7bRealCommandAdapterRegistry();
+        var runtime = new Arch7bOneShotLiveExecutionRuntimeV2(new(),
+            new Arch7bOneShotProcessRunnerV2(adapters), adapters);
+
+        var result = await runtime.RunAsync(fixture.Template, fixture.Authority,
+            fixture.OperatorAuthorization, fixture.TemplateFileSha256, root,
+            TimeProvider.System, new Arch7bCoreOwnedSecretLease());
+
+        Assert.False(result.Passed);
+        Assert.Equal(Arch7bV2Blockers.ChildProcessFailed, result.FinalBlocker);
+        var commandRoot = Path.Combine(root, "commands",
+            "CORE_PREQUALIFICATION", "offline-core-prequalification");
+        var receiptPath = Path.Combine(commandRoot,
+            "child-process-output-receipt.json");
+        var processFailurePath = Path.Combine(commandRoot,
+            "child-process-failure.json");
+        Assert.True(File.Exists(receiptPath));
+        Assert.True(File.Exists(processFailurePath));
+        Assert.False(File.Exists(Path.Combine(commandRoot,
+            "child-adapter-failure.json")));
+
+        using var receipt = JsonDocument.Parse(
+            await File.ReadAllBytesAsync(receiptPath));
+        Assert.Equal(5, receipt.RootElement.GetProperty("exit_code").GetInt32());
+        using var processFailure = JsonDocument.Parse(
+            await File.ReadAllBytesAsync(processFailurePath));
+        var failureRoot = processFailure.RootElement;
+        Assert.Equal(Arch7bV2Contracts.ChildProcessFailureVersion,
+            failureRoot.GetProperty("contract_version").GetString());
+        Assert.Equal(5, failureRoot.GetProperty("exit_code").GetInt32());
+        Assert.Equal(ShaFile(receiptPath),
+            failureRoot.GetProperty("receipt_sha256").GetString());
+        Assert.Equal(Arch7bChildProcessFailureClassifier.NoStderr,
+            failureRoot.GetProperty("stderr_classification").GetString());
+        Assert.False(failureRoot.GetProperty("raw_output_recorded").GetBoolean());
+        Assert.Empty(Directory.EnumerateFiles(commandRoot, "*stdout*",
+            SearchOption.TopDirectoryOnly));
+        Assert.Empty(Directory.EnumerateFiles(commandRoot, "*stderr*",
+            SearchOption.TopDirectoryOnly));
+        Assert.True(result.Cleanup.Complete);
+        Assert.Equal(0, result.ResidualProcessCount);
+        Assert.Equal(0, result.ResidualMarkerCount);
+        Directory.Delete(root, true);
+    }
+
+    [Fact]
+    public void Historical_core_runtime_failure_is_classified_by_bounded_metadata()
+    {
+        Assert.Equal(
+            Arch7bChildProcessFailureClassifier
+                .HistoricalCoreRuntimeCommandFailedNodeExecutable,
+            Arch7bChildProcessFailureClassifier.Classify(61,
+                "a8c77138c62f00cfff97ce87c8927b33df7e95e73f03c7d00c2deeaa81e37c2d"));
+    }
+
+    [Fact]
+    public void Process_failure_evidence_is_byte_for_byte_deterministic()
+    {
+        var provisional = new Arch7bChildProcessFailureEvidence(
+            Arch7bV2Contracts.ChildProcessFailureVersion, "command",
+            "CORE_PREQUALIFICATION", 1, "receipt.json", new string('1', 64),
+            0, Sha(string.Empty), 61,
+            "a8c77138c62f00cfff97ce87c8927b33df7e95e73f03c7d00c2deeaa81e37c2d",
+            Arch7bChildProcessFailureClassifier
+                .HistoricalCoreRuntimeCommandFailedNodeExecutable,
+            false, string.Empty);
+        var evidence = provisional with
+        {
+            EvidenceSha256 = Arch7bOneShotContracts.Sha256(
+                provisional.Canonical())
+        };
+
+        var first = JsonSerializer.SerializeToUtf8Bytes(evidence,
+            Arch7bJson.CanonicalOptions);
+        var second = JsonSerializer.SerializeToUtf8Bytes(evidence,
+            Arch7bJson.CanonicalOptions);
+
+        Assert.Equal(first, second);
+        Assert.DoesNotContain("CORE_RUNTIME_COMMAND_FAILED:C:",
+            Encoding.UTF8.GetString(first), StringComparison.Ordinal);
     }
 
     [Fact]
