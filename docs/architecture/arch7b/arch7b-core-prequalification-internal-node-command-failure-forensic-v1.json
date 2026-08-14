@@ -1,0 +1,105 @@
+{
+  "contract_version": "arch7b_core_prequalification_internal_node_command_failure_forensic_v1",
+  "prior_verdict": "NO_GO_ARCH7B_ONE_SHOT_CHILD_OUTPUT_INVALID",
+  "reclassification": "CORE_PREQUALIFICATION_INTERNAL_NODE_COMMAND_FAILED_AND_WAS_MASKED_BY_ADAPTER_ORDER",
+  "authorities": {
+    "intraday_commit": "6f39a5cd815d20000c25b11778f66e6446693c34",
+    "intraday_tree": "48f46ac5a997f6f647b7eba880429db83716928e",
+    "core_commit": "24992b452a1a3d99318c137413a5e6a4a55512d3",
+    "core_tree": "d9ff920ea5d514190375c689b6d795f1a9a57f37",
+    "freeze_v7r6_package_sha256": "ac53c7c26684d46772c69b9af5992100739895a6e407fa24fcf00f60e7c2a8ed"
+  },
+  "consumed_slot": {
+    "slot_id": "pms-shadow-15m-20260813T2345Z",
+    "reusable": false
+  },
+  "historical_child": {
+    "process_id": 5592,
+    "outer_exit_code": 1,
+    "stdout_byte_count": 0,
+    "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "stderr_byte_count": 61,
+    "stderr_sha256": "a8c77138c62f00cfff97ce87c8927b33df7e95e73f03c7d00c2deeaa81e37c2d",
+    "stderr_classification": "CORE_RUNTIME_COMMAND_FAILED_NODE_EXECUTABLE",
+    "raw_output_persisted": false,
+    "receipt_sha256": "f2c9fce529cf785f69aec332fb850aba0787b3e6a06d213c03b5c505f785b833",
+    "adapter_failure_sha256": "50ba75c02f86f0067c449bd9d5ca24bdc5d10be852d264ddddfa8724d96b15c1"
+  },
+  "budgets": {
+    "slot": 1,
+    "rds_read": 0,
+    "capture": 0,
+    "retry": 0
+  },
+  "isolated_reproduction": {
+    "primary_instance_id": "i-05535ebe6ce80a57b",
+    "ssm_command_id": "38c87b5d-03c1-457b-8d93-16d9a5034baf",
+    "script_sha256": "f69b59831ee8f30fea97341ac7f3719eae659086b8e2c30c1356c5297e19bee6",
+    "node_executable": "C:\\Program Files\\nodejs\\node.exe",
+    "npm_cli": "C:\\Program Files\\nodejs\\node_modules\\npm\\bin\\npm-cli.js",
+    "arguments": [
+      "test"
+    ],
+    "p0_git_package_root": {
+      "path": "D:\\QQFund\\ARCH7B\\runtime\\core-repository-24992b45\\tools\\lmax_portal_reports_downloader",
+      "process_id": 4572,
+      "exit_code": 1,
+      "stdout_byte_count": 7344,
+      "stdout_sha256": "642f67147d444f281c1f8a8350f628d42681b26bf67a8a5fd54940fb69d95e2a",
+      "stderr_byte_count": 0,
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "node_modules_present": false,
+      "playwright_resolved": false,
+      "aws_sdk_resolved": false,
+      "raw_output_persisted": false
+    },
+    "p1_qualified_node_package_root": {
+      "path": "D:\\QQFund\\ARCH7B\\runtime\\core-node-24992b45-v7r4\\tools\\lmax_portal_reports_downloader",
+      "process_id": 4124,
+      "exit_code": 0,
+      "stdout_byte_count": 10884,
+      "stdout_sha256": "433fc8193dc96a3d7264135b4f786d8b15334bc41291c8c0259da33da6cfe30d",
+      "stderr_byte_count": 0,
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "node_modules_present": true,
+      "playwright_resolved": true,
+      "aws_sdk_resolved": true,
+      "raw_output_persisted": false
+    },
+    "identity": {
+      "package_json_sha256": "36835e708e8fee561e32ff9889dbe12f931f1f593ca23efd6976840ab6b8288e",
+      "package_lock_sha256": "e3620c256717dc620cb5269f2b37044238f321a0efe961d3496e8ebbcc79bb1c",
+      "source_sha256": "277ed26a04bf705d05d04f70be96d838fb8326e70c9e38d72dd4f475adb8aea2",
+      "package_bytes_identical": true,
+      "lock_bytes_identical": true,
+      "source_bytes_identical": true
+    },
+    "network_used": false,
+    "npm_install_used": false,
+    "browser_used": false,
+    "secret_used": false,
+    "database_used": false,
+    "slot_selected": false,
+    "slot_locked": false
+  },
+  "classification": "CORE_GIT_REPOSITORY_ROOT_DOES_NOT_CONTAIN_THE_QUALIFIED_NODE_PACKAGE_CLOSURE",
+  "combined_root": {
+    "path": "D:\\QQFund\\ARCH7B\\runtime\\core-operational-24992b45-dde797bc",
+    "repository_path": "D:\\QQFund\\ARCH7B\\runtime\\core-operational-24992b45-dde797bc",
+    "node_package_path": "D:\\QQFund\\ARCH7B\\runtime\\core-operational-24992b45-dde797bc\\tools\\lmax_portal_reports_downloader",
+    "head": "24992b452a1a3d99318c137413a5e6a4a55512d3",
+    "tree": "d9ff920ea5d514190375c689b6d795f1a9a57f37",
+    "remote": "https://github.com/phu-qqb/QQ.Production.Core.git",
+    "git_clean": true,
+    "git_fsck_passed": true,
+    "git_shallow": false,
+    "git_alternates_present": false,
+    "node_closure_file_count": 2927,
+    "node_closure_byte_count": 23610967,
+    "node_closure_inventory_sha256": "09c0db09da7a25c3a64b616c369198fd66b51e6eda234acf9aa268e14dfbe213",
+    "reparse_point_count": 0,
+    "evidence_sha256": "ffe86043df819f03610375649e32885444dff7e97b07bc722f736e399b5588a6"
+  },
+  "raw_output_persisted": false,
+  "no_order": true
+}

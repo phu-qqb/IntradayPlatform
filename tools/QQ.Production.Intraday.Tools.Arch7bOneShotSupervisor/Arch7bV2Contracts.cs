@@ -15,6 +15,10 @@ public static class Arch7bV2Contracts
         "arch7b_child_process_output_receipt_v1";
     public const string ChildAdapterFailureVersion =
         "arch7b_child_adapter_failure_v1";
+    public const string ChildProcessFailureVersion =
+        "arch7b_child_process_failure_v1";
+    public const string CoreOperationalRootRelationVersion =
+        "arch7b_core_operational_root_relation_v1";
     public const string OperatorAuthorizationVersion = "arch7b_one_shot_operator_authorization_v2";
     public const string LiveExecutionAuthorityVersion = "arch7b_one_shot_live_execution_authority_v3";
     public const string LiveExecutionRuntimeVersion = "arch7b_one_shot_live_execution_runtime_v2";
@@ -96,6 +100,14 @@ public static class Arch7bV2Blockers
     public const string ChildOutputSecretValueDetected = "ARCH7B_ONE_SHOT_CHILD_OUTPUT_SECRET_VALUE_DETECTED";
     public const string ChildOutputReceiptWriteFailed =
         "ARCH7B_ONE_SHOT_CHILD_OUTPUT_RECEIPT_WRITE_FAILED";
+    public const string ChildProcessFailed =
+        "ARCH7B_ONE_SHOT_CHILD_PROCESS_FAILED";
+    public const string CoreRuntimeRootRelationMismatch =
+        "ARCH7B_CORE_RUNTIME_ROOT_RELATION_MISMATCH";
+    public const string CoreRuntimeNodeClosureMissing =
+        "ARCH7B_CORE_RUNTIME_NODE_CLOSURE_MISSING";
+    public const string CoreRuntimeNodeClosureMismatch =
+        "ARCH7B_CORE_RUNTIME_NODE_CLOSURE_MISMATCH";
     public const string SecretLeaseMissing = "ARCH7B_ONE_SHOT_SECRET_LEASE_MISSING";
     public const string SecretCommandScopeMismatch = "ARCH7B_ONE_SHOT_SECRET_COMMAND_SCOPE_MISMATCH";
     public const string ChildAdapterMissing = "ARCH7B_ONE_SHOT_CHILD_OUTPUT_ADAPTER_MISSING";

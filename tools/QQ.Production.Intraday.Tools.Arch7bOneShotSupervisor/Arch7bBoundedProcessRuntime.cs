@@ -64,6 +64,47 @@ public sealed record Arch7bChildAdapterFailureEvidence(
         SecondaryReceiptWriteFailureMessageSha256 ?? string.Empty);
 }
 
+public sealed record Arch7bChildProcessFailureEvidence(
+    string ContractVersion,
+    string CommandId,
+    string StageId,
+    int ExitCode,
+    string ReceiptPath,
+    string ReceiptSha256,
+    long StdoutByteCount,
+    string StdoutSha256,
+    long StderrByteCount,
+    string StderrSha256,
+    string StderrClassification,
+    bool RawOutputRecorded,
+    string EvidenceSha256)
+{
+    public string Canonical() => string.Join('\n', ContractVersion, CommandId,
+        StageId, ExitCode, ReceiptPath, ReceiptSha256, StdoutByteCount,
+        StdoutSha256, StderrByteCount, StderrSha256, StderrClassification,
+        RawOutputRecorded);
+}
+
+public static class Arch7bChildProcessFailureClassifier
+{
+    public const string HistoricalCoreRuntimeCommandFailedNodeExecutable =
+        "CORE_RUNTIME_COMMAND_FAILED_NODE_EXECUTABLE";
+    public const string NoStderr = "NONZERO_CHILD_EXIT_WITHOUT_STDERR";
+    public const string StderrPresent = "NONZERO_CHILD_EXIT_WITH_STDERR";
+
+    private const long HistoricalStderrByteCount = 61;
+    private const string HistoricalStderrSha256 =
+        "a8c77138c62f00cfff97ce87c8927b33df7e95e73f03c7d00c2deeaa81e37c2d";
+
+    public static string Classify(long byteCount, string sha256)
+    {
+        if (byteCount == HistoricalStderrByteCount &&
+            sha256 == HistoricalStderrSha256)
+            return HistoricalCoreRuntimeCommandFailedNodeExecutable;
+        return byteCount == 0 ? NoStderr : StderrPresent;
+    }
+}
+
 public static class Arch7bChildOutputClassifier
 {
     public const string PureExpected = "A_PURE_SINGLE_JSON_EXPECTED_SHAPE";
@@ -275,6 +316,27 @@ public sealed class Arch7bOneShotProcessRunnerV2
                 {
                     receiptFailure = failure;
                 }
+                if (receiptFailure is not null)
+                    throw new Arch7bQualificationException(
+                        Arch7bV2Blockers.ChildOutputReceiptWriteFailed,
+                        Arch7bOneShotContracts.Sha256(receiptFailure.Message));
+                if (process.ExitCode != 0)
+                {
+                    try
+                    {
+                        await WriteProcessFailureAsync(command, process.ExitCode,
+                            outputs[0], outputs[1], receiptPath, receiptSha256,
+                            CancellationToken.None).ConfigureAwait(false);
+                    }
+                    catch (Exception failure)
+                    {
+                        throw new Arch7bQualificationException(
+                            Arch7bV2Blockers.ChildOutputReceiptWriteFailed,
+                            Arch7bOneShotContracts.Sha256(failure.Message));
+                    }
+                    throw new Arch7bQualificationException(
+                        Arch7bV2Blockers.ChildProcessFailed, command.CommandId);
+                }
                 var adapter = adapters.Require(command.AdapterId);
                 Arch7bNormalizedChildResult normalized;
                 try
@@ -289,14 +351,6 @@ public sealed class Arch7bOneShotProcessRunnerV2
                         CancellationToken.None).ConfigureAwait(false);
                     throw;
                 }
-                if (receiptFailure is not null)
-                    throw new Arch7bQualificationException(
-                        Arch7bV2Blockers.ChildOutputReceiptWriteFailed,
-                        Arch7bOneShotContracts.Sha256(receiptFailure.Message));
-                if (process.ExitCode != 0)
-                    throw new Arch7bQualificationException(
-                        Arch7bBlockers.ChildProcessFailedUncatalogued,
-                        command.CommandId);
                 var canonical = string.Join('\n', command.CommandId, command.StageId, process.Id,
                     process.ExitCode, startedAt.ToString("O"), completedAt.ToString("O"),
                     stopwatch.ElapsedMilliseconds, outputs[0].Sha256, outputs[1].Sha256,
@@ -444,6 +498,30 @@ public sealed class Arch7bOneShotProcessRunnerV2
                 provisional.Canonical())
         };
         return await WriteCreateNewAtomicAsync(path, receipt, cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    private static async Task<string> WriteProcessFailureAsync(
+        Arch7bOneShotMaterializedCommand command, int exitCode,
+        Arch7bBoundedProcessOutput stdout, Arch7bBoundedProcessOutput stderr,
+        string receiptPath, string receiptSha256,
+        CancellationToken cancellationToken)
+    {
+        var provisional = new Arch7bChildProcessFailureEvidence(
+            Arch7bV2Contracts.ChildProcessFailureVersion,
+            command.CommandId, command.StageId, exitCode,
+            receiptPath, receiptSha256, stdout.ByteCount, stdout.Sha256,
+            stderr.ByteCount, stderr.Sha256,
+            Arch7bChildProcessFailureClassifier.Classify(
+                stderr.ByteCount, stderr.Sha256), false, string.Empty);
+        var evidence = provisional with
+        {
+            EvidenceSha256 = Arch7bOneShotContracts.Sha256(
+                provisional.Canonical())
+        };
+        return await WriteCreateNewAtomicAsync(Path.Combine(
+                Path.GetDirectoryName(command.AuthorityPath)!,
+                "child-process-failure.json"), evidence, cancellationToken)
             .ConfigureAwait(false);
     }
 
