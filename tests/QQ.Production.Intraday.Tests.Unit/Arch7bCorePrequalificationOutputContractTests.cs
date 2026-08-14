@@ -241,9 +241,12 @@ public sealed class Arch7bCorePrequalificationOutputContractTests
             "validation-v1", 0, 0, 0, 0, 0, 0, 0, [], new string('1', 64));
         var entrypoints = new Arch7bChildEntrypointValidation(
             "entrypoints-v1", 0, 0, 0, 0, [], new string('2', 64));
+        var environment = new Arch7bTargetCommandEnvironmentValidation(
+            Arch7bV2Contracts.TargetCommandEnvironmentValidationVersion,
+            true, 13, 2, 0, new string('3', 64));
         var evidence = new Arch7bOneShotStaticPreflightEvidence(
             "ARCH7B_ONE_SHOT_STATIC_PREFLIGHT_QUALIFIED", true,
-            "STATIC_AUTHORITY_VALIDATION", authority, entrypoints,
+            "TARGET_COMMAND_ENVIRONMENT_VALIDATION", environment, authority, entrypoints,
             false, false, false, false, false, 0, 0,
             Arch7bNoLiveSafetyCounters.Zero);
 

@@ -1,0 +1,41 @@
+{
+  "contract_version": "arch7b_target_command_projection_equality_forensic_v1",
+  "historical_verdict": "NO_GO_ARCH7B_TARGET_COMMAND_ENVIRONMENT_MISMATCH",
+  "classification": "RECORD_COLLECTION_REFERENCE_EQUALITY_FALSE_NEGATIVE",
+  "stderr": {
+    "byte_count": 146,
+    "sha256": "57668073821be00bd94ab04b20d782cb4c0f39c599d410aa02a885ce0b383d9e",
+    "sanitized_json": {
+      "status": "NO_GO",
+      "blocker": "ARCH7B_TARGET_COMMAND_ENVIRONMENT_MISMATCH",
+      "detail": "ARCH7B_TARGET_COMMAND_ENVIRONMENT_MISMATCH"
+    },
+    "exception_detail_absent": true,
+    "raw_sensitive_values_persisted": false
+  },
+  "primary": {
+    "target_authority_materialization": "PASS",
+    "target_manifest_sha256": "fa4fdebf1cbab86a310cee24db4f6f73fe8071d8bc5e68c2b280618e26e01660",
+    "projection_failed_before_core_prequalification": true
+  },
+  "reproduction": {
+    "test": "T22_independent_projection_records_expose_collection_reference_false_negative",
+    "projection_count": 2,
+    "command_count": 13,
+    "command_evidence_sha256_equal": true,
+    "canonical_serialized_bytes_equal": true,
+    "command_template_set_sha256_equal": true,
+    "record_sequence_equal": false,
+    "non_secret_environment_reference_equal": false,
+    "non_secret_environment_content_equal": true
+  },
+  "safety": {
+    "slot": 0,
+    "secret": 0,
+    "database": 0,
+    "portal": 0,
+    "lmax": 0,
+    "fix": 0,
+    "order": 0
+  }
+}
