@@ -29,6 +29,8 @@ public static class Arch7bOperationalTemplateAuthorityProjection
         var authorities = manifest.Project(inventory);
         Arch7bOperationalExecutionAuthorityValidator.ValidateStatic(inventory, manifest,
             authorities);
+        var commandProjection = Arch7bTargetBoundCommandTemplateProjector.Project(
+            sourceTemplate.CommandTemplates, authorities);
         var staticAuthoritySet = Arch7bOneShotContracts.Sha256(string.Join('\n', authorities
             .OrderBy(value => value.Key, StringComparer.Ordinal)
             .Select(value => string.Join(':', value.Key, value.Value.Path,
@@ -37,6 +39,8 @@ public static class Arch7bOperationalTemplateAuthorityProjection
         {
             FileAuthorities = authorities,
             StaticAuthoritySetSha256 = staticAuthoritySet,
+            CommandTemplates = commandProjection.CommandTemplates,
+            CommandTemplateSetSha256 = commandProjection.TargetCommandTemplateSetSha256,
             EvidenceSha256 = string.Empty
         };
         var template = provisional with
@@ -45,6 +49,15 @@ public static class Arch7bOperationalTemplateAuthorityProjection
         };
         Arch7bOperationalExecutionAuthorityValidator.RequireExactProjection(authorities,
             template.FileAuthorities, "template");
+        Arch7bTargetBoundCommandTemplateProjector.RequireExactProjection(
+            sourceTemplate.CommandTemplates, template);
+        var environmentValidation = Arch7bTargetCommandEnvironmentValidator.Validate(template);
+        Arch7bLiveTemplateValidator.Validate(template, new Arch7bRealCommandAdapterRegistry());
+        var graph = Arch7bStageFactGraphValidator.RequireValid(template.StageContracts);
+        Directory.CreateDirectory(Path.GetDirectoryName(outputPath)!);
+        var childEntrypoints = Arch7bChildEntrypointValidator.Validate(template, manifest,
+            Path.Combine(Path.GetDirectoryName(outputPath)!,
+                Arch7bChildEntrypointValidator.ValidationFileName));
         var outputBytes = JsonSerializer.SerializeToUtf8Bytes(template, Arch7bJson.CanonicalOptions);
         var outputText = Encoding.UTF8.GetString(outputBytes);
         var regenerateCount = Count(outputText, Arch7bOperationalLiveFactBindingCatalog.Marker);
@@ -54,8 +67,6 @@ public static class Arch7bOperationalTemplateAuthorityProjection
         var unresolvedProducerCount = Arch7bOperationalBindingProducerAudit.Build().MissingProducerCount;
         if (regenerateCount != 0 || fakeNativeChildCount != 0 || syntheticAuthorityCount != 0 ||
             unresolvedProducerCount != 0) throw Mismatch("operational-template-counts");
-        var graph = Arch7bStageFactGraphValidator.RequireValid(template.StageContracts);
-        Directory.CreateDirectory(Path.GetDirectoryName(outputPath)!);
         await using (var stream = new FileStream(outputPath, FileMode.CreateNew, FileAccess.Write,
                          FileShare.None, 4096, FileOptions.WriteThrough))
         {
@@ -81,6 +92,8 @@ public static class Arch7bOperationalTemplateAuthorityProjection
             Arch7bOperationalLivePlanTemplateMaterializer.FileVersion, sourceTemplatePath,
             sourceSha, outputPath, outputSha, inventoryPath, inventorySha,
             template.EvidenceSha256, graph.EvidenceSha256,
+            commandProjection.EvidenceSha256, environmentValidation.EvidenceSha256,
+            childEntrypoints.EvidenceSha256,
             sourceTemplate.CommandTemplates.Count,
             Arch7bOperationalLiveFactBindingCatalog.Build().Sum(value => value.Bindings.Count),
             regenerateCount, fakeNativeChildCount,

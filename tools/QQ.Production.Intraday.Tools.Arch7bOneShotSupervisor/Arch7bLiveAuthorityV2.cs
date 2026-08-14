@@ -220,6 +220,7 @@ public static class Arch7bLiveTemplateValidator
         Arch7bRealCommandAdapterRegistry adapters)
     {
         value.ValidateEvidence();
+        _ = Arch7bTargetCommandEnvironmentValidator.Validate(value);
         if (value.ContractVersion != Arch7bV2Contracts.LivePlanTemplateVersion || !value.NoOrder ||
             value.TargetEnvironment != "TEST" || value.AccountId != "1754288005" ||
             value.StageContracts.Count != Arch7bStages.All.Count ||

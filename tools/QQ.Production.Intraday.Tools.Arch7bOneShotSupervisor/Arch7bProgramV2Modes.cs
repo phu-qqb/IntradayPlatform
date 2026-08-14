@@ -6,6 +6,7 @@ internal sealed record Arch7bOneShotStaticPreflightEvidence(
     string Verdict,
     bool QualificationOnly,
     string Stage,
+    Arch7bTargetCommandEnvironmentValidation TargetCommandEnvironment,
     Arch7bOperationalExecutionAuthorityValidation Validation,
     Arch7bChildEntrypointValidation ChildEntrypoints,
     bool SlotSelected,
@@ -154,6 +155,7 @@ public static class Arch7bProgramV2Modes
 
         var requiredInventory = Arch7bRequiredOperationalExecutionAuthorityInventoryBuilder
             .Build(template.Value);
+        _ = Arch7bTargetCommandEnvironmentValidator.Validate(template.Value);
         var staticEvidenceRoot = runRoot + "-static-authority";
         Arch7bOperationalExecutionAuthorityValidator.ValidateStatic(requiredInventory,
             operationalManifest, template.Value.FileAuthorities, authority.Value.FileAuthorities,
@@ -211,6 +213,8 @@ public static class Arch7bProgramV2Modes
             await File.ReadAllBytesAsync(operationalManifestPath).ConfigureAwait(false));
         var requiredInventory = Arch7bRequiredOperationalExecutionAuthorityInventoryBuilder
             .Build(template.Value);
+        var targetCommandEnvironment = Arch7bTargetCommandEnvironmentValidator
+            .Validate(template.Value);
         var staticEvidenceRoot = runRoot + "-static-authority";
         if (Directory.Exists(staticEvidenceRoot) || File.Exists(staticEvidenceRoot))
             throw new Arch7bQualificationException(Arch7bBlockers.RunRootReused);
@@ -224,7 +228,8 @@ public static class Arch7bProgramV2Modes
 
         return new Arch7bOneShotStaticPreflightEvidence(
             "ARCH7B_ONE_SHOT_STATIC_PREFLIGHT_QUALIFIED", true,
-            "STATIC_AUTHORITY_VALIDATION", validation, childEntrypoints,
+            "TARGET_COMMAND_ENVIRONMENT_VALIDATION", targetCommandEnvironment,
+            validation, childEntrypoints,
             false, false, false, false, false, 0, 0,
             Arch7bNoLiveSafetyCounters.Zero);
     }

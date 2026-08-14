@@ -1,0 +1,45 @@
+{
+  "contract_version": "arch7b_target_bound_command_environment_forensic_v1",
+  "verdict": "NO_GO_ARCH7B_COMMAND_GIT_EXECUTABLE_PATH_AUTHORITY_MISMATCH",
+  "classification": "TARGET_FILE_AUTHORITIES_REBOUND_BUT_COMMAND_NONSECRET_ENVIRONMENT_NOT_RECOMPUTED",
+  "stage": "CORE_PREQUALIFICATION",
+  "target_git_authority": {
+    "path": "D:\\QQFund\\ARCH7B\\runtime\\mingit\\cmd\\git.exe",
+    "sha256": "7b7971dd13f0c3a284e538601f2f9770b3a87dfaccb5fb52d68141c67ed22364"
+  },
+  "stale_path_git_directory": "C:\\Program Files\\Git\\cmd",
+  "call_graph": {
+    "classification": "DIRECT_QUALIFICATION_PROBE",
+    "operational_process_runner": false,
+    "standard_operational_execution": false
+  },
+  "child": {
+    "started": true,
+    "process_id": 5976,
+    "exit_code": 1
+  },
+  "stderr": {
+    "byte_count": 21,
+    "sha256": "630ebcba561b30f4fa40f3c5d0b8fa60ac0a2261cd3302d56f082bfd05c701a3",
+    "sanitized_classification": "SPAWNSYNC_GIT_ENOENT",
+    "raw_persisted": false
+  },
+  "qualification_only_receipt": {
+    "present": true,
+    "process_id": 5976,
+    "exit_code": 1,
+    "stdout_byte_count": 0,
+    "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "stderr_byte_count": 21,
+    "stderr_sha256": "630ebcba561b30f4fa40f3c5d0b8fa60ac0a2261cd3302d56f082bfd05c701a3",
+    "raw_output_persisted": false
+  },
+  "safety_counters": {
+    "slots": 0,
+    "rds_reads": 0,
+    "brackets": 0,
+    "captures": 0,
+    "retries": 0
+  },
+  "cleanup": "COMPLETE"
+}
