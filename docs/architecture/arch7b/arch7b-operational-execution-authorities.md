@@ -18,17 +18,26 @@ versioned contracts:
 - `arch7b_operational_execution_authority_manifest_v1`
 - `arch7b_operational_execution_authority_directory_inventory_v1`
 - `arch7b_operational_execution_authority_validation_v1`
+- `arch7b_source_template_provenance_validation_v1`
 
 ## Materialization
 
-`materialize-operational-execution-authorities` accepts the final static
-40-stage, 13-command template, a closed authority-to-path map, and an empty
-output root. It writes
-the required-reference inventory, one canonical directory inventory for each
-directory authority, and the exact authority manifest.
+`qualify-source-template-provenance` binds the source template byte SHA-256,
+Intraday commit, and Intraday tree before either materialization mode runs. It
+also requires exactly 40 ordered stages, a valid closed stage-fact graph, zero
+legacy clock aliases, and the three canonical clock producer/consumer
+contracts.
 
-`materialize-operational-live-template` takes the same final template and
-requires that manifest. It projects
+`materialize-operational-execution-authorities` accepts the final static
+40-stage, 13-command template, its expected SHA-256/commit/tree, a closed
+authority-to-path map, and an empty output root. Provenance is validated before
+the output root is created. It writes the required-reference inventory, one
+canonical directory inventory for each directory authority, and the exact
+authority manifest.
+
+`materialize-operational-live-template` takes the same final template, its
+expected SHA-256/commit/tree, and requires that manifest. Provenance is
+validated before the target template path is created. It projects
 the complete authority set into `Template.FileAuthorities` and rejects a
 missing, unused, duplicated, conflicting, synthetic, or unresolved authority.
 The live authority copies that exact set from the validated template.

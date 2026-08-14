@@ -37,14 +37,26 @@ public static class Program
                 "materialize-final-stage-execution-classification" => await
                     Arch7bFinalStageExecutionCatalog.WriteAsync(
                         Path.GetFullPath(Required(options, "output-path"))).ConfigureAwait(false),
+                "qualify-source-template-provenance" => await
+                    Arch7bSourceTemplateProvenanceValidator.ValidateAsync(
+                        Path.GetFullPath(Required(options, "source-template")),
+                        RequiredSha(options, "expected-source-template-sha256"),
+                        Required(options, "expected-source-template-commit"),
+                        Required(options, "expected-source-template-tree")).ConfigureAwait(false),
                 "materialize-operational-execution-authorities" => await
                     new Arch7bOperationalExecutionAuthorityMaterializer().MaterializeFilesAsync(
                         Path.GetFullPath(Required(options, "source-template")),
+                        RequiredSha(options, "expected-source-template-sha256"),
+                        Required(options, "expected-source-template-commit"),
+                        Required(options, "expected-source-template-tree"),
                         Path.GetFullPath(Required(options, "authority-path-map")),
                         Path.GetFullPath(Required(options, "output-root"))).ConfigureAwait(false),
                 "materialize-operational-live-template" => await
                     Arch7bOperationalTemplateAuthorityProjection.WriteAsync(
                         Path.GetFullPath(Required(options, "source-template")),
+                        RequiredSha(options, "expected-source-template-sha256"),
+                        Required(options, "expected-source-template-commit"),
+                        Required(options, "expected-source-template-tree"),
                         Path.GetFullPath(Required(options, "authority-manifest")),
                         Path.GetFullPath(Required(options, "output-path"))).ConfigureAwait(false),
                 "qualify-production-clock-authority" => await

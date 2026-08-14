@@ -7,12 +7,17 @@ namespace QQ.Production.Intraday.Tools.Arch7bOneShotSupervisor;
 public static class Arch7bOperationalTemplateAuthorityProjection
 {
     public static async Task<Arch7bOperationalTemplateFileMaterialization> WriteAsync(
-        string sourceTemplatePath, string authorityManifestPath, string outputPath,
+        string sourceTemplatePath, string expectedSourceTemplateSha256,
+        string expectedIntradayCommit, string expectedIntradayTree,
+        string authorityManifestPath, string outputPath,
         CancellationToken cancellationToken = default)
     {
         sourceTemplatePath = Path.GetFullPath(sourceTemplatePath);
         authorityManifestPath = Path.GetFullPath(authorityManifestPath);
         outputPath = Path.GetFullPath(outputPath);
+        var provenance = await Arch7bSourceTemplateProvenanceValidator.ValidateAsync(
+            sourceTemplatePath, expectedSourceTemplateSha256, expectedIntradayCommit,
+            expectedIntradayTree, cancellationToken).ConfigureAwait(false);
         var sourceTemplateBytes = await File.ReadAllBytesAsync(sourceTemplatePath,
             cancellationToken).ConfigureAwait(false);
         var authorityBytes = await File.ReadAllBytesAsync(authorityManifestPath,
@@ -92,6 +97,7 @@ public static class Arch7bOperationalTemplateAuthorityProjection
             Arch7bOperationalLivePlanTemplateMaterializer.FileVersion, sourceTemplatePath,
             sourceSha, outputPath, outputSha, inventoryPath, inventorySha,
             template.EvidenceSha256, graph.EvidenceSha256,
+            provenance.EvidenceSha256,
             commandProjection.EvidenceSha256, environmentValidation.EvidenceSha256,
             childEntrypoints.EvidenceSha256,
             sourceTemplate.CommandTemplates.Count,

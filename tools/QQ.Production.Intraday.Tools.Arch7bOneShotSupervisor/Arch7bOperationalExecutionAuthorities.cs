@@ -870,9 +870,13 @@ public static class Arch7bOperationalExecutionAuthorityValidator
 public sealed class Arch7bOperationalExecutionAuthorityMaterializer
 {
     public async Task<object> MaterializeFilesAsync(string templatePath,
-        string authorityPathMapPath, string outputRoot,
+        string expectedTemplateSha256, string expectedIntradayCommit,
+        string expectedIntradayTree, string authorityPathMapPath, string outputRoot,
         CancellationToken cancellationToken = default)
     {
+        var provenance = await Arch7bSourceTemplateProvenanceValidator.ValidateAsync(
+            templatePath, expectedTemplateSha256, expectedIntradayCommit,
+            expectedIntradayTree, cancellationToken).ConfigureAwait(false);
         var templateBytes = await File.ReadAllBytesAsync(System.IO.Path.GetFullPath(templatePath),
             cancellationToken).ConfigureAwait(false);
         var template = JsonSerializer.Deserialize<Arch7bOneShotLivePlanTemplate>(templateBytes,
@@ -904,6 +908,7 @@ public sealed class Arch7bOperationalExecutionAuthorityMaterializer
             authority_reference_count = inventory.AuthorityReferenceCount,
             required_authority_id_count = inventory.RequiredAuthorityIdCount,
             authority_count = manifest.AuthorityCount,
+            source_template_provenance = provenance,
             inventory_path = inventoryPath,
             inventory_sha256 = Convert.ToHexStringLower(SHA256.HashData(inventoryBytes)),
             manifest_path = manifestPath,

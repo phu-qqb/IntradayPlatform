@@ -1,0 +1,127 @@
+{
+  "contract_version": "arch7b_pr63_source_template_provenance_inventory_v1",
+  "pr": 63,
+  "candidate_head": "c0cc79ffbbaa5f884be6851f6ac20acbcffd7870",
+  "candidate_tree": "b8f6c848086d484fd99d918418d3eed16fcfa234",
+  "classification": "B_PACKAGE_CONTAINS_ONLY_STALE_SOURCE_TEMPLATE",
+  "classification_subtype": "PACKAGE_OMITS_SOURCE_TEMPLATE_AND_CONTROLLER_FALLS_BACK_TO_STALE_V7R7",
+  "native_blocker": {
+    "code": "ARCH7B_LEGACY_STAGE_FACT_ALIAS_PRESENT",
+    "detail": "ARCH7B_LEGACY_STAGE_FACT_ALIAS_PRESENT: clock_preflight_evidence:CLOCK_PREFLIGHT:PORTAL_SESSION_PROVEN",
+    "child_b_stderr_sha256": "d0b75b4061c69c3c4282bc896c7fc164bf45da0627a55ee4e79abaf38b81f8e0",
+    "child_b_stderr_bytes": 202
+  },
+  "child_b_source": {
+    "controller_path": "C:\\tmp\\arch7b-pr63-primary-controller-c0cc79f-r6.ps1",
+    "controller_sha256": "e9086e9395a9658484ef574ba44c04379d3a59507691cb5dde93c482683df341",
+    "absolute_path_passed": "D:\\QQFund\\ARCH7B\\final-operational-freeze-v7r7-0dd8be3a-r2\\rebuild-a\\arch7b-one-shot-live-plan-template.json",
+    "source_template_sha256": "379a4f09f23a8d3146e6bef149ad03908c1fc58c9f6b35c75335270ca75d5db1",
+    "intraday_commit": "0dd8be3aead17c7f35c6bdf2b7e4390fd885a98f",
+    "intraday_tree": "db5a17b5a5f2ceed8bbf9b98f4e4f9e2960ea931",
+    "stage_count": 40,
+    "legacy_alias_count": "AT_LEAST_1_FIRST_OBSERVED",
+    "first_legacy_alias": "clock_preflight_evidence",
+    "graph_validation": "NO_GO",
+    "argument_list_sha256": "425a42e6622c31a64a47df352444a1523569aef5f1acdc43f60b246832e8174f",
+    "provenance": "CONTROLLER_R6_HARDCODED_SOURCEFREEZE_V7R7",
+    "archived_forensic_path": "D:\\QQFund\\ARCH7B\\package-builds\\pr62-stage-fact-graph-primary\\build-a\\payload\\source\\pr62\\docs\\architecture\\arch7b\\arch7b-stage-fact-contract-mismatch-forensic-v1.json",
+    "archived_forensic_sha256": "b2965a1aa9ff369c506d39e9d7a8a3626d0f0ee087982f2a048cf86a47b23d80"
+  },
+  "normalized_v7r8_authority": {
+    "path": "D:\\QQFund\\ARCH7B\\package-builds\\v7r8-759cc46d-r1\\rebuild-a\\arch7b-one-shot-live-plan-template.json",
+    "size_bytes": 59880,
+    "sha256": "322cbb07c90c332f4bcbee6f500b5aa60ac546fb5252fa9656a0f4ad866ae00a",
+    "intraday_commit": "759cc46dc0553cf3185b8c348038c3b2f171cb03",
+    "intraday_tree": "c59b95949a30653153cc89be484b713e6b6378c8",
+    "contract_version": "arch7b_one_shot_live_plan_template_v2",
+    "stage_count": 40,
+    "legacy_alias_count": 0,
+    "missing_producer_count": 0,
+    "duplicate_producer_count": 0,
+    "future_producer_count": 0,
+    "graph_validation": "PASS"
+  },
+  "templates": [
+    {
+      "origin": "PR62_BUILD_A_RAW_CANDIDATE",
+      "path": "D:\\QQFund\\ARCH7B\\package-builds\\pr62-stage-fact-graph-primary\\build-a\\payload\\authority\\arch7b-pr62-operational-template-candidate.json",
+      "size_bytes": 57874,
+      "sha256": "34f92860c877880e4e9f6a0d0a9d7ac4bfe4328f46e35122d48271804dc503ce",
+      "intraday_commit": "bbde704307dfb905c39b53ae1f2683098f471291",
+      "intraday_tree": "c59b95949a30653153cc89be484b713e6b6378c8",
+      "stage_count": 40,
+      "legacy_alias_count": 0,
+      "graph_validation": "PASS"
+    },
+    {
+      "origin": "PR62_BUILD_B_RAW_CANDIDATE",
+      "path": "D:\\QQFund\\ARCH7B\\package-builds\\pr62-stage-fact-graph-primary\\build-b\\payload\\authority\\arch7b-pr62-operational-template-candidate.json",
+      "size_bytes": 57874,
+      "sha256": "34f92860c877880e4e9f6a0d0a9d7ac4bfe4328f46e35122d48271804dc503ce",
+      "intraday_commit": "bbde704307dfb905c39b53ae1f2683098f471291",
+      "intraday_tree": "c59b95949a30653153cc89be484b713e6b6378c8",
+      "stage_count": 40,
+      "legacy_alias_count": 0,
+      "graph_validation": "PASS"
+    },
+    {
+      "origin": "PR62_VERIFY_RAW_CANDIDATE",
+      "path": "D:\\QQFund\\ARCH7B\\package-builds\\pr62-stage-fact-graph-primary\\verify\\authority\\arch7b-pr62-operational-template-candidate.json",
+      "size_bytes": 57874,
+      "sha256": "34f92860c877880e4e9f6a0d0a9d7ac4bfe4328f46e35122d48271804dc503ce",
+      "intraday_commit": "bbde704307dfb905c39b53ae1f2683098f471291",
+      "intraday_tree": "c59b95949a30653153cc89be484b713e6b6378c8",
+      "stage_count": 40,
+      "legacy_alias_count": 0,
+      "graph_validation": "PASS"
+    },
+    {
+      "origin": "V7R8_REBUILD_A_NORMALIZED",
+      "path": "D:\\QQFund\\ARCH7B\\package-builds\\v7r8-759cc46d-r1\\rebuild-a\\arch7b-one-shot-live-plan-template.json",
+      "size_bytes": 59880,
+      "sha256": "322cbb07c90c332f4bcbee6f500b5aa60ac546fb5252fa9656a0f4ad866ae00a",
+      "intraday_commit": "759cc46dc0553cf3185b8c348038c3b2f171cb03",
+      "intraday_tree": "c59b95949a30653153cc89be484b713e6b6378c8",
+      "stage_count": 40,
+      "legacy_alias_count": 0,
+      "graph_validation": "PASS"
+    }
+  ],
+  "package_inventory": [
+    {
+      "package": "C:\\tmp\\arch7b-projection-equality-c0cc79f-package\\arch7b-intraday-target-command-projection-equality-c0cc79f.zip",
+      "size_bytes": 8308435,
+      "sha256": "60d2cdac89fa0a17a7e84c7632d4c4eea2d404a45b73b29df8de969d6f746c79",
+      "physical_copy_count": 3,
+      "logical_content_authority_count": 1,
+      "template_entry_count": 0,
+      "source_template_provenance": "OMITTED"
+    },
+    {
+      "package": "D:\\QQFund\\ARCH7B\\package-builds\\pr62-stage-fact-graph-primary\\build-a.zip",
+      "size_bytes": 15451290,
+      "sha256": "0c7d91e4e1e7949ec4e481b46721b0cf00e6a14584873b42903a3301b3dc548a",
+      "physical_copy_count": 2,
+      "template_entry_count": 1,
+      "template_sha256": "34f92860c877880e4e9f6a0d0a9d7ac4bfe4328f46e35122d48271804dc503ce"
+    },
+    {
+      "package": "D:\\QQFund\\ARCH7B\\package-builds\\v7r8-759cc46d-r1\\arch7b-final-operational-freeze-v7r8-759cc46d-build-a.zip",
+      "size_bytes": 7721771,
+      "sha256": "f5a27d58172f75acb7bf3ad22b9e199bc204c1bac1472843fb740c186d30884d",
+      "physical_copy_count": 2,
+      "template_entry_count": 2,
+      "normalized_template_sha256": "322cbb07c90c332f4bcbee6f500b5aa60ac546fb5252fa9656a0f4ad866ae00a",
+      "candidate_template_sha256": "34f92860c877880e4e9f6a0d0a9d7ac4bfe4328f46e35122d48271804dc503ce"
+    }
+  ],
+  "c0cc_builder": {
+    "path": "C:\\Users\\phili\\source\\repos\\QQ.Production.Core\\.codex-patches\\build-arch7b-projection-equality-package-c0cc79f.ps1",
+    "size_bytes": 7899,
+    "sha256": "015e0ef38340f9c2bf07f20a641d12c56ad8a5d2cd14642b0550c64a3b7e014b",
+    "stage_a_template_count": 0,
+    "stage_b_template_count": 0,
+    "canonical_package_template_count": 0
+  },
+  "conclusion": "The c0cc package is not self-contained for source-template authority. Child B received a stale V7R7 source through controller r6 instead of the normalized V7R8 authority. Target projection did not create the stale alias."
+}

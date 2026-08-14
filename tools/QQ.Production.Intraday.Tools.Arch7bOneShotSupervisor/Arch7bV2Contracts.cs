@@ -77,6 +77,8 @@ public static class Arch7bV2Contracts
 
 public static class Arch7bV2Blockers
 {
+    public const string SourceTemplateProvenanceMismatch =
+        "ARCH7B_SOURCE_TEMPLATE_PROVENANCE_MISMATCH";
     public const string StageFactRequiredProducerMissing =
         "ARCH7B_STAGE_FACT_REQUIRED_PRODUCER_MISSING";
     public const string StageFactDuplicateProducer =
