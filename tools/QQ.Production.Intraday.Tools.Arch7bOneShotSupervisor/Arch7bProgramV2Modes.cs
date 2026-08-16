@@ -9,6 +9,7 @@ internal sealed record Arch7bOneShotStaticPreflightEvidence(
     Arch7bTargetCommandEnvironmentValidation TargetCommandEnvironment,
     Arch7bOperationalExecutionAuthorityValidation Validation,
     Arch7bChildEntrypointValidation ChildEntrypoints,
+    Arch7bLiveCliAuthorityBindingValidation CliAuthorityBindings,
     bool SlotSelected,
     bool SlotLocked,
     bool OneShotIdentityCreated,
@@ -174,14 +175,7 @@ public static class Arch7bProgramV2Modes
         BindHash("adapter-set", Sha(options, "expected-adapter-set-sha256"),
             template.Value.AdapterSetSha256, authority.Value.AdapterSetSha256);
 
-        BindCliAuthority(template.Value, "core_repository", Required(options, "core-repository"),
-            mustBeFile: false, template.Value.CoreRepositoryAuthoritySha256);
-        BindCliAuthority(template.Value, "intraday_runtime", Required(options, "intraday-runtime"),
-            mustBeFile: false, template.Value.RuntimeInventorySha256);
-        BindCliAuthority(template.Value, "git_executable", Required(options, "git-executable"),
-            mustBeFile: true, null);
-        BindCliAuthority(template.Value, "root_certificate", Required(options, "root-certificate"),
-            mustBeFile: true, template.Value.RootCaAuthoritySha256);
+        _ = ValidateCliAuthorities(options, template.Value);
 
         var adapters = new Arch7bRealCommandAdapterRegistry();
         var brokerClient = BuildBrokerClient(options, template.Value, adapters);
@@ -225,11 +219,12 @@ public static class Arch7bProgramV2Modes
         var childEntrypoints = Arch7bChildEntrypointValidator.Validate(template.Value,
             operationalManifest, Path.Combine(staticEvidenceRoot,
                 Arch7bChildEntrypointValidator.ValidationFileName));
+        var cliAuthorityBindings = ValidateCliAuthorities(options, template.Value);
 
         return new Arch7bOneShotStaticPreflightEvidence(
             "ARCH7B_ONE_SHOT_STATIC_PREFLIGHT_QUALIFIED", true,
             "TARGET_COMMAND_ENVIRONMENT_VALIDATION", targetCommandEnvironment,
-            validation, childEntrypoints,
+            validation, childEntrypoints, cliAuthorityBindings,
             false, false, false, false, false, 0, 0,
             Arch7bNoLiveSafetyCounters.Zero);
     }
@@ -345,20 +340,16 @@ public static class Arch7bProgramV2Modes
                 Arch7bV2Blockers.AuthorityBindingMismatch, key);
     }
 
-    private static void BindCliAuthority(Arch7bOneShotLivePlanTemplate template,
-        string authorityId, string cliPath, bool mustBeFile, string? expectedAuthoritySha)
-    {
-        var path = FullPath(cliPath);
-        if (mustBeFile) RequireFile(path, authorityId); else RequireDirectory(path, authorityId);
-        if (!template.FileAuthorities.TryGetValue(authorityId, out var authority) ||
-            !string.Equals(FullPath(authority.Path), path, StringComparison.OrdinalIgnoreCase) ||
-            expectedAuthoritySha is not null && authority.Sha256 != expectedAuthoritySha)
-            throw new Arch7bQualificationException(Arch7bV2Blockers.AuthorityBindingMismatch,
-                authorityId);
-        if (mustBeFile && FileSha(path) != authority.Sha256)
-            throw new Arch7bQualificationException(Arch7bV2Blockers.AuthorityBindingMismatch,
-                authorityId);
-    }
+    internal static Arch7bLiveCliAuthorityBindingValidation ValidateCliAuthorities(
+        IReadOnlyDictionary<string, string> options, Arch7bOneShotLivePlanTemplate template) =>
+        Arch7bLiveCliAuthorityBindingValidator.Validate(template,
+            new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                ["core_repository"] = Required(options, "core-repository"),
+                ["intraday_runtime"] = Required(options, "intraday-runtime"),
+                ["git_executable"] = Required(options, "git-executable"),
+                ["root_certificate"] = Required(options, "root-certificate")
+            });
 
     private static void BindHash(string name, string expected, params string[] actual)
     {
