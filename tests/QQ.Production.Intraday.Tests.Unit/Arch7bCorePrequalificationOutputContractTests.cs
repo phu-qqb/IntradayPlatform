@@ -244,9 +244,12 @@ public sealed class Arch7bCorePrequalificationOutputContractTests
         var environment = new Arch7bTargetCommandEnvironmentValidation(
             Arch7bV2Contracts.TargetCommandEnvironmentValidationVersion,
             true, 13, 2, 0, new string('3', 64));
+        var cliBindings = new Arch7bLiveCliAuthorityBindingValidation(
+            Arch7bV2Contracts.LiveCliAuthorityBindingValidationVersion,
+            4, 4, 0, 0, [], new string('4', 64));
         var evidence = new Arch7bOneShotStaticPreflightEvidence(
             "ARCH7B_ONE_SHOT_STATIC_PREFLIGHT_QUALIFIED", true,
-            "TARGET_COMMAND_ENVIRONMENT_VALIDATION", environment, authority, entrypoints,
+            "TARGET_COMMAND_ENVIRONMENT_VALIDATION", environment, authority, entrypoints, cliBindings,
             false, false, false, false, false, 0, 0,
             Arch7bNoLiveSafetyCounters.Zero);
 

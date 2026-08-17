@@ -14,6 +14,8 @@ public static class Arch7bV2Contracts
         "arch7b_target_command_environment_validation_v1";
     public const string TargetCommandProjectionCanonicalEqualityVersion =
         "arch7b_target_command_projection_canonical_equality_v1";
+    public const string LiveCliAuthorityBindingValidationVersion =
+        "arch7b_live_cli_authority_binding_validation_v1";
     public const string LongLivedProcessRegistryVersion = "arch7b_one_shot_long_lived_process_registry_v1";
     public const string SecretEnvironmentInjectionVersion = "arch7b_one_shot_secret_environment_injection_v1";
     public const string ChildResultAdapterVersion = "arch7b_one_shot_child_result_adapter_v1";
@@ -107,6 +109,14 @@ public static class Arch7bV2Blockers
     public const string PlaceholderUnknown = "ARCH7B_ONE_SHOT_PLACEHOLDER_UNKNOWN";
     public const string PlaceholderTypeMismatch = "ARCH7B_ONE_SHOT_PLACEHOLDER_TYPE_MISMATCH";
     public const string AuthorityBindingMismatch = "ARCH7B_ONE_SHOT_AUTHORITY_BINDING_MISMATCH";
+    public const string LiveCliAuthorityMissing =
+        "ARCH7B_LIVE_CLI_AUTHORITY_MISSING";
+    public const string LiveCliAuthorityPathMismatch =
+        "ARCH7B_LIVE_CLI_AUTHORITY_PATH_MISMATCH";
+    public const string LiveCliAuthorityKindMismatch =
+        "ARCH7B_LIVE_CLI_AUTHORITY_KIND_MISMATCH";
+    public const string LiveCliAuthorityFileContentShaMismatch =
+        "ARCH7B_LIVE_CLI_FILE_CONTENT_SHA_MISMATCH";
     public const string MaterializedCommandAlreadyExists = "ARCH7B_ONE_SHOT_MATERIALIZED_COMMAND_ALREADY_EXISTS";
     public const string DuplicateProcessKey = "ARCH7B_ONE_SHOT_DUPLICATE_PROCESS_KEY";
     public const string LongLivedProcessExited = "ARCH7B_ONE_SHOT_LONG_LIVED_PROCESS_EXITED_PREMATURELY";
