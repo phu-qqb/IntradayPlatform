@@ -250,11 +250,19 @@ public sealed class Arch7bOneShotProcessRunnerV2
     ];
 
     private readonly Arch7bRealCommandAdapterRegistry adapters;
+    private readonly Arch7bFileAuthority? chromeAuthority;
     private readonly Dictionary<string, LongLivedHandle> longLived = new(StringComparer.Ordinal);
 
-    public Arch7bOneShotProcessRunnerV2(Arch7bRealCommandAdapterRegistry adapters)
+    public Arch7bOneShotProcessRunnerV2(Arch7bRealCommandAdapterRegistry adapters,
+        IReadOnlyDictionary<string, Arch7bFileAuthority>? targetAuthorities = null)
     {
         this.adapters = adapters;
+        if (targetAuthorities is not null)
+            chromeAuthority = targetAuthorities.TryGetValue("chrome_executable", out var authority)
+                ? authority
+                : throw new Arch7bQualificationException(
+                    Arch7bV2Blockers.CommandNonSecretEnvironmentAuthorityMissing,
+                    "chrome_executable");
     }
 
     public async Task<Arch7bV2CommandExecutionResult> InvokeAsync(
@@ -642,7 +650,7 @@ public sealed class Arch7bOneShotProcessRunnerV2
         foreach (var name in secrets.Values.Keys) startInfo.Environment.Remove(name);
     }
 
-    private static void ValidateExecutable(Arch7bOneShotMaterializedCommand command)
+    private void ValidateExecutable(Arch7bOneShotMaterializedCommand command)
     {
         if (!Path.IsPathFullyQualified(command.ExecutablePath) || !File.Exists(command.ExecutablePath))
             throw new Arch7bQualificationException(Arch7bBlockers.LiveCommandAuthorityIncomplete,
@@ -655,10 +663,20 @@ public sealed class Arch7bOneShotProcessRunnerV2
         ValidateBrowserAuthority(command);
     }
 
-    private static void ValidateBrowserAuthority(Arch7bOneShotMaterializedCommand command)
+    internal void ValidateBrowserAuthorityForQualification(
+        Arch7bOneShotMaterializedCommand command,
+        string? expectedPolicyPath = null,
+        Func<string, bool>? reparsePoint = null) =>
+        ValidateBrowserAuthority(command, expectedPolicyPath, reparsePoint);
+
+    private void ValidateBrowserAuthority(Arch7bOneShotMaterializedCommand command,
+        string? expectedPolicyPath = null, Func<string, bool>? reparsePoint = null)
     {
         if (command.CommandId.StartsWith("offline-", StringComparison.Ordinal)) return;
 
+        var target = chromeAuthority ?? throw new Arch7bQualificationException(
+            Arch7bV2Blockers.CommandNonSecretEnvironmentAuthorityMissing,
+            "chrome_executable");
         string? path = null;
         string? sha = null;
         if (command.StageId == "CORE_PREQUALIFICATION")
@@ -677,11 +695,18 @@ public sealed class Arch7bOneShotProcessRunnerV2
         {
             path = Arch7bNativeAdapterJson.Option(command.ArgumentList,
                 "--executable-path");
-            sha = Arch7bSealedNonSecretEnvironment.QualifiedChromeExecutableSha256;
+            sha = target.Sha256;
         }
         if (path is null || sha is null) return;
-        Arch7bSealedNonSecretEnvironment.ValidateChromeAuthority(new(
-            "chrome_executable", path, sha, true, false));
+        if (!string.Equals(Path.GetFullPath(path), Path.GetFullPath(target.Path),
+                StringComparison.OrdinalIgnoreCase))
+            throw new Arch7bQualificationException(
+                Arch7bV2Blockers.CommandChromeExecutablePathAuthorityMismatch);
+        if (sha != target.Sha256)
+            throw new Arch7bQualificationException(
+                Arch7bV2Blockers.CommandChromeExecutableShaMismatch);
+        Arch7bSealedNonSecretEnvironment.ValidateChromeAuthority(target,
+            expectedPolicyPath, reparsePoint);
     }
 
     private static void Kill(Process process)

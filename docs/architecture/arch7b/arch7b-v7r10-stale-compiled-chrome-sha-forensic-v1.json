@@ -1,0 +1,59 @@
+{
+  "contract_version": "arch7b_v7r10_stale_compiled_chrome_sha_forensic_v1",
+  "verdict": "NO_GO_ARCH7B_COMMAND_CHROME_EXECUTABLE_SHA_MISMATCH",
+  "classification": "LIVE_BROWSER_VALIDATOR_REINTRODUCED_STALE_COMPILED_CHROME_SHA_AFTER_TARGET_BINDING",
+  "append_only": true,
+  "historical_run": {
+    "ssm_command_id": "3c496a3b-9081-4b23-91f9-dda4e160958a",
+    "consumed_slot_id": "pms-shadow-15m-20260817T0830Z",
+    "retry_authorized": false,
+    "aggregate_evidence_sha256": "651599e0906dde9d3239aab2084cd3743790d299366b7c59c7ea9a1091c1dfb6"
+  },
+  "source_authority": {
+    "intraday_commit": "fd11b54582c592b20095c16b33582887ff2144cc",
+    "intraday_tree": "0e56991f8a0498ad02159b4a98c603d231b23470",
+    "core_commit": "24992b452a1a3d99318c137413a5e6a4a55512d3",
+    "core_tree": "d9ff920ea5d514190375c689b6d795f1a9a57f37"
+  },
+  "v7r10": {
+    "zip_sha256": "ec587707a58ebc748abb1a5a19f3eecfe40b621ead06952eecff81a49052e681",
+    "manifest_sha256": "dd9bbda108281c5c6c0b285d19ec4e56d7a4e088b4f1d1ecac6eb050a5fc43",
+    "packet_sha256": "fbb2df5794f1c312a4382fefbe2ef8686284377dbd053c359ae8b61b9a4434f0",
+    "runtime_inventory_sha256": "ccc86f89dc0c8d68c5f685ce4eb9f2813b6f4152b94c23d835659ede561a4308",
+    "live_template_sha256": "d347779d9b8a385d9f3c0d2e0589cf08d8e84aedf8ef5c48d0e7b1231745faa9"
+  },
+  "target_chrome_authority": {
+    "authority_id": "chrome_executable",
+    "authority_kind": "File",
+    "path": "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
+    "file_sha256": "b73b9e817990d5d6e6167e1011dadb4b53f7e37392fc658f1e809df07ea6b2b7",
+    "must_exist": true,
+    "must_be_inside_run_root": false,
+    "evidence_sha256": "64f64f551cc55ad70241b1288d2823f7e19b58b4b615f356072b9084808c900f"
+  },
+  "closed_forensic": {
+    "portal_path_matches_target": true,
+    "bracket_path_matches_target": true,
+    "core_config_path_matches_target": true,
+    "core_config_sha_matches_target": true,
+    "actual_file_sha_matches_target": true,
+    "actual_file_sha_differs_from_historical_compiled_sha": true,
+    "historical_compiled_sha256": "1c8a72b0e6b5a4dd1de5ce42a7b11460753d8941baebda208360475f31eb17d2",
+    "forensic_ssm_command_id": "0689afba-e7be-4b1b-b8fd-c12127143bb2"
+  },
+  "constant_reference_classification": {
+    "source_historical_template_bootstrap": [
+      "Arch7bOperationalLivePlanTemplateMaterializer.cs"
+    ],
+    "static_policy": [
+      "Arch7bSealedNonSecretEnvironment.cs:QualifiedChromeExecutablePath"
+    ],
+    "live_runtime_authority": [],
+    "test_only": [
+      "Arch7bCorePrequalificationChromeAuthorityTests.cs",
+      "Arch7bCoreRuntimePrequalificationAdapterTests.cs",
+      "Arch7bTargetBoundBrowserRuntimeAuthorityTests.cs"
+    ]
+  },
+  "mutation_count": 0
+}
