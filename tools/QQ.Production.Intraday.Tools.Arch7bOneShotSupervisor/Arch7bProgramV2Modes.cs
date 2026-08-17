@@ -17,7 +17,8 @@ internal sealed record Arch7bOneShotStaticPreflightEvidence(
     bool OperatorAuthorizationLoaded,
     int ResidualProcessCount,
     int ResidualMarkerCount,
-    Arch7bNoLiveSafetyCounters Safety);
+    Arch7bNoLiveSafetyCounters Safety,
+    Arch7bTargetBoundBrowserRuntimeAuthorityValidation? BrowserRuntimeAuthority = null);
 
 public static class Arch7bProgramV2Modes
 {
@@ -176,11 +177,14 @@ public static class Arch7bProgramV2Modes
             template.Value.AdapterSetSha256, authority.Value.AdapterSetSha256);
 
         _ = ValidateCliAuthorities(options, template.Value);
+        _ = Arch7bTargetBoundBrowserRuntimeAuthorityGate
+            .Qualify(template.Value, authority.Value.FileAuthorities);
 
         var adapters = new Arch7bRealCommandAdapterRegistry();
         var brokerClient = BuildBrokerClient(options, template.Value, adapters);
         var runtime = new Arch7bOneShotLiveExecutionRuntimeV2(new(),
-            new Arch7bOneShotProcessRunnerV2(adapters), adapters, brokerClient);
+            new Arch7bOneShotProcessRunnerV2(adapters, authority.Value.FileAuthorities),
+            adapters, brokerClient);
         return await runtime.RunAsync(template.Value, authority.Value, authorization.Value,
             template.FileSha256, runRoot, TimeProvider.System, new Arch7bCoreOwnedSecretLease())
             .ConfigureAwait(false);
@@ -220,13 +224,15 @@ public static class Arch7bProgramV2Modes
             operationalManifest, Path.Combine(staticEvidenceRoot,
                 Arch7bChildEntrypointValidator.ValidationFileName));
         var cliAuthorityBindings = ValidateCliAuthorities(options, template.Value);
+        var browserRuntimeAuthority = Arch7bTargetBoundBrowserRuntimeAuthorityGate
+            .Qualify(template.Value, template.Value.FileAuthorities);
 
         return new Arch7bOneShotStaticPreflightEvidence(
             "ARCH7B_ONE_SHOT_STATIC_PREFLIGHT_QUALIFIED", true,
             "TARGET_COMMAND_ENVIRONMENT_VALIDATION", targetCommandEnvironment,
             validation, childEntrypoints, cliAuthorityBindings,
             false, false, false, false, false, 0, 0,
-            Arch7bNoLiveSafetyCounters.Zero);
+            Arch7bNoLiveSafetyCounters.Zero, browserRuntimeAuthority);
     }
 
     public static async Task<object> QualifyCoreBrokerCrossRepositoryAsync(
