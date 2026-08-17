@@ -205,6 +205,7 @@ public sealed class Arch7bSealedNonSecretEnvironmentTests
             throw new InvalidOperationException());
 
         Assert.Equal(DotnetRoot(), startInfo.Environment["DOTNET_ROOT"]);
+        Assert.False(startInfo.Environment.ContainsKey("PATH"));
         Assert.DoesNotContain("DOTNET_ROOT", startInfo.Environment.Keys.Where(key =>
             key != "DOTNET_ROOT"));
         Directory.Delete(root, true);

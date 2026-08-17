@@ -56,7 +56,7 @@ public sealed class Arch7bOperationalExecutionAuthorityInventoryTests
     {
         var fixture = Arch7bV2QualificationFactory.Create(
             typeof(QQ.Production.Intraday.Tools.Arch7bOneShotSupervisor.Program)
-                .Assembly.Location, Path.Combine(root, "runtime"));
+                .Assembly.Location, Path.Combine(root, "runtime"), dotnetRoot: DotnetRoot());
         var authorities = new Dictionary<string, Arch7bFileAuthority>(
             fixture.Template.FileAuthorities, StringComparer.Ordinal);
         foreach (var pair in Arch7bTaskkillTestAuthorities.Create())
@@ -120,6 +120,18 @@ public sealed class Arch7bOperationalExecutionAuthorityInventoryTests
         };
     }
 
+    private static string DotnetRoot()
+    {
+        var configured = Environment.GetEnvironmentVariable("DOTNET_ROOT");
+        if (!string.IsNullOrWhiteSpace(configured) &&
+            File.Exists(Path.Combine(configured, "dotnet.exe")))
+            return Path.GetFullPath(configured);
+        var installed = Path.Combine(Environment.GetFolderPath(
+            Environment.SpecialFolder.ProgramFiles), "dotnet");
+        if (!File.Exists(Path.Combine(installed, "dotnet.exe")))
+            throw new DirectoryNotFoundException(installed);
+        return installed;
+    }
     private static string RepositoryRoot()
     {
         var current = new DirectoryInfo(AppContext.BaseDirectory);
