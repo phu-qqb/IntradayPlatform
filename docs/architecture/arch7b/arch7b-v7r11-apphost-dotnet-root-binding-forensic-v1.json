@@ -1,0 +1,50 @@
+{
+  "contract_version": "arch7b_v7r11_apphost_dotnet_root_binding_forensic_v1",
+  "historical_forensic_verdict": "ARCH7B_V7R11_PORTAL_CHILD_HOST_FAILURE_EXACTLY_CLASSIFIED",
+  "historical_closed_classification": "PORTAL_CHILD_IS_DOTNET_APPHOST_WITHOUT_QUALIFIED_DOTNET_ROOT",
+  "historical_forensic_file_sha256": "2a564c2655915005c82aab3f211bd12b5860bf9cdf02ebdd590d18cc6b243ba0",
+  "historical_slot_id": "pms-shadow-15m-20260817T1030Z",
+  "historical_slot_reusable": false,
+  "source_intraday_commit": "130ba4b65676f06106c1e0e6886cd0b820ef31f1",
+  "source_intraday_tree": "7bc2d321a02bd8b04d5d6295c9c3e70968e51ae9",
+  "selection_rule": "ExecutableAuthorityId == supervisor_executable",
+  "apphost_command_count": 12,
+  "prior_reported_count": 11,
+  "cardinality_correction": "CLOCK_CAPTURE_START also resolves supervisor_executable and must receive the same target-bound DOTNET_ROOT",
+  "apphost_stages": [
+    "PORTAL_SESSION_PROVEN",
+    "RDS_READ_1",
+    "BRACKET_T2",
+    "CORE_FAST_SEAL",
+    "POSITION_APPLY",
+    "RUNTIME_SELECTION",
+    "CLOCK_CAPTURE_START",
+    "MARKET_CAPTURE",
+    "MARKET_FINALIZATION",
+    "PMS_IMPORT",
+    "ARCH7A_QUALIFY_SHADOW",
+    "REPORTING"
+  ],
+  "required_non_secret_environment": {
+    "count": 1,
+    "variable_name": "DOTNET_ROOT",
+    "value_kind": "AbsoluteDirectory",
+    "source_authority_id": "dotnet_root",
+    "path_added": false
+  },
+  "core_prequalification_environment": {
+    "executable_authority_id": "node_executable",
+    "variable_names": ["PATH"],
+    "dotnet_root_added": false
+  },
+  "preloaded_lease_ready_command_template_present": false,
+  "production_mechanism_hardcodes_cardinality": false,
+  "slot_selected": 0,
+  "slot_locked": 0,
+  "portal_execution": 0,
+  "rds_connections": 0,
+  "market_data_connections": 0,
+  "fix_logons": 0,
+  "orders": 0,
+  "databento_requests": 0
+}

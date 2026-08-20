@@ -180,6 +180,8 @@ public static class Arch7bV2Blockers
         "ARCH7B_TARGET_COMMAND_ENVIRONMENT_SOURCE_PATH_PRESENT";
     public const string TargetCommandEnvironmentEvidenceMismatch =
         "ARCH7B_TARGET_COMMAND_ENVIRONMENT_EVIDENCE_MISMATCH";
+    public const string ApphostDotnetRootBindingMissing =
+        "ARCH7B_APPHOST_DOTNET_ROOT_BINDING_MISSING";
     public const string TargetCommandProjectionContentMismatch =
         "ARCH7B_TARGET_COMMAND_PROJECTION_CONTENT_MISMATCH";
 }
