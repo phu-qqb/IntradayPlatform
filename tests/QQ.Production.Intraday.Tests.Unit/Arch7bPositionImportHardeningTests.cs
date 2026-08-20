@@ -358,6 +358,106 @@ public sealed class Arch7bPositionImportHardeningTests
         Assert.Equal("ARCH7B_POSITION_FAST_PATH_LATE_ARM_REJECTED",
             exception.Message);
     }
+
+    [Fact]
+    public void T80_PreArmResolverUsesCurrentUniverseAndIsDeterministic()
+    {
+        var package = Arch7bAppendOnlyPositionImportTests.Package();
+        var first = Resolve(package.Universe);
+        var second = Resolve(package.Universe);
+
+        Assert.Equal(first, second);
+        Assert.Equal(Arch7bPreArmBindingResolver.ContractVersion,
+            first.ContractVersion);
+        Assert.Equal(Arch7bPreArmBindingResolver.Resolved, first.Result);
+        Assert.Equal(package.Universe.SourceIngestionId, first.SourceIngestionId);
+        Assert.Equal(package.Universe.IngestionCompletedAtUtc,
+            first.SourceIngestionCompletedAtUtc);
+        Assert.Equal(package.Universe.SourceSessionId, first.SourceSessionId);
+        Assert.Equal(QualifiedUniverse(package.Universe).RequiredUniverseSha256,
+            first.RequiredUniverseSha256);
+        Assert.True(first.TransactionReadOnly && !first.PendingModelChanges &&
+                    first.NoDatabaseWrite && first.NoArmedState &&
+                    first.NoOwnerLock && first.NoReadyMarker &&
+                    first.NoLmaxAcquisition && first.NoFix && first.NoBroker &&
+                    first.NoOrder);
+    }
+
+    [Fact]
+    public void T81_PreArmResolverMatchesHistoricalRealOwnerAndAuthorizationHashes()
+    {
+        var package = Arch7bAppendOnlyPositionImportTests.Package();
+        var resolution = Arch7bPreArmBindingResolver.Resolve(
+            "run-20260727T1830Z-bc662887",
+            "owner-arch7b-pos-20260727T1830Z-bc662887",
+            "arch7b-pos-pms-shadow-15m-20260727T1830Z-bc662887",
+            QualifiedUniverse(package.Universe), QualifiedTarget(), Repository());
+
+        Assert.Equal(
+            "58166c0606eaee9bcca957df30bf6031249a701bfbcec57b1d3271e091479dcc",
+            resolution.OwnerIdSha256);
+        Assert.Equal(
+            "742314b04cd7967aba0a99fc6754d5a71c786b77b124a400165267d0fdce485c",
+            resolution.FutureAuthorizationIdSha256);
+    }
+
+    [Theory]
+    [InlineData("", "authorization", "ARCH7B_PREARM_OWNER_ID_INVALID")]
+    [InlineData("owner", "", "ARCH7B_PREARM_FUTURE_AUTHORIZATION_ID_INVALID")]
+    [InlineData(" owner", "authorization", "ARCH7B_PREARM_OWNER_ID_INVALID")]
+    public void T82_PreArmResolverRejectsMissingOrInvalidExecutionIdentities(
+        string ownerId, string futureAuthorizationId, string expected)
+    {
+        var package = Arch7bAppendOnlyPositionImportTests.Package();
+        var exception = Assert.Throws<InvalidDataException>(() =>
+            Arch7bPreArmBindingResolver.Resolve("run", ownerId,
+                futureAuthorizationId, package.Universe, Target(), Repository()));
+        Assert.Equal(expected, exception.Message);
+    }
+
+    [Fact]
+    public void T83_PreArmResolverRejectsMismatchedTarget()
+    {
+        var package = Arch7bAppendOnlyPositionImportTests.Package();
+        var exception = Assert.Throws<InvalidDataException>(() =>
+            Resolve(package.Universe, Target() with { TargetFingerprint = Hash('9') }));
+        Assert.Equal("ARCH7B_PREARM_TARGET_FINGERPRINT_MISMATCH",
+            exception.Message);
+    }
+
+    [Fact]
+    public void T84_PreArmResolverRejectsPendingOrNonReadOnlyUniverse()
+    {
+        var package = Arch7bAppendOnlyPositionImportTests.Package();
+        var pending = Assert.Throws<InvalidDataException>(() =>
+            Resolve(package.Universe with { PendingModelChanges = true }));
+        Assert.Equal("ARCH7B_PREARM_PENDING_MODEL_CHANGES", pending.Message);
+        var nonReadOnly = Assert.Throws<InvalidDataException>(() =>
+            Resolve(package.Universe with { TransactionReadOnly = false }));
+        Assert.Equal("ARCH7B_PREARM_TRANSACTION_NOT_READ_ONLY",
+            nonReadOnly.Message);
+    }
+
+    [Fact]
+    public void T85_PreArmResolverArgumentsDoNotRequireSourceIngestionId()
+    {
+        var parsed = Arch7bPositionImportArguments.Parse(
+            ResolverArguments());
+        Assert.Equal("resolve-arm-preconditions", parsed.Mode);
+        Assert.Equal("run", parsed.RunId);
+    }
+
+    [Fact]
+    public void T86_PreArmResolverRejectsCallerSuppliedSourceIngestionId()
+    {
+        var arguments = ResolverArguments()
+            .Concat(["--expected-source-ingestion-id", Guid.NewGuid().ToString("D")])
+            .ToArray();
+        var exception = Assert.Throws<InvalidDataException>(() =>
+            Arch7bPositionImportArguments.Parse(arguments));
+        Assert.Equal("ARCH7B_PREARM_SOURCE_INGESTION_ARGUMENT_FORBIDDEN",
+            exception.Message);
+    }
     private static PmsShadowPositionSnapshotRow Select(
         params PmsShadowPositionSnapshotRow[] snapshots) =>
         PmsShadowPositionSnapshotForSlotSelection.Select(snapshots, Slot);
@@ -408,6 +508,46 @@ public sealed class Arch7bPositionImportHardeningTests
             Target(), Repository(), "authorization", "owner",
             package.Universe.SourceIngestionId,
             package.Snapshot.BracketLowerBoundUtc.AddSeconds(-1));
+
+    private static Arch7bPreArmBindingResolution Resolve(
+        Arch7bRequiredPmsUniverse universe,
+        PmsShadowPostgreSqlTarget? target = null) =>
+        Arch7bPreArmBindingResolver.Resolve("run", "owner", "authorization",
+            QualifiedUniverse(universe), target ?? QualifiedTarget(), Repository());
+
+    private static Arch7bRequiredPmsUniverse QualifiedUniverse(
+        Arch7bRequiredPmsUniverse universe) => universe with
+    {
+        RequiredUniverseSha256 = Hash('a'),
+        TargetFingerprint = Arch7bPreArmBindingResolver.ExpectedTargetFingerprint
+    };
+
+    private static PmsShadowPostgreSqlTarget QualifiedTarget() => Target() with
+    {
+        TargetFingerprint = Arch7bPreArmBindingResolver.ExpectedTargetFingerprint
+    };
+
+    private static string[] ResolverArguments() =>
+    [
+        "resolve-arm-preconditions",
+        "--no-order",
+        "--expected-environment", Arch7bBracketedGlobalFlatContract.TargetEnvironment,
+        "--expected-database", Arch7bBracketedGlobalFlatContract.TargetDatabase,
+        "--expected-schema", PmsShadowStateContract.SchemaName,
+        "--expected-postgresql-major", Arch7bBracketedGlobalFlatContract.PostgreSqlMajor.ToString(),
+        "--target-profile", Arch7bBracketedGlobalFlatContract.TargetProfile,
+        "--expected-target-fingerprint", Arch7bPreArmBindingResolver.ExpectedTargetFingerprint,
+        "--repository-root", "C:\\repo",
+        "--build-commit", Hash('a', 40),
+        "--expected-repository-head", Hash('a', 40),
+        "--git-executable", "git.exe",
+        "--expected-git-sha256", Hash('b'),
+        "--expected-git-version", "git version test",
+        "--output-directory", "C:\\out",
+        "--run-id", "run",
+        "--owner-id", "owner",
+        "--future-authorization-id", "authorization"
+    ];
 
     private static PmsShadowPostgreSqlTarget Target() =>
         Arch7bAppendOnlyPositionImportTests.Target();
