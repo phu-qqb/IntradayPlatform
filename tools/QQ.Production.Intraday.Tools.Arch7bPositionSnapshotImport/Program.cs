@@ -219,6 +219,50 @@ if (arguments.Mode == "qualify-database-clock")
 var repository = prevalidatedRepository ?? throw new InvalidDataException(
     "ARCH7B_POSITION_IMPORT_REPOSITORY_PREVALIDATION_MISSING");
 
+if (arguments.Mode == "resolve-arm-preconditions")
+{
+    var openEvidence = await supervisor.WaitForOpenAsync();
+    var universe = await new Arch7bRequiredPmsUniverseReader(
+            contextFactory, target, runtime)
+        .ReadAsync();
+    var resolution = Arch7bPreArmBindingResolver.Resolve(
+        arguments.RunId, arguments.OwnerId, arguments.FutureAuthorizationId,
+        universe, target, repository);
+    var evidencePath = Arch7bPreArmBindingResolutionStore.Publish(
+        arguments.OutputDirectory, resolution);
+    Console.WriteLine(JsonSerializer.Serialize(new
+    {
+        resolution.ContractVersion,
+        resolution.Result,
+        resolution.RunId,
+        resolution.OwnerIdSha256,
+        resolution.FutureAuthorizationIdSha256,
+        resolution.SourceIngestionId,
+        resolution.SourceIngestionCompletedAtUtc,
+        resolution.SourceSessionId,
+        resolution.RequiredUniverseSha256,
+        resolution.SourceSelectionAuthority,
+        resolution.TargetProfile,
+        resolution.TargetFingerprint,
+        resolution.RepositoryAuthorityContract,
+        resolution.RepositoryCommit,
+        resolution.BuildCommit,
+        resolution.TransactionReadOnly,
+        resolution.PendingModelChanges,
+        resolution.NoDatabaseWrite,
+        resolution.NoArmedState,
+        resolution.NoOwnerLock,
+        resolution.NoReadyMarker,
+        resolution.NoLmaxAcquisition,
+        resolution.NoFix,
+        resolution.NoBroker,
+        resolution.NoOrder,
+        evidence_path = evidencePath,
+        pinned_session = SanitizedSession(openEvidence)
+    }, Arch7bPositionImportArguments.Json));
+    return;
+}
+
 if (arguments.Mode == "run-fresh-position-import-fast-path")
 {
     var expectations = new Arch7bCoreEvidenceExpectations(
@@ -588,6 +632,7 @@ public sealed class Arch7bPositionImportArguments
     public string ReadyMarkerPath => Required("--ready-marker");
     public string ArmedStatePath => Required("--armed-state");
     public string OwnerLockPath => Required("--owner-lock");
+    public string RunId => Required("--run-id");
     public string OwnerId => Required("--owner-id");
     public string FutureAuthorizationId => Required("--future-authorization-id");
     public bool RequiresRepository =>
@@ -617,6 +662,7 @@ public sealed class Arch7bPositionImportArguments
                     "qualify-pinned-postgresql-session" or
                     "qualify-repository-authority" or
                     "qualify-runtime-selection" or
+                    "resolve-arm-preconditions" or
                     "run-fresh-position-import-fast-path" or
                     "qualify-core-to-position-consumer-offline-bridge",
             "ARCH7B_POSITION_IMPORT_MODE_REQUIRED");
@@ -772,6 +818,17 @@ public sealed class Arch7bPositionImportArguments
             _ = parsed.OwnerId;
             _ = parsed.FutureAuthorizationId;
         }
+        else if (parsed.Mode == "resolve-arm-preconditions")
+        {
+            Require(!parsed.Apply && !parsed.HistoricalFixture,
+                "ARCH7B_PREARM_BINDING_RESOLUTION_FLAGS_INVALID");
+            Require(!parsed.values.ContainsKey("--expected-source-ingestion-id"),
+                "ARCH7B_PREARM_SOURCE_INGESTION_ARGUMENT_FORBIDDEN");
+            _ = parsed.OutputDirectory;
+            _ = parsed.RunId;
+            _ = parsed.OwnerId;
+            _ = parsed.FutureAuthorizationId;
+        }
         else if (parsed.Mode == "plan-import")
         {
             Require(!parsed.Apply,
@@ -833,6 +890,8 @@ public sealed class Arch7bPositionImportArguments
         var applicationName = Mode switch
         {
             "arm-import" => "QQ_ARCH7B_POSITION_IMPORT_ARM_READONLY",
+            "resolve-arm-preconditions" =>
+                "QQ_ARCH7B_PREARM_BINDING_RESOLVER_READONLY",
             "qualify-pinned-postgresql-session" =>
                 "QQ_ARCH7B_PINNED_SESSION_QUALIFICATION_READONLY",
             "qualify-database-clock" =>
