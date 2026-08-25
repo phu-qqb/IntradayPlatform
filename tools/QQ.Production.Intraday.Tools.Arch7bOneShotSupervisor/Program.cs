@@ -37,6 +37,18 @@ public static class Program
                 "materialize-final-stage-execution-classification" => await
                     Arch7bFinalStageExecutionCatalog.WriteAsync(
                         Path.GetFullPath(Required(options, "output-path"))).ConfigureAwait(false),
+                "materialize-governed-source-template" => await
+                    Arch7bGovernedSourceTemplateMaterializer.WriteAsync(
+                        Path.GetFullPath(Required(options, "supervisor-executable")),
+                        Path.GetFullPath(Required(options, "dotnet-root")),
+                        Path.GetFullPath(Required(options, "git-executable")),
+                        Path.GetFullPath(Required(options, "node-executable")),
+                        Path.GetFullPath(Required(options, "taskkill-executable")),
+                        Path.GetFullPath(Required(options, "chrome-executable")),
+                        Required(options, "intraday-commit"),
+                        Required(options, "intraday-tree"),
+                        RequiredSha(options, "runtime-inventory-sha256"),
+                        Path.GetFullPath(Required(options, "output-path"))).ConfigureAwait(false),
                 "qualify-source-template-provenance" => await
                     Arch7bSourceTemplateProvenanceValidator.ValidateAsync(
                         Path.GetFullPath(Required(options, "source-template")),
