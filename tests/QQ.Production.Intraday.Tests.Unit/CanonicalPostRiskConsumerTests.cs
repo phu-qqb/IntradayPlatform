@@ -42,5 +42,5 @@ public sealed class CanonicalPostRiskConsumerTests
 
     private static MandateFundMapping Mandate() => new("mandate-001", new(Guid.Parse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")), "mandate-map", 1, At.AddMinutes(-1), null, "test");
     private static InstrumentExecutionMapping Instrument() => new("instrument-001", new(Guid.Parse("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")), new(Guid.Parse("cccccccc-cccc-cccc-cccc-cccccccccccc")), new(Guid.Parse("dddddddd-dddd-dddd-dddd-dddddddddddd")), "instrument-map", 1, At.AddMinutes(-1), null, "test");
-    private static RetainedExecutionContext Context() => new(1000000m, 15, TargetQuantityMode.FxBaseCurrencyQuantity, new(Guid.Parse("eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee")), "route", "context", 1, At.AddMinutes(-1), null, "test");
+    private static RetainedExecutionContext Context() => new(Mandate().FundId, Instrument().VenueId, 1000000m, 15, TargetQuantityMode.FxBaseCurrencyQuantity, new(Guid.Parse("eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee")), "route", "context", 1, At.AddMinutes(-1), null, "test");
 }
