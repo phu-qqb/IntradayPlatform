@@ -27,10 +27,17 @@ public static class Arch7bOneShotContracts
     public const string IntradayBaseCommit = "6eb13a2f1bcf77f71f12efd4f4eef1b71a43c657";
     public const string IntradayBaseTree = "d325308bc0d951468fc037feb55ffdf01c347f57";
     public const string CoreRepository = "phu-qqb/QQ.Production.Core";
-    public const string CoreCommit = "24992b452a1a3d99318c137413a5e6a4a55512d3";
-    public const string CoreTree = "d9ff920ea5d514190375c689b6d795f1a9a57f37";
-    public const string CoreTrackedInventorySha256 = "786c7b52353a061ec4f1d56c0b238f61809ecadd951a245ae54944d0d5eaeb91";
-    public const string CoreRepositoryAuthoritySha256 = "d4a3c264d2dca0983ac375a39fd8dbc788daf16f329e1afa24ac8afb7a3ae7e9";
+    public const string CoreCommit = "dd9bbe988b3a086ce1d5adf21c8d6ff5d200f825";
+    public const string CoreTree = "94c9352797afaa75e23099e0c14dc84597e1951d";
+    public const string CoreOperationalSourceProvenanceSha256 =
+        "7cda7a9cea12525bb839d62ef27566b4a5aeb53c740e1d02759bf0352612df2d";
+    public const string CoreR38RuntimeSha256 =
+        "2527ec6517cd1086cc49fd433f862f29ef57ac6a909bd8d07ac447dfd17577dd";
+    public const string CoreR38RuntimePayloadSha256 =
+        "3914a248b46f7b6ea16614e46d3c32df1defc2f4b15fa300e033446bd90711b4";
+    public const int CoreR38RuntimeInventoryCount = 2941;
+    public const string CoreTrackedInventorySha256 = CoreR38RuntimePayloadSha256;
+    public const string CoreRepositoryAuthoritySha256 = CoreOperationalSourceProvenanceSha256;
     public const int ExpectedCorePrequalificationTestCount = 156;
 
     public const int MaximumSlots = 1;
@@ -48,6 +55,20 @@ public static class Arch7bOneShotContracts
 
     public static bool IsSha256(string? value) => value is not null && value.Length == 64 &&
         value.All(character => char.IsAsciiHexDigit(character) && !char.IsUpper(character));
+}
+
+public static class Arch7bCoreR38Authority
+{
+    public static void Validate(string coreCommit, string coreTree,
+        string repositoryAuthoritySha256, string trackedInventorySha256)
+    {
+        if (coreCommit != Arch7bOneShotContracts.CoreCommit ||
+            coreTree != Arch7bOneShotContracts.CoreTree ||
+            repositoryAuthoritySha256 != Arch7bOneShotContracts.CoreRepositoryAuthoritySha256 ||
+            trackedInventorySha256 != Arch7bOneShotContracts.CoreTrackedInventorySha256)
+            throw new Arch7bQualificationException(
+                Arch7bV2Blockers.CoreR38AuthorityMismatch);
+    }
 }
 
 public static class Arch7bBlockers

@@ -272,6 +272,7 @@ public static class Arch7bTargetCommandEnvironmentValidator
         var projectedEvidenceCount = 0;
         foreach (var command in template.CommandTemplates)
         {
+            ValidateRequiredEnvironment(command, template.FileAuthorities);
             variableCount += command.NonSecretEnvironment.Count;
             foreach (var argument in command.ArgumentTemplates.Where(argument =>
                          Path.IsPathFullyQualified(argument.Value)))
@@ -333,6 +334,32 @@ public static class Arch7bTargetCommandEnvironmentValidator
         return new(Arch7bV2Contracts.TargetCommandEnvironmentValidationVersion,
             true, template.CommandTemplates.Count, variableCount, forbiddenCount,
             Arch7bOneShotContracts.Sha256(canonical));
+    }
+
+    private static void ValidateRequiredEnvironment(
+        Arch7bOneShotCommandTemplate command,
+        IReadOnlyDictionary<string, Arch7bFileAuthority> authorities)
+    {
+        var catalog = Arch7bFinalStageExecutionCatalog.Require(command.StageId);
+        if (!catalog.HasCommandTemplate || catalog.CommandId != command.CommandId) return;
+
+        if (command.ExecutableAuthorityId == "supervisor_executable")
+        {
+            var names = command.NonSecretEnvironment.Select(value => value.VariableName).ToArray();
+            if (names.Length != 1 || names[0] != "DOTNET_ROOT")
+                throw new Arch7bQualificationException(
+                    Arch7bV2Blockers.ApphostDotnetRootBindingMissing, command.CommandId);
+            return;
+        }
+
+        if (command.StageId != "CORE_PREQUALIFICATION") return;
+        var expected = Arch7bSealedNonSecretEnvironment
+            .ForCorePrequalificationEnvironment(authorities).Single();
+        if (command.NonSecretEnvironment.Count != 1 ||
+            command.NonSecretEnvironment[0].VariableName != expected.VariableName)
+            throw new Arch7bQualificationException(
+                Arch7bV2Blockers.CommandNonSecretEnvironmentVariableForbidden,
+                command.CommandId);
     }
 
     private static Arch7bSealedNonSecretEnvironmentVariable Expected(

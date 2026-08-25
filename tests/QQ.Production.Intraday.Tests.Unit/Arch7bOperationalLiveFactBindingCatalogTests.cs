@@ -247,6 +247,31 @@ public sealed class Arch7bOperationalLiveFactBindingCatalogTests : IDisposable
             executablePath.Value);
         Assert.DoesNotContain(core.NonSecretEnvironment,
             value => value.VariableName == "ProgramFiles(x86)");
+        Assert.DoesNotContain(core.NonSecretEnvironment,
+            value => value.VariableName == "DOTNET_ROOT");
+        var apphosts = result.Template.CommandTemplates.Where(command =>
+            command.ExecutableAuthorityId == "supervisor_executable").ToArray();
+        Assert.Equal(12, apphosts.Length);
+        Assert.Equal(new[]
+        {
+            "PORTAL_SESSION_PROVEN", "RDS_READ_1", "BRACKET_T2", "CORE_FAST_SEAL",
+            "POSITION_APPLY", "RUNTIME_SELECTION", "CLOCK_CAPTURE_START", "MARKET_CAPTURE",
+            "MARKET_FINALIZATION", "PMS_IMPORT", "ARCH7A_QUALIFY_SHADOW", "REPORTING"
+        }, apphosts.Select(command => command.StageId));
+        var expectedDotnetRoot = Arch7bSealedNonSecretEnvironment
+            .ForDotnetRoot(result.Template.FileAuthorities).Single();
+        Assert.All(apphosts, command =>
+        {
+            var variable = Assert.Single(command.NonSecretEnvironment);
+            Assert.Equal(expectedDotnetRoot, variable);
+            Assert.Equal("DOTNET_ROOT", variable.VariableName);
+            Assert.Equal("dotnet_root", variable.SourceAuthorityId);
+            Assert.DoesNotContain(command.NonSecretEnvironment,
+                value => value.VariableName == "PATH");
+        });
+        Assert.DoesNotContain(result.Template.CommandTemplates,
+            command => command.StageId == "PRELOADED_LEASE_READY");
+        Assert.True(Arch7bTargetCommandEnvironmentValidator.Validate(result.Template).Passed);
         Assert.Equal("CHROME_EXPLICIT_EXECUTABLE", result.Template.SelectedBrowser);
         Assert.True(result.Template.FileAuthorities.ContainsKey("chrome_executable"));
         Assert.False(result.Template.FileAuthorities.ContainsKey("msedge_executable"));
@@ -275,6 +300,42 @@ public sealed class Arch7bOperationalLiveFactBindingCatalogTests : IDisposable
         Assert.Equal(first.EvidenceSha256, second.EvidenceSha256);
         Assert.Equal(JsonSerializer.SerializeToUtf8Bytes(first.Template),
             JsonSerializer.SerializeToUtf8Bytes(second.Template));
+    }
+
+    [Fact]
+    public void Target_validation_rejects_apphost_without_dotnet_root()
+    {
+        var template = Arch7bOperationalLivePlanTemplateMaterializer.Materialize(
+            OperationalSkeleton(), File.ReadAllBytes(SourceManifestPath())).Template;
+        var commands = template.CommandTemplates.Select(command =>
+            command.StageId == "PORTAL_SESSION_PROVEN"
+                ? command with { NonSecretEnvironment = [] }
+                : command).ToArray();
+        var stale = template with { CommandTemplates = commands };
+
+        var error = Assert.Throws<Arch7bQualificationException>(() =>
+            Arch7bTargetCommandEnvironmentValidator.Validate(stale));
+
+        Assert.Equal(Arch7bV2Blockers.ApphostDotnetRootBindingMissing, error.BlockerCode);
+    }
+
+    [Fact]
+    public void Target_validation_rejects_path_on_apphost()
+    {
+        var template = Arch7bOperationalLivePlanTemplateMaterializer.Materialize(
+            OperationalSkeleton(), File.ReadAllBytes(SourceManifestPath())).Template;
+        var corePath = template.CommandTemplates.Single(command =>
+            command.StageId == "CORE_PREQUALIFICATION").NonSecretEnvironment;
+        var commands = template.CommandTemplates.Select(command =>
+            command.StageId == "PORTAL_SESSION_PROVEN"
+                ? command with { NonSecretEnvironment = corePath }
+                : command).ToArray();
+        var stale = template with { CommandTemplates = commands };
+
+        var error = Assert.Throws<Arch7bQualificationException>(() =>
+            Arch7bTargetCommandEnvironmentValidator.Validate(stale));
+
+        Assert.Equal(Arch7bV2Blockers.ApphostDotnetRootBindingMissing, error.BlockerCode);
     }
 
     [Fact]
@@ -423,7 +484,7 @@ public sealed class Arch7bOperationalLiveFactBindingCatalogTests : IDisposable
     {
         var fixture = Arch7bV2QualificationFactory.Create(
             typeof(QQ.Production.Intraday.Tools.Arch7bOneShotSupervisor.Program)
-                .Assembly.Location, Path.Combine(root, "runtime"));
+                .Assembly.Location, Path.Combine(root, "runtime"), dotnetRoot: DotnetRoot());
         var authorities = new Dictionary<string, Arch7bFileAuthority>(
             fixture.Template.FileAuthorities, StringComparer.Ordinal);
         foreach (var pair in Arch7bTaskkillTestAuthorities.Create())
@@ -539,6 +600,19 @@ public sealed class Arch7bOperationalLiveFactBindingCatalogTests : IDisposable
 
     private static string Sha(string path) =>
         Convert.ToHexStringLower(SHA256.HashData(File.ReadAllBytes(path)));
+
+    private static string DotnetRoot()
+    {
+        var configured = Environment.GetEnvironmentVariable("DOTNET_ROOT");
+        if (!string.IsNullOrWhiteSpace(configured) &&
+            File.Exists(Path.Combine(configured, "dotnet.exe")))
+            return Path.GetFullPath(configured);
+        var installed = Path.Combine(Environment.GetFolderPath(
+            Environment.SpecialFolder.ProgramFiles), "dotnet");
+        if (!File.Exists(Path.Combine(installed, "dotnet.exe")))
+            throw new DirectoryNotFoundException(installed);
+        return installed;
+    }
 
     public void Dispose()
     {

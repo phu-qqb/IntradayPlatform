@@ -119,6 +119,7 @@ public static class Arch7bOperationalLivePlanTemplateMaterializer
             .Select(command => command.StageId is "PORTAL_SESSION_PROVEN" or "BRACKET_T2"
                 ? BindExplicitChrome(command)
                 : command)
+            .Select(command => BindQualifiedDotnetRootForApphost(command, fileAuthorities))
             .OrderBy(command => stageOrder[command.StageId])
             .ToArray();
         if (commands.Length != Arch7bFinalStageExecutionCatalog.CommandTemplateCount ||
@@ -440,6 +441,36 @@ public static class Arch7bOperationalLivePlanTemplateMaterializer
             string.Join('|', provisional.SecretVariableNames),
             Arch7bSealedNonSecretEnvironment.Canonical(
                 provisional.NonSecretEnvironment),
+            provisional.LongLivedProcessKey ?? string.Empty);
+        return provisional with
+        {
+            EvidenceSha256 = Arch7bOneShotContracts.Sha256(canonical)
+        };
+    }
+
+    private static Arch7bOneShotCommandTemplate BindQualifiedDotnetRootForApphost(
+        Arch7bOneShotCommandTemplate prototype,
+        IReadOnlyDictionary<string, Arch7bFileAuthority> authorities)
+    {
+        if (prototype.ExecutableAuthorityId != "supervisor_executable") return prototype;
+        var provisional = prototype with
+        {
+            NonSecretEnvironment = Arch7bSealedNonSecretEnvironment.ForDotnetRoot(authorities),
+            EvidenceSha256 = string.Empty
+        };
+        var canonical = string.Join('\n', Arch7bV2Contracts.CommandTemplateVersion,
+            provisional.CommandId, provisional.StageId, provisional.ExecutionKind,
+            provisional.ExecutableAuthorityId,
+            string.Join('|', provisional.ArgumentTemplates.Select(value =>
+                $"{value.Value}:{value.ValueKind}:{value.ExpectedProducerStage}:" +
+                $"{value.MaximumAgeSeconds}:{value.MustBeInsideRunRoot}")),
+            provisional.WorkingDirectoryAuthorityId, provisional.AdapterId,
+            provisional.AdapterContractVersion, provisional.ExpectedNativeOutputContract,
+            provisional.TimeoutSeconds, provisional.StandardOutputLimitBytes,
+            provisional.StandardErrorLimitBytes, provisional.CleanupResourceType,
+            provisional.CausesRdsRead, provisional.CausesCapture, provisional.ReadsSecret,
+            string.Join('|', provisional.SecretVariableNames),
+            Arch7bSealedNonSecretEnvironment.Canonical(provisional.NonSecretEnvironment),
             provisional.LongLivedProcessKey ?? string.Empty);
         return provisional with
         {
