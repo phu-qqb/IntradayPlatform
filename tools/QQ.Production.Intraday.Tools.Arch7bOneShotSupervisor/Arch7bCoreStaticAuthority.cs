@@ -109,6 +109,9 @@ public static class Arch7bCoreStaticAuthorityQualifier
             throw new InvalidDataException($"CORE_HEAD_MISMATCH:{head}");
         if (tree != Arch7bOneShotContracts.CoreTree)
             throw new InvalidDataException($"CORE_TREE_MISMATCH:{tree}");
+        Arch7bCoreR38Authority.Validate(head, tree,
+            Arch7bOneShotContracts.CoreRepositoryAuthoritySha256,
+            Arch7bOneShotContracts.CoreTrackedInventorySha256);
 
         var sources = new List<Arch7bCoreSourceAuthority>();
         foreach (var spec in SourceSpecs)
