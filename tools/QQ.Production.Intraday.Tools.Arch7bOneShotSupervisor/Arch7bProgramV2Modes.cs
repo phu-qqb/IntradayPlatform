@@ -27,7 +27,7 @@ public static class Arch7bProgramV2Modes
         "72fa569ee28e4dec6272db0d69c7594b2be8853e9607dff3e78066378a0b5ee4";
     private const string Arch7bPositionImporterSecretArn =
         "arn:aws:secretsmanager:eu-west-2:761018894194:secret:" +
-        "qq/fund-platform/test/rds/arch7b-position-importer-oVmKT5";
+        "qq-intraday-test-credentials-5YHOCV";
     private const string Arch7bDemoAccountId = "1754288005";
 
     public static object ValidateLiveTemplate(IReadOnlyDictionary<string, string> options)
