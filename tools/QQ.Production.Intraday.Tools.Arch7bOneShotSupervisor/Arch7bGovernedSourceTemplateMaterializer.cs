@@ -184,7 +184,7 @@ public static class Arch7bGovernedSourceTemplateMaterializer
         {
             var candidate = Path.Combine(directory.FullName, "docs", "architecture", "arch7b",
                 "arch7b-position-market-live-command-manifest.json");
-            if (File.Exists(candidate)) return directory.FullName;
+            if (File.Exists(candidate)) return candidate;
             directory = directory.Parent;
         }
         throw new Arch7bQualificationException(Arch7bV2Blockers.AuthorityBindingMismatch,
