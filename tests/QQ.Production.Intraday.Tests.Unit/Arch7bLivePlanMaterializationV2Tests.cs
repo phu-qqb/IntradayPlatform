@@ -297,26 +297,13 @@ public sealed class Arch7bLivePlanMaterializationV2Tests
         Arch7bV2QualificationFixture fixture, string suffix)
     {
         var root = Root("freeze-" + suffix);
-        Directory.CreateDirectory(root);
-        var manifestBytes = Encoding.UTF8.GetBytes("manifest-" + suffix);
-        var packetBytes = Encoding.UTF8.GetBytes("packet-" + suffix);
-        var manifestSha = Arch7bOneShotContracts.Sha256("manifest-" + suffix);
-        var packetSha = Arch7bOneShotContracts.Sha256("packet-" + suffix);
-        await File.WriteAllBytesAsync(Path.Combine(root, "arch7b-final-operational-freeze-v7-manifest.json"), manifestBytes);
-        await File.WriteAllBytesAsync(Path.Combine(root, "ARCH7B-next-operational-run-packet-v7.json"), packetBytes);
-        var template = fixture.Template with
-        {
-            FreezeManifestSha256 = manifestSha,
-            FreezePacketSha256 = packetSha,
-            EvidenceSha256 = string.Empty
-        };
-        template = template with { EvidenceSha256 = Arch7bOneShotContracts.Sha256(template.Canonical()) };
-        var templatePath = Path.Combine(root, Arch7bLiveAuthorityMaterializer.TemplateFileName);
-        var templateBytes = JsonSerializer.SerializeToUtf8Bytes(template,
-            new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower });
-        await File.WriteAllBytesAsync(templatePath, templateBytes);
-        return (root, templatePath, manifestSha, packetSha,
-            Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(templateBytes)), template);
+        var materialized = await Arch7bFinalOperationalFreezeMaterializer.MaterializeAsync(
+            fixture.Template, Path.Combine(root, Arch7bLiveAuthorityMaterializer.TemplateFileName));
+        var bytes = await File.ReadAllBytesAsync(materialized.TemplatePath);
+        var template = JsonSerializer.Deserialize<Arch7bOneShotLivePlanTemplate>(bytes,
+            Arch7bJson.CanonicalOptions) ?? throw new InvalidDataException(materialized.TemplatePath);
+        return (root, materialized.TemplatePath, materialized.ManifestSha256,
+            materialized.PacketSha256, materialized.TemplateSha256, template);
     }
     private static Arch7bV2QualificationFixture Fixture(string suffix) =>
         Arch7bV2QualificationFactory.Create(SupervisorExecutable(), Root(suffix));

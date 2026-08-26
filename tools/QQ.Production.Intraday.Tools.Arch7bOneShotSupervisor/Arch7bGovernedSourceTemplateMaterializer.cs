@@ -1,5 +1,4 @@
 using System.Security.Cryptography;
-using System.Text.Json;
 
 namespace QQ.Production.Intraday.Tools.Arch7bOneShotSupervisor;
 
@@ -32,8 +31,6 @@ public static class Arch7bGovernedSourceTemplateMaterializer
         taskkillExecutable = RequireFile(taskkillExecutable, "taskkill-executable");
         chromeExecutable = RequireFile(chromeExecutable, "chrome-executable");
         outputPath = Path.GetFullPath(outputPath);
-        if (File.Exists(outputPath))
-            throw new Arch7bQualificationException(Arch7bBlockers.RunRootReused, outputPath);
 
         var fixture = Arch7bV2QualificationFactory.Create(supervisorExecutable,
             Path.Combine(Path.GetTempPath(), "qq-arch7b-governed-source-template"),
@@ -64,24 +61,23 @@ public static class Arch7bGovernedSourceTemplateMaterializer
             "arch7b", "arch7b-position-market-live-command-manifest.json");
         var materialized = Arch7bOperationalLivePlanTemplateMaterializer.Materialize(skeleton,
             await File.ReadAllBytesAsync(sourceManifestPath, cancellationToken).ConfigureAwait(false));
-        var bytes = JsonSerializer.SerializeToUtf8Bytes(materialized.Template,
-            Arch7bJson.CanonicalOptions);
-        Directory.CreateDirectory(Path.GetDirectoryName(outputPath)!);
-        await using (var stream = new FileStream(outputPath, FileMode.CreateNew, FileAccess.Write,
-                         FileShare.None, 4096, FileOptions.Asynchronous | FileOptions.WriteThrough))
-        {
-            await stream.WriteAsync(bytes, cancellationToken).ConfigureAwait(false);
-            await stream.FlushAsync(cancellationToken).ConfigureAwait(false);
-        }
-        var sha = Convert.ToHexStringLower(SHA256.HashData(bytes));
-        _ = await Arch7bSourceTemplateProvenanceValidator.ValidateAsync(outputPath, sha,
+        var freeze = await Arch7bFinalOperationalFreezeMaterializer.MaterializeAsync(
+            materialized.Template, outputPath, cancellationToken).ConfigureAwait(false);
+        _ = await Arch7bSourceTemplateProvenanceValidator.ValidateAsync(outputPath, freeze.TemplateSha256,
             intradayCommit, intradayTree, cancellationToken).ConfigureAwait(false);
         return new
         {
             verdict = "ARCH7B_GOVERNED_SOURCE_TEMPLATE_MATERIALIZED",
             qualificationOnly = true,
             sourceTemplatePath = outputPath,
-            sourceTemplateSha256 = sha,
+            sourceTemplateSha256 = freeze.TemplateSha256,
+            preFreezeTemplateIdentitySha256 = freeze.PreFreezeTemplateIdentitySha256,
+            freezeManifestPath = freeze.ManifestPath,
+            freezeManifestSha256 = freeze.ManifestSha256,
+            freezePacketPath = freeze.PacketPath,
+            freezePacketSha256 = freeze.PacketSha256,
+            closurePath = freeze.ClosurePath,
+            closureSha256 = freeze.ClosureSha256,
             stageCount = materialized.Template.StageContracts.Count,
             commandCount = materialized.Template.CommandTemplates.Count,
             runtimeInventorySha256,

@@ -45,6 +45,8 @@ public static class Arch7bLiveAuthorityMaterializer
         if (template.Value.FreezeManifestSha256 != expectedFreezeManifestSha256 ||
             template.Value.FreezePacketSha256 != expectedFreezePacketSha256)
             throw new Arch7bQualificationException(Arch7bBlockers.FreezeAuthorityMismatch);
+        await Arch7bFinalOperationalFreezeMaterializer.ValidatePhysicalFreezeAsync(freezeRoot,
+            template.Value, cancellationToken).ConfigureAwait(false);
         var adapters = new Arch7bRealCommandAdapterRegistry();
         Arch7bLiveTemplateValidator.Validate(template.Value, adapters);
 

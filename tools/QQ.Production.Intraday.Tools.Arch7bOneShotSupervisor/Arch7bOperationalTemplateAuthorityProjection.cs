@@ -42,6 +42,10 @@ public static class Arch7bOperationalTemplateAuthorityProjection
                 value.Value.Sha256, value.Value.MustExist, value.Value.MustBeInsideRunRoot))));
         var provisional = sourceTemplate with
         {
+            // These physical hashes are source-freeze bindings.  Target projection may
+            // alter only target authority and command bindings, never the freeze identity.
+            FreezeManifestSha256 = sourceTemplate.FreezeManifestSha256,
+            FreezePacketSha256 = sourceTemplate.FreezePacketSha256,
             FileAuthorities = authorities,
             StaticAuthoritySetSha256 = staticAuthoritySet,
             CommandTemplates = commandProjection.CommandTemplates,
