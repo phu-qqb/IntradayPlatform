@@ -36,6 +36,7 @@ public sealed record CanonicalBoundRiskFreshnessAttestation(
     string MarketReference,
     MarketDataSnapshotId MarketDataSnapshotId,
     DateTimeOffset MarketDataReceivedAtUtc,
+    DateTimeOffset MarketDataSourceTimestampUtc,
     DateTimeOffset VerifiedAtUtc,
     CanonicalBoundRiskFreshness Result);
 
@@ -54,11 +55,12 @@ public sealed record CanonicalPostRiskOrderEvidence(
     CanonicalTradingReleaseControl ReleaseControl,
     CanonicalBoundRiskFreshnessAttestation Freshness,
     CanonicalPostRiskRetainedState State,
-    RetainedTargetQuantity Target,
-    decimal DriftBaseQuantity,
-    decimal DriftVenueQuantity,
-    ParentOrder ParentOrder,
-    ChildOrder ChildOrder);
+    RetainedTargetQuantity? Target,
+    decimal? DriftBaseQuantity,
+    decimal? DriftVenueQuantity,
+    string DecisionReason,
+    ParentOrder? ParentOrder,
+    ChildOrder? ChildOrder);
 
 public sealed record CanonicalPostRiskOrderBoundaryResult(bool Duplicate, CanonicalPostRiskOrderEvidence Evidence);
 
@@ -123,6 +125,8 @@ public sealed class CanonicalPostRiskConsumptionService(
         var control = releaseControls.Resolve(context, asOfUtc);
         var state = retainedState.Resolve(input, context, asOfUtc);
         var freshness = freshnessGate.Verify(input, context, state, asOfUtc);
+        CanonicalPostRiskConsumptionResult Block(string reason, RetainedTargetQuantity? target = null, decimal? driftBase = null, decimal? driftVenue = null)
+            => new(false, false, reason, new CanonicalPostRiskOrderEvidence(input, context, control, freshness, state, target, driftBase, driftVenue, reason, null, null));
         if (!FreshnessIsBound(input, state, freshness, asOfUtc))
             return Block("Fresh canonical Risk required.");
         if (!StateLineageIsUsable(input, context, state, asOfUtc))
@@ -151,15 +155,15 @@ public sealed class CanonicalPostRiskConsumptionService(
 
         var driftBase = target.TargetBaseQuantity - state.CurrentBaseQuantity;
         var driftVenue = driftBase / state.Mapping.ContractSize;
-        if (driftBase == 0m || driftVenue == 0m) return Block("No executable drift.");
+        if (driftBase == 0m || driftVenue == 0m) return Block("No executable drift.", target, driftBase, driftVenue);
         if (QuantityRounding.RoundToStep(driftVenue, state.Mapping.QuantityStep) != driftVenue)
-            return Block("Drift venue quantity is not executable at the retained quantity step.");
+            return Block("Drift venue quantity is not executable at the retained quantity step.", target, driftBase, driftVenue);
         if (Math.Abs(driftVenue) < state.Mapping.MinOrderQuantity)
-            return Block("Drift venue quantity is below the retained minimum order quantity.");
+            return Block("Drift venue quantity is below the retained minimum order quantity.", target, driftBase, driftVenue);
         if (Math.Abs(driftBase) < control.MinimumExecutableBaseQuantity)
-            return Block("Below minimum executable quantity.");
+            return Block("Below minimum executable quantity.", target, driftBase, driftVenue);
         if (Math.Abs(driftBase * state.MarketData.Mid) > control.MaximumPerOrderNotionalUsd)
-            return Block("Maximum per-order notional requires slicing; release blocked.");
+            return Block("Maximum per-order notional requires slicing; release blocked.", target, driftBase, driftVenue);
 
         var side = driftBase > 0m ? OrderSide.Buy : OrderSide.Sell;
         var identity = string.Join("|", input.AdapterInputId, input.Revision, input.Fingerprint, context.Execution.ContextId, context.Execution.Revision, control.ControlSetId, control.Revision);
@@ -173,16 +177,15 @@ public sealed class CanonicalPostRiskConsumptionService(
             new ClientOrderId("CPR-C-" + input.Fingerprint[..16].ToUpperInvariant()), side,
             OrderType.Market, TimeInForce.IOC, Math.Abs(driftBase), Math.Abs(driftVenue),
             OrderStatus.PendingNew, asOfUtc);
-        var evidence = new CanonicalPostRiskOrderEvidence(input, context, control, freshness, state, target, driftBase, driftVenue, parent, child);
+        var evidence = new CanonicalPostRiskOrderEvidence(input, context, control, freshness, state, target, driftBase, driftVenue, "Retained ParentOrder/ChildOrder created at the dormant OMS/EMS boundary; no venue send occurred.", parent, child);
         var boundary = orderBoundary.Create(evidence);
         return new(boundary.Duplicate, true, "Retained ParentOrder/ChildOrder created at the dormant OMS/EMS boundary; no venue send occurred.", boundary.Evidence);
     }
 
-    private static CanonicalPostRiskConsumptionResult Block(string reason) => new(false, false, reason, null);
 
     private static bool FreshnessIsBound(CanonicalPostRiskInput input, CanonicalPostRiskRetainedState state, CanonicalBoundRiskFreshnessAttestation freshness, DateTimeOffset asOfUtc)
         => freshness.Result == CanonicalBoundRiskFreshness.Fresh &&
-           input.RiskRecordedAtUtc <= input.KnowledgeCutoffUtc && input.KnowledgeCutoffUtc <= asOfUtc &&
+           input.RiskRecordedAtUtc.Offset == TimeSpan.Zero && input.KnowledgeCutoffUtc.Offset == TimeSpan.Zero && input.RiskRecordedAtUtc <= asOfUtc && input.KnowledgeCutoffUtc <= asOfUtc &&
            freshness.RiskDecisionId == input.RiskDecisionId &&
            freshness.RiskRecordedAtUtc == input.RiskRecordedAtUtc &&
            freshness.KnowledgeCutoffUtc == input.KnowledgeCutoffUtc &&
@@ -192,14 +195,15 @@ public sealed class CanonicalPostRiskConsumptionService(
            freshness.MarketReference == state.MarketReference &&
            freshness.MarketDataSnapshotId == state.MarketData.Id &&
            freshness.MarketDataReceivedAtUtc == state.MarketData.ReceivedAtUtc &&
-           freshness.VerifiedAtUtc.Offset == TimeSpan.Zero && freshness.VerifiedAtUtc <= asOfUtc &&
-           freshness.RiskRecordedAtUtc.Offset == TimeSpan.Zero && freshness.KnowledgeCutoffUtc.Offset == TimeSpan.Zero;
+           freshness.MarketDataSourceTimestampUtc == state.MarketData.SourceTimestampUtc &&
+           freshness.VerifiedAtUtc.Offset == TimeSpan.Zero && freshness.VerifiedAtUtc >= input.RiskRecordedAtUtc && freshness.VerifiedAtUtc >= state.PositionAsOfUtc && freshness.VerifiedAtUtc >= state.MarketData.ReceivedAtUtc && freshness.VerifiedAtUtc <= asOfUtc &&
+           freshness.RiskRecordedAtUtc.Offset == TimeSpan.Zero && freshness.KnowledgeCutoffUtc.Offset == TimeSpan.Zero && freshness.MarketDataSourceTimestampUtc.Offset == TimeSpan.Zero;
 
     private static bool StateLineageIsUsable(CanonicalPostRiskInput input, ResolvedCanonicalExecutionContext context, CanonicalPostRiskRetainedState state, DateTimeOffset asOfUtc)
         => state.PositionAsOfUtc.Offset == TimeSpan.Zero && state.PositionAsOfUtc >= input.KnowledgeCutoffUtc && state.PositionAsOfUtc <= asOfUtc &&
            !string.IsNullOrWhiteSpace(state.PositionReference) && !string.IsNullOrWhiteSpace(state.MarketReference) &&
            state.MarketData.Id.Value != Guid.Empty && !string.IsNullOrWhiteSpace(state.MarketData.Source) &&
-           state.MarketData.SourceTimestampUtc.Offset == TimeSpan.Zero && state.MarketData.ReceivedAtUtc.Offset == TimeSpan.Zero &&
+           state.MarketData.SourceTimestampUtc.Offset == TimeSpan.Zero && state.MarketData.SourceTimestampUtc >= input.KnowledgeCutoffUtc && state.MarketData.SourceTimestampUtc <= state.MarketData.ReceivedAtUtc && state.MarketData.SourceTimestampUtc <= asOfUtc && state.MarketData.ReceivedAtUtc.Offset == TimeSpan.Zero &&
            state.MarketData.ReceivedAtUtc >= input.KnowledgeCutoffUtc && state.MarketData.ReceivedAtUtc <= asOfUtc &&
            state.Mapping.Id.Value != Guid.Empty && state.Mapping.InstrumentId == context.Instrument.InstrumentId && state.Mapping.VenueId == context.Instrument.VenueId &&
            state.MarketData.InstrumentId == context.Instrument.InstrumentId && state.MarketData.VenueId == context.Instrument.VenueId &&

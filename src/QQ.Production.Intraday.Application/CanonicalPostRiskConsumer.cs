@@ -11,7 +11,7 @@ namespace QQ.Production.Intraday.Application;
 public sealed record CanonicalPostRiskInput(
     string AdapterInputId, long Revision, string? SupersedesAdapterInputId, long? SupersedesRevision,
     string MandateId, string InstrumentId, decimal RiskApprovedTargetWeight, string RiskDecisionId,
-    DateTimeOffset RiskRecordedAtUtc, DateTimeOffset KnowledgeCutoffUtc, string Provenance,
+    DateTimeOffset RiskRecordedAtUtc, DateTimeOffset KnowledgeCutoffUtc, DateTimeOffset AdapterRecordedAtUtc, string Provenance,
     string Fingerprint, string CanonicalJson);
 
 public static class CanonicalPostRiskInputParser
@@ -31,12 +31,12 @@ public static class CanonicalPostRiskInputParser
         Enum(root, "adjustmentState", ["NoOverride", "Overridden"]); OptionalText(root.GetProperty("overrideRevisionId"));
         if ((root.GetProperty("adjustmentState").GetString() == "NoOverride" && root.GetProperty("overrideRevisionId").ValueKind != JsonValueKind.Null) || (root.GetProperty("adjustmentState").GetString() == "Overridden" && root.GetProperty("overrideRevisionId").ValueKind != JsonValueKind.String)) Fail("adjustment state and override revision are inconsistent.");
         var weight = Decimal(root, "riskApprovedTargetWeight"); Text(root, "riskDecisionId"); Text(root, "policyRevisionId"); RiskInput(root.GetProperty("riskInputSnapshot")); Utc(root, "riskEvaluatedAt"); Utc(root, "riskRecordedAt");
-        Array(root, "riskRuleEvaluations", RiskRule); Array(root, "participants", Participant); Utc(root, "effectiveAt"); Utc(root, "recordedAt"); Utc(root, "knowledgeCutoff"); Text(root, "provenance"); Text(root, "decision"); Hash(root, "fingerprint");
+        Array(root, "riskRuleEvaluations", RiskRule); Array(root, "participants", Participant); Utc(root, "effectiveAt"); Utc(root, "recordedAt"); Utc(root, "knowledgeCutoff"); if (UtcValue(root, "recordedAt") < UtcValue(root, "knowledgeCutoff") || UtcValue(root, "recordedAt") < UtcValue(root, "riskRecordedAt")) Fail("recordedAt must not predate canonical knowledge or Risk record time."); Text(root, "provenance"); Text(root, "decision"); Hash(root, "fingerprint");
         var fingerprint = root.GetProperty("fingerprint").GetString()!;
         var expected = CanonicalFingerprint(json);
         if (fingerprint != expected) Fail("fingerprint does not bind canonical material wire content.");
         var supersedes = root.GetProperty("supersedes");
-        return new(root.GetProperty("adapterInputId").GetString()!, root.GetProperty("revision").GetInt64(), supersedes.ValueKind == JsonValueKind.Null ? null : supersedes.GetProperty("adapterInputId").GetString(), supersedes.ValueKind == JsonValueKind.Null ? null : supersedes.GetProperty("revision").GetInt64(), root.GetProperty("mandateId").GetString()!, root.GetProperty("instrumentId").GetString()!, weight, root.GetProperty("riskDecisionId").GetString()!, UtcValue(root, "riskRecordedAt"), UtcValue(root, "knowledgeCutoff"), root.GetProperty("provenance").GetString()!, fingerprint, root.GetRawText());
+        return new(root.GetProperty("adapterInputId").GetString()!, root.GetProperty("revision").GetInt64(), supersedes.ValueKind == JsonValueKind.Null ? null : supersedes.GetProperty("adapterInputId").GetString(), supersedes.ValueKind == JsonValueKind.Null ? null : supersedes.GetProperty("revision").GetInt64(), root.GetProperty("mandateId").GetString()!, root.GetProperty("instrumentId").GetString()!, weight, root.GetProperty("riskDecisionId").GetString()!, UtcValue(root, "riskRecordedAt"), UtcValue(root, "knowledgeCutoff"), UtcValue(root, "recordedAt"), root.GetProperty("provenance").GetString()!, fingerprint, root.GetRawText());
     }
 
     public static string CanonicalFingerprint(string json) { using var document = JsonDocument.Parse(json); return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(Material(document.RootElement)))).ToLowerInvariant(); }

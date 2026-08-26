@@ -17,10 +17,10 @@ public sealed class CanonicalPostRiskTradingTests
 
         Assert.True(first.Allowed);
         Assert.False(first.Duplicate);
-        Assert.Equal(-1250m, first.Evidence!.Target.TargetBaseQuantity);
-        Assert.Equal(-125m, first.Evidence.Target.TargetVenueQuantity);
-        Assert.Equal(OrderSide.Sell, first.Evidence.ParentOrder.Side);
-        Assert.Equal(first.Evidence.ParentOrder.Id, first.Evidence.ChildOrder.ParentOrderId);
+        Assert.Equal(-1250m, first.Evidence!.Target!.TargetBaseQuantity);
+        Assert.Equal(-125m, first.Evidence.Target!.TargetVenueQuantity);
+        Assert.Equal(OrderSide.Sell, first.Evidence.ParentOrder!.Side);
+        Assert.Equal(first.Evidence.ParentOrder!.Id, first.Evidence.ChildOrder!.ParentOrderId);
         Assert.Equal(1, boundary.CreatedOrderCount);
         Assert.True(duplicate.Duplicate);
         Assert.Equal(1, boundary.CreatedOrderCount);
@@ -47,7 +47,7 @@ public sealed class CanonicalPostRiskTradingTests
     {
         var result = Consumer(new InMemoryCanonicalPostRiskOrderBoundary()).Consume(Wire(weight), At);
         Assert.True(result.Allowed);
-        Assert.Equal(targetBase, result.Evidence!.Target.TargetBaseQuantity);
+        Assert.Equal(targetBase, result.Evidence!.Target!.TargetBaseQuantity);
         var expected = RetainedTargetPositionSizing.Calculate(TargetQuantityMode.FxBaseCurrencyQuantity, decimal.Parse(weight, System.Globalization.CultureInfo.InvariantCulture), 10_000m, State().MarketData, Mapping());
         Assert.Equal(expected, result.Evidence.Target);
     }
@@ -74,6 +74,17 @@ public sealed class CanonicalPostRiskTradingTests
         Assert.Equal(0, zeroWeightBoundary.CreatedOrderCount);
     }
 
+    [Fact]
+    public void Canonical_risk_recorded_or_knowledge_cutoff_after_asof_fails_closed()
+    {
+        var riskFuture = Wire("-0.125").Replace("2026-08-25T09:00:03.0000000+00:00", "2026-08-25T09:02:30.0000000+00:00", StringComparison.Ordinal).Replace("2026-08-25T09:01:00.0000000+00:00", "2026-08-25T09:03:00.0000000+00:00", StringComparison.Ordinal);
+        riskFuture = riskFuture.Replace("4ab18dd8c13f6e6859e436ac6758d72ac06b824e5a9e601ff8fb7382d68a1eac", CanonicalPostRiskInputParser.CanonicalFingerprint(riskFuture), StringComparison.Ordinal);
+        var cutoffFuture = Wire("-0.125").Replace("2026-08-25T09:00:30.0000000+00:00", "2026-08-25T09:02:30.0000000+00:00", StringComparison.Ordinal).Replace("2026-08-25T09:01:00.0000000+00:00", "2026-08-25T09:03:00.0000000+00:00", StringComparison.Ordinal);
+        cutoffFuture = cutoffFuture.Replace("4ab18dd8c13f6e6859e436ac6758d72ac06b824e5a9e601ff8fb7382d68a1eac", CanonicalPostRiskInputParser.CanonicalFingerprint(cutoffFuture), StringComparison.Ordinal);
+        Assert.False(Consumer(new InMemoryCanonicalPostRiskOrderBoundary()).Consume(riskFuture, At).Allowed);
+        Assert.False(Consumer(new InMemoryCanonicalPostRiskOrderBoundary()).Consume(cutoffFuture, At).Allowed);
+    }
+
     [Theory]
     [InlineData(CanonicalBoundRiskFreshness.Stale)]
     [InlineData(CanonicalBoundRiskFreshness.Unknown)]
@@ -88,9 +99,11 @@ public sealed class CanonicalPostRiskTradingTests
         Assert.False(Consumer(new InMemoryCanonicalPostRiskOrderBoundary(), state with { PositionAsOfUtc = At.AddMinutes(-2) }).Consume(Wire("-0.125"), At).Allowed);
         Assert.False(Consumer(new InMemoryCanonicalPostRiskOrderBoundary(), state with { MarketData = state.MarketData with { ReceivedAtUtc = At.AddMinutes(1) } }).Consume(Wire("-0.125"), At).Allowed);
         Assert.False(Consumer(new InMemoryCanonicalPostRiskOrderBoundary(), state, future: true).Consume(Wire("-0.125"), At).Allowed);
-        var invalidTiming = Wire("-0.125").Replace("2026-08-25T09:00:03.0000000+00:00", "2026-08-25T09:00:40.0000000+00:00", StringComparison.Ordinal);
-        invalidTiming = invalidTiming.Replace("4ab18dd8c13f6e6859e436ac6758d72ac06b824e5a9e601ff8fb7382d68a1eac", CanonicalPostRiskInputParser.CanonicalFingerprint(invalidTiming), StringComparison.Ordinal);
-        Assert.False(Consumer(new InMemoryCanonicalPostRiskOrderBoundary()).Consume(invalidTiming, At).Allowed);
+        var compatibleRiskRecordedAfterCutoff = Wire("-0.125").Replace("2026-08-25T09:00:03.0000000+00:00", "2026-08-25T09:00:40.0000000+00:00", StringComparison.Ordinal);
+        compatibleRiskRecordedAfterCutoff = compatibleRiskRecordedAfterCutoff.Replace("4ab18dd8c13f6e6859e436ac6758d72ac06b824e5a9e601ff8fb7382d68a1eac", CanonicalPostRiskInputParser.CanonicalFingerprint(compatibleRiskRecordedAfterCutoff), StringComparison.Ordinal);
+        Assert.True(Consumer(new InMemoryCanonicalPostRiskOrderBoundary()).Consume(compatibleRiskRecordedAfterCutoff, At).Allowed);
+        Assert.False(Consumer(new InMemoryCanonicalPostRiskOrderBoundary(), state with { MarketData = state.MarketData with { SourceTimestampUtc = At.AddMinutes(-2), ReceivedAtUtc = At.AddSeconds(-5) } }).Consume(Wire("-0.125"), At).Allowed);
+        Assert.False(Consumer(new InMemoryCanonicalPostRiskOrderBoundary(), state, beforeObservation: true).Consume(Wire("-0.125"), At).Allowed);
     }
 
     [Theory]
@@ -115,6 +128,28 @@ public sealed class CanonicalPostRiskTradingTests
     }
 
     [Fact]
+    public void Blocked_decision_retains_exact_evidence_and_identical_replay_is_conservatively_consumed()
+    {
+        var boundary = new InMemoryCanonicalPostRiskOrderBoundary();
+        var consumer = Consumer(boundary, State() with { KillSwitchActive = true });
+        var blocked = consumer.Consume(Wire("-0.125"), At);
+        var replay = consumer.Consume(Wire("-0.125"), At);
+
+        Assert.False(blocked.Allowed);
+        Assert.Equal("Kill switch is active.", blocked.Reason);
+        Assert.NotNull(blocked.Evidence);
+        Assert.Equal("Kill switch is active.", blocked.Evidence!.DecisionReason);
+        Assert.Equal("context", blocked.Evidence.Context.Execution.ContextId);
+        Assert.Equal("release-control", blocked.Evidence.ReleaseControl.ControlSetId);
+        Assert.Equal("position-snapshot:test", blocked.Evidence.State.PositionReference);
+        Assert.Null(blocked.Evidence.ParentOrder);
+        Assert.Null(blocked.Evidence.ChildOrder);
+        Assert.True(replay.Duplicate);
+        Assert.Null(replay.Evidence);
+        Assert.Equal(0, boundary.CreatedOrderCount);
+    }
+
+    [Fact]
     public void Adr_007_release_controls_block_without_target_mutation_or_slicing()
     {
         var belowMinimum = Consumer(new InMemoryCanonicalPostRiskOrderBoundary(), State() with { CurrentBaseQuantity = -1240m }, control: Control(minimum: 20m)).Consume(Wire("-0.125"), At);
@@ -133,8 +168,8 @@ public sealed class CanonicalPostRiskTradingTests
         Assert.DoesNotContain("IVenueExecutionGateway", source);
     }
 
-    private static CanonicalPostRiskConsumptionService Consumer(InMemoryCanonicalPostRiskOrderBoundary boundary, CanonicalPostRiskRetainedState? state = null, CanonicalBoundRiskFreshness freshness = CanonicalBoundRiskFreshness.Fresh, bool mismatch = false, CanonicalTradingReleaseControl? control = null, bool future = false)
-        => new(new InMemoryCanonicalInputReceiptStore(), new InMemoryCanonicalExecutionContextResolver([Mandate()], [Instrument()], [Context()]), new InMemoryCanonicalTradingReleaseControlResolver([control ?? Control()]), new FixedStateProvider(state ?? State()), new FixedFreshnessGate(freshness, mismatch, future), boundary);
+    private static CanonicalPostRiskConsumptionService Consumer(InMemoryCanonicalPostRiskOrderBoundary boundary, CanonicalPostRiskRetainedState? state = null, CanonicalBoundRiskFreshness freshness = CanonicalBoundRiskFreshness.Fresh, bool mismatch = false, CanonicalTradingReleaseControl? control = null, bool future = false, bool beforeObservation = false)
+        => new(new InMemoryCanonicalInputReceiptStore(), new InMemoryCanonicalExecutionContextResolver([Mandate()], [Instrument()], [Context()]), new InMemoryCanonicalTradingReleaseControlResolver([control ?? Control()]), new FixedStateProvider(state ?? State()), new FixedFreshnessGate(freshness, mismatch, future, beforeObservation), boundary);
 
     private static CanonicalTradingReleaseControl Control(decimal minimum = 10m, decimal maximum = 10_000m) => new(Mandate().FundId, Instrument().VenueId, Instrument().InstrumentId, "release-control", 1, At.AddMinutes(-1), null, "test-release-controls", minimum, maximum);
     private static MandateFundMapping Mandate() => new("mandate-001", new(Guid.Parse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")), "mandate-map", 1, At.AddMinutes(-1), null, "test");
@@ -148,10 +183,10 @@ public sealed class CanonicalPostRiskTradingTests
         public CanonicalPostRiskRetainedState Resolve(CanonicalPostRiskInput input, ResolvedCanonicalExecutionContext context, DateTimeOffset asOfUtc) => state;
     }
 
-    private sealed class FixedFreshnessGate(CanonicalBoundRiskFreshness result, bool mismatch, bool future) : ICanonicalBoundRiskFreshnessGate
+    private sealed class FixedFreshnessGate(CanonicalBoundRiskFreshness result, bool mismatch, bool future, bool beforeObservation) : ICanonicalBoundRiskFreshnessGate
     {
         public CanonicalBoundRiskFreshnessAttestation Verify(CanonicalPostRiskInput input, ResolvedCanonicalExecutionContext context, CanonicalPostRiskRetainedState state, DateTimeOffset asOfUtc)
-            => new(input.RiskDecisionId, input.RiskRecordedAtUtc, input.KnowledgeCutoffUtc, input.Provenance, mismatch ? "wrong-position" : state.PositionReference, state.PositionAsOfUtc, state.MarketReference, state.MarketData.Id, state.MarketData.ReceivedAtUtc, future ? asOfUtc.AddSeconds(1) : asOfUtc, result);
+            => new(input.RiskDecisionId, input.RiskRecordedAtUtc, input.KnowledgeCutoffUtc, input.Provenance, mismatch ? "wrong-position" : state.PositionReference, state.PositionAsOfUtc, state.MarketReference, state.MarketData.Id, state.MarketData.ReceivedAtUtc, state.MarketData.SourceTimestampUtc, future ? asOfUtc.AddSeconds(1) : beforeObservation ? state.MarketData.ReceivedAtUtc.AddSeconds(-1) : asOfUtc, result);
     }
 
     private static string Wire(string weight, long revision = 2, long supersededRevision = 1, bool corruptFingerprint = false)
