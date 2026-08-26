@@ -69,6 +69,45 @@ public sealed class Arch7bFinalOperationalFreezeMaterializerTests : IDisposable
             first.FreezeRoot, firstTemplate);
     }
 
+    [Fact]
+    public async Task Target_semantic_binding_change_materializes_a_distinct_target_freeze()
+    {
+        var source = Fixture();
+        var targetAuthorities = new Dictionary<string, Arch7bFileAuthority>(source.FileAuthorities,
+            StringComparer.Ordinal)
+        {
+            ["supervisor_executable"] = source.FileAuthorities["supervisor_executable"] with
+            {
+                Path = Path.Combine(root, "target", "supervisor.exe"),
+                Sha256 = new string('d', 64)
+            }
+        };
+        var targetProvisional = source with
+        {
+            FileAuthorities = targetAuthorities,
+            StaticAuthoritySetSha256 = new string('e', 64),
+            EvidenceSha256 = string.Empty
+        };
+        var target = targetProvisional with
+        {
+            EvidenceSha256 = Arch7bOneShotContracts.Sha256(targetProvisional.Canonical())
+        };
+        var sourceFreeze = await MaterializeAsync(source, "source-freeze");
+        var targetFreeze = await MaterializeAsync(target, "target-freeze");
+        var targetManifest = await ReadAsync<Arch7bFinalOperationalFreezeManifest>(
+            targetFreeze.ManifestPath);
+        var targetTemplate = await ReadTemplateAsync(targetFreeze.TemplatePath);
+
+        Assert.NotEqual(sourceFreeze.PreFreezeTemplateIdentitySha256,
+            targetFreeze.PreFreezeTemplateIdentitySha256);
+        Assert.Equal(targetFreeze.PreFreezeTemplateIdentitySha256,
+            targetManifest.PreFreezeTemplateIdentitySha256);
+        Assert.Equal(targetFreeze.ManifestSha256, targetTemplate.FreezeManifestSha256);
+        Assert.Equal(targetFreeze.PacketSha256, targetTemplate.FreezePacketSha256);
+        Assert.NotEqual(sourceFreeze.ManifestSha256, targetTemplate.FreezeManifestSha256);
+        Assert.NotEqual(sourceFreeze.PacketSha256, targetTemplate.FreezePacketSha256);
+    }
+
     [Theory]
     [InlineData(Arch7bFinalOperationalFreezeMaterializer.ManifestFileName)]
     [InlineData(Arch7bFinalOperationalFreezeMaterializer.PacketFileName)]
@@ -97,6 +136,76 @@ public sealed class Arch7bFinalOperationalFreezeMaterializerTests : IDisposable
                 materialized.FreezeRoot, template));
 
         Assert.Equal(Arch7bBlockers.FreezeAuthorityMismatch, error.BlockerCode);
+    }
+
+    [Theory]
+    [InlineData("missing")]
+    [InlineData("mutated")]
+    [InlineData("unknown")]
+    [InlineData("template")]
+    [InlineData("manifest")]
+    [InlineData("packet")]
+    [InlineData("identity")]
+    public async Task Complete_freeze_validation_requires_a_valid_closure(string mutation)
+    {
+        var materialized = await MaterializeAsync(Fixture(), "closure-" + mutation);
+        var template = await ReadTemplateAsync(materialized.TemplatePath);
+        if (mutation == "missing")
+        {
+            File.Delete(materialized.ClosurePath);
+        }
+        else if (mutation == "mutated")
+        {
+            await File.AppendAllTextAsync(materialized.ClosurePath, "x");
+        }
+        else if (mutation == "unknown")
+        {
+            var document = System.Text.Json.Nodes.JsonNode.Parse(
+                await File.ReadAllBytesAsync(materialized.ClosurePath))!.AsObject();
+            document["unexpected"] = "forbidden";
+            await File.WriteAllTextAsync(materialized.ClosurePath, document.ToJsonString());
+        }
+        else
+        {
+            var closure = await ReadAsync<Arch7bFinalOperationalFreezeClosure>(materialized.ClosurePath);
+            closure = mutation switch
+            {
+                "template" => closure with { GovernedSourceTemplateSha256 = new string('0', 64) },
+                "manifest" => closure with { FreezeManifestSha256 = new string('0', 64) },
+                "packet" => closure with { FreezePacketSha256 = new string('0', 64) },
+                "identity" => closure with { PreFreezeTemplateIdentitySha256 = new string('0', 64) },
+                _ => throw new ArgumentOutOfRangeException(nameof(mutation))
+            };
+            closure = closure with { EvidenceSha256 = Arch7bOneShotContracts.Sha256(closure.Canonical()) };
+            await File.WriteAllBytesAsync(materialized.ClosurePath, JsonSerializer.SerializeToUtf8Bytes(
+                closure, Arch7bJson.CanonicalOptions));
+        }
+
+        await Arch7bFinalOperationalFreezeMaterializer.ValidateCorePhysicalFreezeAsync(
+            materialized.FreezeRoot, template);
+        var error = await Assert.ThrowsAsync<Arch7bQualificationException>(() =>
+            Arch7bFinalOperationalFreezeMaterializer.ValidatePhysicalFreezeAsync(
+                materialized.FreezeRoot, template));
+
+        Assert.Equal(Arch7bBlockers.FreezeAuthorityMismatch, error.BlockerCode);
+    }
+
+    [Fact]
+    public async Task Live_authority_issuance_rejects_a_missing_closure_before_writing_authorities()
+    {
+        var materialized = await MaterializeAsync(Fixture(), "live-authority-closure");
+        File.Delete(materialized.ClosurePath);
+        var now = DateTimeOffset.UtcNow;
+        var outputRoot = Path.Combine(root, "live-authority-output");
+
+        var error = await Assert.ThrowsAsync<Arch7bQualificationException>(() =>
+            Arch7bLiveAuthorityMaterializer.MaterializeAsync(materialized.FreezeRoot,
+                materialized.ManifestSha256, materialized.PacketSha256, materialized.TemplateSha256,
+                "closure-required", now.AddSeconds(-1), now.AddMinutes(5), outputRoot,
+                "TEST", "1754288005", true));
+
+        Assert.Equal(Arch7bBlockers.FreezeAuthorityMismatch, error.BlockerCode);
+        Assert.False(Directory.Exists(outputRoot));
     }
 
     public void Dispose()

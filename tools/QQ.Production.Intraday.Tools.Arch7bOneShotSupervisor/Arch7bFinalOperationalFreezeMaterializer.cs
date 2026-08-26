@@ -120,6 +120,13 @@ public sealed record Arch7bFinalOperationalFreezeClosure(
     public string Canonical() => string.Join('\n', ContractVersion,
         PreFreezeTemplateIdentitySha256, FreezeManifestSha256, FreezePacketSha256,
         GovernedSourceTemplateSha256, IntradayCommit, IntradayTree, ClosureStatus);
+
+    public void ValidateEvidence()
+    {
+        if (EvidenceSha256 != Arch7bOneShotContracts.Sha256(Canonical()))
+            throw new Arch7bQualificationException(Arch7bBlockers.FreezeAuthorityMismatch,
+                "closure-evidence");
+    }
 }
 
 public sealed record Arch7bFinalOperationalFreezeMaterialization(
@@ -181,12 +188,14 @@ public static class Arch7bFinalOperationalFreezeMaterializer
         };
         var templateSha = await WriteCreateNewAsync(templatePath, finalTemplate, cancellationToken)
             .ConfigureAwait(false);
-        await ValidatePhysicalFreezeAsync(freezeRoot, finalTemplate, cancellationToken)
+        await ValidateCorePhysicalFreezeAsync(freezeRoot, finalTemplate, cancellationToken)
             .ConfigureAwait(false);
         var closure = CreateClosure(preFreezeIdentity, manifestSha, packetSha, templateSha,
             finalTemplate);
         var closurePath = Path.Combine(freezeRoot, ClosureFileName);
         var closureSha = await WriteCreateNewAsync(closurePath, closure, cancellationToken)
+            .ConfigureAwait(false);
+        await ValidatePhysicalFreezeAsync(freezeRoot, finalTemplate, cancellationToken)
             .ConfigureAwait(false);
         var evidence = Arch7bOneShotContracts.Sha256(string.Join('\n', ContractVersion,
             preFreezeIdentity, manifestSha, packetSha, templateSha, closureSha));
@@ -194,7 +203,7 @@ public static class Arch7bFinalOperationalFreezeMaterializer
             packetPath, packetSha, templatePath, templateSha, closurePath, closureSha, evidence);
     }
 
-    public static async Task ValidatePhysicalFreezeAsync(string freezeRoot,
+    public static async Task ValidateCorePhysicalFreezeAsync(string freezeRoot,
         Arch7bOneShotLivePlanTemplate template, CancellationToken cancellationToken = default)
     {
         freezeRoot = Path.GetFullPath(freezeRoot);
@@ -215,6 +224,30 @@ public static class Arch7bFinalOperationalFreezeMaterializer
             "physical-freeze-cross-binding");
         RequireManifestMatchesTemplate(manifest, template);
         RequirePacketMatchesTemplate(packet, template);
+    }
+
+    public static async Task ValidatePhysicalFreezeAsync(string freezeRoot,
+        Arch7bOneShotLivePlanTemplate template, CancellationToken cancellationToken = default)
+    {
+        freezeRoot = Path.GetFullPath(freezeRoot);
+        await ValidateCorePhysicalFreezeAsync(freezeRoot, template, cancellationToken)
+            .ConfigureAwait(false);
+        var templatePath = Path.Combine(freezeRoot,
+            Arch7bLiveAuthorityMaterializer.TemplateFileName);
+        if (!File.Exists(templatePath)) throw new Arch7bQualificationException(
+            Arch7bBlockers.FreezeAuthorityMismatch, templatePath);
+        var templateSha = Convert.ToHexStringLower(SHA256.HashData(
+            await File.ReadAllBytesAsync(templatePath, cancellationToken).ConfigureAwait(false)));
+        var closure = await ReadAndValidateAsync<Arch7bFinalOperationalFreezeClosure>(
+            Path.Combine(freezeRoot, ClosureFileName), cancellationToken).ConfigureAwait(false);
+        closure.ValidateEvidence();
+        Require(closure.ContractVersion == ClosureContractVersion && closure.ClosureStatus == "PASS" &&
+            closure.PreFreezeTemplateIdentitySha256 == Arch7bPreFreezeTemplateIdentity.Compute(template) &&
+            closure.FreezeManifestSha256 == template.FreezeManifestSha256 &&
+            closure.FreezePacketSha256 == template.FreezePacketSha256 &&
+            closure.GovernedSourceTemplateSha256 == templateSha &&
+            closure.IntradayCommit == template.IntradayCommit && closure.IntradayTree == template.IntradayTree,
+            "closure-cross-binding");
     }
 
     private static Arch7bFinalOperationalFreezeManifest CreateManifest(
@@ -281,8 +314,34 @@ public static class Arch7bFinalOperationalFreezeMaterializer
         {
             UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow
         };
-        return JsonSerializer.Deserialize<T>(bytes, options) ?? throw new Arch7bQualificationException(
+        return DeserializeStrict<T>(bytes, options, path);
+    }
+
+    private static async Task<T> ReadAndValidateAsync<T>(string path,
+        CancellationToken cancellationToken)
+    {
+        if (!File.Exists(path)) throw new Arch7bQualificationException(
             Arch7bBlockers.FreezeAuthorityMismatch, path);
+        var bytes = await File.ReadAllBytesAsync(path, cancellationToken).ConfigureAwait(false);
+        var options = new JsonSerializerOptions(Arch7bJson.CanonicalOptions)
+        {
+            UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow
+        };
+        return DeserializeStrict<T>(bytes, options, path);
+    }
+
+    private static T DeserializeStrict<T>(byte[] bytes, JsonSerializerOptions options, string path)
+    {
+        try
+        {
+            return JsonSerializer.Deserialize<T>(bytes, options) ??
+                throw new Arch7bQualificationException(Arch7bBlockers.FreezeAuthorityMismatch, path);
+        }
+        catch (JsonException exception)
+        {
+            throw new Arch7bQualificationException(Arch7bBlockers.FreezeAuthorityMismatch,
+                path + ":" + exception.Message);
+        }
     }
 
     private static async Task<string> WriteCreateNewAsync<T>(string path, T value,

@@ -1,11 +1,13 @@
 ﻿extern alias M2C1ATool;
 
 using System.Diagnostics;
+using System.Text;
 using QQ.Production.Intraday.Infrastructure.PostgreSql;
 using QQ.Production.Intraday.Tools.Arch7aShadowQualification;
 using QQ.Production.Intraday.Tools.Arch7bOneShotSupervisor;
 using QQ.Production.Intraday.Tools.OperationalReporting;
 using M2C1ATool::QQ.Production.Intraday.Tools.LmaxMarketDataCaptureOnly;
+using Xunit.Abstractions;
 
 namespace QQ.Production.Intraday.Tests.Unit;
 
@@ -16,6 +18,10 @@ public sealed class Arch7bOperationalCommandParserRoundtripTests : IDisposable
     private const string IntradayCommit = "cccccccccccccccccccccccccccccccccccccccc";
     private readonly string root = Path.Combine(Path.GetTempPath(),
         "arch7b-parser-roundtrip", Guid.NewGuid().ToString("N"));
+    private readonly ITestOutputHelper output;
+
+    public Arch7bOperationalCommandParserRoundtripTests(ITestOutputHelper output) =>
+        this.output = output;
 
     [Fact]
     public async Task Six_materialized_commands_roundtrip_through_real_parsers()
@@ -31,7 +37,7 @@ public sealed class Arch7bOperationalCommandParserRoundtripTests : IDisposable
             var first = await new Arch7bOneShotCommandMaterializer().MaterializeAsync(
                 template, facts, authorities, root, observed);
             AssertBindings(command, first.ArgumentList);
-            await AssertParserAsync(command, first.ArgumentList);
+            await AssertParserAsync(command, first.ArgumentList, output);
 
             Directory.Delete(Path.GetDirectoryName(first.AuthorityPath)!, true);
             var second = await new Arch7bOneShotCommandMaterializer().MaterializeAsync(
@@ -223,12 +229,13 @@ public sealed class Arch7bOperationalCommandParserRoundtripTests : IDisposable
     }
 
     private static async Task AssertParserAsync(
-        Arch7bOperationalCommandBindingSet command, IReadOnlyList<string> arguments)
+        Arch7bOperationalCommandBindingSet command, IReadOnlyList<string> arguments,
+        ITestOutputHelper output)
     {
         if (command.CommandId is "prearmed-importer" or "capture-starter" or "canonical-slot-finalizer")
         {
-            var result = await HandoffChild(arguments,
-                command.CommandId == "prearmed-importer");
+            var result = await HandoffChild(command.CommandId, arguments,
+                command.CommandId == "prearmed-importer", output);
             Assert.NotEqual(0, result.ExitCode);
             Assert.Contains(command.CommandId == "prearmed-importer"
                     ? "QQ_PMS_SHADOW_ARCH7B_CONNECTION_STRING_REQUIRED"
@@ -249,23 +256,94 @@ public sealed class Arch7bOperationalCommandParserRoundtripTests : IDisposable
                 ReportingArguments.Parse(arguments.ToArray()).Mode);
     }
 
-    private static async Task<ChildResult> HandoffChild(
-        IReadOnlyList<string> arguments, bool removeConnection)
+    private static async Task<ChildResult> HandoffChild(string commandId,
+        IReadOnlyList<string> arguments, bool removeConnection, ITestOutputHelper output)
     {
-        var start = new ProcessStartInfo("dotnet")
+        var dotnet = await ResolveDotnetExecutableAsync();
+        var start = new ProcessStartInfo(dotnet)
         {
             UseShellExecute = false, RedirectStandardOutput = true,
-            RedirectStandardError = true, CreateNoWindow = true
+            RedirectStandardError = true, CreateNoWindow = true,
+            StandardOutputEncoding = Encoding.UTF8, StandardErrorEncoding = Encoding.UTF8
         };
-        start.ArgumentList.Add(typeof(Arch7bPrearmedFreshSlotHandoffCli).Assembly.Location);
+        start.ArgumentList.Add(ParserHostAssembly());
         foreach (var argument in arguments) start.ArgumentList.Add(argument);
         if (removeConnection) start.Environment.Remove("QQ_PMS_SHADOW_ARCH7B_CONNECTION_STRING");
-        using var process = Process.Start(start)!;
-        var output = process.StandardOutput.ReadToEndAsync();
-        var error = process.StandardError.ReadToEndAsync();
-        await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(20));
-        return new(process.ExitCode, (await output) + Environment.NewLine + (await error));
+        var started = DateTimeOffset.UtcNow;
+        using var process = Process.Start(start) ?? throw new InvalidOperationException(
+            "ARCH7B_PARSER_CHILD_START_FAILED");
+        var diagnostics = new ChildDiagnostics(commandId, dotnet, process.Id, started,
+            Environment.CurrentDirectory, Presence(start.Environment, "PATH"),
+            Presence(start.Environment, "DOTNET_ROOT"), Presence(start.Environment, "DOTNET_HOST_PATH"),
+            Presence(start.Environment, "QQ_PMS_SHADOW_ARCH7B_CONNECTION_STRING"));
+        output.WriteLine(diagnostics.Started());
+        var stdoutTask = process.StandardOutput.ReadToEndAsync();
+        var stderrTask = process.StandardError.ReadToEndAsync();
+        try
+        {
+            await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(20));
+        }
+        catch (TimeoutException)
+        {
+            if (!process.HasExited) process.Kill(entireProcessTree: true);
+            await process.WaitForExitAsync();
+            var stdout = await stdoutTask;
+            var stderr = await stderrTask;
+            output.WriteLine(diagnostics.Completed(DateTimeOffset.UtcNow, process.ExitCode,
+                stdout, stderr, true));
+            throw new TimeoutException(diagnostics.Timeout());
+        }
+
+        var completedOutput = await stdoutTask;
+        var completedError = await stderrTask;
+        output.WriteLine(diagnostics.Completed(DateTimeOffset.UtcNow, process.ExitCode,
+            completedOutput, completedError, false));
+        return new(process.ExitCode, completedOutput + Environment.NewLine + completedError);
     }
+
+    private static async Task<string> ResolveDotnetExecutableAsync()
+    {
+        var configured = Environment.GetEnvironmentVariable("DOTNET_ROOT");
+        var root = !string.IsNullOrWhiteSpace(configured) &&
+            File.Exists(Path.Combine(configured, "dotnet.exe"))
+            ? Path.GetFullPath(configured)
+            : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "dotnet");
+        var executable = Path.GetFullPath(Path.Combine(root, "dotnet.exe"));
+        if (!File.Exists(executable)) throw new FileNotFoundException(
+            "ARCH7B_PARSER_DOTNET_EXECUTABLE_NOT_FOUND", executable);
+
+        using var probe = Process.Start(new ProcessStartInfo(executable, "--version")
+        {
+            UseShellExecute = false, RedirectStandardOutput = true,
+            RedirectStandardError = true, CreateNoWindow = true,
+            StandardOutputEncoding = Encoding.UTF8, StandardErrorEncoding = Encoding.UTF8
+        }) ?? throw new InvalidOperationException("ARCH7B_PARSER_DOTNET_VERSION_PROBE_START_FAILED");
+        var stdout = probe.StandardOutput.ReadToEndAsync();
+        var stderr = probe.StandardError.ReadToEndAsync();
+        await probe.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(20));
+        if (probe.ExitCode != 0 || string.IsNullOrWhiteSpace(await stdout))
+            throw new InvalidOperationException("ARCH7B_PARSER_DOTNET_VERSION_PROBE_FAILED: exit=" +
+                probe.ExitCode + "; stderr_bytes=" + Encoding.UTF8.GetByteCount(await stderr));
+        return executable;
+    }
+
+    private static string ParserHostAssembly()
+    {
+        var current = new DirectoryInfo(AppContext.BaseDirectory);
+        while (current is not null && !File.Exists(Path.Combine(current.FullName,
+                   "QQ.Production.Intraday.sln"))) current = current.Parent;
+        var repository = current?.FullName ?? throw new DirectoryNotFoundException("repository root");
+        var configuration = new DirectoryInfo(AppContext.BaseDirectory).Parent?.Name
+            ?? throw new DirectoryNotFoundException("test build configuration");
+        var assembly = Path.Combine(repository, "tests", "QQ.Production.Intraday.Tests.Arch7bParserHost",
+            "bin", configuration, "net10.0", "QQ.Production.Intraday.Tests.Arch7bParserHost.dll");
+        if (!File.Exists(assembly)) throw new FileNotFoundException(
+            "ARCH7B_PARSER_HOST_NOT_BUILT", assembly);
+        return assembly;
+    }
+
+    private static bool Presence(IDictionary<string, string?> environment, string name) =>
+        environment.TryGetValue(name, out var value) && !string.IsNullOrWhiteSpace(value);
 
     private static void AssertBindings(
         Arch7bOperationalCommandBindingSet command, IReadOnlyList<string> arguments)
@@ -321,4 +399,26 @@ public sealed class Arch7bOperationalCommandParserRoundtripTests : IDisposable
     }
 
     private sealed record ChildResult(int ExitCode, string Output);
+
+    private sealed record ChildDiagnostics(string CommandId, string DotnetExecutable, int ProcessId,
+        DateTimeOffset StartedUtc, string WorkingDirectory, bool PathPresent, bool DotnetRootPresent,
+        bool DotnetHostPathPresent, bool ConnectionStringPresent)
+    {
+        public string Started() =>
+            $"ARCH7B_PARSER_CHILD_START command_id={CommandId}; dotnet={DotnetExecutable}; pid={ProcessId}; " +
+            $"started_utc={StartedUtc:O}; working_directory={WorkingDirectory}; path_present={PathPresent}; " +
+            $"dotnet_root_present={DotnetRootPresent}; dotnet_host_path_present={DotnetHostPathPresent}; " +
+            $"connection_string_present={ConnectionStringPresent}";
+
+        public string Completed(DateTimeOffset completed, int exitCode, string stdout, string stderr,
+            bool timedOut) =>
+            $"ARCH7B_PARSER_CHILD_COMPLETE command_id={CommandId}; dotnet={DotnetExecutable}; pid={ProcessId}; " +
+            $"completed_utc={completed:O}; elapsed_ms={(completed - StartedUtc).TotalMilliseconds:F0}; " +
+            $"exit_code={exitCode}; stdout_bytes={Encoding.UTF8.GetByteCount(stdout)}; " +
+            $"stderr_bytes={Encoding.UTF8.GetByteCount(stderr)}; timed_out={timedOut}";
+
+        public string Timeout() =>
+            $"ARCH7B_PARSER_CHILD_TIMEOUT command_id={CommandId}; dotnet={DotnetExecutable}; pid={ProcessId}; " +
+            $"started_utc={StartedUtc:O}; timeout_seconds=20";
+    }
 }
