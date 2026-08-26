@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Text.Encodings.Web;
 using QQ.Production.Intraday.Domain;
 
 namespace QQ.Production.Intraday.Application;
@@ -40,7 +41,7 @@ public static class CanonicalPostRiskInputParser
 
     private static string Material(JsonElement root)
     {
-        using var stream = new MemoryStream(); using var writer = new Utf8JsonWriter(stream);
+        using var stream = new MemoryStream(); using var writer = new Utf8JsonWriter(stream, new JsonWriterOptions { Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping });
         writer.WriteStartObject();
         foreach (var name in new[] { "contractVersion", "adapterInputId" }) S(writer, root, name); N(writer, root, "revision");
         writer.WritePropertyName("supersedes"); var s = root.GetProperty("supersedes"); if (s.ValueKind == JsonValueKind.Null) writer.WriteNullValue(); else { writer.WriteStartObject(); S(writer, s, "adapterInputId"); N(writer, s, "revision"); writer.WriteEndObject(); }
