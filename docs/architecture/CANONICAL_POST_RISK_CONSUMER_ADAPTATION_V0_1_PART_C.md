@@ -1,6 +1,6 @@
 # Canonical post-Risk consumer adaptation v0.1 — Part C classification
 
-Canonical authority: `quantum-qb/QQ.Investment.Platform@f2401b0727c54103ba308b5d7b1b0296952ff060`, ADR-007. Retained evidence: `phu-qqb/IntradayPlatform@d611ded8ae80debafe786b77f5c859a3b2d6e0e6`.
+Canonical authority: `quantum-qb/QQ.Investment.Platform@f2401b0727c54103ba308b5d7b1b0296952ff060`, ADR-007. Retained starting checkpoint: `phu-qqb/IntradayPlatform@d611ded8ae80debafe786b77f5c859a3b2d6e0e6`. Part C changes are adapter-only and carry canonical Risk identity, recorded time, knowledge cutoff, and provenance into the freshness gate.
 
 | Retained check | Classification for canonical path | OBSERVED evidence and disposition |
 |---|---|---|
@@ -11,4 +11,4 @@ Canonical authority: `quantum-qb/QQ.Investment.Platform@f2401b0727c54103ba308b5d
 | Maximum instrument and gross exposure | `DUPLICATE_TARGET_OR_RISK_AUTHORITY` | `RiskEngine.EvaluateDetailed`, `instrumentLimit.MaxExposureUsd` and `limitSet.MaxGrossExposureUsd`; not invoked locally on the canonical path. |
 | Kill switch, trading window/no-new-orders, market freshness, position reconciliation, instrument/venue enabled state, OMS/EMS safety | `CONTEXT_SPECIFIC_TRADING_SAFETY` | `RiskEngine.EvaluateDetailed` and `ProcessModelRunService.ProcessAsync`; canonical Part C keeps explicit fail-closed checks. |
 
-The legacy `ModelWeightBatch -> ModelRun -> ProcessModelRunService` route is unchanged. Its existing classifications and local Risk behavior remain legacy behavior.
+The legacy `ModelWeightBatch -> ModelRun -> ProcessModelRunService` route is unchanged. Its existing classifications and local Risk behavior remain legacy behavior. The Part C `CanonicalPostRiskConsumptionService` records the canonical receipt before the explicit resolver/freshness/release sequence; `CanonicalOmsEmsRelease` is an immutable non-routing hand-off only. No persistence, OMS/EMS gateway call, order construction, exposure calculation, or local Risk decision is added.

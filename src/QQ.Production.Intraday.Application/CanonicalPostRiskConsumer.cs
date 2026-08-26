@@ -7,10 +7,12 @@ using QQ.Production.Intraday.Domain;
 
 namespace QQ.Production.Intraday.Application;
 
-/// <summary>Read-only consumer boundary for canonical contract v1 at QQ.Investment.Platform@47d5d10cf4ee914621526e687c707657324730a1.</summary>
+/// <summary>Read-only consumer boundary for canonical contract v1 at QQ.Investment.Platform@f2401b0727c54103ba308b5d7b1b0296952ff060.</summary>
 public sealed record CanonicalPostRiskInput(
     string AdapterInputId, long Revision, string? SupersedesAdapterInputId, long? SupersedesRevision,
-    string MandateId, string InstrumentId, decimal RiskApprovedTargetWeight, string Fingerprint, string CanonicalJson);
+    string MandateId, string InstrumentId, decimal RiskApprovedTargetWeight, string RiskDecisionId,
+    DateTimeOffset RiskRecordedAtUtc, DateTimeOffset KnowledgeCutoffUtc, string Provenance,
+    string Fingerprint, string CanonicalJson);
 
 public static class CanonicalPostRiskInputParser
 {
@@ -34,7 +36,7 @@ public static class CanonicalPostRiskInputParser
         var expected = CanonicalFingerprint(json);
         if (fingerprint != expected) Fail("fingerprint does not bind canonical material wire content.");
         var supersedes = root.GetProperty("supersedes");
-        return new(root.GetProperty("adapterInputId").GetString()!, root.GetProperty("revision").GetInt64(), supersedes.ValueKind == JsonValueKind.Null ? null : supersedes.GetProperty("adapterInputId").GetString(), supersedes.ValueKind == JsonValueKind.Null ? null : supersedes.GetProperty("revision").GetInt64(), root.GetProperty("mandateId").GetString()!, root.GetProperty("instrumentId").GetString()!, weight, fingerprint, root.GetRawText());
+        return new(root.GetProperty("adapterInputId").GetString()!, root.GetProperty("revision").GetInt64(), supersedes.ValueKind == JsonValueKind.Null ? null : supersedes.GetProperty("adapterInputId").GetString(), supersedes.ValueKind == JsonValueKind.Null ? null : supersedes.GetProperty("revision").GetInt64(), root.GetProperty("mandateId").GetString()!, root.GetProperty("instrumentId").GetString()!, weight, root.GetProperty("riskDecisionId").GetString()!, UtcValue(root, "riskRecordedAt"), UtcValue(root, "knowledgeCutoff"), root.GetProperty("provenance").GetString()!, fingerprint, root.GetRawText());
     }
 
     public static string CanonicalFingerprint(string json) { using var document = JsonDocument.Parse(json); return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(Material(document.RootElement)))).ToLowerInvariant(); }
@@ -63,6 +65,7 @@ public static class CanonicalPostRiskInputParser
     private static void Array(JsonElement x, string n, Action<JsonElement> item) { var a = x.GetProperty(n); if (a.ValueKind != JsonValueKind.Array || a.GetArrayLength() == 0) Fail(n + " must be a non-empty array."); foreach (var i in a.EnumerateArray()) item(i); }
     private static decimal Decimal(JsonElement x, string n) { Text(x, n); var v = x.GetProperty(n).GetString()!; if (!decimal.TryParse(v, NumberStyles.AllowLeadingSign | NumberStyles.AllowDecimalPoint, CultureInfo.InvariantCulture, out var d) || d.ToString("0.############################", CultureInfo.InvariantCulture) != v) Fail(n + " must be canonical base-10 decimal."); return d; }
     private static void Utc(JsonElement x, string n) { Text(x, n); if (!DateTimeOffset.TryParse(x.GetProperty(n).GetString(), CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var t) || t.Offset != TimeSpan.Zero) Fail(n + " must be UTC."); }
+    private static DateTimeOffset UtcValue(JsonElement x, string n) { Utc(x, n); return DateTimeOffset.Parse(x.GetProperty(n).GetString()!, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind).ToUniversalTime(); }
     private static void Hash(JsonElement x, string n) { Text(x, n); var v = x.GetProperty(n).GetString()!; if (v.Length != 64 || v.Any(c => !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')))) Fail(n + " must be lower-case SHA-256 hex."); }
     private static void Text(JsonElement x, string n) { if (x.GetProperty(n).ValueKind != JsonValueKind.String || string.IsNullOrWhiteSpace(x.GetProperty(n).GetString())) Fail(n + " must be a non-empty string."); }
     private static void OptionalText(JsonElement x) { if (x.ValueKind != JsonValueKind.Null && (x.ValueKind != JsonValueKind.String || string.IsNullOrWhiteSpace(x.GetString()))) Fail("optional text is invalid."); }
