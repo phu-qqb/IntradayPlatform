@@ -59,11 +59,17 @@ public static class Arch7bOperationalTemplateAuthorityProjection
         var environmentValidation = Arch7bTargetCommandEnvironmentValidator.Validate(template);
         Arch7bLiveTemplateValidator.Validate(template, new Arch7bRealCommandAdapterRegistry());
         var graph = Arch7bStageFactGraphValidator.RequireValid(template.StageContracts);
-        Directory.CreateDirectory(Path.GetDirectoryName(outputPath)!);
-        var childEntrypoints = Arch7bChildEntrypointValidator.Validate(template, manifest,
-            Path.Combine(Path.GetDirectoryName(outputPath)!,
-                Arch7bChildEntrypointValidator.ValidationFileName));
-        var outputBytes = JsonSerializer.SerializeToUtf8Bytes(template, Arch7bJson.CanonicalOptions);
+        _ = Arch7bChildEntrypointValidator.Validate(template, manifest);
+        var freeze = await Arch7bFinalOperationalFreezeMaterializer.MaterializeAsync(template,
+            outputPath, cancellationToken).ConfigureAwait(false);
+        var outputBytes = await File.ReadAllBytesAsync(outputPath, cancellationToken)
+            .ConfigureAwait(false);
+        var finalTemplate = JsonSerializer.Deserialize<Arch7bOneShotLivePlanTemplate>(outputBytes,
+            Arch7bJson.CanonicalOptions) ?? throw Mismatch("target-template");
+        finalTemplate.ValidateEvidence();
+        Arch7bLiveTemplateValidator.Validate(finalTemplate, new Arch7bRealCommandAdapterRegistry());
+        var expectedOutputBytes = JsonSerializer.SerializeToUtf8Bytes(finalTemplate,
+            Arch7bJson.CanonicalOptions);
         var outputText = Encoding.UTF8.GetString(outputBytes);
         var regenerateCount = Count(outputText, Arch7bOperationalLiveFactBindingCatalog.Marker);
         var fakeNativeChildCount = Count(outputText, "fake-native-child") + Count(outputText, "fake-child");
@@ -72,17 +78,13 @@ public static class Arch7bOperationalTemplateAuthorityProjection
         var unresolvedProducerCount = Arch7bOperationalBindingProducerAudit.Build().MissingProducerCount;
         if (regenerateCount != 0 || fakeNativeChildCount != 0 || syntheticAuthorityCount != 0 ||
             unresolvedProducerCount != 0) throw Mismatch("operational-template-counts");
-        await using (var stream = new FileStream(outputPath, FileMode.CreateNew, FileAccess.Write,
-                         FileShare.None, 4096, FileOptions.WriteThrough))
-        {
-            await stream.WriteAsync(outputBytes, cancellationToken).ConfigureAwait(false);
-            await stream.FlushAsync(cancellationToken).ConfigureAwait(false);
-        }
-        var readback = await File.ReadAllBytesAsync(outputPath, cancellationToken).ConfigureAwait(false);
-        var identical = outputBytes.AsSpan().SequenceEqual(readback);
+        var identical = expectedOutputBytes.AsSpan().SequenceEqual(outputBytes);
         if (!identical) throw Mismatch("template-readback");
+        var childEntrypoints = Arch7bChildEntrypointValidator.Validate(finalTemplate, manifest,
+            Path.Combine(Path.GetDirectoryName(outputPath)!,
+                Arch7bChildEntrypointValidator.ValidationFileName));
         var sourceSha = Convert.ToHexStringLower(SHA256.HashData(sourceTemplateBytes));
-        var outputSha = Convert.ToHexStringLower(SHA256.HashData(outputBytes));
+        var outputSha = freeze.TemplateSha256;
         var inventoryPath = Path.Combine(Path.GetDirectoryName(outputPath)!,
             Arch7bStageFactGraphValidator.InventoryFileName);
         var inventoryBytes = Arch7bStageFactGraphValidator.SerializeInventory(graph);
@@ -96,7 +98,7 @@ public static class Arch7bOperationalTemplateAuthorityProjection
         var evidence = Arch7bOneShotContracts.Sha256(string.Join('\n',
             Arch7bOperationalLivePlanTemplateMaterializer.FileVersion, sourceTemplatePath,
             sourceSha, outputPath, outputSha, inventoryPath, inventorySha,
-            template.EvidenceSha256, graph.EvidenceSha256,
+            finalTemplate.EvidenceSha256, graph.EvidenceSha256,
             provenance.EvidenceSha256,
             commandProjection.EvidenceSha256, environmentValidation.EvidenceSha256,
             childEntrypoints.EvidenceSha256,
@@ -106,7 +108,7 @@ public static class Arch7bOperationalTemplateAuthorityProjection
             syntheticAuthorityCount, unresolvedProducerCount, identical));
         return new(Arch7bOperationalLivePlanTemplateMaterializer.FileVersion,
             sourceTemplatePath, sourceSha, outputPath, outputSha,
-            inventoryPath, inventorySha, template.EvidenceSha256,
+            inventoryPath, inventorySha, finalTemplate.EvidenceSha256,
             sourceTemplate.CommandTemplates.Count,
             Arch7bOperationalLiveFactBindingCatalog.Build().Sum(value => value.Bindings.Count),
             regenerateCount,

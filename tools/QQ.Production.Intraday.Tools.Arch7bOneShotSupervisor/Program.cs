@@ -38,17 +38,12 @@ public static class Program
                     Arch7bFinalStageExecutionCatalog.WriteAsync(
                         Path.GetFullPath(Required(options, "output-path"))).ConfigureAwait(false),
                 "materialize-governed-source-template" => await
-                    Arch7bGovernedSourceTemplateMaterializer.WriteAsync(
-                        Path.GetFullPath(Required(options, "supervisor-executable")),
-                        Path.GetFullPath(Required(options, "dotnet-root")),
-                        Path.GetFullPath(Required(options, "git-executable")),
-                        Path.GetFullPath(Required(options, "node-executable")),
-                        Path.GetFullPath(Required(options, "taskkill-executable")),
-                        Path.GetFullPath(Required(options, "chrome-executable")),
-                        Required(options, "intraday-commit"),
-                        Required(options, "intraday-tree"),
-                        RequiredSha(options, "runtime-inventory-sha256"),
+                    MaterializeGovernedSourceTemplateAsync(options,
                         Path.GetFullPath(Required(options, "output-path"))).ConfigureAwait(false),
+                "materialize-final-operational-freeze" => await
+                    MaterializeGovernedSourceTemplateAsync(options, Path.Combine(
+                        Path.GetFullPath(Required(options, "output-root")),
+                        Arch7bLiveAuthorityMaterializer.TemplateFileName)).ConfigureAwait(false),
                 "qualify-source-template-provenance" => await
                     Arch7bSourceTemplateProvenanceValidator.ValidateAsync(
                         Path.GetFullPath(Required(options, "source-template")),
@@ -135,6 +130,18 @@ public static class Program
         }
         return result;
     }
+
+    private static Task<object> MaterializeGovernedSourceTemplateAsync(
+        IReadOnlyDictionary<string, string> options, string outputPath) =>
+        Arch7bGovernedSourceTemplateMaterializer.WriteAsync(
+            Path.GetFullPath(Required(options, "supervisor-executable")),
+            Path.GetFullPath(Required(options, "dotnet-root")),
+            Path.GetFullPath(Required(options, "git-executable")),
+            Path.GetFullPath(Required(options, "node-executable")),
+            Path.GetFullPath(Required(options, "taskkill-executable")),
+            Path.GetFullPath(Required(options, "chrome-executable")),
+            Required(options, "intraday-commit"), Required(options, "intraday-tree"),
+            RequiredSha(options, "runtime-inventory-sha256"), outputPath);
 
     private static async Task<object> QualifyStaticAsync(IReadOnlyDictionary<string, string> options)
     {
