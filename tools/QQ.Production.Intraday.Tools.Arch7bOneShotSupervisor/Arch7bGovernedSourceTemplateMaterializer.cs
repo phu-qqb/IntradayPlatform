@@ -11,6 +11,8 @@ public static class Arch7bGovernedSourceTemplateMaterializer
 {
     public const string ContractVersion =
         "arch7b_governed_source_template_materializer_v1";
+    public const string PackagedSourceCommandManifestRelativePath =
+        "static/arch7b-position-market-live-command-manifest.json";
 
     public static async Task<object> WriteAsync(string supervisorExecutable, string dotnetRoot,
         string gitExecutable, string nodeExecutable, string taskkillExecutable,
@@ -57,8 +59,7 @@ public static class Arch7bGovernedSourceTemplateMaterializer
         {
             EvidenceSha256 = Arch7bOneShotContracts.Sha256(skeleton.Canonical())
         };
-        var sourceManifestPath = Path.Combine(RepositoryRoot(), "docs", "architecture",
-            "arch7b", "arch7b-position-market-live-command-manifest.json");
+        var sourceManifestPath = SourceCommandManifestPath();
         var materialized = Arch7bOperationalLivePlanTemplateMaterializer.Materialize(skeleton,
             await File.ReadAllBytesAsync(sourceManifestPath, cancellationToken).ConfigureAwait(false));
         var freeze = await Arch7bFinalOperationalFreezeMaterializer.MaterializeAsync(
@@ -172,14 +173,18 @@ public static class Arch7bGovernedSourceTemplateMaterializer
             throw new Arch7bQualificationException(Arch7bV2Blockers.AuthorityBindingMismatch, id);
     }
 
-    private static string RepositoryRoot()
+    internal static string SourceCommandManifestPath()
     {
+        var packaged = Path.Combine(AppContext.BaseDirectory,
+            PackagedSourceCommandManifestRelativePath.Replace('/', Path.DirectorySeparatorChar));
+        if (File.Exists(packaged)) return packaged;
+
         var directory = new DirectoryInfo(AppContext.BaseDirectory);
         while (directory is not null)
         {
             var candidate = Path.Combine(directory.FullName, "docs", "architecture", "arch7b",
                 "arch7b-position-market-live-command-manifest.json");
-            if (File.Exists(candidate)) return directory.FullName;
+            if (File.Exists(candidate)) return candidate;
             directory = directory.Parent;
         }
         throw new Arch7bQualificationException(Arch7bV2Blockers.AuthorityBindingMismatch,

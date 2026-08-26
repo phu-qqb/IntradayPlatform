@@ -8,4 +8,10 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\QQ.Production.Intraday.Infrastructure.PostgreSql\QQ.Production.Intraday.Infrastructure.PostgreSql.csproj" />
   </ItemGroup>
+  <ItemGroup>
+    <Content Include="..\..\docs\architecture\arch7b\arch7b-position-market-live-command-manifest.json"
+             Link="static\arch7b-position-market-live-command-manifest.json"
+             CopyToOutputDirectory="PreserveNewest"
+             CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
 </Project>
