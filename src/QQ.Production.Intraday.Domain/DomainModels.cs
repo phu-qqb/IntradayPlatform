@@ -1104,29 +1104,32 @@ public static class QuantityRounding
     }
 }
 
+public sealed record RetainedTargetQuantity(decimal TargetNotionalUsd, decimal TargetBaseQuantity, decimal TargetVenueQuantity);
+
+public static class RetainedTargetPositionSizing
+{
+    public static RetainedTargetQuantity Calculate(TargetQuantityMode quantityMode, decimal approvedWeight, decimal navUsd, MarketDataSnapshot marketData, VenueInstrumentMapping mapping)
+    {
+        marketData.Validate();
+        var targetNotional = quantityMode == TargetQuantityMode.PortfolioBaseCurrencyNotional
+            ? approvedWeight * navUsd
+            : approvedWeight * navUsd * marketData.Mid;
+        var targetBase = quantityMode == TargetQuantityMode.PortfolioBaseCurrencyNotional
+            ? targetNotional / marketData.Mid
+            : approvedWeight * navUsd;
+        var targetVenue = QuantityRounding.RoundToStep(targetBase / mapping.ContractSize, mapping.QuantityStep);
+        if (targetVenue != 0m && Math.Abs(targetVenue) < mapping.MinOrderQuantity)
+            throw new DomainRuleViolationException("Rounded target venue quantity is below minimum order quantity.");
+        return new(targetNotional, targetVenue * mapping.ContractSize, targetVenue);
+    }
+}
+
 public sealed class TargetPositionCalculator
 {
     public TargetPosition Calculate(ModelRun run, TargetWeight weight, MarketDataSnapshot marketData, VenueInstrumentMapping mapping)
     {
-        marketData.Validate();
-
-        var targetNotional = run.TargetQuantityMode == TargetQuantityMode.PortfolioBaseCurrencyNotional
-            ? weight.Weight * run.NavUsd
-            : weight.Weight * run.NavUsd * marketData.Mid;
-
-        var targetBase = run.TargetQuantityMode == TargetQuantityMode.PortfolioBaseCurrencyNotional
-            ? targetNotional / marketData.Mid
-            : weight.Weight * run.NavUsd;
-
-        var roundedVenue = QuantityRounding.RoundToStep(targetBase / mapping.ContractSize, mapping.QuantityStep);
-        var roundedBase = roundedVenue * mapping.ContractSize;
-
-        if (roundedVenue != 0 && Math.Abs(roundedVenue) < mapping.MinOrderQuantity)
-        {
-            throw new DomainRuleViolationException("Rounded target venue quantity is below minimum order quantity.");
-        }
-
-        return new TargetPosition(run.Id, weight.InstrumentId, targetNotional, roundedBase, roundedVenue, run.TargetQuantityMode);
+        var sized = RetainedTargetPositionSizing.Calculate(run.TargetQuantityMode, weight.Weight, run.NavUsd, marketData, mapping);
+        return new TargetPosition(run.Id, weight.InstrumentId, sized.TargetNotionalUsd, sized.TargetBaseQuantity, sized.TargetVenueQuantity, run.TargetQuantityMode);
     }
 }
 

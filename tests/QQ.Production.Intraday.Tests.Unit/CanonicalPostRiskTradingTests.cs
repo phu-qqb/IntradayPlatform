@@ -8,43 +8,89 @@ public sealed class CanonicalPostRiskTradingTests
     private static readonly DateTimeOffset At = new(2026, 8, 25, 9, 2, 0, TimeSpan.Zero);
 
     [Fact]
-    public void Fresh_canonical_input_is_received_once_and_released_only_to_the_non_routing_boundary()
+    public void Public_wire_entry_parses_before_receipt_and_creates_dormant_parent_and_child_once()
     {
-        var consumer = new CanonicalPostRiskConsumptionService(new InMemoryCanonicalInputReceiptStore(), Service());
+        var boundary = new InMemoryCanonicalPostRiskOrderBoundary();
+        var consumer = Consumer(boundary);
+        var first = consumer.Consume(Wire("-0.125"), At);
+        var duplicate = consumer.Consume(Wire("-0.125"), At);
 
-        var first = consumer.Consume(Input(), At, Safety());
-        var duplicate = consumer.Consume(Input(), At, Safety());
-
+        Assert.True(first.Allowed);
         Assert.False(first.Duplicate);
-        Assert.True(first.TradingResult!.Allowed);
-        Assert.Equal(-1250m, first.TradingResult.TargetBaseQuantity);
-        Assert.Equal(-125m, first.TradingResult.TargetVenueQuantity);
-        Assert.Equal(TradeSide.Sell, first.TradingResult.Release!.Side);
-        Assert.Equal(1250m, first.TradingResult.Release.BaseQuantity);
+        Assert.Equal(-1250m, first.Evidence!.Target.TargetBaseQuantity);
+        Assert.Equal(-125m, first.Evidence.Target.TargetVenueQuantity);
+        Assert.Equal(OrderSide.Sell, first.Evidence.ParentOrder.Side);
+        Assert.Equal(first.Evidence.ParentOrder.Id, first.Evidence.ChildOrder.ParentOrderId);
+        Assert.Equal(1, boundary.CreatedOrderCount);
         Assert.True(duplicate.Duplicate);
-        Assert.Null(duplicate.TradingResult);
-    }
-
-    [Theory]
-    [InlineData(CanonicalRiskFreshness.Stale)]
-    [InlineData(CanonicalRiskFreshness.Unknown)]
-    public void Stale_or_unknown_canonical_risk_requires_a_fresh_canonical_decision(CanonicalRiskFreshness state)
-    {
-        var result = Service(state).Evaluate(Input(), At, Safety());
-
-        Assert.False(result.Allowed);
-        Assert.Equal("Fresh canonical Risk required.", result.Reason);
+        Assert.Equal(1, boundary.CreatedOrderCount);
+        Assert.Throws<ArgumentException>(() => consumer.Consume(Wire("-0.125", corruptFingerprint: true), At));
     }
 
     [Fact]
-    public void Release_controls_block_minimum_quantity_and_unspecified_slicing()
+    public void Conflicting_same_revision_stops_before_effect_and_higher_revision_is_distinct()
     {
-        var minimum = Service(control: Control(minimum: 1m)).Evaluate(Input(), At, Safety() with { CurrentBaseQuantity = -1249.5m });
-        var maximum = Service(control: Control(maximum: 100m)).Evaluate(Input(), At, Safety());
+        var boundary = new InMemoryCanonicalPostRiskOrderBoundary();
+        var consumer = Consumer(boundary);
+        Assert.True(consumer.Consume(Wire("-0.125"), At).Allowed);
+        Assert.Throws<InvalidOperationException>(() => consumer.Consume(Wire("-0.25"), At));
+        Assert.Equal(1, boundary.CreatedOrderCount);
+        Assert.True(consumer.Consume(Wire("0.125", revision: 3, supersededRevision: 2), At).Allowed);
+        Assert.Equal(2, boundary.CreatedOrderCount);
+    }
 
-        Assert.Equal("Below minimum executable quantity.", minimum.Reason);
-        Assert.Equal("Maximum per-order notional requires slicing; release blocked.", maximum.Reason);
-        Assert.Null(maximum.Release);
+    [Theory]
+    [InlineData("0.125", 1250)]
+    [InlineData("-0.125", -1250)]
+    [InlineData("0.0125", 125)]
+    public void Canonical_weights_use_shared_retained_sizing_exactly(string weight, decimal targetBase)
+    {
+        var result = Consumer(new InMemoryCanonicalPostRiskOrderBoundary()).Consume(Wire(weight), At);
+        Assert.True(result.Allowed);
+        Assert.Equal(targetBase, result.Evidence!.Target.TargetBaseQuantity);
+        var expected = RetainedTargetPositionSizing.Calculate(TargetQuantityMode.FxBaseCurrencyQuantity, decimal.Parse(weight, System.Globalization.CultureInfo.InvariantCulture), 10_000m, State().MarketData, Mapping());
+        Assert.Equal(expected, result.Evidence.Target);
+    }
+
+    [Fact]
+    public void Zero_drift_and_non_executable_drift_create_no_order()
+    {
+        var zeroBoundary = new InMemoryCanonicalPostRiskOrderBoundary();
+        var zero = Consumer(zeroBoundary, State() with { CurrentBaseQuantity = -1250m }).Consume(Wire("-0.125"), At);
+        var smallBoundary = new InMemoryCanonicalPostRiskOrderBoundary();
+        var small = Consumer(smallBoundary, State() with { CurrentBaseQuantity = -1245m }).Consume(Wire("-0.125"), At);
+        var zeroWeightBoundary = new InMemoryCanonicalPostRiskOrderBoundary();
+        var zeroWeight = Consumer(zeroWeightBoundary).Consume(Wire("0"), At);
+        var invalidBoundary = new InMemoryCanonicalPostRiskOrderBoundary();
+        var invalid = Consumer(invalidBoundary, State() with { Mapping = Mapping() with { QuantityStep = 0m } }).Consume(Wire("-0.125"), At);
+
+        Assert.Equal("No executable drift.", zero.Reason);
+        Assert.Equal("No executable drift.", zeroWeight.Reason);
+        Assert.Equal("Drift venue quantity is below the retained minimum order quantity.", small.Reason);
+        Assert.Equal("Retained position or market state is invalid.", invalid.Reason);
+        Assert.Equal(0, zeroBoundary.CreatedOrderCount);
+        Assert.Equal(0, smallBoundary.CreatedOrderCount);
+        Assert.Equal(0, invalidBoundary.CreatedOrderCount);
+        Assert.Equal(0, zeroWeightBoundary.CreatedOrderCount);
+    }
+
+    [Theory]
+    [InlineData(CanonicalBoundRiskFreshness.Stale)]
+    [InlineData(CanonicalBoundRiskFreshness.Unknown)]
+    public void Stale_or_unknown_freshness_fails_closed(CanonicalBoundRiskFreshness freshness)
+        => Assert.Equal("Fresh canonical Risk required.", Consumer(new InMemoryCanonicalPostRiskOrderBoundary(), freshness: freshness).Consume(Wire("-0.125"), At).Reason);
+
+    [Fact]
+    public void Freshness_must_bind_exact_state_and_time()
+    {
+        var state = State();
+        Assert.False(Consumer(new InMemoryCanonicalPostRiskOrderBoundary(), state, mismatch: true).Consume(Wire("-0.125"), At).Allowed);
+        Assert.False(Consumer(new InMemoryCanonicalPostRiskOrderBoundary(), state with { PositionAsOfUtc = At.AddMinutes(-2) }).Consume(Wire("-0.125"), At).Allowed);
+        Assert.False(Consumer(new InMemoryCanonicalPostRiskOrderBoundary(), state with { MarketData = state.MarketData with { ReceivedAtUtc = At.AddMinutes(1) } }).Consume(Wire("-0.125"), At).Allowed);
+        Assert.False(Consumer(new InMemoryCanonicalPostRiskOrderBoundary(), state, future: true).Consume(Wire("-0.125"), At).Allowed);
+        var invalidTiming = Wire("-0.125").Replace("2026-08-25T09:00:03.0000000+00:00", "2026-08-25T09:00:40.0000000+00:00", StringComparison.Ordinal);
+        invalidTiming = invalidTiming.Replace("4ab18dd8c13f6e6859e436ac6758d72ac06b824e5a9e601ff8fb7382d68a1eac", CanonicalPostRiskInputParser.CanonicalFingerprint(invalidTiming), StringComparison.Ordinal);
+        Assert.False(Consumer(new InMemoryCanonicalPostRiskOrderBoundary()).Consume(invalidTiming, At).Allowed);
     }
 
     [Theory]
@@ -54,60 +100,65 @@ public sealed class CanonicalPostRiskTradingTests
     [InlineData(3)]
     [InlineData(4)]
     [InlineData(5)]
-    public void Retained_safety_controls_block_release(int control)
+    public void Retained_safety_provider_controls_cannot_be_bypassed_by_wire_caller(int control)
     {
-        var safety = control switch
+        var state = control switch
         {
-            0 => Safety() with { KillSwitchActive = true },
-            1 => Safety() with { TradingWindowOpen = false },
-            2 => Safety() with { MarketDataFresh = false },
-            3 => Safety() with { PositionsReconciled = false },
-            4 => Safety() with { InstrumentEnabled = false },
-            _ => Safety() with { VenueEnabled = false }
+            0 => State() with { KillSwitchActive = true },
+            1 => State() with { TradingWindowOpen = false },
+            2 => State() with { MarketDataFresh = false },
+            3 => State() with { PositionsReconciled = false },
+            4 => State() with { InstrumentEnabled = false },
+            _ => State() with { VenueEnabled = false }
         };
-
-        Assert.False(Service().Evaluate(Input(), At, safety).Allowed);
+        Assert.False(Consumer(new InMemoryCanonicalPostRiskOrderBoundary(), state).Consume(Wire("-0.125"), At).Allowed);
     }
 
     [Fact]
-    public void Missing_or_cross_bound_context_and_lineage_fail_closed()
+    public void Adr_007_release_controls_block_without_target_mutation_or_slicing()
     {
-        var input = Input();
-        Assert.Throws<InvalidOperationException>(() => new InMemoryCanonicalExecutionContextResolver([], [], []).Resolve(input, At));
-        var invalidLineage = Safety() with { Mapping = Mapping() with { VenueId = new VenueId(Guid.Parse("99999999-9999-9999-9999-999999999999")) } };
-
-        Assert.Equal("Position or market lineage is invalid.", Service().Evaluate(input, At, invalidLineage).Reason);
+        var belowMinimum = Consumer(new InMemoryCanonicalPostRiskOrderBoundary(), State() with { CurrentBaseQuantity = -1240m }, control: Control(minimum: 20m)).Consume(Wire("-0.125"), At);
+        var overMaximum = Consumer(new InMemoryCanonicalPostRiskOrderBoundary(), control: Control(maximum: 100m)).Consume(Wire("-0.125"), At);
+        Assert.Equal("Below minimum executable quantity.", belowMinimum.Reason);
+        Assert.Equal("Maximum per-order notional requires slicing; release blocked.", overMaximum.Reason);
     }
 
     [Fact]
-    public void Adapter_contains_no_local_risk_or_order_side_entry()
+    public void Wire_entry_has_no_public_safety_or_live_venue_send_path()
     {
-        var source = File.ReadAllText(RepositoryFile("src", "QQ.Production.Intraday.Application", "CanonicalPostRiskTrading.cs"));
-
-        Assert.DoesNotContain("RiskEngine", source);
-        Assert.DoesNotContain("ModelWeightPromotionService", source);
-        Assert.DoesNotContain("ProcessModelRunService", source);
-        Assert.DoesNotContain("new RiskDecision", source);
+        var source = File.ReadAllText(RepositoryFile("src", "QQ.Production.Intraday.Application", "CanonicalPostRiskOrderBoundary.cs"));
+        Assert.Contains("Consume(string canonicalWire, DateTimeOffset asOfUtc)", source);
+        Assert.Contains("RetainedTargetPositionSizing.Calculate", source);
+        Assert.DoesNotContain("SendOrderAsync", source);
         Assert.DoesNotContain("IVenueExecutionGateway", source);
-        Assert.DoesNotContain("AddOrdersAsync", source);
-        Assert.Contains("no order was created or routed", source);
     }
 
-    private static CanonicalPostRiskTradingService Service(CanonicalRiskFreshness state = CanonicalRiskFreshness.Fresh, CanonicalTradingReleaseControl? control = null)
-        => new(new InMemoryCanonicalExecutionContextResolver([Mandate()], [Instrument()], [Context()]), new InMemoryCanonicalTradingReleaseControlResolver([control ?? Control()]), new FixedFreshnessGate(state));
+    private static CanonicalPostRiskConsumptionService Consumer(InMemoryCanonicalPostRiskOrderBoundary boundary, CanonicalPostRiskRetainedState? state = null, CanonicalBoundRiskFreshness freshness = CanonicalBoundRiskFreshness.Fresh, bool mismatch = false, CanonicalTradingReleaseControl? control = null, bool future = false)
+        => new(new InMemoryCanonicalInputReceiptStore(), new InMemoryCanonicalExecutionContextResolver([Mandate()], [Instrument()], [Context()]), new InMemoryCanonicalTradingReleaseControlResolver([control ?? Control()]), new FixedStateProvider(state ?? State()), new FixedFreshnessGate(freshness, mismatch, future), boundary);
 
-    private static CanonicalPostRiskInput Input() => CanonicalPostRiskInputParser.Parse(Valid);
     private static CanonicalTradingReleaseControl Control(decimal minimum = 10m, decimal maximum = 10_000m) => new(Mandate().FundId, Instrument().VenueId, Instrument().InstrumentId, "release-control", 1, At.AddMinutes(-1), null, "test-release-controls", minimum, maximum);
     private static MandateFundMapping Mandate() => new("mandate-001", new(Guid.Parse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")), "mandate-map", 1, At.AddMinutes(-1), null, "test");
     private static InstrumentExecutionMapping Instrument() => new("instrument-001", new(Guid.Parse("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")), new(Guid.Parse("cccccccc-cccc-cccc-cccc-cccccccccccc")), new(Guid.Parse("dddddddd-dddd-dddd-dddd-dddddddddddd")), "instrument-map", 1, At.AddMinutes(-1), null, "test");
     private static RetainedExecutionContext Context() => new(Mandate().FundId, Instrument().VenueId, 10_000m, 15, TargetQuantityMode.FxBaseCurrencyQuantity, new(Guid.Parse("eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee")), "route", "context", 1, At.AddMinutes(-1), null, "test");
     private static VenueInstrumentMapping Mapping() => new(Instrument().VenueInstrumentId, Instrument().VenueId, Instrument().InstrumentId, "TEST", "TEST", 10m, 1m, 0.1m, 0.01m);
-    private static CanonicalPostRiskTradingSafety Safety() => new(false, true, true, true, true, true, 0m, Mapping(), new(new MarketDataSnapshotId(Guid.Parse("ffffffff-ffff-ffff-ffff-ffffffffffff")), Instrument().InstrumentId, Instrument().VenueId, 1.99m, 2.01m, null, "test-market", At.AddSeconds(-10), At.AddSeconds(-5)), At.AddSeconds(-5), "position-snapshot:test");
+    private static CanonicalPostRiskRetainedState State() => new(false, true, true, true, true, true, 0m, Mapping(), new(new MarketDataSnapshotId(Guid.Parse("ffffffff-ffff-ffff-ffff-ffffffffffff")), Instrument().InstrumentId, Instrument().VenueId, 1.99m, 2.01m, null, "test-market", At.AddSeconds(-10), At.AddSeconds(-5)), At.AddSeconds(-5), "position-snapshot:test", "market-snapshot:test");
 
-    private sealed class FixedFreshnessGate(CanonicalRiskFreshness state) : ICanonicalRiskFreshnessGate
+    private sealed class FixedStateProvider(CanonicalPostRiskRetainedState state) : ICanonicalPostRiskRetainedStateProvider
     {
-        public CanonicalRiskFreshnessAttestation Verify(CanonicalPostRiskInput input, ResolvedCanonicalExecutionContext context, DateTimeOffset asOfUtc)
-            => new(input.RiskDecisionId, input.RiskRecordedAtUtc, input.KnowledgeCutoffUtc, input.Provenance, state);
+        public CanonicalPostRiskRetainedState Resolve(CanonicalPostRiskInput input, ResolvedCanonicalExecutionContext context, DateTimeOffset asOfUtc) => state;
+    }
+
+    private sealed class FixedFreshnessGate(CanonicalBoundRiskFreshness result, bool mismatch, bool future) : ICanonicalBoundRiskFreshnessGate
+    {
+        public CanonicalBoundRiskFreshnessAttestation Verify(CanonicalPostRiskInput input, ResolvedCanonicalExecutionContext context, CanonicalPostRiskRetainedState state, DateTimeOffset asOfUtc)
+            => new(input.RiskDecisionId, input.RiskRecordedAtUtc, input.KnowledgeCutoffUtc, input.Provenance, mismatch ? "wrong-position" : state.PositionReference, state.PositionAsOfUtc, state.MarketReference, state.MarketData.Id, state.MarketData.ReceivedAtUtc, future ? asOfUtc.AddSeconds(1) : asOfUtc, result);
+    }
+
+    private static string Wire(string weight, long revision = 2, long supersededRevision = 1, bool corruptFingerprint = false)
+    {
+        var wire = Valid.Replace("\"riskApprovedTargetWeight\":\"-0.125\"", "\"riskApprovedTargetWeight\":\"" + weight + "\"", StringComparison.Ordinal).Replace("\"revision\":2", "\"revision\":" + revision, StringComparison.Ordinal).Replace("\"revision\":1}", "\"revision\":" + supersededRevision + "}", StringComparison.Ordinal);
+        var fingerprint = CanonicalPostRiskInputParser.CanonicalFingerprint(wire);
+        return wire.Replace("4ab18dd8c13f6e6859e436ac6758d72ac06b824e5a9e601ff8fb7382d68a1eac", corruptFingerprint ? new string('b', 64) : fingerprint, StringComparison.Ordinal);
     }
 
     private static string RepositoryFile(params string[] parts)
