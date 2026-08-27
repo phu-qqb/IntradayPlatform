@@ -158,7 +158,7 @@ $marketDataTarget = Get-SecretField -Secret $secret -EnvironmentName "QQ_LMAX_FI
     "LmaxConnectivityLab__FixMarketDataTargetCompId",
     "LmaxConnectivityLab:FixMarketDataTargetCompId",
     "FixMarketDataTargetCompId"
-) -Required $false
+) -Required $true
 $sharedTarget = Get-SecretField -Secret $secret -EnvironmentName "QQ_LMAX_FIX_TARGET_COMP_ID" -Names @(
     "QQ_LMAX_FIX_TARGET_COMP_ID",
     "LmaxConnectivityLab__FixTargetCompId",
@@ -169,18 +169,13 @@ $sharedTarget = Get-SecretField -Secret $secret -EnvironmentName "QQ_LMAX_FIX_TA
 if ($null -eq $orderTarget -and $null -eq $sharedTarget) {
     throw "required_secret_field_missing:QQ_LMAX_FIX_ORDER_TARGET_COMP_ID"
 }
-if ($null -eq $marketDataTarget -and $null -eq $sharedTarget) {
-    throw "required_secret_field_missing:QQ_LMAX_FIX_MARKET_DATA_TARGET_COMP_ID"
-}
 if ($null -ne $orderTarget) {
     $processOverrides["QQ_LMAX_FIX_ORDER_TARGET_COMP_ID"] = $orderTarget
 }
-if ($null -ne $marketDataTarget) {
-    $processOverrides["QQ_LMAX_FIX_MARKET_DATA_TARGET_COMP_ID"] = $marketDataTarget
-}
-if ($null -ne $sharedTarget) {
+else {
     $processOverrides["QQ_LMAX_FIX_TARGET_COMP_ID"] = $sharedTarget
 }
+$processOverrides["QQ_LMAX_FIX_MARKET_DATA_TARGET_COMP_ID"] = $marketDataTarget
 
 if (-not [string]::Equals($processOverrides["QQ_LMAX_ENVIRONMENT"], "Production", [System.StringComparison]::OrdinalIgnoreCase)) {
     throw "secret_environment_not_production"
