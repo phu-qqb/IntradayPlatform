@@ -56,28 +56,21 @@ function Get-SecretField {
     return $values[0]
 }
 
-function Get-SecretFieldNames {
-    param([Parameter(Mandatory)][string]$Name)
+function Get-EquivalentSecretField {
+    param(
+        [Parameter(Mandatory)][psobject]$Secret,
+        [Parameter(Mandatory)][string]$EnvironmentName,
+        [Parameter(Mandatory)][string]$OrderName,
+        [Parameter(Mandatory)][string]$MarketDataName
+    )
 
-    $logicalName = switch ($Name) {
-        "QQ_LMAX_ENVIRONMENT" { "EnvironmentName" }
-        "QQ_LMAX_ACCOUNT_CODE" { "AccountCode" }
-        "QQ_LMAX_FIX_ORDER_HOST" { "FixOrderHost" }
-        "QQ_LMAX_FIX_ORDER_PORT" { "FixOrderPort" }
-        "QQ_LMAX_FIX_MARKET_DATA_HOST" { "FixMarketDataHost" }
-        "QQ_LMAX_FIX_MARKET_DATA_PORT" { "FixMarketDataPort" }
-        "QQ_LMAX_FIX_SENDER_COMP_ID" { "FixSenderCompId" }
-        "QQ_LMAX_FIX_USERNAME" { "FixUsername" }
-        "QQ_LMAX_FIX_PASSWORD" { "FixPassword" }
-        "QQ_LMAX_USE_TLS" { "UseTls" }
-        "QQ_LMAX_INSTRUMENT_SYMBOL" { "InstrumentSymbol" }
-        "QQ_LMAX_INSTRUMENT_ID" { "LmaxInstrumentId" }
-        "QQ_LMAX_FIX_SECURITY_ID_SOURCE" { "FixSecurityIdSource" }
-        "QQ_LMAX_MARKET_DATA_SYMBOL_ENCODING_MODE" { "MarketDataSymbolEncodingMode" }
-        default { throw "unsupported_environment_name:$Name" }
+    $orderValue = Get-SecretField -Secret $Secret -EnvironmentName $EnvironmentName -Names @($OrderName)
+    $marketDataValue = Get-SecretField -Secret $Secret -EnvironmentName $EnvironmentName -Names @($MarketDataName)
+    if (-not [string]::Equals($orderValue, $marketDataValue, [System.StringComparison]::Ordinal)) {
+        throw "session_credential_mismatch:$EnvironmentName"
     }
 
-    return @($Name, "LmaxConnectivityLab__$logicalName", "LmaxConnectivityLab:$logicalName", $logicalName)
+    return $orderValue
 }
 
 $root = Split-Path $PSScriptRoot -Parent
@@ -122,66 +115,16 @@ if ($null -eq $secret) {
     throw "aws_secret_string_not_json"
 }
 
-$requiredEnvironmentNames = @(
-    "QQ_LMAX_ENVIRONMENT",
-    "QQ_LMAX_ACCOUNT_CODE",
-    "QQ_LMAX_FIX_ORDER_HOST",
-    "QQ_LMAX_FIX_ORDER_PORT",
-    "QQ_LMAX_FIX_MARKET_DATA_HOST",
-    "QQ_LMAX_FIX_MARKET_DATA_PORT",
-    "QQ_LMAX_FIX_SENDER_COMP_ID",
-    "QQ_LMAX_FIX_USERNAME",
-    "QQ_LMAX_FIX_PASSWORD",
-    "QQ_LMAX_USE_TLS",
-    "QQ_LMAX_INSTRUMENT_SYMBOL",
-    "QQ_LMAX_INSTRUMENT_ID",
-    "QQ_LMAX_FIX_SECURITY_ID_SOURCE",
-    "QQ_LMAX_MARKET_DATA_SYMBOL_ENCODING_MODE"
-)
-
-$processOverrides = [ordered]@{}
-foreach ($environmentName in $requiredEnvironmentNames) {
-    $processOverrides[$environmentName] = Get-SecretField `
-        -Secret $secret `
-        -EnvironmentName $environmentName `
-        -Names (Get-SecretFieldNames -Name $environmentName)
-}
-
-$orderTarget = Get-SecretField -Secret $secret -EnvironmentName "QQ_LMAX_FIX_ORDER_TARGET_COMP_ID" -Names @(
-    "QQ_LMAX_FIX_ORDER_TARGET_COMP_ID",
-    "LmaxConnectivityLab__FixOrderTargetCompId",
-    "LmaxConnectivityLab:FixOrderTargetCompId",
-    "FixOrderTargetCompId"
-) -Required $false
-$marketDataTarget = Get-SecretField -Secret $secret -EnvironmentName "QQ_LMAX_FIX_MARKET_DATA_TARGET_COMP_ID" -Names @(
-    "QQ_LMAX_FIX_MARKET_DATA_TARGET_COMP_ID",
-    "LmaxConnectivityLab__FixMarketDataTargetCompId",
-    "LmaxConnectivityLab:FixMarketDataTargetCompId",
-    "FixMarketDataTargetCompId"
-) -Required $true
-$sharedTarget = Get-SecretField -Secret $secret -EnvironmentName "QQ_LMAX_FIX_TARGET_COMP_ID" -Names @(
-    "QQ_LMAX_FIX_TARGET_COMP_ID",
-    "LmaxConnectivityLab__FixTargetCompId",
-    "LmaxConnectivityLab:FixTargetCompId",
-    "FixTargetCompId"
-) -Required $false
-
-if ($null -eq $orderTarget -and $null -eq $sharedTarget) {
-    throw "required_secret_field_missing:QQ_LMAX_FIX_ORDER_TARGET_COMP_ID"
-}
-if ($null -ne $orderTarget) {
-    $processOverrides["QQ_LMAX_FIX_ORDER_TARGET_COMP_ID"] = $orderTarget
-}
-else {
-    $processOverrides["QQ_LMAX_FIX_TARGET_COMP_ID"] = $sharedTarget
-}
-$processOverrides["QQ_LMAX_FIX_MARKET_DATA_TARGET_COMP_ID"] = $marketDataTarget
-
-if (-not [string]::Equals($processOverrides["QQ_LMAX_ENVIRONMENT"], "Production", [System.StringComparison]::OrdinalIgnoreCase)) {
-    throw "secret_environment_not_production"
-}
-if (-not [bool]::Parse($processOverrides["QQ_LMAX_USE_TLS"])) {
-    throw "secret_tls_not_enabled"
+$processOverrides = [ordered]@{
+    "QQ_LMAX_FIX_ORDER_HOST" = Get-SecretField -Secret $secret -EnvironmentName "QQ_LMAX_FIX_ORDER_HOST" -Names @("QQ_LMAX_FIX_ORDER_HOST")
+    "QQ_LMAX_FIX_ORDER_PORT" = Get-SecretField -Secret $secret -EnvironmentName "QQ_LMAX_FIX_ORDER_PORT" -Names @("QQ_LMAX_FIX_ORDER_PORT")
+    "QQ_LMAX_FIX_ORDER_TARGET_COMP_ID" = Get-SecretField -Secret $secret -EnvironmentName "QQ_LMAX_FIX_ORDER_TARGET_COMP_ID" -Names @("QQ_LMAX_FIX_ORDER_TARGET_COMP_ID")
+    "QQ_LMAX_FIX_MARKET_DATA_HOST" = Get-SecretField -Secret $secret -EnvironmentName "QQ_LMAX_FIX_MARKET_DATA_HOST" -Names @("QQ_LMAX_FIX_MARKETDATA_HOST")
+    "QQ_LMAX_FIX_MARKET_DATA_PORT" = Get-SecretField -Secret $secret -EnvironmentName "QQ_LMAX_FIX_MARKET_DATA_PORT" -Names @("QQ_LMAX_FIX_MARKETDATA_PORT")
+    "QQ_LMAX_FIX_MARKET_DATA_TARGET_COMP_ID" = Get-SecretField -Secret $secret -EnvironmentName "QQ_LMAX_FIX_MARKET_DATA_TARGET_COMP_ID" -Names @("QQ_LMAX_FIX_MARKETDATA_TARGET_COMP_ID")
+    "QQ_LMAX_FIX_SENDER_COMP_ID" = Get-EquivalentSecretField -Secret $secret -EnvironmentName "QQ_LMAX_FIX_SENDER_COMP_ID" -OrderName "QQ_LMAX_FIX_ORDER_SENDER_COMP_ID" -MarketDataName "QQ_LMAX_FIX_MARKETDATA_SENDER_COMP_ID"
+    "QQ_LMAX_FIX_USERNAME" = Get-EquivalentSecretField -Secret $secret -EnvironmentName "QQ_LMAX_FIX_USERNAME" -OrderName "QQ_LMAX_FIX_ORDER_USERNAME" -MarketDataName "QQ_LMAX_FIX_MARKETDATA_USERNAME"
+    "QQ_LMAX_FIX_PASSWORD" = Get-EquivalentSecretField -Secret $secret -EnvironmentName "QQ_LMAX_FIX_PASSWORD" -OrderName "QQ_LMAX_FIX_ORDER_PASSWORD" -MarketDataName "QQ_LMAX_FIX_MARKETDATA_PASSWORD"
 }
 
 $processOverrides["QQ_LMAX_ALLOW_EXTERNAL_CONNECTIONS"] = "false"
