@@ -1402,6 +1402,41 @@ public sealed class Arch7bLmaxFixKnownOrderContractTests
     private static LmaxFixMarketDataRequestOptions StreamingRequestOptions()
         => LmaxFixMarketDataRequestOptions.FromLabOptions(LiveLikeOptions());
 
+    [Fact]
+    public void ProductionSecretPrintConfigWrapper_IsProcessScoped_AndPrintConfigOnly()
+    {
+        var source = File.ReadAllText(Path.Combine(
+            RepoRoot(),
+            "scripts",
+            "lmax-production-print-config-from-aws-secret.ps1"));
+
+        Assert.Contains("secretsmanager", source, StringComparison.Ordinal);
+        Assert.Contains("get-secret-value", source, StringComparison.Ordinal);
+        Assert.Contains("[Environment]::SetEnvironmentVariable", source, StringComparison.Ordinal);
+        Assert.Contains("\"Process\"", source, StringComparison.Ordinal);
+        Assert.Contains("--no-build --no-restore -- print-config", source, StringComparison.Ordinal);
+        Assert.Contains("QQ_LMAX_ALLOW_EXTERNAL_CONNECTIONS\"] = \"false\"", source, StringComparison.Ordinal);
+        Assert.Contains("QQ_LMAX_ALLOW_ORDER_SUBMISSION\"] = \"false\"", source, StringComparison.Ordinal);
+        Assert.Contains("QQ_LMAX_ALLOW_LIVE_TRADING\"] = \"false\"", source, StringComparison.Ordinal);
+        var marketDataTarget = source.IndexOf(
+            "$marketDataTarget = Get-SecretField -Secret $secret -EnvironmentName \"QQ_LMAX_FIX_MARKET_DATA_TARGET_COMP_ID\"",
+            StringComparison.Ordinal);
+        var sharedTarget = source.IndexOf("$sharedTarget = Get-SecretField", StringComparison.Ordinal);
+        var marketDataTargetRequired = marketDataTarget < 0
+            ? -1
+            : source.IndexOf(") -Required $true", marketDataTarget, StringComparison.Ordinal);
+        Assert.True(
+            marketDataTarget >= 0 && marketDataTargetRequired > marketDataTarget && marketDataTargetRequired < sharedTarget);
+        Assert.DoesNotContain(
+            "if ($null -eq $marketDataTarget -and $null -eq $sharedTarget)",
+            source,
+            StringComparison.Ordinal);
+        Assert.DoesNotContain("fix-arch7b-production-readiness", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("Set-Content", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("Out-File", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("Add-Content", source, StringComparison.Ordinal);
+    }
+
     private static LmaxConnectivityLabOptions MarketDataOnlyOptions()
     {
         var options = LiveLikeOptions();
