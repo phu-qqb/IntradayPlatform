@@ -72,6 +72,15 @@ public sealed partial class RawLmaxFixSessionClient
                 "ARCH7B_PRODUCTION_MARKET_DATA_READINESS_FAILED", diagnostics);
         }
 
+        var orderEntryBlockers = LmaxFixArch7bProductionReadinessContract.Validate(
+            options, request, explicitReadinessConfirmation, DateTimeOffset.UtcNow);
+        if (orderEntryBlockers.Count != 0)
+        {
+            diagnostics.AddRange(orderEntryBlockers);
+            return Result("Failed", persistence, marketDataReadiness,
+                new(false, false, false, false), orderEntryBlockers[0], diagnostics);
+        }
+
         var orderEntry = await ValidateOrderEntryLogonReadinessAsync(options, cancellationToken, diagnostics);
         var ready = persistence.RequiredSchemaPresent &&
                     marketDataReadiness.TcpConnected && marketDataReadiness.TlsHandshakeCompleted &&
@@ -178,7 +187,10 @@ public sealed partial class RawLmaxFixSessionClient
                 await tcp.ConnectAsync(options.FixOrderHost!, options.FixOrderPort!.Value, connectTimeout.Token);
                 tcpConnected = true;
             }
-            await using var stream = await CreateTlsStreamAsync(tcp, options.FixOrderHost!, cancellationToken);
+            Stream rawStream;
+            using (var tlsTimeout = CreateTimeout(options.ConnectTimeoutSeconds, cancellationToken))
+                rawStream = await CreateTlsStreamAsync(tcp, options.FixOrderHost!, tlsTimeout.Token);
+            await using var stream = rawStream;
             tlsHandshakeCompleted = true;
             var target = (options.FixOrderTargetCompId ?? options.FixTargetCompId)!;
             var logon = LmaxFixMarketDataCodec.BuildMessage("A", 1, options.FixSenderCompId!, target,

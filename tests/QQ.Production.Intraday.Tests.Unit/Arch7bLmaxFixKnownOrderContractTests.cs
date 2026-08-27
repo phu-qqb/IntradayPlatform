@@ -217,6 +217,14 @@ public sealed class Arch7bLmaxFixKnownOrderContractTests
         Assert.Contains("TrySendLogoutAsync", source, StringComparison.Ordinal);
         Assert.Contains("logonConfirmation.NextOutboundSequenceNumber", source, StringComparison.Ordinal);
         Assert.Contains("return (true, sequenceNumber)", source, StringComparison.Ordinal);
+        var revalidation = source.IndexOf(
+            "var orderEntryBlockers = LmaxFixArch7bProductionReadinessContract.Validate(",
+            StringComparison.Ordinal);
+        var orderEntry = source.IndexOf(
+            "ValidateOrderEntryLogonReadinessAsync(", StringComparison.Ordinal);
+        Assert.True(revalidation >= 0 && revalidation < orderEntry);
+        Assert.Contains("CreateTimeout(options.ConnectTimeoutSeconds, cancellationToken)", source, StringComparison.Ordinal);
+        Assert.Contains("CreateTlsStreamAsync(tcp, options.FixOrderHost!, tlsTimeout.Token)", source, StringComparison.Ordinal);
         Assert.Contains("SET TRANSACTION READ ONLY", source, StringComparison.Ordinal);
         Assert.Contains("SELECT 1", source, StringComparison.Ordinal);
         Assert.DoesNotContain("INSERT ", source, StringComparison.Ordinal);
