@@ -1418,19 +1418,14 @@ public sealed class Arch7bLmaxFixKnownOrderContractTests
         Assert.Contains("QQ_LMAX_ALLOW_EXTERNAL_CONNECTIONS\"] = \"false\"", source, StringComparison.Ordinal);
         Assert.Contains("QQ_LMAX_ALLOW_ORDER_SUBMISSION\"] = \"false\"", source, StringComparison.Ordinal);
         Assert.Contains("QQ_LMAX_ALLOW_LIVE_TRADING\"] = \"false\"", source, StringComparison.Ordinal);
-        var marketDataTarget = source.IndexOf(
-            "$marketDataTarget = Get-SecretField -Secret $secret -EnvironmentName \"QQ_LMAX_FIX_MARKET_DATA_TARGET_COMP_ID\"",
-            StringComparison.Ordinal);
-        var sharedTarget = source.IndexOf("$sharedTarget = Get-SecretField", StringComparison.Ordinal);
-        var marketDataTargetRequired = marketDataTarget < 0
-            ? -1
-            : source.IndexOf(") -Required $true", marketDataTarget, StringComparison.Ordinal);
-        Assert.True(
-            marketDataTarget >= 0 && marketDataTargetRequired > marketDataTarget && marketDataTargetRequired < sharedTarget);
-        Assert.DoesNotContain(
-            "if ($null -eq $marketDataTarget -and $null -eq $sharedTarget)",
-            source,
-            StringComparison.Ordinal);
+        Assert.Contains("QQ_LMAX_FIX_MARKETDATA_HOST", source, StringComparison.Ordinal);
+        Assert.Contains("QQ_LMAX_FIX_MARKETDATA_PORT", source, StringComparison.Ordinal);
+        Assert.Contains("QQ_LMAX_FIX_MARKETDATA_TARGET_COMP_ID", source, StringComparison.Ordinal);
+        Assert.Contains("QQ_LMAX_FIX_ORDER_SENDER_COMP_ID", source, StringComparison.Ordinal);
+        Assert.Contains("QQ_LMAX_FIX_MARKETDATA_SENDER_COMP_ID", source, StringComparison.Ordinal);
+        Assert.Contains("session_credential_mismatch:$EnvironmentName", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("QQ_LMAX_FIX_TARGET_COMP_ID", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("secret_environment_not_production", source, StringComparison.Ordinal);
         Assert.DoesNotContain("fix-arch7b-production-readiness", source, StringComparison.Ordinal);
         Assert.DoesNotContain("Set-Content", source, StringComparison.Ordinal);
         Assert.DoesNotContain("Out-File", source, StringComparison.Ordinal);
