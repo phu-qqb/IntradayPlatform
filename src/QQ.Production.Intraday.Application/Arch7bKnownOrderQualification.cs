@@ -36,6 +36,58 @@ public static class Arch7bKnownOrderQualificationPolicy
     public const string ExternalOrManualOrderCoverage = "UNPROVEN";
 }
 
+/// <summary>
+/// The immutable execution binding for one bounded known-order lifecycle.
+/// Demo uses <see cref="Demo"/>; production callers must construct and bind a
+/// separate profile rather than relaxing the Demo policy.
+/// </summary>
+public sealed record Arch7bKnownOrderExecutionProfile(
+    string Gate,
+    string Scope,
+    string Environment,
+    string AccountId,
+    string Symbol,
+    string SecurityId,
+    string SecurityIdSource,
+    string OpeningSide,
+    decimal VenueQuantity,
+    decimal QuantityIncrement,
+    decimal PriceIncrement,
+    decimal CollarPips,
+    int MaximumBboAgeSeconds,
+    int MaximumLifecycleSeconds,
+    int MaximumNewOrderSingleCount,
+    int MaximumCancelCount,
+    int MaximumReplaceCount,
+    int MaximumOrderStatusRequestCount,
+    string OpeningLimitPolicy,
+    string FlattenLimitPolicy,
+    string ExternalOrManualOrderCoverage)
+{
+    public static Arch7bKnownOrderExecutionProfile Demo { get; } = new(
+        Arch7bKnownOrderQualificationPolicy.Gate,
+        Arch7bKnownOrderQualificationPolicy.Scope,
+        Arch7bKnownOrderQualificationPolicy.Environment,
+        Arch7bKnownOrderQualificationPolicy.DemoAccountId,
+        Arch7bKnownOrderQualificationPolicy.Symbol,
+        Arch7bKnownOrderQualificationPolicy.SecurityId,
+        Arch7bKnownOrderQualificationPolicy.SecurityIdSource,
+        Arch7bKnownOrderQualificationPolicy.OpeningSide,
+        Arch7bKnownOrderQualificationPolicy.VenueQuantity,
+        Arch7bKnownOrderQualificationPolicy.QuantityIncrement,
+        Arch7bKnownOrderQualificationPolicy.PriceIncrement,
+        Arch7bKnownOrderQualificationPolicy.CollarPips,
+        Arch7bKnownOrderQualificationPolicy.MaximumBboAgeSeconds,
+        Arch7bKnownOrderQualificationPolicy.MaximumLifecycleSeconds,
+        Arch7bKnownOrderQualificationPolicy.MaximumNewOrderSingleCount,
+        Arch7bKnownOrderQualificationPolicy.MaximumCancelCount,
+        Arch7bKnownOrderQualificationPolicy.MaximumReplaceCount,
+        Arch7bKnownOrderQualificationPolicy.MaximumOrderStatusRequestCount,
+        Arch7bKnownOrderQualificationPolicy.OpeningLimitPolicy,
+        Arch7bKnownOrderQualificationPolicy.FlattenLimitPolicy,
+        Arch7bKnownOrderQualificationPolicy.ExternalOrManualOrderCoverage);
+}
+
 public sealed record Arch7bSelectedChildOrder(
     Guid TradeIntentId,
     Guid ParentOrderId,
@@ -215,23 +267,36 @@ public sealed record Arch7bLifecycleEvaluation(
 public static class Arch7bKnownOrderQualification
 {
     public static Arch7bPreflightDecision EvaluatePreflight(Arch7bPreflightInput input)
+        => EvaluatePreflight(input, Arch7bKnownOrderExecutionProfile.Demo);
+
+    public static Arch7bPreflightDecision EvaluatePreflight(
+        Arch7bPreflightInput input, Arch7bKnownOrderExecutionProfile profile)
     {
         ArgumentNullException.ThrowIfNull(input);
+        ArgumentNullException.ThrowIfNull(profile);
+        var demoProfile = profile == Arch7bKnownOrderExecutionProfile.Demo;
         var blockers = new List<string>();
         var child = input.ChildOrder;
         var bbo = input.Bbo;
-        Require(input.ConfiguredEnvironment == Arch7bKnownOrderQualificationPolicy.Environment, "ARCH7B_ENVIRONMENT_NOT_TEST");
-        Require(input.ConfiguredAccountId == Arch7bKnownOrderQualificationPolicy.DemoAccountId, "ARCH7B_DEMO_ACCOUNT_IDENTITY_MISMATCH");
-        Require(input.ConfiguredAccountId != Arch7bKnownOrderQualificationPolicy.ForbiddenRealAccountId, "ARCH7B_REAL_ACCOUNT_FORBIDDEN");
-        Require(child.Environment == Arch7bKnownOrderQualificationPolicy.Environment, "ARCH7B_CHILD_ENVIRONMENT_MISMATCH");
-        Require(child.AccountScope == Arch7bKnownOrderQualificationPolicy.DemoAccountId, "ARCH7B_CHILD_ACCOUNT_SCOPE_MISMATCH");
+        Require(input.ConfiguredEnvironment == profile.Environment,
+            demoProfile ? "ARCH7B_ENVIRONMENT_NOT_TEST" : "ARCH7B_ENVIRONMENT_BINDING_MISMATCH");
+        Require(input.ConfiguredAccountId == profile.AccountId,
+            demoProfile ? "ARCH7B_DEMO_ACCOUNT_IDENTITY_MISMATCH" : "ARCH7B_ACCOUNT_BINDING_MISMATCH");
+        if (demoProfile)
+        {
+            Require(input.ConfiguredAccountId != Arch7bKnownOrderQualificationPolicy.ForbiddenRealAccountId,
+                "ARCH7B_REAL_ACCOUNT_FORBIDDEN");
+            Require(child.AccountScope != Arch7bKnownOrderQualificationPolicy.ForbiddenRealAccountId,
+                "ARCH7B_REAL_ACCOUNT_FORBIDDEN");
+        }
+        Require(child.Environment == profile.Environment, "ARCH7B_CHILD_ENVIRONMENT_MISMATCH");
+        Require(child.AccountScope == profile.AccountId, "ARCH7B_CHILD_ACCOUNT_SCOPE_MISMATCH");
         Require(child.AccountScope == input.ConfiguredAccountId, "ARCH7B_CHILD_CONFIGURED_ACCOUNT_MISMATCH");
-        Require(child.AccountScope != Arch7bKnownOrderQualificationPolicy.ForbiddenRealAccountId, "ARCH7B_REAL_ACCOUNT_FORBIDDEN");
-        Require(child.Symbol == Arch7bKnownOrderQualificationPolicy.Symbol, "ARCH7B_SELECTED_SYMBOL_MISMATCH");
-        Require(child.SecurityId == Arch7bKnownOrderQualificationPolicy.SecurityId, "ARCH7B_SECURITY_ID_MISMATCH");
-        Require(child.SecurityIdSource == Arch7bKnownOrderQualificationPolicy.SecurityIdSource, "ARCH7B_SECURITY_ID_SOURCE_MISMATCH");
-        Require(child.Side == Arch7bKnownOrderQualificationPolicy.OpeningSide, "ARCH7B_OPENING_SIDE_MISMATCH");
-        Require(child.SourceQuantity >= Arch7bKnownOrderQualificationPolicy.VenueQuantity, "ARCH7B_CHILD_QUANTITY_TOO_SMALL");
+        Require(child.Symbol == profile.Symbol, "ARCH7B_SELECTED_SYMBOL_MISMATCH");
+        Require(child.SecurityId == profile.SecurityId, "ARCH7B_SECURITY_ID_MISMATCH");
+        Require(child.SecurityIdSource == profile.SecurityIdSource, "ARCH7B_SECURITY_ID_SOURCE_MISMATCH");
+        Require(child.Side == profile.OpeningSide, "ARCH7B_OPENING_SIDE_MISMATCH");
+        Require(child.SourceQuantity >= profile.VenueQuantity, "ARCH7B_CHILD_QUANTITY_TOO_SMALL");
         Require(child.LatestQualifyingRevision, "ARCH7B_SOURCE_NOT_LATEST_QUALIFYING_REVISION");
         Require(child.EconomicRevisionNumber == 2, "ARCH7B_ECONOMIC_REVISION_TWO_REQUIRED");
         Require(child.SourceCompleted, "ARCH7B_SOURCE_NOT_COMPLETED");
@@ -247,14 +312,14 @@ public static class Arch7bKnownOrderQualification
         Require(child.ParentStatus == "SHADOW_PLANNED", "ARCH7B_PARENT_STATUS_MISMATCH");
         Require(child.ChildStatus == "SHADOW_ONLY", "ARCH7B_CHILD_STATUS_MISMATCH");
         Require(bbo.Source == "LMAX", "ARCH7B_BBO_SOURCE_NOT_LMAX");
-        Require(bbo.Symbol == Arch7bKnownOrderQualificationPolicy.Symbol && bbo.SecurityId == Arch7bKnownOrderQualificationPolicy.SecurityId, "ARCH7B_BBO_INSTRUMENT_MISMATCH");
+        Require(bbo.Symbol == profile.Symbol && bbo.SecurityId == profile.SecurityId, "ARCH7B_BBO_INSTRUMENT_MISMATCH");
         Require(bbo.Bid > 0m && bbo.Ask >= bbo.Bid, "ARCH7B_BBO_INVALID");
         Require(bbo.SequenceIntegrityProven, "ARCH7B_BBO_SEQUENCE_INTEGRITY_UNPROVEN");
         Require(!bbo.PolygonUsed, "ARCH7B_POLYGON_ORDER_PRICE_FORBIDDEN");
-        Require(IsTickAligned(bbo.Bid) && IsTickAligned(bbo.Ask), "ARCH7B_BBO_NOT_TICK_ALIGNED");
-        Require(bbo.Spread <= MaximumSpread(), "ARCH7B_BBO_SPREAD_TOO_WIDE");
+        Require(IsTickAligned(bbo.Bid, profile) && IsTickAligned(bbo.Ask, profile), "ARCH7B_BBO_NOT_TICK_ALIGNED");
+        Require(bbo.Spread <= MaximumSpread(profile), "ARCH7B_BBO_SPREAD_TOO_WIDE");
         Require(bbo.AcquisitionStartedAtUtc <= bbo.ObservedAtUtc, "ARCH7B_BBO_TIME_ORDER_INVALID");
-        Require(input.EvaluationTimeUtc - bbo.ObservedAtUtc <= TimeSpan.FromSeconds(Arch7bKnownOrderQualificationPolicy.MaximumBboAgeSeconds),
+        Require(input.EvaluationTimeUtc - bbo.ObservedAtUtc <= TimeSpan.FromSeconds(profile.MaximumBboAgeSeconds),
             "ARCH7B_BBO_STALE");
         Require(input.CurrentKnownPosition == 0m, "ARCH7B_INITIAL_POSITION_NOT_FLAT");
         Require(input.PlatformKnownWorkingOrderCount == 0, "ARCH7B_PLATFORM_KNOWN_WORKING_ORDER_PRESENT");
@@ -273,9 +338,9 @@ public static class Arch7bKnownOrderQualification
             "ARCH7B_EXCLUSIVITY_DECLARATION_INCOMPLETE");
 
         var runIdentity = string.Join("|",
-            Arch7bKnownOrderQualificationPolicy.Gate,
-            Arch7bKnownOrderQualificationPolicy.Environment,
-            Arch7bKnownOrderQualificationPolicy.DemoAccountId,
+            profile.Gate,
+            profile.Environment,
+            profile.AccountId,
             child.SlotId,
             child.TradeIntentId.ToString("D"),
             child.ParentOrderId.ToString("D"),
@@ -285,9 +350,9 @@ public static class Arch7bKnownOrderQualification
         var flattenId = DeterministicClientOrderId("A7BF", runIdentity);
         var cancelId = DeterministicClientOrderId("A7BC", runIdentity);
         var openingLimit = child.Side == "BUY" ? bbo.Ask : bbo.Bid;
-        var collar = Arch7bKnownOrderQualificationPolicy.CollarPips * Arch7bKnownOrderQualificationPolicy.PriceIncrement * 10m;
+        var collar = profile.CollarPips * profile.PriceIncrement * 10m;
         var maximumOpeningPrice = bbo.Ask + collar;
-        var minimumOpeningPrice = Math.Max(Arch7bKnownOrderQualificationPolicy.PriceIncrement, bbo.Bid - collar);
+        var minimumOpeningPrice = Math.Max(profile.PriceIncrement, bbo.Bid - collar);
         var policySha = Sha256(string.Join("|",
             runIdentity,
             openingId,
@@ -296,8 +361,8 @@ public static class Arch7bKnownOrderQualification
             openingLimit.ToString("G29", CultureInfo.InvariantCulture),
             maximumOpeningPrice.ToString("G29", CultureInfo.InvariantCulture),
             minimumOpeningPrice.ToString("G29", CultureInfo.InvariantCulture),
-            Arch7bKnownOrderQualificationPolicy.OpeningLimitPolicy,
-            Arch7bKnownOrderQualificationPolicy.FlattenLimitPolicy));
+            profile.OpeningLimitPolicy,
+            profile.FlattenLimitPolicy));
 
         return new(
             blockers.Count == 0,
@@ -323,8 +388,20 @@ public static class Arch7bKnownOrderQualification
         string flattenClientOrderId,
         string? cancelClientOrderId = null,
         bool fullFixSessionSequenceValidated = false)
+        => EvaluateLifecycle(reports, openingClientOrderId, flattenClientOrderId,
+            Arch7bKnownOrderExecutionProfile.Demo, cancelClientOrderId,
+            fullFixSessionSequenceValidated);
+
+    public static Arch7bLifecycleEvaluation EvaluateLifecycle(
+        IEnumerable<Arch7bExecutionReportEvent> reports,
+        string openingClientOrderId,
+        string flattenClientOrderId,
+        Arch7bKnownOrderExecutionProfile profile,
+        string? cancelClientOrderId = null,
+        bool fullFixSessionSequenceValidated = false)
     {
         ArgumentNullException.ThrowIfNull(reports);
+        ArgumentNullException.ThrowIfNull(profile);
         var knownIds = new HashSet<string>(StringComparer.Ordinal)
         {
             openingClientOrderId,
@@ -346,7 +423,7 @@ public static class Arch7bKnownOrderQualification
                      .ThenBy(value => value.SequenceNumber)
                      .ThenBy(value => value.RawMessageSha256, StringComparer.Ordinal))
         {
-            ValidateReport(report, knownIds, issues);
+            ValidateReport(report, knownIds, issues, profile);
             if (seenHashes.TryGetValue(report.RawMessageSha256, out var existingHashExec))
             {
                 if (!existingHashExec.Equals(report.ExecId, StringComparison.Ordinal))
@@ -521,9 +598,17 @@ public static class Arch7bKnownOrderQualification
     }
 
     public static void ValidateBudget(Arch7bApplicationMessageBudget budget)
+        => ValidateBudget(budget, Arch7bKnownOrderExecutionProfile.Demo);
+
+    public static void ValidateBudget(
+        Arch7bApplicationMessageBudget budget, Arch7bKnownOrderExecutionProfile profile)
     {
         ArgumentNullException.ThrowIfNull(budget);
-        if (!budget.WithinPolicy)
+        ArgumentNullException.ThrowIfNull(profile);
+        if (budget.NewOrderSingleCount > profile.MaximumNewOrderSingleCount ||
+            budget.CancelCount > profile.MaximumCancelCount ||
+            budget.ReplaceCount > profile.MaximumReplaceCount ||
+            budget.OrderStatusRequestCount > profile.MaximumOrderStatusRequestCount)
             throw new InvalidOperationException("ARCH7B_APPLICATION_MESSAGE_BUDGET_EXCEEDED");
     }
 
@@ -541,13 +626,18 @@ public static class Arch7bKnownOrderQualification
     }
 
     public static decimal TouchLimit(Arch7bLmaxBbo bbo, string side)
+        => TouchLimit(bbo, side, Arch7bKnownOrderExecutionProfile.Demo);
+
+    public static decimal TouchLimit(
+        Arch7bLmaxBbo bbo, string side, Arch7bKnownOrderExecutionProfile profile)
     {
         ArgumentNullException.ThrowIfNull(bbo);
+        ArgumentNullException.ThrowIfNull(profile);
         if (bbo.Bid <= 0m || bbo.Ask <= 0m || bbo.Bid > bbo.Ask)
             throw new InvalidOperationException("ARCH7B_BBO_INVALID");
-        if (!IsTickAligned(bbo.Bid) || !IsTickAligned(bbo.Ask))
+        if (!IsTickAligned(bbo.Bid, profile) || !IsTickAligned(bbo.Ask, profile))
             throw new InvalidOperationException("ARCH7B_BBO_NOT_TICK_ALIGNED");
-        if (bbo.Spread > MaximumSpread())
+        if (bbo.Spread > MaximumSpread(profile))
             throw new InvalidOperationException("ARCH7B_BBO_SPREAD_TOO_WIDE");
         return side switch
         {
@@ -557,27 +647,26 @@ public static class Arch7bKnownOrderQualification
         };
     }
 
-    private static decimal MaximumSpread()
-        => Arch7bKnownOrderQualificationPolicy.MaximumSpreadPips *
-           Arch7bKnownOrderQualificationPolicy.PriceIncrement * 10m;
+    private static decimal MaximumSpread(Arch7bKnownOrderExecutionProfile profile)
+        => profile.CollarPips * profile.PriceIncrement * 10m;
 
-    private static bool IsTickAligned(decimal value)
-        => value % Arch7bKnownOrderQualificationPolicy.PriceIncrement == 0m;
+    private static bool IsTickAligned(decimal value, Arch7bKnownOrderExecutionProfile profile)
+        => value % profile.PriceIncrement == 0m;
 
     private static void ValidateReport(
         Arch7bExecutionReportEvent report,
         IReadOnlySet<string> knownIds,
-        ICollection<string> issues)
+        ICollection<string> issues,
+        Arch7bKnownOrderExecutionProfile profile)
     {
         if (!knownIds.Contains(report.ClOrdId) &&
             (string.IsNullOrWhiteSpace(report.OrigClOrdId) || !knownIds.Contains(report.OrigClOrdId)))
             issues.Add($"ARCH7B_UNKNOWN_CLORDID:{report.ClOrdId}");
-        if (report.AccountId != Arch7bKnownOrderQualificationPolicy.DemoAccountId)
-            issues.Add("ARCH7B_DEMO_ACCOUNT_IDENTITY_MISMATCH");
-        if (report.AccountId == Arch7bKnownOrderQualificationPolicy.ForbiddenRealAccountId)
-            issues.Add("ARCH7B_REAL_ACCOUNT_FORBIDDEN");
-        if (report.Symbol != Arch7bKnownOrderQualificationPolicy.Symbol ||
-            report.SecurityId != Arch7bKnownOrderQualificationPolicy.SecurityId)
+        if (report.AccountId != profile.AccountId)
+            issues.Add(profile == Arch7bKnownOrderExecutionProfile.Demo
+                ? "ARCH7B_DEMO_ACCOUNT_IDENTITY_MISMATCH"
+                : "ARCH7B_EXECUTION_REPORT_ACCOUNT_BINDING_MISMATCH");
+        if (report.Symbol != profile.Symbol || report.SecurityId != profile.SecurityId)
             issues.Add("ARCH7B_EXECUTION_REPORT_INSTRUMENT_MISMATCH");
         if (report.SequenceNumber <= 0)
             issues.Add("ARCH7B_FIX_SEQUENCE_INVALID");

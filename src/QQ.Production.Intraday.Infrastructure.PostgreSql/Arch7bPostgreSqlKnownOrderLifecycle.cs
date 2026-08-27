@@ -148,7 +148,8 @@ public sealed record Arch7bQualificationRegistration(
     Arch7bPreflightDecision Preflight,
     string AuthorizationPacketSha256,
     Arch7bExclusivityDeclaration Exclusivity,
-    DateTimeOffset RegisteredAtUtc);
+    DateTimeOffset RegisteredAtUtc,
+    Arch7bKnownOrderExecutionProfile ExecutionProfile);
 
 public sealed record Arch7bFixSessionLedgerEvent(
     Guid SessionEventId,
@@ -208,6 +209,7 @@ public sealed class EfArch7bKnownOrderLifecycleStore(
         RequireSha(registration.Preflight.PolicySha256, "ARCH7B_POLICY_SHA256_INVALID");
         RequireSha(registration.AuthorizationPacketSha256, "ARCH7B_AUTHORIZATION_PACKET_SHA256_INVALID");
         RequireUtc(registration.RegisteredAtUtc, "ARCH7B_REGISTERED_TIME_NOT_UTC");
+        ArgumentNullException.ThrowIfNull(registration.ExecutionProfile);
         if (!registration.Exclusivity.AdvisoryLeaseHeld ||
             registration.Exclusivity.ExpiresAtUtc <= registration.RegisteredAtUtc)
             throw new InvalidOperationException("ARCH7B_EXCLUSIVITY_LEASE_NOT_HELD");
@@ -215,17 +217,17 @@ public sealed class EfArch7bKnownOrderLifecycleStore(
         var row = new PmsArch7bQualificationRunRow(
             registration.QualificationRunId,
             registration.ChildOrderId,
-            Arch7bKnownOrderQualificationPolicy.Gate,
-            Arch7bKnownOrderQualificationPolicy.Scope,
-            Arch7bKnownOrderQualificationPolicy.Environment,
-            Arch7bKnownOrderQualificationPolicy.DemoAccountId,
-            Arch7bKnownOrderQualificationPolicy.Symbol,
-            Arch7bKnownOrderQualificationPolicy.SecurityId,
-            Arch7bKnownOrderQualificationPolicy.SecurityIdSource,
-            Arch7bKnownOrderQualificationPolicy.OpeningSide,
-            Arch7bKnownOrderQualificationPolicy.VenueQuantity,
-            Arch7bKnownOrderQualificationPolicy.QuantityIncrement,
-            Arch7bKnownOrderQualificationPolicy.PriceIncrement,
+            registration.ExecutionProfile.Gate,
+            registration.ExecutionProfile.Scope,
+            registration.ExecutionProfile.Environment,
+            registration.ExecutionProfile.AccountId,
+            registration.ExecutionProfile.Symbol,
+            registration.ExecutionProfile.SecurityId,
+            registration.ExecutionProfile.SecurityIdSource,
+            registration.ExecutionProfile.OpeningSide,
+            registration.ExecutionProfile.VenueQuantity,
+            registration.ExecutionProfile.QuantityIncrement,
+            registration.ExecutionProfile.PriceIncrement,
             registration.Preflight.OpeningClientOrderId,
             registration.Preflight.FlattenClientOrderId,
             registration.Preflight.CancelClientOrderId,
@@ -233,7 +235,7 @@ public sealed class EfArch7bKnownOrderLifecycleStore(
             registration.AuthorizationPacketSha256,
             registration.Exclusivity.OwnerId,
             registration.Exclusivity.ExpiresAtUtc,
-            Arch7bKnownOrderQualificationPolicy.ExternalOrManualOrderCoverage,
+            registration.ExecutionProfile.ExternalOrManualOrderCoverage,
             registration.RegisteredAtUtc);
 
         return await InsertIdenticalAsync(
@@ -280,9 +282,7 @@ public sealed class EfArch7bKnownOrderLifecycleStore(
         RequireSha(value.BboSnapshotSha256, "ARCH7B_SEND_BBO_SHA256_INVALID");
         RequireSha(value.PayloadSha256, "ARCH7B_SEND_PAYLOAD_SHA256_INVALID");
         RequireUtc(value.IntentRecordedAtUtc, "ARCH7B_SEND_INTENT_TIME_NOT_UTC");
-        if (value.Quantity < 0m ||
-            value.Quantity > Arch7bKnownOrderQualificationPolicy.VenueQuantity ||
-            value.Quantity % Arch7bKnownOrderQualificationPolicy.QuantityIncrement != 0m)
+        if (value.Quantity < 0m)
             throw new InvalidOperationException("ARCH7B_SEND_QUANTITY_OUT_OF_BOUNDS");
         if (value.MessageType is not ("D" or "F" or "H"))
             throw new InvalidOperationException("ARCH7B_SEND_MESSAGE_TYPE_FORBIDDEN");
@@ -293,6 +293,8 @@ public sealed class EfArch7bKnownOrderLifecycleStore(
         await LockRunAsync(context, value.QualificationRunId, cancellationToken);
         var run = await context.Arch7bQualificationRuns.AsNoTracking()
             .SingleAsync(item => item.QualificationRunId == value.QualificationRunId, cancellationToken);
+        if (value.Quantity > run.VenueQuantity || value.Quantity % run.QuantityIncrement != 0m)
+            throw new InvalidOperationException("ARCH7B_SEND_QUANTITY_OUT_OF_BOUNDS");
         ValidateKnownSend(run, value);
 
         var existing = await context.Arch7bOrderSendLedger.AsNoTracking()
@@ -304,8 +306,8 @@ public sealed class EfArch7bKnownOrderLifecycleStore(
             value.MessageType,
             value.ClientOrderId,
             value.OriginalClientOrderId,
-            Arch7bKnownOrderQualificationPolicy.Symbol,
-            Arch7bKnownOrderQualificationPolicy.SecurityId,
+            run.Symbol,
+            run.SecurityId,
             value.Side,
             value.Quantity,
             value.LimitPrice,
@@ -553,6 +555,7 @@ public sealed class EfArch7bKnownOrderLifecycleStore(
             reports,
             run.OpeningClientOrderId,
             run.FlattenClientOrderId,
+            ExecutionProfile(run),
             run.CancelClientOrderId,
             fullFixSessionSequenceValidated: true);
     }
@@ -674,9 +677,11 @@ public sealed class EfArch7bKnownOrderLifecycleStore(
                     report.OrigClOrdId == run.FlattenClientOrderId;
         if (!known)
             throw new InvalidOperationException("ARCH7B_UNKNOWN_CLORDID");
-        if (report.AccountId != run.AccountId ||
-            report.AccountId == Arch7bKnownOrderQualificationPolicy.ForbiddenRealAccountId)
-            throw new InvalidOperationException("ARCH7B_DEMO_ACCOUNT_IDENTITY_MISMATCH");
+        if (report.AccountId != run.AccountId)
+            throw new InvalidOperationException(run.AccountId ==
+                Arch7bKnownOrderQualificationPolicy.DemoAccountId
+                ? "ARCH7B_DEMO_ACCOUNT_IDENTITY_MISMATCH"
+                : "ARCH7B_EXECUTION_REPORT_ACCOUNT_BINDING_MISMATCH");
         if (report.Symbol != run.Symbol || report.SecurityId != run.SecurityId)
             throw new InvalidOperationException("ARCH7B_EXECUTION_REPORT_INSTRUMENT_MISMATCH");
         if (report.SequenceNumber <= 0 || string.IsNullOrWhiteSpace(report.ExecId) ||
@@ -705,6 +710,31 @@ public sealed class EfArch7bKnownOrderLifecycleStore(
            report.OrdStatus is "1" or "2" &&
            report.LastQty > 0m &&
            report.LastPx > 0m;
+
+    private static Arch7bKnownOrderExecutionProfile ExecutionProfile(
+        PmsArch7bQualificationRunRow run)
+        => new(
+            run.Gate,
+            run.Scope,
+            run.Environment,
+            run.AccountId,
+            run.Symbol,
+            run.SecurityId,
+            run.SecurityIdSource,
+            run.OpeningSide,
+            run.VenueQuantity,
+            run.QuantityIncrement,
+            run.PriceIncrement,
+            Arch7bKnownOrderQualificationPolicy.CollarPips,
+            Arch7bKnownOrderQualificationPolicy.MaximumBboAgeSeconds,
+            Arch7bKnownOrderQualificationPolicy.MaximumLifecycleSeconds,
+            Arch7bKnownOrderQualificationPolicy.MaximumNewOrderSingleCount,
+            Arch7bKnownOrderQualificationPolicy.MaximumCancelCount,
+            Arch7bKnownOrderQualificationPolicy.MaximumReplaceCount,
+            Arch7bKnownOrderQualificationPolicy.MaximumOrderStatusRequestCount,
+            Arch7bKnownOrderQualificationPolicy.OpeningLimitPolicy,
+            Arch7bKnownOrderQualificationPolicy.FlattenLimitPolicy,
+            run.ExternalOrManualOrderCoverage);
 
     private static PmsArch7bExecutionReportRow ToRow(
         Guid qualificationRunId,
@@ -845,15 +875,30 @@ public sealed class Arch7bPostgreSqlExclusiveLease : IAsyncDisposable
         DateTimeOffset acquiredAtUtc,
         TimeSpan duration,
         CancellationToken cancellationToken = default)
+        => await AcquireAsync(
+            contextFactory,
+            ownerId,
+            acquiredAtUtc,
+            duration,
+            Arch7bKnownOrderQualificationPolicy.DemoAccountId,
+            cancellationToken);
+
+    public static async Task<Arch7bPostgreSqlExclusiveLease> AcquireAsync(
+        IDbContextFactory<PmsShadowDbContext> contextFactory,
+        string ownerId,
+        DateTimeOffset acquiredAtUtc,
+        TimeSpan duration,
+        string accountId,
+        CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(ownerId) || acquiredAtUtc.Offset != TimeSpan.Zero ||
-            duration <= TimeSpan.Zero ||
+            string.IsNullOrWhiteSpace(accountId) || duration <= TimeSpan.Zero ||
             duration > TimeSpan.FromSeconds(Arch7bKnownOrderQualificationPolicy.MaximumLifecycleSeconds))
             throw new InvalidOperationException("ARCH7B_EXCLUSIVITY_REQUEST_INVALID");
         var context = await contextFactory.CreateDbContextAsync(cancellationToken);
         await context.Database.OpenConnectionAsync(cancellationToken);
         var lockKey = BitConverter.ToInt64(SHA256.HashData(Encoding.UTF8.GetBytes(
-            $"arch7b-exclusive|{Arch7bKnownOrderQualificationPolicy.DemoAccountId}")), 0);
+            $"arch7b-exclusive|{accountId}")), 0);
         await using var command = context.Database.GetDbConnection().CreateCommand();
         command.CommandText = "SELECT pg_try_advisory_lock(@lock_key)";
         var parameter = command.CreateParameter();

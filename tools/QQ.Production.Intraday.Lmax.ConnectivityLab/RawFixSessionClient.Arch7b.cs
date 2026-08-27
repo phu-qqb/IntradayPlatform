@@ -18,8 +18,14 @@ public sealed partial class RawLmaxFixSessionClient
         if (request.Activation == LmaxFixArch7bActivation.Disabled)
             return LmaxFixArch7bKnownOrderResult.Skipped("ARCH7B_EXECUTION_DISABLED_BY_DEFAULT");
 
-        if (request.Activation == LmaxFixArch7bActivation.DryRun)
+        if (request.Activation is LmaxFixArch7bActivation.DryRun or LmaxFixArch7bActivation.ProductionDryRun)
         {
+            if (request.Activation == LmaxFixArch7bActivation.ProductionDryRun)
+            {
+                var dryRunBlockers = LmaxFixArch7bKnownOrderContract.Validate(options, request, startedAt).ToList();
+                if (dryRunBlockers.Count != 0)
+                    return LmaxFixArch7bKnownOrderResult.Skipped(dryRunBlockers[0], dryRunBlockers);
+            }
             var plan = LmaxFixArch7bKnownOrderContract.BuildDryRunPlan(options, request);
             return new(
                 "fix-arch7b-known-order-lifecycle",
@@ -54,6 +60,7 @@ public sealed partial class RawLmaxFixSessionClient
             blockers.Add("ARCH7B_DURABLE_QUALIFICATION_SESSION_REQUIRED");
         if (blockers.Count != 0)
             return LmaxFixArch7bKnownOrderResult.Skipped(blockers[0], blockers);
+        var profile = request.ExecutionProfile;
 
         var target = (options.FixOrderTargetCompId ?? options.FixTargetCompId)!;
         var reports = new List<LmaxFixExecutionReport>();
@@ -90,6 +97,45 @@ public sealed partial class RawLmaxFixSessionClient
             var openingMarketObservationId = recovery.OpeningMarketObservationId ??
                 request.OpeningMarketObservationId;
             string? flattenMarketObservationId = recovery.FlattenMarketObservationId;
+
+            if (request.Activation == LmaxFixArch7bActivation.ProductionAuthorizedOnce &&
+                recoveryPlan.MaySendOpeningNewOrderSingle)
+            {
+                var preflightStartedAtUtc = DateTimeOffset.UtcNow;
+                var preflightOptions = CreateArch7bReadOnlyMarketDataOptions(options, profile);
+                var remaining = request.DeadlineUtc - preflightStartedAtUtc;
+                if (remaining <= TimeSpan.Zero)
+                    return await ResultWithCleanupAsync("Failed", "ARCH7B_DEADLINE_EXCEEDED");
+                var preflightBudget = TimeSpan.FromSeconds(profile.MaximumBboAgeSeconds);
+                using var preflightDeadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                preflightDeadline.CancelAfter(remaining < preflightBudget ? remaining : preflightBudget);
+                var preflightMarketData = await Arch7bProductionReadOnlyMarketDataSnapshotAsync(
+                    preflightOptions,
+                    request,
+                    request.DeadlineUtc,
+                    preflightDeadline.Token);
+                var preflightDecision = LmaxFixArch7bKnownOrderContract.EvaluateFreshFlattenObservation(
+                    preflightOptions,
+                    preflightMarketData,
+                    preflightStartedAtUtc,
+                    DateTimeOffset.UtcNow,
+                    request.OpeningMarketObservationId,
+                    profile);
+                diagnostics.Add($"ARCH7B_PRODUCTION_PREFLIGHT_MARKET_DATA:{preflightMarketData.Status}");
+                if (!preflightDecision.Allowed)
+                {
+                    diagnostics.AddRange(preflightDecision.Blockers);
+                    return await ResultWithCleanupAsync(
+                        "Failed",
+                        "ARCH7B_PRODUCTION_PREFLIGHT_MARKET_DATA_UNAVAILABLE");
+                }
+
+                var postPreflightBlockers = LmaxFixArch7bKnownOrderContract.Validate(
+                    options, request, DateTimeOffset.UtcNow).ToList();
+                if (postPreflightBlockers.Count != 0)
+                    return await ResultWithCleanupAsync("Failed", postPreflightBlockers[0]);
+            }
+
             await arch7bObserver!.RecordSessionEventAsync(
                 request,
                 "KILL_SWITCH_ARMED_BEFORE_FIX_LOGON",
@@ -161,10 +207,15 @@ public sealed partial class RawLmaxFixSessionClient
             }
             else
             {
-                var openingRequest = LmaxFixArch7bKnownOrderContract.DemoLimitRequest(
+                var preOpeningBlockers = LmaxFixArch7bKnownOrderContract.Validate(
+                    options, request, DateTimeOffset.UtcNow).ToList();
+                if (preOpeningBlockers.Count != 0)
+                    return await ResultWithCleanupAsync("Failed", preOpeningBlockers[0]);
+                var openingRequest = LmaxFixArch7bKnownOrderContract.LimitRequest(
+                    profile,
                     request.AccountId,
                     LmaxFixDemoOrderSide.Buy,
-                    Arch7bKnownOrderQualificationPolicy.VenueQuantity,
+                    profile.VenueQuantity,
                     request.OpeningLimitPrice,
                     request.OpeningClientOrderId);
                 var opening = LmaxFixRecoveryCodec.BuildNewOrderSingle(
@@ -173,7 +224,7 @@ public sealed partial class RawLmaxFixSessionClient
                     sequenceNumber,
                     openingRequest,
                     request.OpeningClientOrderId,
-                    Arch7bKnownOrderQualificationPolicy.SecurityIdSource);
+                    profile.SecurityIdSource);
                 await PersistThenSendAsync(
                     stream,
                     "OPEN",
@@ -181,7 +232,7 @@ public sealed partial class RawLmaxFixSessionClient
                     request.OpeningClientOrderId,
                     null,
                     "BUY",
-                    Arch7bKnownOrderQualificationPolicy.VenueQuantity,
+                    profile.VenueQuantity,
                     request.OpeningLimitPrice,
                     openingMarketObservationId,
                     opening,
@@ -190,10 +241,13 @@ public sealed partial class RawLmaxFixSessionClient
                 openingSent = true;
             }
 
+            var openingCancelDeadline = request.OpeningCancelAtUtc < request.DeadlineUtc
+                ? request.OpeningCancelAtUtc
+                : request.DeadlineUtc;
             await ReadUntilAsync(
                 stream,
-                request.OpeningCancelAtUtc,
-                () => OpeningTerminal() || OpeningFilledQuantity() >= Arch7bKnownOrderQualificationPolicy.VenueQuantity,
+                openingCancelDeadline,
+                () => OpeningTerminal() || OpeningFilledQuantity() >= profile.VenueQuantity,
                 cancellationToken);
             if (blocker is not null)
                 return await ResultWithCleanupAsync("Failed", blocker);
@@ -220,11 +274,11 @@ public sealed partial class RawLmaxFixSessionClient
                         sequenceNumber,
                         request.CancelClientOrderId,
                         request.OpeningClientOrderId,
-                        Arch7bKnownOrderQualificationPolicy.Symbol,
+                        profile.Symbol,
                         "1",
-                        Arch7bKnownOrderQualificationPolicy.VenueQuantity,
-                        Arch7bKnownOrderQualificationPolicy.SecurityId,
-                        Arch7bKnownOrderQualificationPolicy.SecurityIdSource);
+                        profile.VenueQuantity,
+                        profile.SecurityId,
+                        profile.SecurityIdSource);
                     await PersistThenSendAsync(
                         stream,
                         "OPEN_RESIDUAL_CANCEL",
@@ -232,7 +286,7 @@ public sealed partial class RawLmaxFixSessionClient
                         request.CancelClientOrderId,
                         request.OpeningClientOrderId,
                         "BUY",
-                        Arch7bKnownOrderQualificationPolicy.VenueQuantity,
+                        profile.VenueQuantity,
                         null,
                         openingMarketObservationId,
                         cancel,
@@ -261,8 +315,8 @@ public sealed partial class RawLmaxFixSessionClient
                 return await ResultWithCleanupAsync("Failed", "ARCH7B_OPENING_TERMINAL_NOT_CONFIRMED");
             if (openingFilled == 0m)
                 return await ResultWithCleanupAsync("Failed", "ARCH7B_OPENING_ORDER_NOT_FILLED");
-            if (openingFilled > Arch7bKnownOrderQualificationPolicy.VenueQuantity ||
-                openingFilled % Arch7bKnownOrderQualificationPolicy.QuantityIncrement != 0m)
+            if (openingFilled > profile.VenueQuantity ||
+                openingFilled % profile.QuantityIncrement != 0m)
                 return await ResultWithCleanupAsync("Failed", "ARCH7B_OPENING_FILL_QUANTITY_OUT_OF_BOUNDS");
 
             var openingFillQuantity =
@@ -302,13 +356,7 @@ public sealed partial class RawLmaxFixSessionClient
             else
             {
                 var observationNotBeforeUtc = DateTimeOffset.UtcNow;
-                var marketDataOnlyOptions = CopyOptions(options);
-                marketDataOnlyOptions.AllowOrderSubmission = false;
-                marketDataOnlyOptions.AllowLiveTrading = false;
-                marketDataOnlyOptions.MarketDataRequestMode =
-                    LmaxFixMarketDataRequestMode.SnapshotPlusUpdates;
-                marketDataOnlyOptions.MarketDepth = 1;
-                marketDataOnlyOptions.MarketDataMaxWaitSeconds = 5;
+                var marketDataOnlyOptions = CreateArch7bReadOnlyMarketDataOptions(options, profile);
                 LmaxFixArch7bMarketObservationDecision? marketDecision = null;
                 for (var attempt = 1;
                      attempt <= Arch7bKnownOrderQualificationPolicy.MaximumFlattenBboAcquisitionAttempts &&
@@ -318,22 +366,29 @@ public sealed partial class RawLmaxFixSessionClient
                     var attemptStartedAtUtc = DateTimeOffset.UtcNow;
                     var remaining = request.DeadlineUtc - attemptStartedAtUtc;
                     var attemptBudget = TimeSpan.FromSeconds(
-                        Arch7bKnownOrderQualificationPolicy.MaximumBboAgeSeconds);
+                        profile.MaximumBboAgeSeconds);
                     using var acquisitionDeadline =
                         CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
                     acquisitionDeadline.CancelAfter(
                         remaining < attemptBudget ? remaining : attemptBudget);
-                    var marketData = await MarketDataSnapshotSmokeAsync(
-                        marketDataOnlyOptions,
-                        request.DeadlineUtc,
-                        acquisitionDeadline.Token);
+                    var marketData = request.Activation == LmaxFixArch7bActivation.ProductionAuthorizedOnce
+                        ? await Arch7bProductionReadOnlyMarketDataSnapshotAsync(
+                            marketDataOnlyOptions,
+                            request,
+                            request.DeadlineUtc,
+                            acquisitionDeadline.Token)
+                        : await MarketDataSnapshotSmokeAsync(
+                            marketDataOnlyOptions,
+                            request.DeadlineUtc,
+                            acquisitionDeadline.Token);
                     marketDecision =
                         LmaxFixArch7bKnownOrderContract.EvaluateFreshFlattenObservation(
                             marketDataOnlyOptions,
                             marketData,
                             observationNotBeforeUtc,
                             DateTimeOffset.UtcNow,
-                            openingMarketObservationId);
+                            openingMarketObservationId,
+                            profile);
                     diagnostics.Add(
                         $"ARCH7B_FLATTEN_BBO_ATTEMPT_{attempt}:{marketData.Status}");
                     if (marketDecision.Allowed)
@@ -366,7 +421,8 @@ public sealed partial class RawLmaxFixSessionClient
                     lastInboundSequenceNumber,
                     DateTimeOffset.UtcNow,
                     cancellationToken);
-                var flattenRequest = LmaxFixArch7bKnownOrderContract.DemoLimitRequest(
+                var flattenRequest = LmaxFixArch7bKnownOrderContract.LimitRequest(
+                    profile,
                     request.AccountId,
                     LmaxFixDemoOrderSide.Sell,
                     openingFilled,
@@ -378,7 +434,7 @@ public sealed partial class RawLmaxFixSessionClient
                     sequenceNumber,
                     flattenRequest,
                     request.FlattenClientOrderId,
-                    Arch7bKnownOrderQualificationPolicy.SecurityIdSource);
+                    profile.SecurityIdSource);
                 await PersistThenSendAsync(
                     stream,
                     "FLATTEN",
@@ -404,7 +460,7 @@ public sealed partial class RawLmaxFixSessionClient
                 return await ResultWithCleanupAsync("Failed", blocker);
             if (!FlattenTerminal() || FlattenLeavesQuantity() > 0m || FlattenFilledQuantity() != openingFilled)
             {
-                if (statusRequestCount < Arch7bKnownOrderQualificationPolicy.MaximumOrderStatusRequestCount)
+                if (statusRequestCount < profile.MaximumOrderStatusRequestCount)
                 {
                     await SendKnownStatusRequestAsync(
                         stream,
@@ -501,7 +557,7 @@ public sealed partial class RawLmaxFixSessionClient
                 string fixSide,
                 CancellationToken token)
             {
-                if (++statusRequestCount > Arch7bKnownOrderQualificationPolicy.MaximumOrderStatusRequestCount)
+                if (++statusRequestCount > profile.MaximumOrderStatusRequestCount)
                     throw new InvalidOperationException("ARCH7B_ORDER_STATUS_REQUEST_BUDGET_EXCEEDED");
                 var status = LmaxFixRecoveryCodec.BuildOrderStatusRequest(
                     options.FixSenderCompId!,
@@ -509,8 +565,8 @@ public sealed partial class RawLmaxFixSessionClient
                     sequenceNumber,
                     clientOrderId,
                     request.AccountId,
-                    Arch7bKnownOrderQualificationPolicy.SecurityId,
-                    Arch7bKnownOrderQualificationPolicy.SecurityIdSource,
+                    profile.SecurityId,
+                    profile.SecurityIdSource,
                     fixSide);
                 var marketObservationId = clientOrderId == request.OpeningClientOrderId
                     ? openingMarketObservationId
@@ -641,12 +697,11 @@ public sealed partial class RawLmaxFixSessionClient
                      (string.IsNullOrWhiteSpace(report.OrigClOrdId) ||
                       !knownClientOrderIds.Contains(report.OrigClOrdId))))
                     return "ARCH7B_UNKNOWN_CLORDID";
-                if (report.Account != Arch7bKnownOrderQualificationPolicy.DemoAccountId)
-                    return "ARCH7B_DEMO_ACCOUNT_IDENTITY_MISMATCH";
-                if (report.Account == Arch7bKnownOrderQualificationPolicy.ForbiddenRealAccountId)
-                    return "ARCH7B_REAL_ACCOUNT_FORBIDDEN";
-                if (report.Symbol != Arch7bKnownOrderQualificationPolicy.Symbol ||
-                    report.SecurityId != Arch7bKnownOrderQualificationPolicy.SecurityId)
+                if (report.Account != profile.AccountId)
+                    return profile == Arch7bKnownOrderExecutionProfile.Demo
+                        ? "ARCH7B_DEMO_ACCOUNT_IDENTITY_MISMATCH"
+                        : "ARCH7B_EXECUTION_REPORT_ACCOUNT_BINDING_MISMATCH";
+                if (report.Symbol != profile.Symbol || report.SecurityId != profile.SecurityId)
                     return "ARCH7B_EXECUTION_REPORT_INSTRUMENT_MISMATCH";
                 if (report.FixSequenceNumber is null || report.FixSequenceNumber <= 0)
                     return "ARCH7B_FIX_SEQUENCE_INVALID";
@@ -792,6 +847,19 @@ public sealed partial class RawLmaxFixSessionClient
                     $"ARCH7B_FAIL_CLOSED_LOGOUT_FAILURE:{exception.GetType().Name}");
             }
         }
+    }
+
+    private static LmaxConnectivityLabOptions CreateArch7bReadOnlyMarketDataOptions(
+        LmaxConnectivityLabOptions options,
+        Arch7bKnownOrderExecutionProfile profile)
+    {
+        var readOnly = CopyOptions(options);
+        readOnly.AllowOrderSubmission = false;
+        readOnly.AllowLiveTrading = false;
+        readOnly.MarketDataRequestMode = LmaxFixMarketDataRequestMode.SnapshotPlusUpdates;
+        readOnly.MarketDepth = 1;
+        readOnly.MarketDataMaxWaitSeconds = Math.Min(profile.MaximumBboAgeSeconds, 5);
+        return readOnly;
     }
 
     private static string Sha256(string value)
