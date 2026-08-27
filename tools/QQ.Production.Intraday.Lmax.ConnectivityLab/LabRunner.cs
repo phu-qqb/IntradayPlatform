@@ -191,7 +191,12 @@ public sealed class LmaxConnectivityLabRunner(
                 {
                     ExactOperatorAuthorizationPresent =
                         request.ExactOperatorAuthorizationPresent &&
-                        HasFlag(optionArgs, "confirm-arch7b-known-order")
+                        (request.Activation is LmaxFixArch7bActivation.ProductionAuthorizedOnce or LmaxFixArch7bActivation.ProductionDryRun
+                            ? true
+                            : HasFlag(optionArgs, "confirm-arch7b-known-order")),
+                    ProductionCommandConfirmed =
+                        request.Activation == LmaxFixArch7bActivation.ProductionAuthorizedOnce &&
+                        HasFlag(optionArgs, "confirm-production-known-order")
                 };
                 var arch7bResult = await fixClient.Arch7bKnownOrderLifecycleAsync(
                     options, request, cancellationToken);

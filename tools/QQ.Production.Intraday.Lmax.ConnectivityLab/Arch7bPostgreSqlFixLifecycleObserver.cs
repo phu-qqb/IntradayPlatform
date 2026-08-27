@@ -7,24 +7,26 @@ using QQ.Production.Intraday.Infrastructure.PostgreSql;
 namespace QQ.Production.Intraday.Lmax.ConnectivityLab;
 
 public sealed class DeferredArch7bPostgreSqlFixLifecycleObserver(
-    Func<Arch7bPostgreSqlFixLifecycleObserver> observerFactory) :
+    Func<LmaxFixArch7bKnownOrderRequest, Arch7bPostgreSqlFixLifecycleObserver> observerFactory) :
     ILmaxFixArch7bLifecycleObserver,
     ILmaxFixArch7bQualificationSession
 {
-    private readonly Lazy<Arch7bPostgreSqlFixLifecycleObserver> inner =
-        new(observerFactory, LazyThreadSafetyMode.ExecutionAndPublication);
+    private Arch7bPostgreSqlFixLifecycleObserver? inner;
 
     public bool IsDurable => true;
 
     public Task InitializeAsync(
         LmaxFixArch7bKnownOrderRequest request,
         CancellationToken cancellationToken)
-        => inner.Value.InitializeAsync(request, cancellationToken);
+    {
+        inner ??= observerFactory(request);
+        return inner.InitializeAsync(request, cancellationToken);
+    }
 
     public Task<LmaxFixArch7bRecoveryState> LoadRecoveryStateAsync(
         LmaxFixArch7bKnownOrderRequest request,
         CancellationToken cancellationToken)
-        => inner.Value.LoadRecoveryStateAsync(request, cancellationToken);
+        => RequiredInner().LoadRecoveryStateAsync(request, cancellationToken);
 
     public Task RecordSessionEventAsync(
         LmaxFixArch7bKnownOrderRequest request,
@@ -32,7 +34,7 @@ public sealed class DeferredArch7bPostgreSqlFixLifecycleObserver(
         long? fixSequenceNumber,
         DateTimeOffset occurredAtUtc,
         CancellationToken cancellationToken)
-        => inner.Value.RecordSessionEventAsync(
+        => RequiredInner().RecordSessionEventAsync(
             request,
             eventType,
             fixSequenceNumber,
@@ -43,7 +45,7 @@ public sealed class DeferredArch7bPostgreSqlFixLifecycleObserver(
         LmaxFixArch7bKnownOrderRequest request,
         LmaxFixArch7bOutboundIntent intent,
         CancellationToken cancellationToken)
-        => inner.Value.RecordSendIntentAsync(
+        => RequiredInner().RecordSendIntentAsync(
             request,
             intent,
             cancellationToken);
@@ -52,7 +54,7 @@ public sealed class DeferredArch7bPostgreSqlFixLifecycleObserver(
         LmaxFixArch7bKnownOrderRequest request,
         LmaxFixExecutionReport report,
         CancellationToken cancellationToken)
-        => inner.Value.RecordExecutionReportAsync(
+        => RequiredInner().RecordExecutionReportAsync(
             request,
             report,
             cancellationToken);
@@ -61,7 +63,7 @@ public sealed class DeferredArch7bPostgreSqlFixLifecycleObserver(
         LmaxFixArch7bKnownOrderRequest request,
         string clientOrderId,
         CancellationToken cancellationToken)
-        => inner.Value.ReadValidatedFillQuantityAsync(
+        => RequiredInner().ReadValidatedFillQuantityAsync(
             request,
             clientOrderId,
             cancellationToken);
@@ -69,19 +71,23 @@ public sealed class DeferredArch7bPostgreSqlFixLifecycleObserver(
     public Task<Arch7bLifecycleEvaluation> FinalizeReconciliationAsync(
         LmaxFixArch7bKnownOrderRequest request,
         CancellationToken cancellationToken)
-        => inner.Value.FinalizeReconciliationAsync(request, cancellationToken);
+        => RequiredInner().FinalizeReconciliationAsync(request, cancellationToken);
 
     public ValueTask CompleteAsync(
         LmaxFixArch7bKnownOrderRequest request,
         CancellationToken cancellationToken)
-        => inner.IsValueCreated
-            ? inner.Value.CompleteAsync(request, cancellationToken)
+        => inner is not null
+            ? inner.CompleteAsync(request, cancellationToken)
             : ValueTask.CompletedTask;
+
+    private Arch7bPostgreSqlFixLifecycleObserver RequiredInner()
+        => inner ?? throw new InvalidOperationException("ARCH7B_QUALIFICATION_SESSION_NOT_INITIALIZED");
 }
 
 public sealed class Arch7bPostgreSqlFixLifecycleObserver(
     IDbContextFactory<PmsShadowDbContext> contextFactory,
-    EfArch7bKnownOrderLifecycleStore store) :
+    EfArch7bKnownOrderLifecycleStore store,
+    string persistenceDatabase = "qq_pms_shadow_arch6d_test") :
     ILmaxFixArch7bLifecycleObserver,
     ILmaxFixArch7bQualificationSession
 {
@@ -96,7 +102,12 @@ public sealed class Arch7bPostgreSqlFixLifecycleObserver(
     {
         if (lease is not null)
             throw new InvalidOperationException("ARCH7B_QUALIFICATION_SESSION_ALREADY_INITIALIZED");
+        if (request.Activation == LmaxFixArch7bActivation.ProductionAuthorizedOnce &&
+            !string.Equals(request.ProductionBinding?.PersistenceDatabase,
+                persistenceDatabase, StringComparison.Ordinal))
+            throw new InvalidOperationException("ARCH7B_PRODUCTION_PERSISTENCE_BINDING_MISMATCH");
         var now = DateTimeOffset.UtcNow;
+        var profile = request.ExecutionProfile;
         activeFixSessionId =
             $"A7B-{request.QualificationRunId:N}-{now.ToUnixTimeMilliseconds()}";
         var duration = request.DeadlineUtc - now;
@@ -105,6 +116,7 @@ public sealed class Arch7bPostgreSqlFixLifecycleObserver(
             request.OwnerId,
             now,
             duration,
+            request.AccountId,
             cancellationToken);
         var exclusivity = new Arch7bExclusivityDeclaration(
             request.OwnerId,
@@ -136,8 +148,8 @@ public sealed class Arch7bPostgreSqlFixLifecycleObserver(
                 : Arch7bKnownOrderQualification.EvaluatePreflight(new(
                     snapshot.ChildOrder,
                     new(
-                        Arch7bKnownOrderQualificationPolicy.Symbol,
-                        Arch7bKnownOrderQualificationPolicy.SecurityId,
+                        profile.Symbol,
+                        profile.SecurityId,
                         request.BboBid,
                         request.BboAsk,
                         request.BboObservedAtUtc,
@@ -147,13 +159,13 @@ public sealed class Arch7bPostgreSqlFixLifecycleObserver(
                         request.BboSequenceIntegrityProven,
                         request.BboPolygonUsed),
                     exclusivity,
-                    Arch7bKnownOrderQualificationPolicy.Environment,
+                    profile.Environment,
                     request.AccountId,
                     snapshot.CurrentKnownPosition,
                     snapshot.PlatformKnownWorkingOrderCount,
                     request.ExactOperatorAuthorizationPresent,
                     request.KillSwitchArmed,
-                    now));
+                    now), profile);
             ValidatePreflightBinding(preflight, request);
             await store.RegisterRunAsync(
                 new(
@@ -162,7 +174,8 @@ public sealed class Arch7bPostgreSqlFixLifecycleObserver(
                     preflight,
                     request.AuthorizationPacketSha256,
                     exclusivity,
-                    request.RegisteredAtUtc),
+                    request.RegisteredAtUtc,
+                    request.ExecutionProfile),
                 cancellationToken);
         }
         catch

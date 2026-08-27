@@ -109,6 +109,35 @@ public sealed class Arch7bLmaxFixKnownOrderContractTests
     }
 
     [Fact]
+    public async Task RawClient_ProductionDryRunUsesTheBoundedProductionProfileWithoutNetwork()
+    {
+        var binding = ProductionBinding();
+        var request = WithProductionPacket(ProductionRequest(binding) with
+        {
+            Activation = LmaxFixArch7bActivation.ProductionDryRun,
+            ProductionCommandConfirmed = false
+        });
+        var options = ProductionOptions(binding);
+        options.AllowExternalConnections = false;
+        options.AllowOrderSubmission = false;
+        options.DryRun = true;
+        options.FixUsername = null;
+        options.FixPassword = null;
+        var client = new RawLmaxFixSessionClient(new LmaxConnectivityLabSafetyValidator());
+
+        var result = await client.Arch7bKnownOrderLifecycleAsync(
+            options, request, CancellationToken.None);
+
+        Assert.Equal("Ok", result.Status);
+        Assert.False(result.Connected);
+        Assert.False(result.OpeningSent);
+        Assert.False(result.FlattenSent);
+        Assert.Contains(result.Diagnostics, value => value.Contains("55=EURUSD", StringComparison.Ordinal));
+        Assert.Contains(result.Diagnostics, value => value.Contains("38=0.2", StringComparison.Ordinal));
+        Assert.Contains("ARCH7B_DRY_RUN_NO_NETWORK_NO_SEND", result.Diagnostics);
+    }
+
+    [Fact]
     public void RawClient_CleansUpOrderEntrySessionOnEveryPostLogonExit()
     {
         var source = File.ReadAllText(Path.Combine(
@@ -639,6 +668,439 @@ public sealed class Arch7bLmaxFixKnownOrderContractTests
                 LmaxFixArch7bKnownOrderContract.ComputeAuthorizationPacketSha256(request)
         };
     }
+
+    [Fact]
+    public void Production_activation_is_separate_and_binds_confirmation_packet_endpoint_and_quantity()
+    {
+        var binding = ProductionBinding();
+        var request = ProductionRequest(binding);
+        var options = ProductionOptions(binding);
+
+        Assert.Empty(LmaxFixArch7bKnownOrderContract.Validate(options, request, DateTimeOffset.UtcNow));
+
+        var noConfirmation = request with { ProductionCommandConfirmed = false };
+        Assert.Contains("ARCH7B_PRODUCTION_CLI_CONFIRMATION_MISSING",
+            LmaxFixArch7bKnownOrderContract.Validate(options, noConfirmation, DateTimeOffset.UtcNow));
+
+        var wrongEndpoint = ProductionOptions(binding);
+        wrongEndpoint.FixOrderTargetCompId = "OTHER";
+        Assert.Contains("ARCH7B_PRODUCTION_FIX_ENDPOINT_BINDING_MISMATCH",
+            LmaxFixArch7bKnownOrderContract.Validate(wrongEndpoint, request, DateTimeOffset.UtcNow));
+
+        var excessive = binding with { VenueQuantity = 1.1m };
+        var excessiveRequest = ProductionRequest(excessive);
+        Assert.Contains("ARCH7B_PRODUCTION_QUANTITY_CAP_INVALID",
+            LmaxFixArch7bKnownOrderContract.Validate(ProductionOptions(excessive), excessiveRequest, DateTimeOffset.UtcNow));
+    }
+
+    [Fact]
+    public void Demo_activation_remains_demo_only_when_production_values_are_present()
+    {
+        var binding = ProductionBinding();
+        var request = ProductionRequest(binding) with
+        {
+            Activation = LmaxFixArch7bActivation.AuthorizedOnce
+        };
+
+        var blockers = LmaxFixArch7bKnownOrderContract.Validate(
+            ProductionOptions(binding), request, DateTimeOffset.UtcNow);
+
+        Assert.Contains("ARCH7B_FIX_ENVIRONMENT_NOT_DEMO_OR_UAT", blockers);
+        Assert.Contains("ARCH7B_DEMO_ACCOUNT_IDENTITY_MISMATCH", blockers);
+    }
+
+    [Fact]
+    public void Persistence_target_is_selected_from_activation_not_the_production_confirmation()
+    {
+        var demo = Request(LmaxFixArch7bActivation.AuthorizedOnce) with
+        {
+            ProductionCommandConfirmed = true
+        };
+        var production = ProductionRequest(ProductionBinding());
+
+        Assert.Equal(Arch7bPostgreSqlPersistenceTarget.DemoConnectionEnvironmentVariable,
+            Arch7bPostgreSqlPersistenceTarget.ConnectionEnvironmentVariable(demo));
+        Assert.Equal(Arch7bPostgreSqlPersistenceTarget.ProductionConnectionEnvironmentVariable,
+            Arch7bPostgreSqlPersistenceTarget.ConnectionEnvironmentVariable(production));
+        Assert.Throws<InvalidOperationException>(() =>
+            Arch7bPostgreSqlPersistenceTarget.ValidateResolvedConnection(
+                production, "localhost", 5432, Arch7bPostgreSqlPersistenceTarget.DemoDatabase));
+    }
+
+    [Fact]
+    public void Production_persistence_target_requires_the_exact_packet_bound_host_port_and_database()
+    {
+        var request = ProductionRequest(ProductionBinding());
+
+        Assert.Throws<InvalidOperationException>(() =>
+            Arch7bPostgreSqlPersistenceTarget.ValidateResolvedConnection(request, "other-host", 5432,
+                request.ProductionBinding!.PersistenceDatabase));
+        Assert.Throws<InvalidOperationException>(() =>
+            Arch7bPostgreSqlPersistenceTarget.ValidateResolvedConnection(request,
+                request.ProductionBinding!.PersistenceHost, 5433, request.ProductionBinding.PersistenceDatabase));
+        Assert.Throws<InvalidOperationException>(() =>
+            Arch7bPostgreSqlPersistenceTarget.ValidateResolvedConnection(request,
+                request.ProductionBinding!.PersistenceHost, request.ProductionBinding.PersistencePort, "other-database"));
+    }
+
+    [Fact]
+    public void Production_rejects_invalid_time_and_bbo_observation_windows_before_connection()
+    {
+        var binding = ProductionBinding();
+        var now = DateTimeOffset.UtcNow;
+        var request = ProductionRequest(binding);
+        var options = ProductionOptions(binding);
+
+        Assert.Contains("ARCH7B_OPENING_CANCEL_DEADLINE_NOT_BEFORE_FINAL_DEADLINE",
+            LmaxFixArch7bKnownOrderContract.Validate(options,
+                WithProductionPacket(request with { OpeningCancelAtUtc = request.DeadlineUtc }), now));
+        Assert.Contains("ARCH7B_OPENING_CANCEL_DEADLINE_EXCEEDED",
+            LmaxFixArch7bKnownOrderContract.Validate(options,
+                WithProductionPacket(request with { OpeningCancelAtUtc = now }), now));
+        Assert.Contains("ARCH7B_BBO_NOT_ACQUIRED_IN_AUTHORIZED_WINDOW",
+            LmaxFixArch7bKnownOrderContract.Validate(options,
+                WithProductionPacket(request with { BboObservedAtUtc = now.AddSeconds(1) }), now));
+        Assert.Contains("ARCH7B_OPENING_MARKET_OBSERVATION_ID_INVALID",
+            LmaxFixArch7bKnownOrderContract.Validate(options,
+                WithProductionPacket(request with { OpeningMarketObservationId = new string('d', 64) }), now));
+    }
+
+    [Theory]
+    [InlineData("polygon")]
+    [InlineData("sequence")]
+    [InlineData("cancel")]
+    [InlineData("exclusivity")]
+    [InlineData("operator")]
+    public void Production_authorization_packet_invalidates_when_a_bound_safety_field_changes(string mutation)
+    {
+        var binding = ProductionBinding();
+        var request = ProductionRequest(binding);
+        var mutated = mutation switch
+        {
+            "polygon" => request with { BboPolygonUsed = true },
+            "sequence" => request with { BboSequenceIntegrityProven = false },
+            "cancel" => request with { OpeningCancelAtUtc = request.OpeningCancelAtUtc.AddSeconds(-1) },
+            "exclusivity" => request with { ExclusivityDeclared = false },
+            "operator" => request with { ExactOperatorAuthorizationPresent = false },
+            _ => throw new ArgumentOutOfRangeException(nameof(mutation))
+        };
+
+        Assert.Contains("ARCH7B_AUTHORIZATION_PACKET_SHA256_MISMATCH",
+            LmaxFixArch7bKnownOrderContract.Validate(ProductionOptions(binding), mutated, DateTimeOffset.UtcNow));
+    }
+
+    [Fact]
+    public void Production_fails_closed_for_invalid_increment_tls_and_sender_without_throwing()
+    {
+        var binding = ProductionBinding();
+        var invalidIncrement = binding with { QuantityIncrement = 0m };
+        var request = ProductionRequest(invalidIncrement);
+
+        var incrementBlockers = LmaxFixArch7bKnownOrderContract.Validate(
+            ProductionOptions(invalidIncrement), request, DateTimeOffset.UtcNow);
+        Assert.Contains("ARCH7B_PRODUCTION_QUANTITY_INCREMENT_INVALID", incrementBlockers);
+
+        var noTls = ProductionOptions(binding);
+        noTls.UseTls = false;
+        Assert.Contains("ARCH7B_PRODUCTION_FIX_TLS_REQUIRED",
+            LmaxFixArch7bKnownOrderContract.Validate(noTls, ProductionRequest(binding), DateTimeOffset.UtcNow));
+
+        var wrongSender = ProductionOptions(binding);
+        wrongSender.FixSenderCompId = "OTHER";
+        Assert.Contains("ARCH7B_PRODUCTION_FIX_SENDER_BINDING_MISMATCH",
+            LmaxFixArch7bKnownOrderContract.Validate(wrongSender, ProductionRequest(binding), DateTimeOffset.UtcNow));
+    }
+
+    [Fact]
+    public async Task Production_dry_run_validates_the_packet_and_remains_zero_network_and_zero_database()
+    {
+        var binding = ProductionBinding();
+        var request = WithProductionPacket(ProductionRequest(binding) with
+        {
+            Activation = LmaxFixArch7bActivation.ProductionDryRun,
+            ProductionCommandConfirmed = false
+        });
+        var options = ProductionOptions(binding);
+        options.AllowExternalConnections = false;
+        options.AllowOrderSubmission = false;
+        options.DryRun = true;
+        options.FixUsername = null;
+        options.FixPassword = null;
+
+        Assert.Empty(LmaxFixArch7bKnownOrderContract.Validate(options, request, DateTimeOffset.UtcNow));
+        var result = await new RawLmaxFixSessionClient(new LmaxConnectivityLabSafetyValidator())
+            .Arch7bKnownOrderLifecycleAsync(options, request, CancellationToken.None);
+
+        Assert.Equal("Ok", result.Status);
+        Assert.False(result.Connected);
+        Assert.False(result.OpeningSent);
+        Assert.False(result.FlattenSent);
+    }
+
+    [Fact]
+    public void Authorized_production_read_only_flatten_market_data_is_the_only_specialized_path()
+    {
+        var binding = ProductionBinding();
+        var request = ProductionRequest(binding);
+        var readOnly = ProductionOptions(binding);
+        readOnly.AllowOrderSubmission = false;
+
+        Assert.Empty(LmaxFixArch7bKnownOrderContract.ValidateProductionReadOnlyMarketData(
+            readOnly, request, request.DeadlineUtc, DateTimeOffset.UtcNow));
+        Assert.Contains("FIX logon smoke is allowed only in Demo or UAT environments.",
+            new LmaxConnectivityLabSafetyValidator().ValidateForFixLogon(readOnly, marketData: true));
+    }
+
+    [Fact]
+    public async Task Generic_market_data_snapshot_remains_blocked_for_production_without_connecting()
+    {
+        var options = ProductionOptions(ProductionBinding());
+        options.AllowOrderSubmission = false;
+
+        var result = await new RawLmaxFixSessionClient(new LmaxConnectivityLabSafetyValidator())
+            .MarketDataSnapshotSmokeAsync(options, CancellationToken.None);
+
+        Assert.Equal("Skipped", result.Status);
+        Assert.False(result.TcpConnected);
+        Assert.Contains("Demo or UAT", result.Message, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("demo")]
+    [InlineData("production-dry-run")]
+    public void Non_authorized_activations_cannot_use_the_specialized_production_market_data_path(string activation)
+    {
+        var binding = ProductionBinding();
+        var request = activation == "demo"
+            ? Request(LmaxFixArch7bActivation.AuthorizedOnce)
+            : WithProductionPacket(ProductionRequest(binding) with
+            {
+                Activation = LmaxFixArch7bActivation.ProductionDryRun,
+                ProductionCommandConfirmed = false
+            });
+        var options = ProductionOptions(binding);
+        options.AllowOrderSubmission = false;
+
+        Assert.Contains("ARCH7B_PRODUCTION_READ_ONLY_MARKET_DATA_ACTIVATION_REQUIRED",
+            LmaxFixArch7bKnownOrderContract.ValidateProductionReadOnlyMarketData(
+                options, request, request.DeadlineUtc, DateTimeOffset.UtcNow));
+    }
+
+    [Theory]
+    [InlineData("order-submission", "ARCH7B_PRODUCTION_READ_ONLY_ORDER_SUBMISSION_FORBIDDEN")]
+    [InlineData("live-trading", "ARCH7B_PRODUCTION_READ_ONLY_LIVE_TRADING_FORBIDDEN")]
+    [InlineData("external-disabled", "ARCH7B_PRODUCTION_READ_ONLY_EXTERNAL_CONNECTIONS_REQUIRED")]
+    [InlineData("dry-run", "ARCH7B_PRODUCTION_READ_ONLY_DRY_RUN_FORBIDDEN")]
+    [InlineData("tls", "ARCH7B_PRODUCTION_FIX_TLS_REQUIRED")]
+    [InlineData("md-host", "ARCH7B_PRODUCTION_MARKET_DATA_HOST_BINDING_MISMATCH")]
+    [InlineData("md-port", "ARCH7B_PRODUCTION_MARKET_DATA_PORT_BINDING_MISMATCH")]
+    [InlineData("md-target", "ARCH7B_PRODUCTION_MARKET_DATA_TARGET_BINDING_MISMATCH")]
+    [InlineData("sender", "ARCH7B_PRODUCTION_FIX_SENDER_BINDING_MISMATCH")]
+    [InlineData("instrument", "ARCH7B_PRODUCTION_INSTRUMENT_BINDING_MISMATCH")]
+    [InlineData("security", "ARCH7B_PRODUCTION_INSTRUMENT_BINDING_MISMATCH")]
+    [InlineData("mode", "ARCH7B_PRODUCTION_MARKET_DATA_REQUEST_MODE_INVALID")]
+    [InlineData("encoding", "ARCH7B_PRODUCTION_MARKET_DATA_SYMBOL_ENCODING_INVALID")]
+    [InlineData("depth", "ARCH7B_PRODUCTION_MARKET_DATA_DEPTH_INVALID")]
+    [InlineData("wait", "ARCH7B_PRODUCTION_MARKET_DATA_WAIT_BUDGET_INVALID")]
+    public void Specialized_production_market_data_validation_fails_closed_for_every_option_mismatch(
+        string mutation,
+        string expectedBlocker)
+    {
+        var binding = ProductionBinding();
+        var request = ProductionRequest(binding);
+        var options = ProductionOptions(binding);
+        options.AllowOrderSubmission = false;
+        switch (mutation)
+        {
+            case "order-submission": options.AllowOrderSubmission = true; break;
+            case "live-trading": options.AllowLiveTrading = true; break;
+            case "external-disabled": options.AllowExternalConnections = false; break;
+            case "dry-run": options.DryRun = true; break;
+            case "tls": options.UseTls = false; break;
+            case "md-host": options.FixMarketDataHost = "other"; break;
+            case "md-port": options.FixMarketDataPort = binding.FixMarketDataPort + 1; break;
+            case "md-target": options.FixMarketDataTargetCompId = "other"; break;
+            case "sender": options.FixSenderCompId = "other"; break;
+            case "instrument": options.InstrumentSymbol = "OTHER"; break;
+            case "security": options.LmaxInstrumentId = "OTHER"; break;
+            case "mode": options.MarketDataRequestMode = LmaxFixMarketDataRequestMode.SnapshotOnly; break;
+            case "encoding": options.MarketDataSymbolEncodingMode = LmaxFixMarketDataSymbolEncodingMode.Auto; break;
+            case "depth": options.MarketDepth = 2; break;
+            case "wait": options.MarketDataMaxWaitSeconds = 6; break;
+        }
+
+        Assert.Contains(expectedBlocker, LmaxFixArch7bKnownOrderContract.ValidateProductionReadOnlyMarketData(
+            options, request, request.DeadlineUtc, DateTimeOffset.UtcNow));
+    }
+
+    [Theory]
+    [InlineData("host")]
+    [InlineData("port")]
+    [InlineData("target")]
+    public void Production_packet_binds_market_data_endpoint(string mutation)
+    {
+        var binding = ProductionBinding();
+        var mutatedBinding = mutation switch
+        {
+            "host" => binding with { FixMarketDataHost = "other" },
+            "port" => binding with { FixMarketDataPort = binding.FixMarketDataPort + 1 },
+            "target" => binding with { FixMarketDataTargetCompId = "other" },
+            _ => throw new ArgumentOutOfRangeException(nameof(mutation))
+        };
+        var request = ProductionRequest(binding) with { ProductionBinding = mutatedBinding };
+        var options = ProductionOptions(mutatedBinding);
+        options.AllowOrderSubmission = false;
+
+        Assert.Contains("ARCH7B_AUTHORIZATION_PACKET_SHA256_MISMATCH",
+            LmaxFixArch7bKnownOrderContract.ValidateProductionReadOnlyMarketData(
+                options, request, request.DeadlineUtc, DateTimeOffset.UtcNow));
+    }
+
+    [Fact]
+    public void Specialized_production_market_data_rejects_an_expired_lifecycle_deadline()
+    {
+        var binding = ProductionBinding();
+        var request = WithProductionPacket(ProductionRequest(binding) with
+        {
+            DeadlineUtc = DateTimeOffset.UtcNow.AddSeconds(-1)
+        });
+        var options = ProductionOptions(binding);
+        options.AllowOrderSubmission = false;
+
+        Assert.Contains("ARCH7B_PRODUCTION_MARKET_DATA_DEADLINE_EXCEEDED",
+            LmaxFixArch7bKnownOrderContract.ValidateProductionReadOnlyMarketData(
+                options, request, request.DeadlineUtc, DateTimeOffset.UtcNow));
+    }
+
+    [Fact]
+    public void Fresh_production_runs_preflight_market_data_before_order_entry_and_opening_send()
+    {
+        var source = File.ReadAllText(Path.Combine(
+            RepoRoot(),
+            "tools",
+            "QQ.Production.Intraday.Lmax.ConnectivityLab",
+            "RawFixSessionClient.Arch7b.cs"));
+        var recoveryPlan = source.IndexOf("recoveryPlan = LmaxFixArch7bRecoveryPlanner.Build(recovery)", StringComparison.Ordinal);
+        var preflight = source.IndexOf("ARCH7B_PRODUCTION_PREFLIGHT_MARKET_DATA_UNAVAILABLE", StringComparison.Ordinal);
+        var revalidation = source.IndexOf("postPreflightBlockers", StringComparison.Ordinal);
+        var orderEntry = source.IndexOf("orderEntryTcp = new TcpClient", StringComparison.Ordinal);
+        var preOpeningRevalidation = source.IndexOf("preOpeningBlockers", StringComparison.Ordinal);
+        var opening = source.IndexOf("var openingRequest", StringComparison.Ordinal);
+
+        Assert.True(recoveryPlan >= 0 && recoveryPlan < preflight);
+        Assert.True(preflight < revalidation && revalidation < orderEntry);
+        Assert.True(orderEntry < preOpeningRevalidation && preOpeningRevalidation < opening);
+        Assert.Contains("recoveryPlan.MaySendOpeningNewOrderSingle", source, StringComparison.Ordinal);
+        Assert.Contains("request.Activation == LmaxFixArch7bActivation.ProductionAuthorizedOnce", source,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Current_time_revalidation_rejects_a_stale_production_opening_packet_before_send()
+    {
+        var binding = ProductionBinding();
+        var now = DateTimeOffset.UtcNow;
+        var request = WithProductionPacket(ProductionRequest(binding) with
+        {
+            RegisteredAtUtc = now.AddSeconds(-10),
+            BboAcquisitionStartedAtUtc = now.AddSeconds(-10),
+            BboObservedAtUtc = now.AddSeconds(-6),
+            OpeningCancelAtUtc = now.AddSeconds(10),
+            DeadlineUtc = now.AddSeconds(60)
+        });
+
+        Assert.Contains("ARCH7B_BBO_STALE",
+            LmaxFixArch7bKnownOrderContract.Validate(ProductionOptions(binding), request, now));
+    }
+
+    private static LmaxFixArch7bProductionBinding ProductionBinding()
+        => new(
+            "Production",
+            "PROD-TEST-ACCOUNT",
+            "fix.production.test",
+            443,
+            "LMXPRD",
+            "PROD-SENDER",
+            "md.production.test",
+            444,
+            "LMXMDPRD",
+            "EURUSD",
+            "9001",
+            "8",
+            0.2m,
+            0.1m,
+            0.00001m,
+            2m,
+            120,
+            "prod-postgres.test",
+            5432,
+            "qq_pms_arch7b_production",
+            "operator-test-production-once");
+
+    private static LmaxFixArch7bKnownOrderRequest ProductionRequest(
+        LmaxFixArch7bProductionBinding binding)
+    {
+        var now = DateTimeOffset.UtcNow;
+        var request = Request(LmaxFixArch7bActivation.ProductionAuthorizedOnce) with
+        {
+            AccountId = binding.AccountId,
+            OpeningLimitPrice = 1.10000m,
+            MinimumOpeningPrice = 1.09980m,
+            MaximumOpeningPrice = 1.10020m,
+            BboBid = 1.09990m,
+            BboAsk = 1.10000m,
+            BboObservedAtUtc = now,
+            RegisteredAtUtc = now,
+            OpeningCancelAtUtc = now.AddSeconds(30),
+            DeadlineUtc = now.AddSeconds(120),
+            ProductionBinding = binding,
+            ProductionCommandConfirmed = true,
+            BboSymbol = binding.InstrumentSymbol,
+            BboSecurityId = binding.SecurityId,
+            BboAcquisitionStartedAtUtc = now
+        };
+        return request with
+        {
+            AuthorizationPacketSha256 =
+                LmaxFixArch7bKnownOrderContract.ComputeProductionAuthorizationPacketSha256(request, binding)
+        };
+    }
+
+    private static LmaxFixArch7bKnownOrderRequest WithProductionPacket(
+        LmaxFixArch7bKnownOrderRequest request)
+        => request with
+        {
+            AuthorizationPacketSha256 = LmaxFixArch7bKnownOrderContract
+                .ComputeProductionAuthorizationPacketSha256(request, request.ProductionBinding!)
+        };
+
+    private static LmaxConnectivityLabOptions ProductionOptions(
+        LmaxFixArch7bProductionBinding binding)
+        => new()
+        {
+            EnvironmentName = binding.EnvironmentName,
+            AllowExternalConnections = true,
+            AllowOrderSubmission = true,
+            AllowLiveTrading = false,
+            DryRun = false,
+            UseTls = true,
+            FixOrderHost = binding.FixOrderHost,
+            FixOrderPort = binding.FixOrderPort,
+            FixOrderTargetCompId = binding.FixOrderTargetCompId,
+            FixSenderCompId = "PROD-SENDER",
+            FixMarketDataHost = binding.FixMarketDataHost,
+            FixMarketDataPort = binding.FixMarketDataPort,
+            FixMarketDataTargetCompId = binding.FixMarketDataTargetCompId,
+            FixUsername = "synthetic-user",
+            FixPassword = "synthetic-password",
+            InstrumentSymbol = binding.InstrumentSymbol,
+            LmaxInstrumentId = binding.SecurityId,
+            FixSecurityIdSource = binding.SecurityIdSource,
+            MarketDepth = 1,
+            MarketDataMaxWaitSeconds = 5,
+            MarketDataRequestMode = LmaxFixMarketDataRequestMode.SnapshotPlusUpdates,
+            MarketDataSymbolEncodingMode = LmaxFixMarketDataSymbolEncodingMode.SecurityIdAndSymbol
+        };
 
     private static LmaxFixMarketDataSmokeResult FreshSnapshot(
         DateTimeOffset startedAtUtc,

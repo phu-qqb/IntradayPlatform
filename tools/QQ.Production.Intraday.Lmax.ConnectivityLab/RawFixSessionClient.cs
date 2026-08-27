@@ -105,6 +105,36 @@ public sealed partial class RawLmaxFixSessionClient(
             return skipped with { Diagnostics = diagnostics };
         }
 
+        return await MarketDataSnapshotCoreAsync(options, cleanupDeadlineUtc, cancellationToken);
+    }
+
+    private async Task<LmaxFixMarketDataSmokeResult> Arch7bProductionReadOnlyMarketDataSnapshotAsync(
+        LmaxConnectivityLabOptions options,
+        LmaxFixArch7bKnownOrderRequest request,
+        DateTimeOffset cleanupDeadlineUtc,
+        CancellationToken cancellationToken)
+    {
+        var startedAt = DateTimeOffset.UtcNow;
+        var issues = LmaxFixArch7bKnownOrderContract.ValidateProductionReadOnlyMarketData(
+            options, request, cleanupDeadlineUtc, startedAt).ToList();
+        var diagnostics = BuildSafeDiagnostics(options).ToList();
+        if (issues.Count != 0)
+        {
+            var skipped = LmaxFixMarketDataSmokeResult.Skipped(
+                string.Join(" ", issues), LmaxConnectivityLabSafetyValidator.DecisionsForExternalCommand(options));
+            return skipped with { Diagnostics = diagnostics };
+        }
+
+        return await MarketDataSnapshotCoreAsync(options, cleanupDeadlineUtc, cancellationToken);
+    }
+
+    private async Task<LmaxFixMarketDataSmokeResult> MarketDataSnapshotCoreAsync(
+        LmaxConnectivityLabOptions options,
+        DateTimeOffset cleanupDeadlineUtc,
+        CancellationToken cancellationToken)
+    {
+        var startedAt = DateTimeOffset.UtcNow;
+        var diagnostics = BuildSafeDiagnostics(options).ToList();
         var requestOptions = LmaxFixMarketDataRequestOptions.FromLabOptions(options);
         var requestModes = GetRequestModeAttempts(requestOptions.RequestMode).ToList();
         var encodings = GetEncodingAttempts(requestOptions.SymbolEncodingMode).ToList();
