@@ -138,6 +138,94 @@ public sealed class Arch7bLmaxFixKnownOrderContractTests
     }
 
     [Fact]
+    public async Task ProductionReadiness_MissingDedicatedConfirmationOpensNeitherDatabaseNorSocket()
+    {
+        var binding = ProductionBinding();
+        var options = ProductionOptions(binding);
+        options.AllowOrderSubmission = false;
+        var client = new RawLmaxFixSessionClient(new LmaxConnectivityLabSafetyValidator());
+
+        var result = await client.Arch7bProductionReadinessAsync(
+            options,
+            ProductionRequest(binding) with { ProductionCommandConfirmed = false },
+            explicitReadinessConfirmation: false,
+            CancellationToken.None);
+
+        Assert.Equal("Skipped", result.Status);
+        Assert.Equal("ARCH7B_PRODUCTION_READINESS_CLI_CONFIRMATION_MISSING", result.Blocker);
+        Assert.False(result.Persistence.Connected);
+        Assert.False(result.MarketData.TcpConnected);
+        Assert.False(result.OrderEntry.TcpConnected);
+    }
+
+    [Theory]
+    [InlineData("environment")]
+    [InlineData("order-host")]
+    [InlineData("market-data-host")]
+    [InlineData("market-data-port")]
+    [InlineData("market-data-target")]
+    [InlineData("order-port")]
+    [InlineData("order-target")]
+    [InlineData("tls")]
+    [InlineData("credentials")]
+    [InlineData("orders")]
+    [InlineData("live")]
+    public void ProductionReadiness_RejectsUnsafeOrMismatchedInputsBeforeExternalOperations(string scenario)
+    {
+        var binding = ProductionBinding();
+        var options = ProductionOptions(binding);
+        options.AllowOrderSubmission = false;
+        switch (scenario)
+        {
+            case "environment": options.EnvironmentName = "Demo"; break;
+            case "order-host": options.FixOrderHost = "wrong.example"; break;
+            case "market-data-host": options.FixMarketDataHost = "wrong.example"; break;
+            case "market-data-port": options.FixMarketDataPort = 1; break;
+            case "market-data-target": options.FixMarketDataTargetCompId = "wrong"; break;
+            case "order-port": options.FixOrderPort = 1; break;
+            case "order-target": options.FixOrderTargetCompId = "wrong"; break;
+            case "tls": options.UseTls = false; break;
+            case "credentials": options.FixPassword = null; break;
+            case "orders": options.AllowOrderSubmission = true; break;
+            case "live": options.AllowLiveTrading = true; break;
+        }
+
+        var blockers = LmaxFixArch7bProductionReadinessContract.Validate(
+            options,
+            ProductionRequest(binding) with { ProductionCommandConfirmed = false },
+            explicitReadinessConfirmation: true,
+            DateTimeOffset.UtcNow);
+
+        Assert.NotEmpty(blockers);
+        Assert.DoesNotContain("ARCH7B_PRODUCTION_READINESS_CLI_CONFIRMATION_MISSING", blockers);
+    }
+
+    [Fact]
+    public void ProductionReadiness_SourceHasNoKnownOrderOrTradingMessagePath_AndPersistenceSqlIsReadOnly()
+    {
+        var source = File.ReadAllText(Path.Combine(
+            RepoRoot(),
+            "tools",
+            "QQ.Production.Intraday.Lmax.ConnectivityLab",
+            "RawFixSessionClient.Arch7bProductionReadiness.cs"));
+
+        Assert.DoesNotContain("Arch7bKnownOrderLifecycleAsync", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("BuildNewOrderSingle", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("BuildOrderCancelRequest", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("BuildOrderStatusRequest", source, StringComparison.Ordinal);
+        Assert.Contains("BuildMessage(\"A\"", source, StringComparison.Ordinal);
+        Assert.Contains("TrySendLogoutAsync", source, StringComparison.Ordinal);
+        Assert.Contains("SET TRANSACTION READ ONLY", source, StringComparison.Ordinal);
+        Assert.Contains("SELECT 1", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("INSERT ", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("UPDATE ", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("DELETE ", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("CREATE ", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("ALTER ", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("DROP ", source, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void RawClient_CleansUpOrderEntrySessionOnEveryPostLogonExit()
     {
         var source = File.ReadAllText(Path.Combine(

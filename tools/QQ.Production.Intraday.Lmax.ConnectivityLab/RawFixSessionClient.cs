@@ -128,6 +128,29 @@ public sealed partial class RawLmaxFixSessionClient(
         return await MarketDataSnapshotCoreAsync(options, cleanupDeadlineUtc, cancellationToken);
     }
 
+    // This overload is intentionally private and is usable only by the separate readiness path.
+    // It keeps the generic production guard intact and does not grant known-order confirmation.
+    private async Task<LmaxFixMarketDataSmokeResult> Arch7bProductionReadOnlyMarketDataSnapshotAsync(
+        LmaxConnectivityLabOptions options,
+        LmaxFixArch7bKnownOrderRequest request,
+        DateTimeOffset cleanupDeadlineUtc,
+        bool explicitReadinessConfirmation,
+        CancellationToken cancellationToken)
+    {
+        var startedAt = DateTimeOffset.UtcNow;
+        var issues = LmaxFixArch7bProductionReadinessContract.Validate(
+            options, request, explicitReadinessConfirmation, startedAt).ToList();
+        var diagnostics = BuildSafeDiagnostics(options).ToList();
+        if (issues.Count != 0)
+        {
+            var skipped = LmaxFixMarketDataSmokeResult.Skipped(
+                string.Join(" ", issues), LmaxConnectivityLabSafetyValidator.DecisionsForExternalCommand(options));
+            return skipped with { Diagnostics = diagnostics };
+        }
+
+        return await MarketDataSnapshotCoreAsync(options, cleanupDeadlineUtc, cancellationToken);
+    }
+
     private async Task<LmaxFixMarketDataSmokeResult> MarketDataSnapshotCoreAsync(
         LmaxConnectivityLabOptions options,
         DateTimeOffset cleanupDeadlineUtc,

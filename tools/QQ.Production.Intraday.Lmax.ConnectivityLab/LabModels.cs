@@ -392,6 +392,9 @@ public interface ILmaxFixSessionClient
     Task<LmaxFixArch7bKnownOrderResult> Arch7bKnownOrderLifecycleAsync(LmaxConnectivityLabOptions options, LmaxFixArch7bKnownOrderRequest request, CancellationToken cancellationToken)
         => Task.FromResult(LmaxFixArch7bKnownOrderResult.Skipped(
             "ARCH7B_EXECUTION_DISABLED_BY_DEFAULT"));
+    Task<LmaxFixArch7bProductionReadinessResult> Arch7bProductionReadinessAsync(LmaxConnectivityLabOptions options, LmaxFixArch7bKnownOrderRequest request, bool explicitReadinessConfirmation, CancellationToken cancellationToken)
+        => Task.FromResult(LmaxFixArch7bProductionReadinessResult.Skipped(
+            "ARCH7B_PRODUCTION_READINESS_RAW_FIX_CLIENT_REQUIRED"));
     Task<LmaxFixLifecycleEvidenceResult> DemoLifecycleEvidenceAsync(LmaxConnectivityLabOptions options, LmaxFixDemoOrderRequest request, LmaxFixTradeCaptureRequestOptions tradeCaptureRequest, bool explicitConfirmation, CancellationToken cancellationToken);
 }
 
