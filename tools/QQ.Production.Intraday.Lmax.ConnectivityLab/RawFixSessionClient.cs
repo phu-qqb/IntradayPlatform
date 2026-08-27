@@ -132,14 +132,14 @@ public sealed partial class RawLmaxFixSessionClient(
     // It keeps the generic production guard intact and does not grant known-order confirmation.
     private async Task<LmaxFixMarketDataSmokeResult> Arch7bProductionReadOnlyMarketDataSnapshotAsync(
         LmaxConnectivityLabOptions options,
-        LmaxFixArch7bKnownOrderRequest request,
+        LmaxFixArch7bProductionReadinessBinding binding,
         DateTimeOffset cleanupDeadlineUtc,
         bool explicitReadinessConfirmation,
         CancellationToken cancellationToken)
     {
         var startedAt = DateTimeOffset.UtcNow;
         var issues = LmaxFixArch7bProductionReadinessContract.Validate(
-            options, request, explicitReadinessConfirmation, startedAt).ToList();
+            options, binding, explicitReadinessConfirmation, validateOnly: false, nowUtc: startedAt).ToList();
         var diagnostics = BuildSafeDiagnostics(options).ToList();
         if (issues.Count != 0)
         {

@@ -24,56 +24,54 @@ public sealed partial class RawLmaxFixSessionClient
 
     public async Task<LmaxFixArch7bProductionReadinessResult> Arch7bProductionReadinessAsync(
         LmaxConnectivityLabOptions options,
-        LmaxFixArch7bKnownOrderRequest request,
+        LmaxFixArch7bProductionReadinessBinding binding,
         bool explicitReadinessConfirmation,
         CancellationToken cancellationToken)
     {
         var startedAt = DateTimeOffset.UtcNow;
         var blockers = LmaxFixArch7bProductionReadinessContract.Validate(
-            options, request, explicitReadinessConfirmation, startedAt);
+            options, binding, explicitReadinessConfirmation, validateOnly: false, nowUtc: startedAt);
         if (blockers.Count != 0)
             return Result("Skipped", new(false, false, false, false),
                 new(false, false, false, false, false, false, false, false),
                 new(false, false, false, false), blockers[0], blockers);
 
         var diagnostics = new List<string>();
-        var persistenceProbe = await ValidatePersistenceReadinessAsync(request, cancellationToken, diagnostics);
+        var persistenceProbe = await ValidatePersistenceReadinessAsync(binding, cancellationToken, diagnostics);
         var persistence = persistenceProbe.Result;
         if (!persistence.RequiredSchemaPresent)
             return Result("Failed", persistence,
                 new(false, false, false, false, false, false, false, false),
                 new(false, false, false, false), persistenceProbe.Blocker ?? "ARCH7B_PRODUCTION_PERSISTENCE_READINESS_FAILED", diagnostics);
 
-        var profile = request.ExecutionProfile;
-        var marketDataOptions = CreateArch7bReadOnlyMarketDataOptions(options, profile);
+        var marketDataOptions = CreateArch7bReadinessMarketDataOptions(options);
         var marketData = await Arch7bProductionReadOnlyMarketDataSnapshotAsync(
-            marketDataOptions, request, request.DeadlineUtc, explicitReadinessConfirmation, cancellationToken);
-        var observation = LmaxFixArch7bKnownOrderContract.EvaluateFreshFlattenObservation(
+            marketDataOptions, binding, binding.DeadlineUtc, explicitReadinessConfirmation, cancellationToken);
+        var observationBlockers = LmaxFixArch7bProductionReadinessContract.ValidateMarketDataObservation(
             marketDataOptions,
             marketData,
             startedAt,
             DateTimeOffset.UtcNow,
-            request.OpeningMarketObservationId,
-            profile);
+            binding);
         var marketDataReadiness = new LmaxFixArch7bProductionReadinessMarketData(
             marketData.TcpConnected,
             marketData.TlsHandshakeCompleted,
             marketData.FixLoggedOn,
             marketData.MarketDataRequestSent,
             marketData.CompleteTopOfBook,
-            observation.Allowed,
+            observationBlockers.Count == 0,
             marketData.InboundSequenceIntegrityProven,
             marketData.LogoutSent);
-        if (!observation.Allowed)
+        if (observationBlockers.Count != 0)
         {
-            diagnostics.AddRange(observation.Blockers);
+            diagnostics.AddRange(observationBlockers);
             return Result("Failed", persistence, marketDataReadiness,
                 new(false, false, false, false),
                 "ARCH7B_PRODUCTION_MARKET_DATA_READINESS_FAILED", diagnostics);
         }
 
         var orderEntryBlockers = LmaxFixArch7bProductionReadinessContract.Validate(
-            options, request, explicitReadinessConfirmation, DateTimeOffset.UtcNow);
+            options, binding, explicitReadinessConfirmation, validateOnly: false, nowUtc: DateTimeOffset.UtcNow);
         if (orderEntryBlockers.Count != 0)
         {
             diagnostics.AddRange(orderEntryBlockers);
@@ -112,8 +110,43 @@ public sealed partial class RawLmaxFixSessionClient
                 resultDiagnostics);
     }
 
+    public Task<LmaxFixArch7bProductionReadinessResult> Arch7bProductionReadinessValidateOnlyAsync(
+        LmaxConnectivityLabOptions options,
+        LmaxFixArch7bProductionReadinessBinding binding,
+        bool explicitReadinessConfirmation,
+        CancellationToken cancellationToken)
+    {
+        var startedAt = DateTimeOffset.UtcNow;
+        var blockers = LmaxFixArch7bProductionReadinessContract.Validate(
+            options, binding, explicitReadinessConfirmation, validateOnly: true, nowUtc: startedAt).ToList();
+        if (blockers.Count == 0)
+        {
+            var persistenceBlocker = ValidatePersistenceBindingMetadata(binding);
+            if (persistenceBlocker is not null)
+                blockers.Add(persistenceBlocker);
+        }
+
+        var result = new LmaxFixArch7bProductionReadinessResult(
+            "fix-arch7b-production-readiness",
+            blockers.Count == 0 ? "Ok" : "Skipped",
+            startedAt,
+            DateTimeOffset.UtcNow,
+            new(blockers.Count == 0, false, false, false),
+            new(false, false, false, false, false, false, false, false),
+            new(false, false, false, false),
+            false,
+            blockers.FirstOrDefault(),
+            blockers.Count == 0
+                ? ["ARCH7B_PRODUCTION_READINESS_VALIDATE_ONLY_ZERO_IO"]
+                : blockers)
+        {
+            ValidateOnly = true
+        };
+        return Task.FromResult(result);
+    }
+
     private static async Task<PersistenceProbe> ValidatePersistenceReadinessAsync(
-        LmaxFixArch7bKnownOrderRequest request,
+        LmaxFixArch7bProductionReadinessBinding binding,
         CancellationToken cancellationToken,
         ICollection<string> diagnostics)
     {
@@ -121,8 +154,9 @@ public sealed partial class RawLmaxFixSessionClient
             Arch7bPostgreSqlPersistenceTarget.ProductionConnectionEnvironmentVariable);
         if (string.IsNullOrWhiteSpace(connectionString))
         {
-            diagnostics.Add("ARCH7B_PRODUCTION_PERSISTENCE_CONNECTION_STRING_MISSING");
-            return new(new(false, false, false, false), "ARCH7B_PRODUCTION_PERSISTENCE_CONNECTION_STRING_MISSING");
+            diagnostics.Add(Arch7bPostgreSqlPersistenceTarget.ProductionConnectionEnvironmentVariable);
+            return new(new(false, false, false, false),
+                Arch7bPostgreSqlPersistenceTarget.ProductionConnectionEnvironmentVariable);
         }
 
         var bindingValidated = false;
@@ -130,7 +164,7 @@ public sealed partial class RawLmaxFixSessionClient
         {
             var builder = new NpgsqlConnectionStringBuilder(connectionString);
             Arch7bPostgreSqlPersistenceTarget.ValidateResolvedConnection(
-                request, builder.Host, builder.Port, builder.Database);
+                binding, builder.Host, builder.Port, builder.Database);
             bindingValidated = true;
             await using var connection = new NpgsqlConnection(connectionString);
             await connection.OpenAsync(cancellationToken);
@@ -168,6 +202,42 @@ public sealed partial class RawLmaxFixSessionClient
                 : "ARCH7B_PRODUCTION_PERSISTENCE_READINESS_FAILED";
             return new(new(bindingValidated, false, false, false), blocker);
         }
+    }
+
+    private static string? ValidatePersistenceBindingMetadata(
+        LmaxFixArch7bProductionReadinessBinding binding)
+    {
+        var connectionString = Environment.GetEnvironmentVariable(
+            Arch7bPostgreSqlPersistenceTarget.ProductionConnectionEnvironmentVariable);
+        if (string.IsNullOrWhiteSpace(connectionString))
+            return Arch7bPostgreSqlPersistenceTarget.ProductionConnectionEnvironmentVariable;
+
+        try
+        {
+            var builder = new NpgsqlConnectionStringBuilder(connectionString);
+            Arch7bPostgreSqlPersistenceTarget.ValidateResolvedConnection(
+                binding, builder.Host, builder.Port, builder.Database);
+            return null;
+        }
+        catch (Exception exception) when (exception is InvalidOperationException or ArgumentException)
+        {
+            return exception is InvalidOperationException { Message: var message } &&
+                   message.StartsWith("ARCH7B_", StringComparison.Ordinal)
+                ? message
+                : "ARCH7B_PRODUCTION_PERSISTENCE_BINDING_INVALID";
+        }
+    }
+
+    private static LmaxConnectivityLabOptions CreateArch7bReadinessMarketDataOptions(
+        LmaxConnectivityLabOptions options)
+    {
+        var readOnly = CopyOptions(options);
+        readOnly.AllowOrderSubmission = false;
+        readOnly.AllowLiveTrading = false;
+        readOnly.MarketDataRequestMode = LmaxFixMarketDataRequestMode.SnapshotPlusUpdates;
+        readOnly.MarketDepth = 1;
+        readOnly.MarketDataMaxWaitSeconds = Math.Min(options.MarketDataMaxWaitSeconds, 5);
+        return readOnly;
     }
 
     private static async Task<LmaxFixArch7bProductionReadinessOrderEntry> ValidateOrderEntryLogonReadinessAsync(
