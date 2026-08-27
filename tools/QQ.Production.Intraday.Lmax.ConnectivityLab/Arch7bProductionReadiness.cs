@@ -1,5 +1,3 @@
-using System.Text.RegularExpressions;
-
 namespace QQ.Production.Intraday.Lmax.ConnectivityLab;
 
 /// <summary>
@@ -40,6 +38,13 @@ public sealed record LmaxFixArch7bProductionReadinessResult(
     string? Blocker,
     IReadOnlyList<string> Diagnostics)
 {
+    public bool ValidateOnly { get; init; }
+
+    public bool ZeroIo =>
+        !Persistence.Connected &&
+        !MarketData.TcpConnected &&
+        !OrderEntry.TcpConnected;
+
     public static LmaxFixArch7bProductionReadinessResult Skipped(string blocker)
     {
         var now = DateTimeOffset.UtcNow;
@@ -58,31 +63,62 @@ public sealed record LmaxFixArch7bProductionReadinessResult(
 }
 
 /// <summary>
-/// Keeps the production readiness command packet-bound while requiring every trading permission to be disabled.
+/// Non-secret immutable binding for infrastructure readiness. It is deliberately
+/// separate from the trading authorization packet and contains no order economics.
+/// </summary>
+public sealed record LmaxFixArch7bProductionReadinessBinding(
+    string EnvironmentName,
+    string AccountId,
+    string FixOrderHost,
+    int FixOrderPort,
+    string FixOrderTargetCompId,
+    string FixSenderCompId,
+    string FixMarketDataHost,
+    int FixMarketDataPort,
+    string FixMarketDataTargetCompId,
+    string InstrumentSymbol,
+    string SecurityId,
+    string SecurityIdSource,
+    string PersistenceHost,
+    int PersistencePort,
+    string PersistenceDatabase,
+    string OperatorAuthorizationId,
+    DateTimeOffset IssuedAtUtc,
+    DateTimeOffset DeadlineUtc);
+
+/// <summary>
+/// Validates the separate, zero-order production readiness binding.
 /// </summary>
 public static class LmaxFixArch7bProductionReadinessContract
 {
-    private static readonly Regex Sha256 = new("^[0-9a-f]{64}$", RegexOptions.CultureInvariant);
-
     public static IReadOnlyList<string> Validate(
         LmaxConnectivityLabOptions options,
-        LmaxFixArch7bKnownOrderRequest request,
+        LmaxFixArch7bProductionReadinessBinding binding,
         bool explicitReadinessConfirmation,
+        bool validateOnly,
         DateTimeOffset nowUtc)
     {
         var blockers = new List<string>();
-        var binding = request.ProductionBinding;
         Require(explicitReadinessConfirmation, "ARCH7B_PRODUCTION_READINESS_CLI_CONFIRMATION_MISSING");
-        Require(request.Activation == LmaxFixArch7bActivation.ProductionAuthorizedOnce,
-            "ARCH7B_PRODUCTION_READINESS_ACTIVATION_REQUIRED");
-        Require(binding is not null, "ARCH7B_PRODUCTION_BINDING_MISSING");
-        if (binding is null)
-            return blockers;
-
+        Require(!string.IsNullOrWhiteSpace(options.AccountCode), "QQ_LMAX_ACCOUNT_CODE");
+        Require(!string.IsNullOrWhiteSpace(options.FixOrderHost), "QQ_LMAX_FIX_ORDER_HOST");
+        Require(options.FixOrderPort is > 0 and <= 65535, "QQ_LMAX_FIX_ORDER_PORT");
+        Require(!string.IsNullOrWhiteSpace(options.FixOrderTargetCompId ?? options.FixTargetCompId),
+            "QQ_LMAX_FIX_ORDER_TARGET_COMP_ID");
+        Require(!string.IsNullOrWhiteSpace(options.FixMarketDataHost), "QQ_LMAX_FIX_MARKET_DATA_HOST");
+        Require(options.FixMarketDataPort is > 0 and <= 65535, "QQ_LMAX_FIX_MARKET_DATA_PORT");
+        Require(!string.IsNullOrWhiteSpace(options.FixMarketDataTargetCompId),
+            "QQ_LMAX_FIX_MARKET_DATA_TARGET_COMP_ID");
+        Require(!string.IsNullOrWhiteSpace(options.FixSenderCompId), "QQ_LMAX_FIX_SENDER_COMP_ID");
+        Require(!string.IsNullOrWhiteSpace(options.InstrumentSymbol), "QQ_LMAX_INSTRUMENT_SYMBOL");
+        Require(!string.IsNullOrWhiteSpace(options.LmaxInstrumentId), "QQ_LMAX_INSTRUMENT_ID");
+        Require(!string.IsNullOrWhiteSpace(options.FixSecurityIdSource), "QQ_LMAX_FIX_SECURITY_ID_SOURCE");
+        Require(!string.IsNullOrWhiteSpace(options.FixUsername), "QQ_LMAX_FIX_USERNAME");
+        Require(!string.IsNullOrWhiteSpace(options.FixPassword), "QQ_LMAX_FIX_PASSWORD");
         Require(binding.EnvironmentName.Equals("Production", StringComparison.Ordinal) &&
                 options.EnvironmentName.Equals("Production", StringComparison.Ordinal),
             "ARCH7B_PRODUCTION_ENVIRONMENT_BINDING_MISMATCH");
-        Require(request.AccountId == binding.AccountId,
+        Require(options.AccountCode == binding.AccountId,
             "ARCH7B_PRODUCTION_ACCOUNT_BINDING_MISMATCH");
         Require(options.FixOrderHost == binding.FixOrderHost &&
                 options.FixOrderPort == binding.FixOrderPort &&
@@ -102,27 +138,67 @@ public static class LmaxFixArch7bProductionReadinessContract
                 binding.PersistencePort is > 0 and <= 65535 &&
                 !string.IsNullOrWhiteSpace(binding.PersistenceDatabase),
             "ARCH7B_PRODUCTION_PERSISTENCE_BINDING_MISSING");
-        Require(options.AllowExternalConnections && !options.AllowOrderSubmission &&
-                !options.AllowLiveTrading && !options.DryRun,
-            "ARCH7B_PRODUCTION_READINESS_OPTIONS_INVALID");
         Require(options.UseTls, "ARCH7B_PRODUCTION_FIX_TLS_REQUIRED");
-        Require(!string.IsNullOrWhiteSpace(options.FixUsername) && !string.IsNullOrWhiteSpace(options.FixPassword),
-            "ARCH7B_PRODUCTION_FIX_IDENTITY_MISSING");
-        Require(request.ExactOperatorAuthorizationPresent && request.KillSwitchArmed && request.ExclusivityDeclared &&
-                !string.IsNullOrWhiteSpace(binding.OperatorAuthorizationId),
+        Require(!string.IsNullOrWhiteSpace(binding.OperatorAuthorizationId),
             "ARCH7B_EXACT_OPERATOR_AUTHORIZATION_MISSING");
-        Require(Sha256.IsMatch(request.PolicySha256) && Sha256.IsMatch(request.AuthorizationPacketSha256) &&
-                request.AuthorizationPacketSha256.Equals(
-                    LmaxFixArch7bKnownOrderContract.ComputeProductionAuthorizationPacketSha256(request, binding),
-                    StringComparison.OrdinalIgnoreCase),
-            "ARCH7B_AUTHORIZATION_PACKET_SHA256_MISMATCH");
-        Require(request.DeadlineUtc.Offset == TimeSpan.Zero && request.DeadlineUtc > nowUtc &&
-                request.DeadlineUtc - nowUtc <= TimeSpan.FromSeconds(binding.MaximumLifecycleSeconds),
+        Require(binding.IssuedAtUtc.Offset == TimeSpan.Zero && binding.DeadlineUtc.Offset == TimeSpan.Zero &&
+                binding.IssuedAtUtc <= nowUtc && binding.DeadlineUtc > nowUtc &&
+                binding.DeadlineUtc - binding.IssuedAtUtc <= TimeSpan.FromSeconds(180),
             "ARCH7B_DEADLINE_EXCEEDED");
         Require(options.MarketDataRequestMode == LmaxFixMarketDataRequestMode.SnapshotPlusUpdates &&
                 options.MarketDataSymbolEncodingMode != LmaxFixMarketDataSymbolEncodingMode.Auto &&
                 options.MarketDepth == 1 && options.MarketDataMaxWaitSeconds is > 0 and <= 5,
             "ARCH7B_PRODUCTION_MARKET_DATA_READINESS_OPTIONS_INVALID");
+        if (validateOnly)
+        {
+            Require(!options.AllowExternalConnections && !options.AllowOrderSubmission &&
+                    !options.AllowLiveTrading && options.DryRun,
+                "ARCH7B_PRODUCTION_READINESS_VALIDATE_ONLY_OPTIONS_INVALID");
+        }
+        else
+        {
+            Require(options.AllowExternalConnections && !options.AllowOrderSubmission &&
+                    !options.AllowLiveTrading && !options.DryRun,
+                "ARCH7B_PRODUCTION_READINESS_OPTIONS_INVALID");
+        }
+        return blockers;
+
+        void Require(bool condition, string blocker)
+        {
+            if (!condition)
+                blockers.Add(blocker);
+        }
+    }
+
+    public static IReadOnlyList<string> ValidateMarketDataObservation(
+        LmaxConnectivityLabOptions options,
+        LmaxFixMarketDataSmokeResult result,
+        DateTimeOffset notBeforeUtc,
+        DateTimeOffset nowUtc,
+        LmaxFixArch7bProductionReadinessBinding binding)
+    {
+        var blockers = new List<string>();
+        var observedAtUtc = result.ObservationCompletedAtUtc ?? result.CompletedAtUtc;
+        Require(!options.AllowOrderSubmission && !options.AllowLiveTrading,
+            "ARCH7B_READINESS_MARKET_DATA_NOT_READ_ONLY");
+        Require(options.InstrumentSymbol == binding.InstrumentSymbol &&
+                options.LmaxInstrumentId == binding.SecurityId &&
+                options.FixSecurityIdSource == binding.SecurityIdSource,
+            "ARCH7B_PRODUCTION_INSTRUMENT_BINDING_MISMATCH");
+        Require(result.Status == "Ok" && result.FixLoggedOn && result.MarketDataRequestSent &&
+                result.MarketDataSnapshotReceived && !result.MarketDataRejectReceived && result.CompleteTopOfBook,
+            "ARCH7B_PRODUCTION_READINESS_BBO_UNAVAILABLE");
+        Require(result.RequestMode == LmaxFixMarketDataRequestMode.SnapshotPlusUpdates &&
+                !string.IsNullOrWhiteSpace(result.MdReqId),
+            "ARCH7B_PRODUCTION_READINESS_MARKET_DATA_REQUEST_INVALID");
+        Require(result.InboundSequenceIntegrityProven,
+            "ARCH7B_PRODUCTION_READINESS_SEQUENCE_INTEGRITY_UNPROVEN");
+        Require(result.StartedAtUtc >= notBeforeUtc && observedAtUtc >= result.StartedAtUtc &&
+                observedAtUtc <= nowUtc && nowUtc - observedAtUtc <=
+                TimeSpan.FromSeconds(options.MarketDataMaxWaitSeconds),
+            "ARCH7B_PRODUCTION_READINESS_BBO_STALE");
+        Require(result.BestBid is > 0m && result.BestAsk is > 0m && result.BestAsk >= result.BestBid,
+            "ARCH7B_PRODUCTION_READINESS_BBO_INVALID");
         return blockers;
 
         void Require(bool condition, string blocker)

@@ -213,31 +213,40 @@ public sealed class LmaxConnectivityLabRunner(
 
         if (command.Equals("fix-arch7b-production-readiness", StringComparison.OrdinalIgnoreCase))
         {
-            var requestPath = GetStringArg(optionArgs, "request-json");
-            if (string.IsNullOrWhiteSpace(requestPath) || !File.Exists(requestPath))
+            var bindingPath = GetStringArg(optionArgs, "readiness-binding-json");
+            if (string.IsNullOrWhiteSpace(bindingPath) || !File.Exists(bindingPath))
             {
                 WriteArch7bProductionReadinessResult(
-                    LmaxFixArch7bProductionReadinessResult.Skipped("ARCH7B_REQUEST_JSON_MISSING"));
+                    LmaxFixArch7bProductionReadinessResult.Skipped("ARCH7B_READINESS_BINDING_JSON_MISSING"));
                 return 2;
             }
 
             try
             {
-                var request = JsonSerializer.Deserialize<LmaxFixArch7bKnownOrderRequest>(
-                    File.ReadAllText(requestPath),
-                    new JsonSerializerOptions(JsonSerializerDefaults.Web));
-                if (request is null)
+                var binding = JsonSerializer.Deserialize<LmaxFixArch7bProductionReadinessBinding>(
+                    File.ReadAllText(bindingPath),
+                    new JsonSerializerOptions(JsonSerializerDefaults.Web)
+                    {
+                        UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow
+                    });
+                if (binding is null)
                 {
                     WriteArch7bProductionReadinessResult(
-                        LmaxFixArch7bProductionReadinessResult.Skipped("ARCH7B_REQUEST_JSON_INVALID"));
+                        LmaxFixArch7bProductionReadinessResult.Skipped("ARCH7B_READINESS_BINDING_JSON_INVALID"));
                     return 2;
                 }
 
-                var readiness = await fixClient.Arch7bProductionReadinessAsync(
-                    options,
-                    request,
-                    HasFlag(optionArgs, "confirm-production-readiness"),
-                    cancellationToken);
+                var readiness = HasFlag(optionArgs, "validate-only")
+                    ? await fixClient.Arch7bProductionReadinessValidateOnlyAsync(
+                        options,
+                        binding,
+                        HasFlag(optionArgs, "confirm-production-readiness"),
+                        cancellationToken)
+                    : await fixClient.Arch7bProductionReadinessAsync(
+                        options,
+                        binding,
+                        HasFlag(optionArgs, "confirm-production-readiness"),
+                        cancellationToken);
                 WriteArch7bProductionReadinessResult(readiness);
                 return readiness.Status == "Ok" ? 0 : readiness.Status == "Failed" ? 1 : 2;
             }
@@ -245,7 +254,7 @@ public sealed class LmaxConnectivityLabRunner(
             {
                 WriteArch7bProductionReadinessResult(
                     LmaxFixArch7bProductionReadinessResult.Skipped(
-                        $"ARCH7B_REQUEST_JSON_INVALID:{exception.GetType().Name}"));
+                        $"ARCH7B_READINESS_BINDING_JSON_INVALID:{exception.GetType().Name}"));
                 return 2;
             }
         }
@@ -1265,6 +1274,8 @@ public sealed class LmaxConnectivityLabRunner(
     {
         Console.WriteLine($"Command: {result.Command}");
         Console.WriteLine($"Status: {result.Status}");
+        Console.WriteLine($"ValidateOnly: {result.ValidateOnly}");
+        Console.WriteLine($"ZeroIo: {result.ZeroIo}");
         Console.WriteLine($"StartedAtUtc: {result.StartedAtUtc:O}");
         Console.WriteLine($"CompletedAtUtc: {result.CompletedAtUtc:O}");
         Console.WriteLine($"Persistence: BindingValidated={result.Persistence.BindingValidated} Connected={result.Persistence.Connected} SelectOneSucceeded={result.Persistence.SelectOneSucceeded} RequiredSchemaPresent={result.Persistence.RequiredSchemaPresent}");

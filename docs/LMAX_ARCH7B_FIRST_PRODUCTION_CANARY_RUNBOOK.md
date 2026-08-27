@@ -6,18 +6,28 @@ This runbook is for the first, deliberately tiny production canary only. A succe
 
 Confirm the release build, focused readiness tests, ARCH7B regression, ConnectivityLab tests, and `git diff --check` are clean. Do not proceed with a dirty worktree or an unreviewed PR.
 
-## GATE 1 — production dry run
+## GATE 1 — readiness validate-only
 
-Run the packet-bound `ProductionDryRun` only. Require its explicit zero-I/O proof: **zero network, zero DB, zero order**.
-
-## GATE 2 — production readiness (readiness only)
-
-With the correct fresh request JSON and the explicit `--confirm-production-readiness` flag, run:
+Review a fresh non-secret readiness binding, then require this zero-I/O validation:
 
 ```powershell
 dotnet run --project .\tools\QQ.Production.Intraday.Lmax.ConnectivityLab -- `
   fix-arch7b-production-readiness `
-  --request-json "<fresh-production-request.json>" `
+  --readiness-binding-json "<reviewed-production-readiness-binding.json>" `
+  --validate-only `
+  --confirm-production-readiness
+```
+
+It may validate configured endpoint, account, instrument, TLS, credential presence, and PostgreSQL connection metadata. It must report `ZeroIo=true`: **zero network, zero DB connection, zero FIX, zero order**.
+
+## GATE 2 — production readiness (readiness only)
+
+With the same reviewed readiness binding and the explicit `--confirm-production-readiness` flag, run:
+
+```powershell
+dotnet run --project .\tools\QQ.Production.Intraday.Lmax.ConnectivityLab -- `
+  fix-arch7b-production-readiness `
+  --readiness-binding-json "<reviewed-production-readiness-binding.json>" `
   --confirm-production-readiness
 ```
 
@@ -33,9 +43,9 @@ Before generating the final canary packet, independently verify:
 - the kill switch is armed; and
 - the manual emergency-flatten procedure is ready.
 
-## GATE 4 — fresh final packet
+## GATE 4 — fresh trading packet and ProductionDryRun
 
-Generate a **new, fresh** final `ProductionAuthorizedOnce` authorization packet after the checks above. Do not reuse the readiness evidence or an old packet.
+Obtain a fresh real LMAX BBO and generate a **new, fresh** final `ProductionAuthorizedOnce` authorization packet after the manual checks. Run the existing strict `ProductionDryRun` against that exact trading request and require its zero-I/O proof. Do not reuse readiness evidence as a trading packet.
 
 ## GATE 5 — first canary
 

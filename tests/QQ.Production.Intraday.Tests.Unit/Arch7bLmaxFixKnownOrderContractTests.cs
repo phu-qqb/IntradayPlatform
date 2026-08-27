@@ -147,7 +147,7 @@ public sealed class Arch7bLmaxFixKnownOrderContractTests
 
         var result = await client.Arch7bProductionReadinessAsync(
             options,
-            ProductionRequest(binding) with { ProductionCommandConfirmed = false },
+            ReadinessBinding(binding),
             explicitReadinessConfirmation: false,
             CancellationToken.None);
 
@@ -158,8 +158,79 @@ public sealed class Arch7bLmaxFixKnownOrderContractTests
         Assert.False(result.OrderEntry.TcpConnected);
     }
 
+    [Fact]
+    public async Task ProductionReadiness_ValidateOnlyUsesBindingAndPerformsZeroIo()
+    {
+        var binding = ReadinessBinding(ProductionBinding());
+        var options = ProductionOptions(ProductionBinding());
+        options.AllowExternalConnections = false;
+        options.AllowOrderSubmission = false;
+        options.AllowLiveTrading = false;
+        options.DryRun = true;
+        var connectionSetting = Arch7bPostgreSqlPersistenceTarget.ProductionConnectionEnvironmentVariable;
+        var original = Environment.GetEnvironmentVariable(connectionSetting);
+        Environment.SetEnvironmentVariable(
+            connectionSetting,
+            $"Host={binding.PersistenceHost};Port={binding.PersistencePort};Database={binding.PersistenceDatabase}");
+        try
+        {
+            var result = await new RawLmaxFixSessionClient(new LmaxConnectivityLabSafetyValidator())
+                .Arch7bProductionReadinessValidateOnlyAsync(
+                    options, binding, explicitReadinessConfirmation: true, CancellationToken.None);
+
+            Assert.Equal("Ok", result.Status);
+            Assert.True(result.ValidateOnly);
+            Assert.True(result.ZeroIo);
+            Assert.False(result.Persistence.Connected);
+            Assert.False(result.MarketData.TcpConnected);
+            Assert.False(result.OrderEntry.TcpConnected);
+            Assert.Contains("ARCH7B_PRODUCTION_READINESS_VALIDATE_ONLY_ZERO_IO", result.Diagnostics);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(connectionSetting, original);
+        }
+    }
+
+    [Fact]
+    public async Task ProductionReadiness_MissingFixCredentialFailsBeforeDatabaseOrSocket()
+    {
+        var binding = ReadinessBinding(ProductionBinding());
+        var options = ProductionOptions(ProductionBinding());
+        options.AllowOrderSubmission = false;
+        options.FixPassword = null;
+
+        var result = await new RawLmaxFixSessionClient(new LmaxConnectivityLabSafetyValidator())
+            .Arch7bProductionReadinessAsync(
+                options, binding, explicitReadinessConfirmation: true, CancellationToken.None);
+
+        Assert.Equal("Skipped", result.Status);
+        Assert.Equal("QQ_LMAX_FIX_PASSWORD", result.Blocker);
+        Assert.True(result.ZeroIo);
+    }
+
+    [Fact]
+    public void ProductionReadinessBinding_ContainsNoTradingPacketFields()
+    {
+        var names = typeof(LmaxFixArch7bProductionReadinessBinding)
+            .GetProperties()
+            .Select(property => property.Name)
+            .ToArray();
+
+        Assert.DoesNotContain(names, value => value.Contains("Bbo", StringComparison.Ordinal));
+        Assert.DoesNotContain(names, value => value.Contains("Opening", StringComparison.Ordinal));
+        Assert.DoesNotContain(names, value => value.Contains("Cancel", StringComparison.Ordinal));
+        Assert.DoesNotContain(names, value => value.Contains("Flatten", StringComparison.Ordinal));
+        Assert.DoesNotContain(names, value => value.Contains("ClientOrder", StringComparison.Ordinal));
+        Assert.DoesNotContain(names, value => value.Contains("Quantity", StringComparison.Ordinal));
+        Assert.DoesNotContain(names, value => value.Contains("Price", StringComparison.Ordinal));
+        Assert.DoesNotContain(names, value => value.Contains("Policy", StringComparison.Ordinal));
+        Assert.DoesNotContain(names, value => value.Contains("AuthorizationPacket", StringComparison.Ordinal));
+    }
+
     [Theory]
     [InlineData("environment")]
+    [InlineData("account")]
     [InlineData("order-host")]
     [InlineData("market-data-host")]
     [InlineData("market-data-port")]
@@ -168,16 +239,21 @@ public sealed class Arch7bLmaxFixKnownOrderContractTests
     [InlineData("order-target")]
     [InlineData("tls")]
     [InlineData("credentials")]
+    [InlineData("instrument")]
+    [InlineData("persistence")]
+    [InlineData("external-disabled")]
     [InlineData("orders")]
     [InlineData("live")]
     public void ProductionReadiness_RejectsUnsafeOrMismatchedInputsBeforeExternalOperations(string scenario)
     {
         var binding = ProductionBinding();
+        var readinessBinding = ReadinessBinding(binding);
         var options = ProductionOptions(binding);
         options.AllowOrderSubmission = false;
         switch (scenario)
         {
             case "environment": options.EnvironmentName = "Demo"; break;
+            case "account": options.AccountCode = "wrong"; break;
             case "order-host": options.FixOrderHost = "wrong.example"; break;
             case "market-data-host": options.FixMarketDataHost = "wrong.example"; break;
             case "market-data-port": options.FixMarketDataPort = 1; break;
@@ -186,15 +262,19 @@ public sealed class Arch7bLmaxFixKnownOrderContractTests
             case "order-target": options.FixOrderTargetCompId = "wrong"; break;
             case "tls": options.UseTls = false; break;
             case "credentials": options.FixPassword = null; break;
+            case "instrument": options.InstrumentSymbol = "wrong"; break;
+            case "persistence": readinessBinding = readinessBinding with { PersistenceHost = string.Empty }; break;
+            case "external-disabled": options.AllowExternalConnections = false; break;
             case "orders": options.AllowOrderSubmission = true; break;
             case "live": options.AllowLiveTrading = true; break;
         }
 
         var blockers = LmaxFixArch7bProductionReadinessContract.Validate(
             options,
-            ProductionRequest(binding) with { ProductionCommandConfirmed = false },
+            readinessBinding,
             explicitReadinessConfirmation: true,
-            DateTimeOffset.UtcNow);
+            validateOnly: false,
+            nowUtc: DateTimeOffset.UtcNow);
 
         Assert.NotEmpty(blockers);
         Assert.DoesNotContain("ARCH7B_PRODUCTION_READINESS_CLI_CONFIRMATION_MISSING", blockers);
@@ -210,6 +290,7 @@ public sealed class Arch7bLmaxFixKnownOrderContractTests
             "RawFixSessionClient.Arch7bProductionReadiness.cs"));
 
         Assert.DoesNotContain("Arch7bKnownOrderLifecycleAsync", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("LmaxFixArch7bKnownOrderRequest", source, StringComparison.Ordinal);
         Assert.DoesNotContain("BuildNewOrderSingle", source, StringComparison.Ordinal);
         Assert.DoesNotContain("BuildOrderCancelRequest", source, StringComparison.Ordinal);
         Assert.DoesNotContain("BuildOrderStatusRequest", source, StringComparison.Ordinal);
@@ -233,6 +314,30 @@ public sealed class Arch7bLmaxFixKnownOrderContractTests
         Assert.DoesNotContain("CREATE ", source, StringComparison.Ordinal);
         Assert.DoesNotContain("ALTER ", source, StringComparison.Ordinal);
         Assert.DoesNotContain("DROP ", source, StringComparison.Ordinal);
+
+        var runnerSource = File.ReadAllText(Path.Combine(
+            RepoRoot(),
+            "tools",
+            "QQ.Production.Intraday.Lmax.ConnectivityLab",
+            "LabRunner.cs"));
+        var readinessCommand = runnerSource.IndexOf(
+            "if (command.Equals(\"fix-arch7b-production-readiness\"", StringComparison.Ordinal);
+        var readinessBlock = runnerSource[readinessCommand..];
+        Assert.Contains("readiness-binding-json", readinessBlock, StringComparison.Ordinal);
+        Assert.Contains("validate-only", readinessBlock, StringComparison.Ordinal);
+        Assert.DoesNotContain("request-json", readinessBlock[..readinessBlock.IndexOf(
+            "if (command.Equals(\"fix-order-mass-status-smoke\"", StringComparison.Ordinal)], StringComparison.Ordinal);
+
+        var runbook = File.ReadAllText(Path.Combine(
+            RepoRoot(),
+            "docs",
+            "LMAX_ARCH7B_FIRST_PRODUCTION_CANARY_RUNBOOK.md"));
+        var gateOne = runbook.IndexOf("## GATE 1 — readiness validate-only", StringComparison.Ordinal);
+        var gateTwo = runbook.IndexOf("## GATE 2 — production readiness", StringComparison.Ordinal);
+        var gateFour = runbook.IndexOf("## GATE 4 — fresh trading packet and ProductionDryRun", StringComparison.Ordinal);
+        Assert.True(gateOne >= 0 && gateOne < gateTwo && gateTwo < gateFour);
+        Assert.Contains("--readiness-binding-json", runbook, StringComparison.Ordinal);
+        Assert.Contains("ZeroIo=true", runbook, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -1172,11 +1277,37 @@ public sealed class Arch7bLmaxFixKnownOrderContractTests
                 .ComputeProductionAuthorizationPacketSha256(request, request.ProductionBinding!)
         };
 
+    private static LmaxFixArch7bProductionReadinessBinding ReadinessBinding(
+        LmaxFixArch7bProductionBinding binding)
+    {
+        var now = DateTimeOffset.UtcNow;
+        return new(
+            binding.EnvironmentName,
+            binding.AccountId,
+            binding.FixOrderHost,
+            binding.FixOrderPort,
+            binding.FixOrderTargetCompId,
+            binding.FixSenderCompId,
+            binding.FixMarketDataHost,
+            binding.FixMarketDataPort,
+            binding.FixMarketDataTargetCompId,
+            binding.InstrumentSymbol,
+            binding.SecurityId,
+            binding.SecurityIdSource,
+            binding.PersistenceHost,
+            binding.PersistencePort,
+            binding.PersistenceDatabase,
+            binding.OperatorAuthorizationId,
+            now,
+            now.AddSeconds(120));
+    }
+
     private static LmaxConnectivityLabOptions ProductionOptions(
         LmaxFixArch7bProductionBinding binding)
         => new()
         {
             EnvironmentName = binding.EnvironmentName,
+            AccountCode = binding.AccountId,
             AllowExternalConnections = true,
             AllowOrderSubmission = true,
             AllowLiveTrading = false,

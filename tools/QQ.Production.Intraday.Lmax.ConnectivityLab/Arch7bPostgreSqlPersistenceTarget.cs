@@ -39,6 +39,22 @@ public static class Arch7bPostgreSqlPersistenceTarget
             throw new InvalidOperationException("ARCH7B_PRODUCTION_PERSISTENCE_DATABASE_BINDING_MISMATCH");
     }
 
+    public static void ValidateResolvedConnection(
+        LmaxFixArch7bProductionReadinessBinding binding,
+        string? host,
+        int port,
+        string? database)
+    {
+        if (string.Equals(database, DemoDatabase, StringComparison.Ordinal))
+            throw new InvalidOperationException("ARCH7B_POSTGRESQL_DATABASE_NOT_PRODUCTION_TARGET");
+        if (!string.Equals(host, binding.PersistenceHost, StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException("ARCH7B_PRODUCTION_PERSISTENCE_HOST_BINDING_MISMATCH");
+        if (port != binding.PersistencePort)
+            throw new InvalidOperationException("ARCH7B_PRODUCTION_PERSISTENCE_PORT_BINDING_MISMATCH");
+        if (!string.Equals(database, binding.PersistenceDatabase, StringComparison.Ordinal))
+            throw new InvalidOperationException("ARCH7B_PRODUCTION_PERSISTENCE_DATABASE_BINDING_MISMATCH");
+    }
+
     private static bool IsLoopback(string? host)
         => !string.IsNullOrWhiteSpace(host) &&
            (host.Equals("localhost", StringComparison.OrdinalIgnoreCase) ||
