@@ -211,6 +211,45 @@ public sealed class LmaxConnectivityLabRunner(
             }
         }
 
+        if (command.Equals("fix-arch7b-production-readiness", StringComparison.OrdinalIgnoreCase))
+        {
+            var requestPath = GetStringArg(optionArgs, "request-json");
+            if (string.IsNullOrWhiteSpace(requestPath) || !File.Exists(requestPath))
+            {
+                WriteArch7bProductionReadinessResult(
+                    LmaxFixArch7bProductionReadinessResult.Skipped("ARCH7B_REQUEST_JSON_MISSING"));
+                return 2;
+            }
+
+            try
+            {
+                var request = JsonSerializer.Deserialize<LmaxFixArch7bKnownOrderRequest>(
+                    File.ReadAllText(requestPath),
+                    new JsonSerializerOptions(JsonSerializerDefaults.Web));
+                if (request is null)
+                {
+                    WriteArch7bProductionReadinessResult(
+                        LmaxFixArch7bProductionReadinessResult.Skipped("ARCH7B_REQUEST_JSON_INVALID"));
+                    return 2;
+                }
+
+                var readiness = await fixClient.Arch7bProductionReadinessAsync(
+                    options,
+                    request,
+                    HasFlag(optionArgs, "confirm-production-readiness"),
+                    cancellationToken);
+                WriteArch7bProductionReadinessResult(readiness);
+                return readiness.Status == "Ok" ? 0 : readiness.Status == "Failed" ? 1 : 2;
+            }
+            catch (Exception exception) when (exception is IOException or JsonException)
+            {
+                WriteArch7bProductionReadinessResult(
+                    LmaxFixArch7bProductionReadinessResult.Skipped(
+                        $"ARCH7B_REQUEST_JSON_INVALID:{exception.GetType().Name}"));
+                return 2;
+            }
+        }
+
         if (command.Equals("fix-order-mass-status-smoke", StringComparison.OrdinalIgnoreCase) ||
             command.Equals("fix-position-report-smoke", StringComparison.OrdinalIgnoreCase))
         {
@@ -1217,6 +1256,22 @@ public sealed class LmaxConnectivityLabRunner(
         foreach (var report in result.ExecutionReports)
             Console.WriteLine(
                 $"ExecutionReport: Seq={report.FixSequenceNumber} PossDup={report.PossDup} ExecID={report.ExecId} OrderID={report.OrderId} ClOrdID={report.ClOrdId} OrigClOrdID={report.OrigClOrdId} ExecType={report.ExecTypeRaw} OrdStatus={report.OrdStatusRaw} CumQty={report.CumQty} LeavesQty={report.LeavesQty} LastQty={report.LastQty} LastPx={report.LastPx} RawSHA256={report.RawMessageSha256}");
+        foreach (var diagnostic in result.Diagnostics)
+            Console.WriteLine($"Diagnostic: {diagnostic}");
+    }
+
+    private static void WriteArch7bProductionReadinessResult(
+        LmaxFixArch7bProductionReadinessResult result)
+    {
+        Console.WriteLine($"Command: {result.Command}");
+        Console.WriteLine($"Status: {result.Status}");
+        Console.WriteLine($"StartedAtUtc: {result.StartedAtUtc:O}");
+        Console.WriteLine($"CompletedAtUtc: {result.CompletedAtUtc:O}");
+        Console.WriteLine($"Persistence: BindingValidated={result.Persistence.BindingValidated} Connected={result.Persistence.Connected} SelectOneSucceeded={result.Persistence.SelectOneSucceeded} RequiredSchemaPresent={result.Persistence.RequiredSchemaPresent}");
+        Console.WriteLine($"MarketData: TcpConnected={result.MarketData.TcpConnected} TlsHandshakeCompleted={result.MarketData.TlsHandshakeCompleted} FixLoggedOn={result.MarketData.FixLoggedOn} MarketDataRequestSent={result.MarketData.MarketDataRequestSent} BboReceived={result.MarketData.BboReceived} InstrumentValidated={result.MarketData.InstrumentValidated} SequenceIntegrityValidated={result.MarketData.SequenceIntegrityValidated} LoggedOut={result.MarketData.LoggedOut}");
+        Console.WriteLine($"OrderEntry: TcpConnected={result.OrderEntry.TcpConnected} TlsHandshakeCompleted={result.OrderEntry.TlsHandshakeCompleted} FixLoggedOn={result.OrderEntry.FixLoggedOn} LoggedOut={result.OrderEntry.LoggedOut}");
+        Console.WriteLine($"ReadyForProductionCanary: {result.ReadyForProductionCanary}");
+        Console.WriteLine($"Blocker: {result.Blocker ?? "(none)"}");
         foreach (var diagnostic in result.Diagnostics)
             Console.WriteLine($"Diagnostic: {diagnostic}");
     }
