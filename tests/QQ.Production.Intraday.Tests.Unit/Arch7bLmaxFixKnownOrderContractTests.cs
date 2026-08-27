@@ -215,6 +215,8 @@ public sealed class Arch7bLmaxFixKnownOrderContractTests
         Assert.DoesNotContain("BuildOrderStatusRequest", source, StringComparison.Ordinal);
         Assert.Contains("BuildMessage(\"A\"", source, StringComparison.Ordinal);
         Assert.Contains("TrySendLogoutAsync", source, StringComparison.Ordinal);
+        Assert.Contains("logonConfirmation.NextOutboundSequenceNumber", source, StringComparison.Ordinal);
+        Assert.Contains("return (true, sequenceNumber)", source, StringComparison.Ordinal);
         Assert.Contains("SET TRANSACTION READ ONLY", source, StringComparison.Ordinal);
         Assert.Contains("SELECT 1", source, StringComparison.Ordinal);
         Assert.DoesNotContain("INSERT ", source, StringComparison.Ordinal);

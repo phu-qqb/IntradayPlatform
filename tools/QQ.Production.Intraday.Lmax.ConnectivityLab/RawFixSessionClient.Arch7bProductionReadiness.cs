@@ -192,11 +192,18 @@ public sealed partial class RawLmaxFixSessionClient
             using (var logonTimeout = CreateTimeout(options.LogonTimeoutSeconds, cancellationToken))
             {
                 await WriteAsciiAsync(stream, logon, logonTimeout.Token);
-                fixLoggedOn = await ConfirmReadinessLogonAsync(
+                var logonConfirmation = await ConfirmReadinessLogonAsync(
                     stream, options, target, logonTimeout.Token);
+                fixLoggedOn = logonConfirmation.LoggedOn;
+                if (fixLoggedOn)
+                    loggedOut = await TrySendLogoutAsync(
+                        stream,
+                        options,
+                        target,
+                        logonConfirmation.NextOutboundSequenceNumber,
+                        diagnostics,
+                        "ProductionReadinessOrderEntry");
             }
-            if (fixLoggedOn)
-                loggedOut = await TrySendLogoutAsync(stream, options, target, 2, diagnostics, "ProductionReadinessOrderEntry");
         }
         catch (Exception exception) when (exception is SocketException or IOException or AuthenticationException or OperationCanceledException)
         {
@@ -205,7 +212,7 @@ public sealed partial class RawLmaxFixSessionClient
         return new(tcpConnected, tlsHandshakeCompleted, fixLoggedOn, loggedOut);
     }
 
-    private static async Task<bool> ConfirmReadinessLogonAsync(
+    private static async Task<(bool LoggedOn, int NextOutboundSequenceNumber)> ConfirmReadinessLogonAsync(
         Stream stream,
         LmaxConnectivityLabOptions options,
         string target,
@@ -217,9 +224,9 @@ public sealed partial class RawLmaxFixSessionClient
             var response = await ReadAnyFixMessageAsync(stream, cancellationToken);
             var messageType = LmaxFixMarketDataCodec.GetMsgType(response);
             if (messageType == "A")
-                return true;
+                return (true, sequenceNumber);
             if (messageType == "5" || string.IsNullOrWhiteSpace(messageType))
-                return false;
+                return (false, sequenceNumber);
             if (messageType == "1")
             {
                 var testRequestId = LmaxFixMarketDataCodec.GetTag(response, "112");
@@ -231,6 +238,6 @@ public sealed partial class RawLmaxFixSessionClient
                 await WriteAsciiAsync(stream, heartbeat, cancellationToken);
             }
         }
-        return false;
+        return (false, sequenceNumber);
     }
 }
