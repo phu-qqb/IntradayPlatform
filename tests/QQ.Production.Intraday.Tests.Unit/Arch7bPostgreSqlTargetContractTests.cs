@@ -1,5 +1,6 @@
 using Npgsql;
 using QQ.Production.Intraday.Infrastructure.PostgreSql;
+using QQ.Production.Intraday.Lmax.ConnectivityLab;
 
 namespace QQ.Production.Intraday.Tests.Unit;
 
@@ -38,6 +39,32 @@ public sealed class Arch7bPostgreSqlTargetContractTests
 
         Assert.Equal(PmsShadowPostgreSqlTargetContract.RemoteTlsKind, target.TargetKind);
         Assert.Equal("VERIFYFULL", target.TlsPolicy);
+    }
+
+    [Fact]
+    public void Demo_known_order_persistence_uses_the_portable_remote_test_target_contract()
+    {
+        var builder = RemoteBuilder("arch7b-test.cluster-example.eu-west-1.rds.amazonaws.com");
+        builder.Database = "qq_pms_shadow_arch7b_test";
+
+        var target = Arch7bPostgreSqlPersistenceTarget.ValidateDemoTestConnection(builder.ConnectionString);
+
+        Assert.Equal("ARCH7B_RDS_TEST", target.TargetProfileId);
+        Assert.Equal(PmsShadowPostgreSqlTargetContract.RemoteTlsKind, target.TargetKind);
+        Assert.Equal("VERIFYFULL", target.TlsPolicy);
+    }
+
+    [Fact]
+    public void Demo_known_order_persistence_rejects_loopback_before_connecting()
+    {
+        var builder = Builder("127.0.0.1");
+        builder.Database = "qq_pms_shadow_arch7b_test";
+        builder.SslMode = SslMode.VerifyFull;
+
+        var error = Assert.Throws<InvalidDataException>(() =>
+            Arch7bPostgreSqlPersistenceTarget.ValidateDemoTestConnection(builder.ConnectionString));
+
+        Assert.Equal("POSTGRESQL_TARGET_LOOPBACK_NOT_ALLOWED", error.Message);
     }
 
     [Fact]

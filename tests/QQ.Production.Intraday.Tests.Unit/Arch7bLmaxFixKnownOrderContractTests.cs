@@ -925,6 +925,9 @@ public sealed class Arch7bLmaxFixKnownOrderContractTests
             Arch7bPostgreSqlPersistenceTarget.ConnectionEnvironmentVariable(demo));
         Assert.Equal(Arch7bPostgreSqlPersistenceTarget.ProductionConnectionEnvironmentVariable,
             Arch7bPostgreSqlPersistenceTarget.ConnectionEnvironmentVariable(production));
+
+        Assert.Equal("qq_pms_shadow_arch7b_test", Arch7bPostgreSqlPersistenceTarget.DemoDatabase);
+        Assert.Equal("ARCH7B_RDS_TEST", Arch7bPostgreSqlPersistenceTarget.DemoTargetProfileId);
         Assert.Throws<InvalidOperationException>(() =>
             Arch7bPostgreSqlPersistenceTarget.ValidateResolvedConnection(
                 production, "localhost", 5432, Arch7bPostgreSqlPersistenceTarget.DemoDatabase));
