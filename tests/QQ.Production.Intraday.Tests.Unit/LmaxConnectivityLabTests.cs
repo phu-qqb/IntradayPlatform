@@ -187,6 +187,36 @@ public sealed class LmaxConnectivityLabTests
     }
 
     [Fact]
+    public void Certificate_revocation_check_defaults_on_and_demo_can_explicitly_disable_it()
+    {
+        var options = CompleteFixOptions();
+        options.AllowExternalConnections = true;
+        options.CheckCertificateRevocation = false;
+
+        Assert.True(new LmaxConnectivityLabOptions().CheckCertificateRevocation);
+        Assert.False(LmaxConnectivityLabOptions.FromEnvironmentAndArgs(["--certificate-revocation-check=false"]).CheckCertificateRevocation);
+        Assert.Equal("False", options.ToSafeDictionary()["CheckCertificateRevocation"]);
+        Assert.Empty(new LmaxConnectivityLabSafetyValidator().ValidateForFixLogon(options, marketData: true));
+    }
+
+    [Fact]
+    public void Certificate_revocation_check_disabled_is_blocked_for_production_or_live_capable_options()
+    {
+        var production = CompleteFixOptions();
+        production.EnvironmentName = "Production";
+        production.AllowExternalConnections = true;
+        production.CheckCertificateRevocation = false;
+
+        var liveCapable = CompleteFixOptions(liveTrading: true);
+        liveCapable.AllowExternalConnections = true;
+        liveCapable.CheckCertificateRevocation = false;
+
+        var validator = new LmaxConnectivityLabSafetyValidator();
+        Assert.Contains("Certificate revocation checking", string.Join(" ", validator.ValidateForFixLogon(production, marketData: true)), StringComparison.Ordinal);
+        Assert.Contains("Certificate revocation checking", string.Join(" ", validator.ValidateForFixLogon(liveCapable, marketData: true)), StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Market_data_request_builder_creates_snapshot_request()
     {
         var request = LmaxFixMarketDataCodec.BuildMarketDataRequest("SENDER", "LMXBDM", 2, "REQ1", CompleteMarketDataRequestOptions());

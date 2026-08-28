@@ -35,6 +35,7 @@ public sealed class LmaxConnectivityLabOptions
     public string? FixUsername { get; set; }
     public string? FixPassword { get; set; }
     public bool UseTls { get; set; } = true;
+    public bool CheckCertificateRevocation { get; set; } = true;
     public string InstrumentSymbol { get; set; } = "EURUSD";
     public string LmaxInstrumentId { get; set; } = "4001";
     public string LmaxSlashSymbol { get; set; } = "EUR/USD";
@@ -93,6 +94,7 @@ public sealed class LmaxConnectivityLabOptions
             if (key == "fix-target-comp-id") options.FixTargetCompId = value;
             if (key == "fix-username") options.FixUsername = value;
             if (key == "fix-password") options.FixPassword = value;
+            if (key == "certificate-revocation-check") options.CheckCertificateRevocation = bool.Parse(value);
             if (key == "instrument-symbol") options.InstrumentSymbol = value;
             if (key == "instrument") options.InstrumentSymbol = value;
             if (key == "lmax-instrument-id") options.LmaxInstrumentId = value;
@@ -144,6 +146,7 @@ public sealed class LmaxConnectivityLabOptions
             ["FixUsername"] = Mask(FixUsername),
             ["FixPassword"] = Mask(FixPassword),
             ["UseTls"] = UseTls.ToString(),
+            ["CheckCertificateRevocation"] = CheckCertificateRevocation.ToString(),
             ["InstrumentSymbol"] = InstrumentSymbol,
             ["LmaxInstrumentId"] = LmaxInstrumentId,
             ["LmaxSlashSymbol"] = LmaxSlashSymbol,
@@ -251,6 +254,7 @@ public sealed class LmaxConnectivityLabOptions
         SetIfPresent(values, "LmaxConnectivityLab:FixUsername", "QQ_LMAX_FIX_USERNAME", "LmaxConnectivityLab__FixUsername");
         SetIfPresent(values, "LmaxConnectivityLab:FixPassword", "QQ_LMAX_FIX_PASSWORD", "LmaxConnectivityLab__FixPassword");
         SetIfPresent(values, "LmaxConnectivityLab:UseTls", "QQ_LMAX_USE_TLS", "LmaxConnectivityLab__UseTls");
+        SetIfPresent(values, "LmaxConnectivityLab:CheckCertificateRevocation", "QQ_LMAX_CERTIFICATE_REVOCATION_CHECK", "LmaxConnectivityLab__CheckCertificateRevocation");
         SetIfPresent(values, "LmaxConnectivityLab:InstrumentSymbol", "QQ_LMAX_INSTRUMENT_SYMBOL", "LmaxConnectivityLab__InstrumentSymbol");
         SetIfPresent(values, "LmaxConnectivityLab:LmaxInstrumentId", "QQ_LMAX_INSTRUMENT_ID", "LmaxConnectivityLab__LmaxInstrumentId");
         SetIfPresent(values, "LmaxConnectivityLab:LmaxSlashSymbol", "QQ_LMAX_SLASH_SYMBOL", "LmaxConnectivityLab__LmaxSlashSymbol");
@@ -311,6 +315,7 @@ public sealed class LmaxConnectivityLabOptions
         options.FixUsername = GetString(values, nameof(FixUsername), options.FixUsername);
         options.FixPassword = GetString(values, nameof(FixPassword), options.FixPassword);
         options.UseTls = GetBool(values, nameof(UseTls), options.UseTls);
+        options.CheckCertificateRevocation = GetBool(values, nameof(CheckCertificateRevocation), options.CheckCertificateRevocation);
         options.InstrumentSymbol = GetString(values, nameof(InstrumentSymbol), options.InstrumentSymbol) ?? options.InstrumentSymbol;
         options.LmaxInstrumentId = GetString(values, nameof(LmaxInstrumentId), options.LmaxInstrumentId) ?? options.LmaxInstrumentId;
         options.LmaxSlashSymbol = GetString(values, nameof(LmaxSlashSymbol), options.LmaxSlashSymbol) ?? options.LmaxSlashSymbol;

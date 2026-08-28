@@ -6,6 +6,7 @@ public sealed class LmaxConnectivityLabSafetyValidator
     {
         var issues = new List<string>();
         if (options.AllowLiveTrading) issues.Add("AllowLiveTrading=true is forbidden in the connectivity lab.");
+        if (!options.CheckCertificateRevocation && IsProductionOrLiveCapable(options)) issues.Add("Certificate revocation checking cannot be disabled in Production or live-capable environments.");
         if (!options.AllowExternalConnections) issues.Add("External calls are blocked because AllowExternalConnections=false.");
         return issues;
     }
@@ -63,6 +64,7 @@ public sealed class LmaxConnectivityLabSafetyValidator
     {
         var issues = new List<string>();
         if (options.AllowLiveTrading) issues.Add("FIX logon smoke is blocked because AllowLiveTrading=true.");
+        if (!options.CheckCertificateRevocation && IsProductionOrLiveCapable(options)) issues.Add("Certificate revocation checking cannot be disabled in Production or live-capable environments.");
         if (!options.AllowExternalConnections) issues.Add("FIX logon smoke is skipped because AllowExternalConnections=false.");
         if (!IsDemoOrUat(options.EnvironmentName)) issues.Add("FIX logon smoke is allowed only in Demo or UAT environments.");
         if (options.AllowOrderSubmission) issues.Add("FIX logon smoke requires AllowOrderSubmission=false.");
@@ -85,6 +87,9 @@ public sealed class LmaxConnectivityLabSafetyValidator
         if (string.IsNullOrWhiteSpace(options.FixPassword)) issues.Add("Missing FixPassword.");
         return issues;
     }
+
+    private static bool IsProductionOrLiveCapable(LmaxConnectivityLabOptions options)
+        => options.EnvironmentName.Equals("Production", StringComparison.OrdinalIgnoreCase) || options.AllowLiveTrading;
 
     public IReadOnlyList<string> ValidateForAccountApi(LmaxConnectivityLabOptions options)
     {
