@@ -294,7 +294,7 @@ public sealed class Arch7bLmaxFixKnownOrderContractTests
         Assert.DoesNotContain("BuildNewOrderSingle", source, StringComparison.Ordinal);
         Assert.DoesNotContain("BuildOrderCancelRequest", source, StringComparison.Ordinal);
         Assert.DoesNotContain("BuildOrderStatusRequest", source, StringComparison.Ordinal);
-        Assert.Contains("BuildMessage(\"A\"", source, StringComparison.Ordinal);
+        Assert.Contains("BuildLogonMessage", source, StringComparison.Ordinal);
         Assert.Contains("TrySendLogoutAsync", source, StringComparison.Ordinal);
         Assert.Contains("logonConfirmation.NextOutboundSequenceNumber", source, StringComparison.Ordinal);
         Assert.Contains("return (true, sequenceNumber)", source, StringComparison.Ordinal);
@@ -338,6 +338,30 @@ public sealed class Arch7bLmaxFixKnownOrderContractTests
         Assert.True(gateOne >= 0 && gateOne < gateTwo && gateTwo < gateFour);
         Assert.Contains("--readiness-binding-json", runbook, StringComparison.Ordinal);
         Assert.Contains("ZeroIo=true", runbook, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ConnectivityLab_AllLogonPaths_UseUsernameForSenderAndUsernameTags()
+    {
+        var directory = Path.Combine(
+            RepoRoot(),
+            "tools",
+            "QQ.Production.Intraday.Lmax.ConnectivityLab");
+        var sharedLogon = File.ReadAllText(Path.Combine(directory, "RawFixSessionClient.cs"));
+        var knownOrderLogon = File.ReadAllText(Path.Combine(directory, "RawFixSessionClient.Arch7b.cs"));
+        var readinessLogon = File.ReadAllText(Path.Combine(directory, "RawFixSessionClient.Arch7bProductionReadiness.cs"));
+
+        Assert.Contains(
+            "BuildMessage(\"A\", sequenceNumber, options.FixUsername!, targetCompId",
+            sharedLogon,
+            StringComparison.Ordinal);
+        Assert.Contains("(\"553\", options.FixUsername!)", sharedLogon, StringComparison.Ordinal);
+        Assert.DoesNotContain("BuildMessage(\"A\"", knownOrderLogon, StringComparison.Ordinal);
+        Assert.DoesNotContain("BuildMessage(\"A\"", readinessLogon, StringComparison.Ordinal);
+        Assert.Equal(6, CountOccurrences(sharedLogon, "BuildLogonMessage(options,"));
+        Assert.Equal(1, CountOccurrences(knownOrderLogon, "BuildLogonMessage(options,"));
+        Assert.Equal(1, CountOccurrences(readinessLogon, "BuildLogonMessage(options,"));
+        Assert.Contains("targetCompId", sharedLogon, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -1462,6 +1486,19 @@ public sealed class Arch7bLmaxFixKnownOrderContractTests
             MarketDataRequestMode = LmaxFixMarketDataRequestMode.SnapshotPlusUpdates,
             MarketDataSymbolEncodingMode = LmaxFixMarketDataSymbolEncodingMode.SecurityIdAndSymbol
         };
+
+    private static int CountOccurrences(string source, string value)
+    {
+        var count = 0;
+        var index = 0;
+        while ((index = source.IndexOf(value, index, StringComparison.Ordinal)) >= 0)
+        {
+            count++;
+            index += value.Length;
+        }
+
+        return count;
+    }
 
     private static string RepoRoot()
     {
