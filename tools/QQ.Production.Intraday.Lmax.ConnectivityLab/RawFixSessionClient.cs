@@ -1188,6 +1188,7 @@ public sealed partial class RawLmaxFixSessionClient(
         var host = options.FixMarketDataHost!;
         var port = options.FixMarketDataPort!.Value;
         var target = (options.FixMarketDataTargetCompId ?? options.FixTargetCompId)!;
+        var marketDataSenderCompId = options.FixUsername!;
         var messages = new List<string>();
         var entries = new List<LmaxFixMarketDataEntry>();
         var mdReqId = $"QQMD-{Guid.NewGuid():N}";
@@ -1242,7 +1243,7 @@ public sealed partial class RawLmaxFixSessionClient(
         async Task<bool> TryUnsubscribeAsync(CancellationToken cleanupToken)
         {
             var unsubscribe = LmaxFixMarketDataCodec.BuildMarketDataRequest(
-                options.FixSenderCompId!,
+                marketDataSenderCompId,
                 target,
                 sequenceNumber++,
                 mdReqId,
@@ -1267,6 +1268,7 @@ public sealed partial class RawLmaxFixSessionClient(
                 sequenceNumber,
                 attempts,
                 attemptLabel,
+                marketDataSenderCompId,
                 cleanupToken);
 
         LmaxFixMarketDataSmokeResult WithMetadata(
@@ -1326,7 +1328,7 @@ public sealed partial class RawLmaxFixSessionClient(
                 return LmaxFixMarketDataSmokeResult.Create("Failed", "FIX market data logon was not confirmed; market data request was not sent.", startedAt, tcpConnected, tlsHandshakeCompleted, fixLogonSent, fixLoggedOn, false, false, false, logoutSent, null, null, lastMsgType, LmaxConnectivityLabSafetyValidator.DecisionsForExternalCommand(options), diagnostics, attempts, messageCount: messages.Count);
             }
 
-            var request = LmaxFixMarketDataCodec.BuildMarketDataRequest(options.FixSenderCompId!, target, sequenceNumber++, mdReqId, requestOptions);
+            var request = LmaxFixMarketDataCodec.BuildMarketDataRequest(marketDataSenderCompId, target, sequenceNumber++, mdReqId, requestOptions);
             attempts.AddRange(LmaxFixMarketDataCodec.DescribeMarketDataRequest(request).Select(x => $"{attemptLabel}: {x}"));
             if (requestOptions.ShowFixMessages)
             {
@@ -1341,7 +1343,7 @@ public sealed partial class RawLmaxFixSessionClient(
                 while (messages.Count < requestOptions.MaxMessages + 1 && !marketDataTimeout.IsCancellationRequested)
                 {
                     var readResult = await ReadMarketDataResponseAsync(
-                        activeStream, options, target, sequenceNumber, marketDataTimeout.Token, ObserveInboundSequence);
+                        activeStream, options, target, sequenceNumber, marketDataTimeout.Token, ObserveInboundSequence, marketDataSenderCompId);
                     sequenceNumber = readResult.NextSequenceNumber;
                     var message = readResult.Message;
                     if (string.IsNullOrWhiteSpace(message))
@@ -1558,7 +1560,8 @@ public sealed partial class RawLmaxFixSessionClient(
         string target,
         int sequenceNumber,
         CancellationToken cancellationToken,
-        Action<string>? inboundObserver = null)
+        Action<string>? inboundObserver = null,
+        string? senderCompId = null)
     {
         while (!cancellationToken.IsCancellationRequested)
         {
@@ -1571,7 +1574,7 @@ public sealed partial class RawLmaxFixSessionClient(
                 IReadOnlyList<(string Tag, string Value)> heartbeatFields = string.IsNullOrWhiteSpace(testReqId)
                     ? []
                     : [("112", testReqId)];
-                var heartbeat = LmaxFixMarketDataCodec.BuildMessage("0", sequenceNumber++, options.FixSenderCompId!, target, heartbeatFields);
+                var heartbeat = LmaxFixMarketDataCodec.BuildMessage("0", sequenceNumber++, senderCompId ?? options.FixSenderCompId!, target, heartbeatFields);
                 await WriteAsciiAsync(stream, heartbeat, cancellationToken);
                 continue;
             }
@@ -1618,13 +1621,14 @@ public sealed partial class RawLmaxFixSessionClient(
             sequenceNumber,
             attempts,
             attemptLabel,
+            options.FixSenderCompId!,
             CancellationToken.None);
 
-    private static async Task<bool> TrySendLogoutAsync(Stream stream, LmaxConnectivityLabOptions options, string target, int sequenceNumber, ICollection<string> attempts, string attemptLabel, CancellationToken cancellationToken)
+    private static async Task<bool> TrySendLogoutAsync(Stream stream, LmaxConnectivityLabOptions options, string target, int sequenceNumber, ICollection<string> attempts, string attemptLabel, string senderCompId, CancellationToken cancellationToken)
     {
         try
         {
-            var logout = LmaxFixMarketDataCodec.BuildMessage("5", sequenceNumber, options.FixSenderCompId!, target, [("58", "Connectivity lab FIX logoff")]);
+            var logout = LmaxFixMarketDataCodec.BuildMessage("5", sequenceNumber, senderCompId, target, [("58", "Connectivity lab FIX logoff")]);
             if (options.ShowFixMessages)
             {
                 attempts.Add($"{attemptLabel}: OUT {LmaxFixMarketDataCodec.SanitizeMessage(logout)}");

@@ -365,6 +365,43 @@ public sealed class Arch7bLmaxFixKnownOrderContractTests
     }
 
     [Fact]
+    public void ConnectivityLab_MarketDataSession_UsesUsernameForEveryPostLogonSender()
+    {
+        var source = File.ReadAllText(Path.Combine(
+            RepoRoot(),
+            "tools",
+            "QQ.Production.Intraday.Lmax.ConnectivityLab",
+            "RawFixSessionClient.cs"));
+        var marketDataAttempt = source[source.IndexOf(
+            "private static async Task<LmaxFixMarketDataSmokeResult> RunSingleMarketDataSnapshotAttemptAsync",
+            StringComparison.Ordinal)..source.IndexOf(
+            "private static string BuildLogonMessage",
+            StringComparison.Ordinal)];
+        var normalized = marketDataAttempt.ReplaceLineEndings("\n");
+
+        Assert.Contains(
+            "var marketDataSenderCompId = options.FixUsername!;",
+            normalized,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "BuildMarketDataRequest(marketDataSenderCompId, target",
+            normalized,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "marketDataSenderCompId,\n                target,",
+            normalized,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "marketDataSenderCompId,\n                cleanupToken",
+            normalized,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "marketDataSenderCompId);",
+            normalized,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void RawClient_CleansUpOrderEntrySessionOnEveryPostLogonExit()
     {
         var source = File.ReadAllText(Path.Combine(
