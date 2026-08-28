@@ -47,7 +47,7 @@ public sealed partial class RawLmaxFixSessionClient(
         {
             using var tcp = new TcpClient();
             await tcp.ConnectAsync(host, port, timeout.Token);
-            await using var stream = options.UseTls ? await CreateTlsStreamAsync(tcp, host, timeout.Token) : tcp.GetStream();
+            await using var stream = options.UseTls ? await CreateTlsStreamAsync(tcp, host, options.CheckCertificateRevocation, timeout.Token) : tcp.GetStream();
 
             var logon = LmaxFixMarketDataCodec.BuildMessage("A", 1, options.FixSenderCompId!, target, [
                 ("98", "0"),
@@ -235,7 +235,7 @@ public sealed partial class RawLmaxFixSessionClient(
             Stream rawStream;
             using (var connectTimeout = CreateTimeout(options.ConnectTimeoutSeconds, cancellationToken))
             {
-                rawStream = options.UseTls ? await CreateTlsStreamAsync(tcp, options.FixOrderHost!, connectTimeout.Token) : tcp.GetStream();
+                rawStream = options.UseTls ? await CreateTlsStreamAsync(tcp, options.FixOrderHost!, options.CheckCertificateRevocation, connectTimeout.Token) : tcp.GetStream();
             }
 
             await using var stream = rawStream;
@@ -426,7 +426,7 @@ public sealed partial class RawLmaxFixSessionClient(
             Stream rawStream;
             using (var connectTimeout = CreateTimeout(options.ConnectTimeoutSeconds, cancellationToken))
             {
-                rawStream = options.UseTls ? await CreateTlsStreamAsync(tcp, options.FixOrderHost!, connectTimeout.Token) : tcp.GetStream();
+                rawStream = options.UseTls ? await CreateTlsStreamAsync(tcp, options.FixOrderHost!, options.CheckCertificateRevocation, connectTimeout.Token) : tcp.GetStream();
             }
 
             await using var stream = rawStream;
@@ -580,7 +580,7 @@ public sealed partial class RawLmaxFixSessionClient(
             Stream rawStream;
             using (var connectTimeout = CreateTimeout(options.ConnectTimeoutSeconds, cancellationToken))
             {
-                rawStream = options.UseTls ? await CreateTlsStreamAsync(tcp, options.FixOrderHost!, connectTimeout.Token) : tcp.GetStream();
+                rawStream = options.UseTls ? await CreateTlsStreamAsync(tcp, options.FixOrderHost!, options.CheckCertificateRevocation, connectTimeout.Token) : tcp.GetStream();
             }
 
             await using var stream = rawStream;
@@ -785,7 +785,7 @@ public sealed partial class RawLmaxFixSessionClient(
             Stream rawStream;
             using (var connectTimeout = CreateTimeout(options.ConnectTimeoutSeconds, cancellationToken))
             {
-                rawStream = options.UseTls ? await CreateTlsStreamAsync(tcp, options.FixOrderHost!, connectTimeout.Token) : tcp.GetStream();
+                rawStream = options.UseTls ? await CreateTlsStreamAsync(tcp, options.FixOrderHost!, options.CheckCertificateRevocation, connectTimeout.Token) : tcp.GetStream();
             }
 
             await using var stream = rawStream;
@@ -1166,6 +1166,7 @@ public sealed partial class RawLmaxFixSessionClient(
             FixUsername = source.FixUsername,
             FixPassword = source.FixPassword,
             UseTls = source.UseTls,
+            CheckCertificateRevocation = source.CheckCertificateRevocation,
             InstrumentSymbol = source.InstrumentSymbol,
             LmaxInstrumentId = source.LmaxInstrumentId,
             LmaxSlashSymbol = source.LmaxSlashSymbol,
@@ -1329,7 +1330,7 @@ public sealed partial class RawLmaxFixSessionClient(
             using (var connectTimeout = CreateTimeout(options.ConnectTimeoutSeconds, cancellationToken))
             {
                 rawStream = options.UseTls
-                    ? await CreateTlsStreamAsync(tcp!, host, connectTimeout.Token)
+                    ? await CreateTlsStreamAsync(tcp!, host, options.CheckCertificateRevocation, connectTimeout.Token)
                     : tcp!.GetStream();
                 tlsHandshakeCompleted = options.UseTls || rawStream is not null;
             }
@@ -1533,10 +1534,13 @@ public sealed partial class RawLmaxFixSessionClient(
             cleanup);
     }
 
-    private static async Task<Stream> CreateTlsStreamAsync(TcpClient tcp, string host, CancellationToken cancellationToken)
+    private static Task<Stream> CreateTlsStreamAsync(TcpClient tcp, string host, CancellationToken cancellationToken)
+        => CreateTlsStreamAsync(tcp, host, checkCertificateRevocation: true, cancellationToken);
+
+    private static async Task<Stream> CreateTlsStreamAsync(TcpClient tcp, string host, bool checkCertificateRevocation, CancellationToken cancellationToken)
     {
         var ssl = new SslStream(tcp.GetStream(), leaveInnerStreamOpen: false);
-        await ssl.AuthenticateAsClientAsync(host, null, System.Security.Authentication.SslProtocols.Tls12 | System.Security.Authentication.SslProtocols.Tls13, checkCertificateRevocation: true).WaitAsync(cancellationToken);
+        await ssl.AuthenticateAsClientAsync(host, null, System.Security.Authentication.SslProtocols.Tls12 | System.Security.Authentication.SslProtocols.Tls13, checkCertificateRevocation).WaitAsync(cancellationToken);
         return ssl;
     }
 
