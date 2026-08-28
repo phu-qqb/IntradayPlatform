@@ -49,13 +49,7 @@ public sealed partial class RawLmaxFixSessionClient(
             await tcp.ConnectAsync(host, port, timeout.Token);
             await using var stream = options.UseTls ? await CreateTlsStreamAsync(tcp, host, options.CheckCertificateRevocation, timeout.Token) : tcp.GetStream();
 
-            var logon = LmaxFixMarketDataCodec.BuildMessage("A", 1, options.FixSenderCompId!, target, [
-                ("98", "0"),
-                ("108", "30"),
-                ("141", "Y"),
-                ("553", options.FixUsername!),
-                ("554", options.FixPassword!)
-            ]);
+            var logon = BuildLogonMessage(options, 1, target);
             await WriteAsciiAsync(stream, logon, timeout.Token);
 
             var response = await ReadFixResponseAsync(stream, timeout.Token);
@@ -239,13 +233,7 @@ public sealed partial class RawLmaxFixSessionClient(
             }
 
             await using var stream = rawStream;
-            var logon = LmaxFixMarketDataCodec.BuildMessage("A", sequenceNumber++, options.FixSenderCompId!, target, [
-                ("98", "0"),
-                ("108", "30"),
-                ("141", "Y"),
-                ("553", options.FixUsername!),
-                ("554", options.FixPassword!)
-            ]);
+            var logon = BuildLogonMessage(options, sequenceNumber++, target);
             using (var logonTimeout = CreateTimeout(options.LogonTimeoutSeconds, cancellationToken))
             {
                 await WriteAsciiAsync(stream, logon, logonTimeout.Token);
@@ -430,13 +418,7 @@ public sealed partial class RawLmaxFixSessionClient(
             }
 
             await using var stream = rawStream;
-            var logon = LmaxFixMarketDataCodec.BuildMessage("A", sequenceNumber++, options.FixSenderCompId!, targetCompId, [
-                ("98", "0"),
-                ("108", "30"),
-                ("141", "Y"),
-                ("553", options.FixUsername!),
-                ("554", options.FixPassword!)
-            ]);
+            var logon = BuildLogonMessage(options, sequenceNumber++, targetCompId);
             using (var logonTimeout = CreateTimeout(options.LogonTimeoutSeconds, cancellationToken))
             {
                 await WriteAsciiAsync(stream, logon, logonTimeout.Token);
@@ -584,13 +566,7 @@ public sealed partial class RawLmaxFixSessionClient(
             }
 
             await using var stream = rawStream;
-            var logon = LmaxFixMarketDataCodec.BuildMessage("A", sequenceNumber++, options.FixSenderCompId!, target, [
-                ("98", "0"),
-                ("108", "30"),
-                ("141", "Y"),
-                ("553", options.FixUsername!),
-                ("554", options.FixPassword!)
-            ]);
+            var logon = BuildLogonMessage(options, sequenceNumber++, target);
             using (var logonTimeout = CreateTimeout(options.LogonTimeoutSeconds, cancellationToken))
             {
                 await WriteAsciiAsync(stream, logon, logonTimeout.Token);
@@ -790,13 +766,7 @@ public sealed partial class RawLmaxFixSessionClient(
 
             await using var stream = rawStream;
             var logonSeq = sequenceNumber;
-            var logon = LmaxFixMarketDataCodec.BuildMessage("A", sequenceNumber++, options.FixSenderCompId!, target, [
-                ("98", "0"),
-                ("108", "30"),
-                ("141", "Y"),
-                ("553", options.FixUsername!),
-                ("554", options.FixPassword!)
-            ]);
+            var logon = BuildLogonMessage(options, sequenceNumber++, target);
             diagnostics.Add($"MsgSeqNum Logon={logonSeq}");
             if (request.ShowFixMessages || options.ShowFixMessages) diagnostics.Add($"OUT Logon {LmaxFixMarketDataCodec.SanitizeMessage(logon)}");
             using (var logonTimeout = CreateTimeout(options.LogonTimeoutSeconds, cancellationToken))
@@ -1339,13 +1309,7 @@ public sealed partial class RawLmaxFixSessionClient(
             Stream activeStream = rawStream ??
                 throw new IOException("FIX market-data stream was not created.");
 
-            var logon = LmaxFixMarketDataCodec.BuildMessage("A", sequenceNumber++, options.FixSenderCompId!, target, [
-                ("98", "0"),
-                ("108", "30"),
-                ("141", "Y"),
-                ("553", options.FixUsername!),
-                ("554", options.FixPassword!)
-            ]);
+            var logon = BuildLogonMessage(options, sequenceNumber++, target);
             using (var logonTimeout = CreateTimeout(options.LogonTimeoutSeconds, cancellationToken))
             {
                 await WriteAsciiAsync(activeStream, logon, logonTimeout.Token);
@@ -1533,6 +1497,16 @@ public sealed partial class RawLmaxFixSessionClient(
             },
             cleanup);
     }
+
+    private static string BuildLogonMessage(LmaxConnectivityLabOptions options, int sequenceNumber, string targetCompId)
+        => LmaxFixMarketDataCodec.BuildMessage("A", sequenceNumber, options.FixUsername!, targetCompId,
+        [
+            ("98", "0"),
+            ("108", "30"),
+            ("141", "Y"),
+            ("553", options.FixUsername!),
+            ("554", options.FixPassword!)
+        ]);
 
     private static Task<Stream> CreateTlsStreamAsync(TcpClient tcp, string host, CancellationToken cancellationToken)
         => CreateTlsStreamAsync(tcp, host, checkCertificateRevocation: true, cancellationToken);

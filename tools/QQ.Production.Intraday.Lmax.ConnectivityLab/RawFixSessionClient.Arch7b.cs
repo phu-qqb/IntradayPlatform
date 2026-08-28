@@ -159,14 +159,7 @@ public sealed partial class RawLmaxFixSessionClient
             orderEntryStream = rawStream;
             var stream = rawStream;
             var logonSequence = sequenceNumber++;
-            var logon = LmaxFixMarketDataCodec.BuildMessage("A", logonSequence, options.FixSenderCompId!, target,
-            [
-                ("98", "0"),
-                ("108", "30"),
-                ("141", "Y"),
-                ("553", options.FixUsername!),
-                ("554", options.FixPassword!)
-            ]);
+            var logon = BuildLogonMessage(options, logonSequence, target);
             using (var logonTimeout = CreateTimeout(options.LogonTimeoutSeconds, cancellationToken))
             {
                 await WriteAsciiAsync(stream, logon, logonTimeout.Token);
