@@ -21,8 +21,11 @@ static Arch7bPostgreSqlFixLifecycleObserver CreateArch7bObserver(LmaxFixArch7bKn
         throw new InvalidOperationException(
             $"ARCH7B_POSTGRESQL_CONNECTION_MISSING:{environmentVariable}");
     var connection = new NpgsqlConnectionStringBuilder(value);
-    Arch7bPostgreSqlPersistenceTarget.ValidateResolvedConnection(
-        request, connection.Host, connection.Port, connection.Database);
+    if (request.Activation == LmaxFixArch7bActivation.AuthorizedOnce)
+        Arch7bPostgreSqlPersistenceTarget.ValidateDemoTestConnection(connection.ConnectionString);
+    else
+        Arch7bPostgreSqlPersistenceTarget.ValidateResolvedConnection(
+            request, connection.Host, connection.Port, connection.Database);
     var options = new DbContextOptionsBuilder<PmsShadowDbContext>()
         .UseNpgsql(connection.ConnectionString, npgsql => npgsql.SetPostgresVersion(16, 0))
         .Options;
