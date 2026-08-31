@@ -4,10 +4,12 @@ using QQ.Production.Intraday.Domain;
 using QQ.Production.Intraday.Infrastructure.PostgreSql;
 using QQ.Production.Intraday.Infrastructure.Simulator;
 using QQ.Production.Intraday.Infrastructure.SqlServer;
+using QQ.Production.Intraday.Lmax.ConnectivityLab;
 using QQ.Production.Intraday.Worker;
 using Serilog;
 
 var builder = Host.CreateApplicationBuilder(args);
+var demoStrategyBridgeEnabled = builder.Configuration.GetValue("LmaxDemoStrategyBridge:Enabled", false);
 builder.Services.AddSingleton<IClock, SystemClock>();
 builder.Services.AddSingleton<IOperatorContext>(new StaticOperatorContext(OperatorAuditActorType.Worker, "system", "Local Worker"));
 builder.Services.AddScoped<IOperatorAuditService, OperatorAuditService>();
@@ -36,6 +38,16 @@ builder.Services.AddScoped<ILmaxReportPairConsistencyService, LmaxReportPairCons
 builder.Services.AddScoped<IEodReconciliationService, EodReconciliationService>();
 builder.Services.AddScoped<IEodPnlSummaryService, EodPnlSummaryService>();
 builder.Services.AddScoped<IFakeLmaxEodReportGenerator, FakeLmaxEodReportGenerator>();
+
+if (demoStrategyBridgeEnabled)
+{
+    var lmaxOptions = LmaxConnectivityLabOptions.FromEnvironmentAndArgs(args);
+    LmaxDemoStrategyVenueExecutionGateway.EnsureDemoOnly(lmaxOptions);
+    builder.Services.AddSingleton(lmaxOptions);
+    builder.Services.AddSingleton<LmaxConnectivityLabSafetyValidator>();
+    builder.Services.AddScoped<ILmaxDemoStrategySession>(provider =>
+        new RawLmaxFixSessionClient(provider.GetRequiredService<LmaxConnectivityLabSafetyValidator>()));
+}
 
 if (builder.Configuration.GetValue("Intraday15m:Enabled", false))
 {
@@ -106,6 +118,15 @@ else
     throw new InvalidOperationException($"Unsupported persistence provider '{persistenceProvider}'.");
 }
 
+if (demoStrategyBridgeEnabled)
+{
+    builder.Services.AddScoped<IVenueExecutionGateway, LmaxDemoStrategyVenueExecutionGateway>();
+    builder.Services.AddScoped<IBrokerPositionProvider>(provider =>
+        new LmaxDemoBrokerPositionProvider(
+            provider.GetRequiredService<IIntradayRepository>(),
+            provider.GetRequiredService<LmaxConnectivityLabOptions>()));
+}
+
 builder.Services.AddHostedService<Worker>();
 builder.Services.AddSerilog(new LoggerConfiguration().WriteTo.Console().CreateLogger());
 
@@ -154,14 +175,23 @@ static void ValidateSafety(IHost host, string persistenceProvider)
     using var scope = host.Services.CreateScope();
     var configuration = scope.ServiceProvider.GetRequiredService<IConfiguration>();
     var gateway = scope.ServiceProvider.GetRequiredService<IVenueExecutionGateway>();
-    if (!configuration.GetValue("Safety:AllowLiveTrading", false) && gateway is not FakeLmaxGateway)
+    if (gateway is LmaxDemoStrategyVenueExecutionGateway)
     {
-        throw new InvalidOperationException("Live trading is disabled and the registered execution gateway is not FakeLmaxGateway.");
+        if (configuration.GetValue("Safety:AllowLiveTrading", false))
+            throw new InvalidOperationException("Demo strategy bridge requires Safety:AllowLiveTrading=false.");
+        if (!configuration.GetValue("Safety:AllowExternalConnections", false))
+            throw new InvalidOperationException("Demo strategy bridge requires Safety:AllowExternalConnections=true.");
+        if (configuration.GetValue("Safety:RequireFakeExecutionGateway", true))
+            throw new InvalidOperationException("Demo strategy bridge requires Safety:RequireFakeExecutionGateway=false.");
+        LmaxDemoStrategyVenueExecutionGateway.EnsureDemoOnly(
+            scope.ServiceProvider.GetRequiredService<LmaxConnectivityLabOptions>());
     }
-
-    if (configuration.GetValue("Safety:RequireFakeExecutionGateway", true) && gateway is not FakeLmaxGateway)
+    else
     {
-        throw new InvalidOperationException("Safety requires FakeLmaxGateway.");
+        if (!configuration.GetValue("Safety:AllowLiveTrading", false) && gateway is not FakeLmaxGateway)
+            throw new InvalidOperationException("Live trading is disabled and the registered execution gateway is not FakeLmaxGateway.");
+        if (configuration.GetValue("Safety:RequireFakeExecutionGateway", true) && gateway is not FakeLmaxGateway)
+            throw new InvalidOperationException("Safety requires FakeLmaxGateway.");
     }
 
     if (!configuration.GetValue("Safety:AllowExternalConnections", false) && scope.ServiceProvider.GetRequiredService<IMarketDataProvider>() is not FakeMarketDataProvider)
