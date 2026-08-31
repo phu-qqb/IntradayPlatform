@@ -14,7 +14,7 @@ public sealed class LmaxDemoStrategyBridgeTests
     [Fact]
     public void Production_IsRejectedBeforeAnyExecution()
     {
-        var options = Options() withEnvironment("Production");
+        var options = Options().withEnvironment("Production");
         Assert.Throws<InvalidOperationException>(() => LmaxDemoStrategyVenueExecutionGateway.EnsureDemoOnly(options));
     }
 
