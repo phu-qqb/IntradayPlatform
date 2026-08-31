@@ -64,6 +64,37 @@ public sealed class LmaxDemoStrategyBridgeTests
         Assert.Equal(0, session.SendCount);
     }
 
+    [Fact]
+    public async Task FreshOperatorAttestation_ProvidesOnlyTheObservedFlatPreRunState()
+    {
+        var fixture = Fixture();
+        var provider = new LmaxDemoOperatorBrokerStateAttestationProvider(fixture.Repository, fixture.Options, fixture.Clock);
+
+        var positions = await provider.GetPositionsAsync(fixture.State.BrokerAccounts.Single().Id, CancellationToken.None);
+
+        Assert.Empty(positions);
+    }
+
+    [Theory]
+    [InlineData("approval", "", true, true, "DEMO_STRATEGY_ATTESTATION_APPROVAL_REQUIRED")]
+    [InlineData("observed", "2026-08-31T08:00:00Z", true, true, "DEMO_STRATEGY_ATTESTATION_STALE")]
+    [InlineData("flat", null, false, true, "DEMO_STRATEGY_ATTESTATION_FLAT_REQUIRED")]
+    [InlineData("orders", null, true, false, "DEMO_STRATEGY_ATTESTATION_NO_WORKING_ORDERS_REQUIRED")]
+    public async Task OperatorAttestation_FailsClosedWhenRequiredEvidenceIsInvalid(string field, string? value, bool flat, bool noWorkingOrders, string expected)
+    {
+        var fixture = Fixture();
+        fixture.Options.DemoBrokerStateAttestationFlat = flat;
+        fixture.Options.DemoBrokerStateAttestationNoWorkingOrders = noWorkingOrders;
+        if (field == "approval") fixture.Options.DemoBrokerStateAttestationApprovalId = value;
+        if (field == "observed") fixture.Options.DemoBrokerStateAttestationObservedAtUtc = value;
+        var provider = new LmaxDemoOperatorBrokerStateAttestationProvider(fixture.Repository, fixture.Options, fixture.Clock);
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            provider.GetPositionsAsync(fixture.State.BrokerAccounts.Single().Id, CancellationToken.None));
+
+        Assert.Equal(expected, ex.Message);
+    }
+
     private static BridgeFixture Fixture()
     {
         var now = new DateTimeOffset(2026, 8, 31, 8, 30, 0, TimeSpan.Zero);
@@ -114,7 +145,13 @@ public sealed class LmaxDemoStrategyBridgeTests
             FixOrderTargetCompId = "LMXBD",
             FixMarketDataTargetCompId = "LMXBD",
             MaxDemoOrderQuantity = 1m,
-            AccountCode = "DEMO"
+            AccountCode = "LMAX_DEMO_LOCAL",
+            DemoBrokerStateAttestationAccountCode = "LMAX_DEMO_LOCAL",
+            DemoBrokerStateAttestationInstruments = "EURUSD",
+            DemoBrokerStateAttestationObservedAtUtc = "2026-08-31T08:29:00Z",
+            DemoBrokerStateAttestationFlat = true,
+            DemoBrokerStateAttestationNoWorkingOrders = true,
+            DemoBrokerStateAttestationApprovalId = "DEMO-APPROVED-001"
         };
 
     private sealed class CapturingSession : ILmaxDemoStrategySession

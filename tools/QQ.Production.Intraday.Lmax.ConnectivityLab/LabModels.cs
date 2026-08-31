@@ -15,6 +15,13 @@ public sealed class LmaxConnectivityLabOptions
     public bool DryRun { get; set; } = true;
     public string VenueName { get; set; } = "LMAX";
     public string AccountCode { get; set; } = "LMAX_DEMO_LOCAL";
+    public string? DemoBrokerStateAttestationAccountCode { get; set; }
+    public string? DemoBrokerStateAttestationInstruments { get; set; }
+    public string? DemoBrokerStateAttestationObservedAtUtc { get; set; }
+    public bool DemoBrokerStateAttestationFlat { get; set; }
+    public bool DemoBrokerStateAttestationNoWorkingOrders { get; set; }
+    public string? DemoBrokerStateAttestationApprovalId { get; set; }
+    public int DemoBrokerStateAttestationMaxAgeSeconds { get; set; } = 300;
     public string? AccountApiBaseUrl { get; set; } = "https://account-api.london-demo.lmax.com";
     public string? PublicDataApiBaseUrl { get; set; } = "https://public-data-api.london-demo.lmax.com";
     public LmaxAccountApiAuthMode AccountApiAuthMode { get; set; } = LmaxAccountApiAuthMode.Auto;
@@ -126,6 +133,12 @@ public sealed class LmaxConnectivityLabOptions
             ["DryRun"] = DryRun.ToString(),
             ["VenueName"] = VenueName,
             ["AccountCode"] = AccountCode,
+            ["DemoBrokerStateAttestationConfigured"] =
+                (!string.IsNullOrWhiteSpace(DemoBrokerStateAttestationAccountCode)
+                 && !string.IsNullOrWhiteSpace(DemoBrokerStateAttestationInstruments)
+                 && !string.IsNullOrWhiteSpace(DemoBrokerStateAttestationObservedAtUtc)
+                 && !string.IsNullOrWhiteSpace(DemoBrokerStateAttestationApprovalId)).ToString(),
+            ["DemoBrokerStateAttestationMaxAgeSeconds"] = DemoBrokerStateAttestationMaxAgeSeconds.ToString(),
             ["AccountApiBaseUrl"] = AccountApiBaseUrl ?? "(not configured)",
             ["PublicDataApiBaseUrl"] = PublicDataApiBaseUrl ?? "(not configured)",
             ["AccountApiAuthMode"] = AccountApiAuthMode.ToString(),
@@ -234,6 +247,13 @@ public sealed class LmaxConnectivityLabOptions
         SetIfPresent(values, "LmaxConnectivityLab:DryRun", "QQ_LMAX_DRY_RUN", "LmaxConnectivityLab__DryRun");
         SetIfPresent(values, "LmaxConnectivityLab:VenueName", "QQ_LMAX_VENUE_NAME", "LmaxConnectivityLab__VenueName");
         SetIfPresent(values, "LmaxConnectivityLab:AccountCode", "QQ_LMAX_ACCOUNT_CODE", "LmaxConnectivityLab__AccountCode");
+        SetIfPresent(values, "LmaxConnectivityLab:DemoBrokerStateAttestationAccountCode", "QQ_LMAX_DEMO_BROKER_STATE_ATTESTATION_ACCOUNT_CODE", "LmaxConnectivityLab__DemoBrokerStateAttestationAccountCode");
+        SetIfPresent(values, "LmaxConnectivityLab:DemoBrokerStateAttestationInstruments", "QQ_LMAX_DEMO_BROKER_STATE_ATTESTATION_INSTRUMENTS", "LmaxConnectivityLab__DemoBrokerStateAttestationInstruments");
+        SetIfPresent(values, "LmaxConnectivityLab:DemoBrokerStateAttestationObservedAtUtc", "QQ_LMAX_DEMO_BROKER_STATE_ATTESTATION_OBSERVED_AT_UTC", "LmaxConnectivityLab__DemoBrokerStateAttestationObservedAtUtc");
+        SetIfPresent(values, "LmaxConnectivityLab:DemoBrokerStateAttestationFlat", "QQ_LMAX_DEMO_BROKER_STATE_ATTESTATION_FLAT", "LmaxConnectivityLab__DemoBrokerStateAttestationFlat");
+        SetIfPresent(values, "LmaxConnectivityLab:DemoBrokerStateAttestationNoWorkingOrders", "QQ_LMAX_DEMO_BROKER_STATE_ATTESTATION_NO_WORKING_ORDERS", "LmaxConnectivityLab__DemoBrokerStateAttestationNoWorkingOrders");
+        SetIfPresent(values, "LmaxConnectivityLab:DemoBrokerStateAttestationApprovalId", "QQ_LMAX_DEMO_BROKER_STATE_ATTESTATION_APPROVAL_ID", "LmaxConnectivityLab__DemoBrokerStateAttestationApprovalId");
+        SetIfPresent(values, "LmaxConnectivityLab:DemoBrokerStateAttestationMaxAgeSeconds", "QQ_LMAX_DEMO_BROKER_STATE_ATTESTATION_MAX_AGE_SECONDS", "LmaxConnectivityLab__DemoBrokerStateAttestationMaxAgeSeconds");
         SetIfPresent(values, "LmaxConnectivityLab:AccountApiBaseUrl", "QQ_LMAX_ACCOUNT_API_BASE_URL", "LmaxConnectivityLab__AccountApiBaseUrl");
         SetIfPresent(values, "LmaxConnectivityLab:PublicDataApiBaseUrl", "QQ_LMAX_PUBLIC_DATA_API_BASE_URL", "LmaxConnectivityLab__PublicDataApiBaseUrl");
         SetIfPresent(values, "LmaxConnectivityLab:AccountApiAuthMode", "QQ_LMAX_ACCOUNT_API_AUTH_MODE", "LmaxConnectivityLab__AccountApiAuthMode");
@@ -295,6 +315,13 @@ public sealed class LmaxConnectivityLabOptions
         options.DryRun = GetBool(values, nameof(DryRun), options.DryRun);
         options.VenueName = GetString(values, nameof(VenueName), options.VenueName) ?? options.VenueName;
         options.AccountCode = GetString(values, nameof(AccountCode), options.AccountCode) ?? options.AccountCode;
+        options.DemoBrokerStateAttestationAccountCode = GetString(values, nameof(DemoBrokerStateAttestationAccountCode), options.DemoBrokerStateAttestationAccountCode);
+        options.DemoBrokerStateAttestationInstruments = GetString(values, nameof(DemoBrokerStateAttestationInstruments), options.DemoBrokerStateAttestationInstruments);
+        options.DemoBrokerStateAttestationObservedAtUtc = GetString(values, nameof(DemoBrokerStateAttestationObservedAtUtc), options.DemoBrokerStateAttestationObservedAtUtc);
+        options.DemoBrokerStateAttestationFlat = GetBool(values, nameof(DemoBrokerStateAttestationFlat), options.DemoBrokerStateAttestationFlat);
+        options.DemoBrokerStateAttestationNoWorkingOrders = GetBool(values, nameof(DemoBrokerStateAttestationNoWorkingOrders), options.DemoBrokerStateAttestationNoWorkingOrders);
+        options.DemoBrokerStateAttestationApprovalId = GetString(values, nameof(DemoBrokerStateAttestationApprovalId), options.DemoBrokerStateAttestationApprovalId);
+        options.DemoBrokerStateAttestationMaxAgeSeconds = GetInt(values, nameof(DemoBrokerStateAttestationMaxAgeSeconds), options.DemoBrokerStateAttestationMaxAgeSeconds) ?? options.DemoBrokerStateAttestationMaxAgeSeconds;
         options.AccountApiBaseUrl = GetString(values, nameof(AccountApiBaseUrl), options.AccountApiBaseUrl);
         options.PublicDataApiBaseUrl = GetString(values, nameof(PublicDataApiBaseUrl), options.PublicDataApiBaseUrl);
         options.AccountApiAuthMode = GetEnum(values, nameof(AccountApiAuthMode), options.AccountApiAuthMode);

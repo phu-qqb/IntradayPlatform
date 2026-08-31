@@ -1,5 +1,4 @@
 using System.Globalization;
-using System.Net.Http.Headers;
 using System.Text.Json;
 using QQ.Production.Intraday.Application;
 using QQ.Production.Intraday.Domain;
@@ -37,6 +36,7 @@ public sealed class LmaxDemoStrategyVenueExecutionGateway(
             ?? throw new InvalidOperationException("DEMO_STRATEGY_MAPPING_NOT_VALID");
         var instrument = state.Instruments.SingleOrDefault(x => x.Id == request.InstrumentId && x.IsEnabled && x.IsTradingEnabled)
             ?? throw new InvalidOperationException("DEMO_STRATEGY_INSTRUMENT_NOT_ENABLED");
+        LmaxDemoOperatorBrokerStateAttestationProvider.Validate(options, now, instrument.Symbol);
         var preTrade = state.ReconciliationRuns
             .Where(x => x.ModelRunId == run.Id && x.Phase == ReconciliationPhase.PreTrade)
             .OrderByDescending(x => x.CreatedAtUtc)
@@ -163,62 +163,93 @@ public sealed class LmaxDemoStrategyVenueExecutionGateway(
     }
 }
 
-/// <summary>Read-only LMAX Demo instrument-position provider used by pre/post-trade reconciliation.</summary>
-public sealed class LmaxDemoBrokerPositionProvider(
+/// <summary>
+/// Demo-only pre-run gate backed by the operator's fresh observation of the official LMAX Demo UI.
+/// It deliberately does not query Account REST or manufacture a broker snapshot. FIX lifecycle evidence
+/// remains the machine evidence during the run; final broker UI verification and EOD corroboration stay
+/// explicit operator protocol boundaries.
+/// </summary>
+public sealed class LmaxDemoOperatorBrokerStateAttestationProvider(
     IIntradayRepository repository,
     LmaxConnectivityLabOptions options,
-    HttpMessageHandler? handler = null) : IBrokerPositionProvider
+    IClock clock) : IBrokerPositionProvider
 {
+    private bool preTradeAttestationConsumed;
+
     public async Task<IReadOnlyList<BrokerPositionSnapshot>> GetPositionsAsync(BrokerAccountId brokerAccountId, CancellationToken cancellationToken)
     {
         LmaxDemoStrategyVenueExecutionGateway.EnsureDemoOnly(options);
-        if (string.IsNullOrWhiteSpace(options.AccountApiBaseUrl)
-            || !Uri.TryCreate(options.AccountApiBaseUrl, UriKind.Absolute, out var baseUri)
-            || !baseUri.Host.Contains("demo", StringComparison.OrdinalIgnoreCase))
-            throw new InvalidOperationException("DEMO_STRATEGY_ACCOUNT_API_NOT_DEMO");
-        if (string.IsNullOrWhiteSpace(options.AccountApiBearerToken))
-            throw new InvalidOperationException("DEMO_STRATEGY_ACCOUNT_API_BEARER_TOKEN_REQUIRED");
-
-        using var client = handler is null ? new HttpClient() : new HttpClient(handler, disposeHandler: false);
-        client.BaseAddress = baseUri;
-        client.Timeout = TimeSpan.FromSeconds(Math.Max(1, options.AccountApiRequestTimeoutSeconds));
-        using var request = new HttpRequestMessage(HttpMethod.Get, "/v1/account/positions");
-        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", options.AccountApiBearerToken);
-        using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
-        if (!response.IsSuccessStatusCode)
-            throw new InvalidOperationException($"DEMO_STRATEGY_ACCOUNT_POSITIONS_HTTP_{(int)response.StatusCode}");
-        var body = await response.Content.ReadAsStringAsync(cancellationToken);
-        using var document = JsonDocument.Parse(body);
-        if (!document.RootElement.TryGetProperty("positions", out var positions) || positions.ValueKind != JsonValueKind.Array)
-            throw new InvalidOperationException("DEMO_STRATEGY_ACCOUNT_POSITIONS_SHAPE_INVALID");
-
         var state = await repository.LoadStateAsync(cancellationToken);
-        var snapshots = new List<BrokerPositionSnapshot>();
-        foreach (var item in positions.EnumerateArray())
-        {
-            var instrumentId = item.GetProperty("instrument_id").GetString();
-            var openQuantityRaw = item.GetProperty("open_quantity").GetString();
-            var side = item.GetProperty("side").GetString();
-            var timestampRaw = item.GetProperty("timestamp").GetString();
-            if (string.IsNullOrWhiteSpace(instrumentId)
-                || !decimal.TryParse(openQuantityRaw, NumberStyles.Number, CultureInfo.InvariantCulture, out var quantity)
-                || !DateTimeOffset.TryParse(timestampRaw, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal, out var asOfUtc))
-                throw new InvalidOperationException("DEMO_STRATEGY_ACCOUNT_POSITION_ROW_INVALID");
+        var account = state.BrokerAccounts.SingleOrDefault(x => x.Id == brokerAccountId && x.IsEnabled)
+            ?? throw new InvalidOperationException("DEMO_STRATEGY_ATTESTATION_BROKER_ACCOUNT_NOT_ENABLED");
+        if (!string.Equals(account.AccountCode, options.AccountCode, StringComparison.Ordinal))
+            throw new InvalidOperationException("DEMO_STRATEGY_ATTESTATION_TARGET_ACCOUNT_MISMATCH");
 
-            var normalizedSymbol = instrumentId.Replace("-", string.Empty, StringComparison.Ordinal).ToUpperInvariant();
-            var instrument = state.Instruments.SingleOrDefault(x => x.Symbol.Equals(normalizedSymbol, StringComparison.OrdinalIgnoreCase));
-            if (instrument is null)
-                throw new InvalidOperationException("DEMO_STRATEGY_ACCOUNT_POSITION_INSTRUMENT_UNMAPPED");
-            var signed = side switch
-            {
-                "BID" => Math.Abs(quantity),
-                "ASK" => -Math.Abs(quantity),
-                "ZERO" => 0m,
-                _ => throw new InvalidOperationException("DEMO_STRATEGY_ACCOUNT_POSITION_SIDE_INVALID")
-            };
-            snapshots.Add(new BrokerPositionSnapshot(brokerAccountId, instrument.Id, signed, asOfUtc));
+        if (!preTradeAttestationConsumed)
+        {
+            Validate(options, clock.UtcNow, null);
+            var scope = ParseScope(options.DemoBrokerStateAttestationInstruments);
+            if (scope.Any(symbol => !state.Instruments.Any(x => x.IsEnabled && NormalizeSymbol(x.Symbol) == symbol)))
+                throw new InvalidOperationException("DEMO_STRATEGY_ATTESTATION_INSTRUMENT_UNMAPPED");
+            preTradeAttestationConsumed = true;
         }
 
-        return snapshots;
+        // The accepted pre-run UI observation establishes zero only for the configured scope.
+        // It is intentionally not repurposed as post-run broker authority.
+        return [];
     }
+
+    public static void Validate(LmaxConnectivityLabOptions options, DateTimeOffset now, string? requiredInstrument)
+    {
+        if (string.IsNullOrWhiteSpace(options.DemoBrokerStateAttestationAccountCode))
+            throw new InvalidOperationException("DEMO_STRATEGY_ATTESTATION_ACCOUNT_REQUIRED");
+        if (!string.Equals(options.DemoBrokerStateAttestationAccountCode, options.AccountCode, StringComparison.Ordinal))
+            throw new InvalidOperationException("DEMO_STRATEGY_ATTESTATION_ACCOUNT_MISMATCH");
+        if (!options.DemoBrokerStateAttestationFlat)
+            throw new InvalidOperationException("DEMO_STRATEGY_ATTESTATION_FLAT_REQUIRED");
+        if (!options.DemoBrokerStateAttestationNoWorkingOrders)
+            throw new InvalidOperationException("DEMO_STRATEGY_ATTESTATION_NO_WORKING_ORDERS_REQUIRED");
+        if (!IsExplicitApproval(options.DemoBrokerStateAttestationApprovalId))
+            throw new InvalidOperationException("DEMO_STRATEGY_ATTESTATION_APPROVAL_REQUIRED");
+        if (options.DemoBrokerStateAttestationMaxAgeSeconds is < 1 or > 900)
+            throw new InvalidOperationException("DEMO_STRATEGY_ATTESTATION_MAX_AGE_INVALID");
+        if (!DateTimeOffset.TryParse(options.DemoBrokerStateAttestationObservedAtUtc, CultureInfo.InvariantCulture,
+                DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal, out var observedAtUtc))
+            throw new InvalidOperationException("DEMO_STRATEGY_ATTESTATION_OBSERVED_AT_INVALID");
+        if (observedAtUtc > now)
+            throw new InvalidOperationException("DEMO_STRATEGY_ATTESTATION_OBSERVED_AT_FUTURE");
+        if (now - observedAtUtc > TimeSpan.FromSeconds(options.DemoBrokerStateAttestationMaxAgeSeconds))
+            throw new InvalidOperationException("DEMO_STRATEGY_ATTESTATION_STALE");
+
+        var scope = ParseScope(options.DemoBrokerStateAttestationInstruments);
+        var configuredInstrument = NormalizeSymbol(options.InstrumentSymbol);
+        if (!scope.Contains(configuredInstrument))
+            throw new InvalidOperationException("DEMO_STRATEGY_ATTESTATION_CONFIGURED_INSTRUMENT_MISSING");
+        if (requiredInstrument is not null && !scope.Contains(NormalizeSymbol(requiredInstrument)))
+            throw new InvalidOperationException("DEMO_STRATEGY_ATTESTATION_TARGET_INSTRUMENT_MISSING");
+    }
+
+    private static HashSet<string> ParseScope(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            throw new InvalidOperationException("DEMO_STRATEGY_ATTESTATION_INSTRUMENTS_REQUIRED");
+        var scope = value.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(NormalizeSymbol)
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        if (scope.Count == 0)
+            throw new InvalidOperationException("DEMO_STRATEGY_ATTESTATION_INSTRUMENTS_REQUIRED");
+        return scope;
+    }
+
+    private static string NormalizeSymbol(string value)
+        => value.Replace("/", string.Empty, StringComparison.Ordinal)
+            .Replace("-", string.Empty, StringComparison.Ordinal)
+            .Trim()
+            .ToUpperInvariant();
+
+    private static bool IsExplicitApproval(string? value)
+        => !string.IsNullOrWhiteSpace(value)
+            && !new[] { "NONE", "N/A", "PLACEHOLDER", "TBD", "UNKNOWN" }
+                .Contains(value.Trim(), StringComparer.OrdinalIgnoreCase);
 }

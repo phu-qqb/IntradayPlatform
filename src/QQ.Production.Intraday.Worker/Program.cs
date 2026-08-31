@@ -122,9 +122,10 @@ if (demoStrategyBridgeEnabled)
 {
     builder.Services.AddScoped<IVenueExecutionGateway, LmaxDemoStrategyVenueExecutionGateway>();
     builder.Services.AddScoped<IBrokerPositionProvider>(provider =>
-        new LmaxDemoBrokerPositionProvider(
+        new LmaxDemoOperatorBrokerStateAttestationProvider(
             provider.GetRequiredService<IIntradayRepository>(),
-            provider.GetRequiredService<LmaxConnectivityLabOptions>()));
+            provider.GetRequiredService<LmaxConnectivityLabOptions>(),
+            provider.GetRequiredService<IClock>()));
 }
 
 builder.Services.AddHostedService<Worker>();
