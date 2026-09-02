@@ -24,7 +24,10 @@ jobs:
           -r win-x64
           --self-contained true
           -p:PublishSingleFile=false
+          -p:ErrorOnDuplicatePublishOutputFiles=false
           -o artifacts/worker
+      - name: Preserve Worker configuration
+        run: cp src/QQ.Production.Intraday.Worker/appsettings.json artifacts/worker/appsettings.json
       - name: Package
         run: cd artifacts/worker && zip -r ../QQ.Production.Intraday.Worker.win-x64.zip .
       - uses: actions/upload-artifact@v4
