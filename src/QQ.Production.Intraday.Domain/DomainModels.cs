@@ -238,7 +238,7 @@ public sealed record ModelRun(
 public sealed record TargetWeight(ModelRunId ModelRunId, InstrumentId InstrumentId, decimal Weight, string RawSecurityId);
 
 public enum ModelWeightBatchStatus { Draft, Ready, Validating, Accepted, Rejected, Promoted }
-public enum ModelWeightSourceSystem { Fake, Qubes, GeneticAlgorithm, Manual, Other }
+public enum ModelWeightSourceSystem { Fake, Qubes, GeneticAlgorithm, Manual, Other, LegacyAnubis }
 public enum ModelWeightValidationIssueType
 {
     MissingBatch,
