@@ -1,0 +1,35 @@
+name: Demo Day 1 deployment artifact
+
+on:
+  pull_request:
+    branches:
+      - master
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+      - name: Publish self-contained Windows Worker
+        run: >-
+          dotnet publish src/QQ.Production.Intraday.Worker/QQ.Production.Intraday.Worker.csproj
+          -c Release
+          -r win-x64
+          --self-contained true
+          -p:PublishSingleFile=false
+          -o artifacts/worker
+      - name: Package
+        run: cd artifacts/worker && zip -r ../QQ.Production.Intraday.Worker.win-x64.zip .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: qq-production-intraday-worker-win-x64
+          path: artifacts/QQ.Production.Intraday.Worker.win-x64.zip
+          if-no-files-found: error
+          retention-days: 1
