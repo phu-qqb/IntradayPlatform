@@ -89,6 +89,13 @@ public sealed class IntradayDbContext(DbContextOptions<IntradayDbContext> option
         modelBuilder.Entity<QubesWeightAuditBatch>().HasKey(x => x.Id);
         modelBuilder.Entity<QubesRawWeightAuditRow>().HasKey(x => x.Id);
         modelBuilder.Entity<QubesNormalizedWeightAuditRow>().HasKey(x => x.Id);
+        modelBuilder.Entity<QubesRawWeightAuditRow>().Property(x => x.BloombergTicker).HasMaxLength(450);
+        modelBuilder.Entity<QubesRawWeightAuditRow>().Property(x => x.Pair).HasMaxLength(16);
+        modelBuilder.Entity<QubesRawWeightAuditRow>().Property(x => x.BaseCurrency).HasMaxLength(3);
+        modelBuilder.Entity<QubesRawWeightAuditRow>().Property(x => x.QuoteCurrency).HasMaxLength(3);
+        modelBuilder.Entity<QubesNormalizedWeightAuditRow>().Property(x => x.NormalizedTicker).HasMaxLength(450);
+        modelBuilder.Entity<QubesNormalizedWeightAuditRow>().Property(x => x.Currency).HasMaxLength(3);
+        modelBuilder.Entity<QubesNormalizedWeightAuditRow>().Property(x => x.PromotionStatus).HasMaxLength(64);
         modelBuilder.Entity<TargetPosition>().HasKey(nameof(TargetPosition.ModelRunId), nameof(TargetPosition.InstrumentId));
         modelBuilder.Entity<DriftSnapshot>().HasKey(nameof(DriftSnapshot.ModelRunId), nameof(DriftSnapshot.InstrumentId));
         modelBuilder.Entity<MarketDataSnapshot>().HasKey(x => x.Id);

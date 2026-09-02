@@ -1290,13 +1290,13 @@ namespace QQ.Production.Intraday.Infrastructure.SqlServer.Migrations
 
                     b.HasIndex("ReplayRunId");
 
-                    b.HasIndex("ReplayRunId", "Fingerprint");
-
                     b.HasIndex("Severity");
 
                     b.HasIndex("Status");
 
                     b.HasIndex("Type");
+
+                    b.HasIndex("ReplayRunId", "Fingerprint");
 
                     b.ToTable("LmaxShadowObservations");
                 });
@@ -2589,6 +2589,159 @@ namespace QQ.Production.Intraday.Infrastructure.SqlServer.Migrations
                     b.ToTable("PositionLedgerEvents");
                 });
 
+            modelBuilder.Entity("QQ.Production.Intraday.Domain.QubesNormalizedWeightAuditRow", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("AuditBatchId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTimeOffset>("CreatedAtUtc")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<string>("Currency")
+                        .IsRequired()
+                        .HasMaxLength(3)
+                        .HasColumnType("nvarchar(3)");
+
+                    b.Property<Guid?>("ModelRunId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid?>("ModelWeightBatchId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("NormalizedTicker")
+                        .IsRequired()
+                        .HasMaxLength(450)
+                        .HasColumnType("nvarchar(450)");
+
+                    b.Property<string>("PromotionStatus")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<string>("Symbol")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(450)");
+
+                    b.Property<Guid?>("TargetWeightInstrumentId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<decimal>("Weight")
+                        .HasPrecision(28, 10)
+                        .HasColumnType("decimal(28,10)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ModelRunId");
+
+                    b.HasIndex("ModelWeightBatchId");
+
+                    b.HasIndex("TargetWeightInstrumentId");
+
+                    b.HasIndex("AuditBatchId", "Symbol")
+                        .IsUnique();
+
+                    b.ToTable("QubesNormalizedWeightAuditRows");
+                });
+
+            modelBuilder.Entity("QQ.Production.Intraday.Domain.QubesRawWeightAuditRow", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("AuditBatchId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("BaseCurrency")
+                        .IsRequired()
+                        .HasMaxLength(3)
+                        .HasColumnType("nvarchar(3)");
+
+                    b.Property<string>("BloombergTicker")
+                        .IsRequired()
+                        .HasMaxLength(450)
+                        .HasColumnType("nvarchar(450)");
+
+                    b.Property<DateTimeOffset>("CreatedAtUtc")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<string>("Pair")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("nvarchar(16)");
+
+                    b.Property<string>("QuoteCurrency")
+                        .IsRequired()
+                        .HasMaxLength(3)
+                        .HasColumnType("nvarchar(3)");
+
+                    b.Property<int>("RowNumber")
+                        .HasColumnType("int");
+
+                    b.Property<decimal>("Weight")
+                        .HasPrecision(28, 10)
+                        .HasColumnType("decimal(28,10)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("AuditBatchId", "RowNumber")
+                        .IsUnique();
+
+                    b.ToTable("QubesRawWeightAuditRows");
+                });
+
+            modelBuilder.Entity("QQ.Production.Intraday.Domain.QubesWeightAuditBatch", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<int>("CadenceMinutes")
+                        .HasColumnType("int");
+
+                    b.Property<DateTimeOffset>("CreatedAtUtc")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<DateTimeOffset>("EffectiveAtUtc")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<Guid?>("ModelWeightBatchId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<int>("NormalizedRowCount")
+                        .HasColumnType("int");
+
+                    b.Property<DateTimeOffset>("ProducedAtUtc")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<Guid?>("PromotedModelRunId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("QubesRunId")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(450)");
+
+                    b.Property<int>("RawRowCount")
+                        .HasColumnType("int");
+
+                    b.Property<int>("SourceSystem")
+                        .HasColumnType("int");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ModelWeightBatchId");
+
+                    b.HasIndex("PromotedModelRunId");
+
+                    b.HasIndex("QubesRunId")
+                        .IsUnique();
+
+                    b.HasIndex("SourceSystem", "ProducedAtUtc");
+
+                    b.ToTable("QubesWeightAuditBatches");
+                });
+
             modelBuilder.Entity("QQ.Production.Intraday.Domain.ReconciliationBreak", b =>
                 {
                     b.Property<Guid>("Id")
@@ -3615,6 +3768,52 @@ namespace QQ.Production.Intraday.Infrastructure.SqlServer.Migrations
                         .HasForeignKey("InstrumentId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
+                });
+
+            modelBuilder.Entity("QQ.Production.Intraday.Domain.QubesNormalizedWeightAuditRow", b =>
+                {
+                    b.HasOne("QQ.Production.Intraday.Domain.QubesWeightAuditBatch", null)
+                        .WithMany()
+                        .HasForeignKey("AuditBatchId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("QQ.Production.Intraday.Domain.ModelRun", null)
+                        .WithMany()
+                        .HasForeignKey("ModelRunId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("QQ.Production.Intraday.Domain.ModelWeightBatch", null)
+                        .WithMany()
+                        .HasForeignKey("ModelWeightBatchId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("QQ.Production.Intraday.Domain.Instrument", null)
+                        .WithMany()
+                        .HasForeignKey("TargetWeightInstrumentId")
+                        .OnDelete(DeleteBehavior.Restrict);
+                });
+
+            modelBuilder.Entity("QQ.Production.Intraday.Domain.QubesRawWeightAuditRow", b =>
+                {
+                    b.HasOne("QQ.Production.Intraday.Domain.QubesWeightAuditBatch", null)
+                        .WithMany()
+                        .HasForeignKey("AuditBatchId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("QQ.Production.Intraday.Domain.QubesWeightAuditBatch", b =>
+                {
+                    b.HasOne("QQ.Production.Intraday.Domain.ModelWeightBatch", null)
+                        .WithMany()
+                        .HasForeignKey("ModelWeightBatchId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("QQ.Production.Intraday.Domain.ModelRun", null)
+                        .WithMany()
+                        .HasForeignKey("PromotedModelRunId")
+                        .OnDelete(DeleteBehavior.Restrict);
                 });
 
             modelBuilder.Entity("QQ.Production.Intraday.Domain.ReconciliationBreak", b =>
