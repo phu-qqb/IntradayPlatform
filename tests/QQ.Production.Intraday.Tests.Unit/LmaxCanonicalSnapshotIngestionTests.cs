@@ -93,6 +93,7 @@ public sealed class LmaxCanonicalSnapshotIngestionTests
                 [],
                 []),
                 new ManualRecorderClock(timestamp));
+            var runRoot = recorder.RunRoot;
             await using (recorder)
             {
                 await recorder.RecordAsync(new CanonicalRecorderV2Event(
@@ -116,8 +117,8 @@ public sealed class LmaxCanonicalSnapshotIngestionTests
                 await recorder.CompleteAsync();
             }
 
-            var finalManifest = Path.Combine(root, "final_manifest.json");
-            return new Capture(root, timestamp, CanonicalRecorderV2.Sha256File(finalManifest));
+            var finalManifest = Path.Combine(runRoot, "final_manifest.json");
+            return new Capture(runRoot, timestamp, CanonicalRecorderV2.Sha256File(finalManifest));
         }
 
         public LmaxCanonicalSnapshotIngestionRequest Request(DateTimeOffset decision, TimeSpan maxAge)
