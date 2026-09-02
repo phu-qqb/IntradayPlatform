@@ -4,6 +4,9 @@ on:
   push:
     branches:
       - codex/demo-day1-legacy-anubis-handoff
+  pull_request:
+    branches:
+      - master
 
 permissions:
   contents: read
