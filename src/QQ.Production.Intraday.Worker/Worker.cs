@@ -11,6 +11,7 @@ public sealed class Worker(IServiceScopeFactory scopeFactory, IConfiguration con
         var pollInterval = configuration.GetValue("Worker:PollInterval", TimeSpan.FromMinutes(15));
         if (configuration.GetValue("Worker:ProcessImmediatelyOnStartup", true))
         {
+            await IngestLegacyAnubisPortfolioIfEnabled(stoppingToken);
             await IngestLegacyAnubisWeightsIfEnabled(stoppingToken);
             await PromoteWeightsIfEnabled(stoppingToken);
             await ProcessOnce(stoppingToken);
@@ -21,6 +22,7 @@ public sealed class Worker(IServiceScopeFactory scopeFactory, IConfiguration con
         using var timer = new PeriodicTimer(pollInterval);
         while (!stoppingToken.IsCancellationRequested && await timer.WaitForNextTickAsync(stoppingToken))
         {
+            await IngestLegacyAnubisPortfolioIfEnabled(stoppingToken);
             await IngestLegacyAnubisWeightsIfEnabled(stoppingToken);
             await PromoteWeightsIfEnabled(stoppingToken);
             await ProcessOnce(stoppingToken);
@@ -28,6 +30,67 @@ public sealed class Worker(IServiceScopeFactory scopeFactory, IConfiguration con
             await RunLocalSchedulerIfEnabled(stoppingToken);
             await RunIntradaySchedulerIfEnabled(stoppingToken);
         }
+    }
+
+    private async Task IngestLegacyAnubisPortfolioIfEnabled(CancellationToken cancellationToken)
+    {
+        if (!configuration.GetValue("LegacyAnubisPortfolio:Enabled", false))
+            return;
+        if (configuration.GetValue("LegacyAnubisWeights:Enabled", false))
+            throw new InvalidOperationException("LEGACY_ANUBIS_SINGLE_AND_PORTFOLIO_IMPORTERS_CANNOT_BOTH_BE_ENABLED");
+
+        static string Required(IConfiguration configuration, string key)
+            => configuration[key] ?? throw new InvalidOperationException($"{key.Replace(':', '_').ToUpperInvariant()}_REQUIRED");
+        static DateTimeOffset RequiredUtc(IConfiguration configuration, string key)
+        {
+            var value = Required(configuration, key);
+            if (!DateTimeOffset.TryParse(value, System.Globalization.CultureInfo.InvariantCulture,
+                    System.Globalization.DateTimeStyles.AssumeUniversal | System.Globalization.DateTimeStyles.AdjustToUniversal,
+                    out var parsed) || parsed.Offset != TimeSpan.Zero)
+                throw new InvalidOperationException($"{key.Replace(':', '_').ToUpperInvariant()}_UTC_REQUIRED");
+            return parsed;
+        }
+
+        LegacyAnubisProgrammeContribution Contribution(
+            string name, int universe, int model, string session, int frequency, decimal coefficient)
+        {
+            var root = $"LegacyAnubisPortfolio:Programmes:{name}";
+            var stateText = Required(configuration, $"{root}:State");
+            if (!Enum.TryParse<LegacyAnubisProgrammeContributionState>(stateText, true, out var state))
+                throw new InvalidOperationException($"{root.Replace(':', '_').ToUpperInvariant()}_STATE_INVALID");
+            var reason = configuration[$"{root}:Reason"];
+            return state == LegacyAnubisProgrammeContributionState.Present
+                ? new(name, universe, model, session, frequency, coefficient, state,
+                    RequiredUtc(configuration, $"{root}:AsOfUtc"),
+                    Required(configuration, $"{root}:ExecDeskWeightFilePath"),
+                    Required(configuration, $"{root}:ExpectedExecDeskWeightFileSha256"),
+                    Required(configuration, $"{root}:AggregatedWeightsFilePath"),
+                    Required(configuration, $"{root}:ExpectedAggregatedWeightsFileSha256"),
+                    reason)
+                : new(name, universe, model, session, frequency, coefficient, state, Reason: reason);
+        }
+
+        var request = new LegacyAnubisPortfolioWeightIngestionRequest(
+            [
+                Contribution("INFX7", 54, 10, "US", 15, 4.5m),
+                Contribution("INFX8", 57, 11, "US", 30, 2.1m),
+                Contribution("INFX9", 58, 12, "EU", 15, 1.4m),
+                Contribution("INFX10", 59, 13, "EU", 60, 0.6m)
+            ],
+            configuration.GetValue("LegacyAnubisPortfolio:FundCode", "QQ Intraday Fund")!,
+            configuration.GetValue("LegacyAnubisPortfolio:ModelName", "IntradayFxPortfolio")!,
+            RequiredUtc(configuration, "LegacyAnubisPortfolio:DecisionAtUtc"),
+            RequiredUtc(configuration, "LegacyAnubisPortfolio:EffectiveAtUtc"),
+            configuration.GetValue("LegacyAnubisPortfolio:NavUsd", 1_000_000m),
+            configuration.GetValue("LegacyAnubisPortfolio:TargetQuantityMode", TargetQuantityMode.PortfolioBaseCurrencyNotional));
+
+        using var scope = scopeFactory.CreateScope();
+        var service = scope.ServiceProvider.GetRequiredService<ILegacyAnubisPortfolioWeightIngestionService>();
+        var result = await service.IngestAsync(request, cancellationToken);
+        logger.LogInformation(
+            "Legacy Anubis four-programme portfolio batch: BatchId={BatchId} Present={Present} Absent={Absent} SourceRows={SourceRows} ExecutableRows={ExecutableRows} AlreadyExisted={AlreadyExisted} PortfolioLineageSha256={PortfolioLineageSha256}",
+            result.Batch.Id.Value, result.PresentProgrammeCount, result.AbsentProgrammeCount, result.SourceRowCount,
+            result.ExecutableRowCount, result.AlreadyExisted, result.PortfolioLineageSha256);
     }
 
     private async Task IngestLegacyAnubisWeightsIfEnabled(CancellationToken cancellationToken)
