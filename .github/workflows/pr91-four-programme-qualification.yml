@@ -1,0 +1,27 @@
+name: PR91 four-programme qualification
+
+on:
+  push:
+    branches:
+      - fix/intraday-four-programme-portfolio
+
+permissions:
+  contents: read
+
+jobs:
+  qualify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+      - name: Restore Worker and unit tests
+        run: |
+          dotnet restore src/QQ.Production.Intraday.Worker/QQ.Production.Intraday.Worker.csproj
+          dotnet restore tests/QQ.Production.Intraday.Tests.Unit/QQ.Production.Intraday.Tests.Unit.csproj
+      - name: Build Worker
+        run: dotnet build src/QQ.Production.Intraday.Worker/QQ.Production.Intraday.Worker.csproj --configuration Release --no-restore
+      - name: Run focused four-programme tests
+        run: dotnet test tests/QQ.Production.Intraday.Tests.Unit/QQ.Production.Intraday.Tests.Unit.csproj --configuration Release --no-restore --filter FullyQualifiedName~LegacyAnubisPortfolioWeightIngestionTests
