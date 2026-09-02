@@ -33,6 +33,7 @@ builder.Services.AddScoped<IModelWeightPromotionService, ModelWeightPromotionSer
 builder.Services.AddScoped<IFakeModelWeightGenerator, FakeModelWeightGenerator>();
 builder.Services.AddScoped<ILegacyAnubisWeightIngestionService, LegacyAnubisWeightIngestionService>();
 builder.Services.AddScoped<ILegacyAnubisPortfolioWeightIngestionService, LegacyAnubisPortfolioWeightIngestionService>();
+builder.Services.AddScoped<ILmaxCanonicalSnapshotIngestionService, LmaxCanonicalSnapshotIngestionService>();
 builder.Services.AddScoped<QubesWeightPersistenceService>();
 builder.Services.AddSingleton(new LmaxEodReportOptions());
 builder.Services.AddScoped<ILmaxEodReportImportService, LmaxEodReportImportService>();
