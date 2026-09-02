@@ -91,7 +91,8 @@ public sealed class LmaxCanonicalSnapshotIngestionTests
                 ["EURUSD"],
                 [],
                 [],
-                []));
+                []),
+                new ManualRecorderClock(timestamp));
             await using (recorder)
             {
                 await recorder.RecordAsync(new CanonicalRecorderV2Event(
