@@ -1968,7 +1968,9 @@ public sealed class ModelWeightPromotionService(
             batch.NavUsd,
             ModelRunStatus.Received,
             batch.ContentHash ?? ModelWeightHash.Compute(batch.SourceSystem, batch.ExternalBatchId, batch.FundCode, batch.ModelName, batch.AsOfUtc, batch.EffectiveAtUtc, batch.FrequencyMinutes, batch.NavUsd, batch.TargetQuantityMode, rows.Select(x => new CreateFakeModelWeightRowRequest(x.RawSecurityId, x.Symbol, x.Weight)).ToList()),
-            "db-weight-source",
+            batch.SourceSystem == ModelWeightSourceSystem.LegacyAnubis
+                ? $"legacy-anubis:{batch.ExternalBatchId}"
+                : "db-weight-source",
             false,
             batch.TargetQuantityMode);
         var weights = rows.Select(row =>

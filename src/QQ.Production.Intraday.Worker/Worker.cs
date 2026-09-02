@@ -11,6 +11,7 @@ public sealed class Worker(IServiceScopeFactory scopeFactory, IConfiguration con
         var pollInterval = configuration.GetValue("Worker:PollInterval", TimeSpan.FromMinutes(15));
         if (configuration.GetValue("Worker:ProcessImmediatelyOnStartup", true))
         {
+            await IngestLegacyAnubisWeightsIfEnabled(stoppingToken);
             await PromoteWeightsIfEnabled(stoppingToken);
             await ProcessOnce(stoppingToken);
             await BuildBarsIfEnabled(stoppingToken);
@@ -20,12 +21,51 @@ public sealed class Worker(IServiceScopeFactory scopeFactory, IConfiguration con
         using var timer = new PeriodicTimer(pollInterval);
         while (!stoppingToken.IsCancellationRequested && await timer.WaitForNextTickAsync(stoppingToken))
         {
+            await IngestLegacyAnubisWeightsIfEnabled(stoppingToken);
             await PromoteWeightsIfEnabled(stoppingToken);
             await ProcessOnce(stoppingToken);
             await BuildBarsIfEnabled(stoppingToken);
             await RunLocalSchedulerIfEnabled(stoppingToken);
             await RunIntradaySchedulerIfEnabled(stoppingToken);
         }
+    }
+
+    private async Task IngestLegacyAnubisWeightsIfEnabled(CancellationToken cancellationToken)
+    {
+        if (!configuration.GetValue("LegacyAnubisWeights:Enabled", false))
+            return;
+
+        static string Required(IConfiguration configuration, string key)
+            => configuration[key] ?? throw new InvalidOperationException($"{key.Replace(':', '_').ToUpperInvariant()}_REQUIRED");
+        static DateTimeOffset RequiredUtc(IConfiguration configuration, string key)
+        {
+            var value = Required(configuration, key);
+            if (!DateTimeOffset.TryParse(value, System.Globalization.CultureInfo.InvariantCulture,
+                    System.Globalization.DateTimeStyles.AssumeUniversal | System.Globalization.DateTimeStyles.AdjustToUniversal,
+                    out var parsed) || parsed.Offset != TimeSpan.Zero)
+                throw new InvalidOperationException($"{key.Replace(':', '_').ToUpperInvariant()}_UTC_REQUIRED");
+            return parsed;
+        }
+
+        using var scope = scopeFactory.CreateScope();
+        var service = scope.ServiceProvider.GetRequiredService<ILegacyAnubisWeightIngestionService>();
+        var result = await service.IngestAsync(new LegacyAnubisWeightIngestionRequest(
+            Required(configuration, "LegacyAnubisWeights:ProgramName"),
+            Required(configuration, "LegacyAnubisWeights:ExecDeskWeightFilePath"),
+            Required(configuration, "LegacyAnubisWeights:ExpectedExecDeskWeightFileSha256"),
+            Required(configuration, "LegacyAnubisWeights:AggregatedWeightsFilePath"),
+            Required(configuration, "LegacyAnubisWeights:ExpectedAggregatedWeightsFileSha256"),
+            configuration.GetValue("LegacyAnubisWeights:FundCode", "QQ Intraday Fund")!,
+            configuration.GetValue("LegacyAnubisWeights:ModelName", "IntradayFxModel")!,
+            RequiredUtc(configuration, "LegacyAnubisWeights:AsOfUtc"),
+            RequiredUtc(configuration, "LegacyAnubisWeights:EffectiveAtUtc"),
+            configuration.GetValue("LegacyAnubisWeights:FrequencyMinutes", 15),
+            configuration.GetValue("LegacyAnubisWeights:NavUsd", 1_000_000m),
+            configuration.GetValue("LegacyAnubisWeights:TargetQuantityMode", TargetQuantityMode.PortfolioBaseCurrencyNotional)),
+            cancellationToken);
+        logger.LogInformation("Legacy Anubis manager batch: BatchId={BatchId} SourceRows={SourceRows} ExecutableRows={ExecutableRows} AlreadyExisted={AlreadyExisted} ExecDeskSha256={ExecDeskSha256} AggregatedWeightsSha256={AggregatedWeightsSha256}",
+            result.Batch.Id.Value, result.SourceRowCount, result.ExecutableRowCount, result.AlreadyExisted,
+            result.ExecDeskWeightFileSha256, result.AggregatedWeightsFileSha256);
     }
 
     private async Task PromoteWeightsIfEnabled(CancellationToken cancellationToken)

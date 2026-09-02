@@ -75,6 +75,44 @@ public sealed class LmaxDemoStrategyBridgeTests
         Assert.Empty(positions);
     }
 
+    [Fact]
+    public async Task NormalizedFixFillEvidence_ProjectsTheControlledSessionPosition()
+    {
+        var fixture = Fixture();
+        var fillTime = fixture.Clock.UtcNow;
+        const string executionId = "FIX-EXEC-1";
+        fixture.State.Fills.Add(new Fill(
+            FillId.New(), executionId, fixture.State.ChildOrders.Single().Id,
+            fixture.Instrument.Id, fixture.State.Venues.Single().Id, TradeSide.Sell,
+            1_000m, 0.1m, 1.1m, fillTime, fillTime));
+        fixture.State.PositionLedger.Add(new PositionLedgerEvent(
+            Guid.NewGuid(), fixture.Fund.Id, fixture.Instrument.Id,
+            PositionLedgerEventType.Fill, -1_000m, executionId, fillTime));
+        var provider = new LmaxDemoOperatorBrokerStateAttestationProvider(fixture.Repository, fixture.Options, fixture.Clock);
+
+        var positions = await provider.GetPositionsAsync(fixture.State.BrokerAccounts.Single().Id, CancellationToken.None);
+
+        var position = Assert.Single(positions);
+        Assert.Equal(fixture.Instrument.Id, position.InstrumentId);
+        Assert.Equal(-1_000m, position.BaseQuantity);
+    }
+
+    [Fact]
+    public async Task GenuineZeroCloseTarget_CanExecuteANonZeroFlattenDrift()
+    {
+        var fixture = Fixture();
+        var target = fixture.State.TargetPositions.Single(x => x.ModelRunId == fixture.Run.Id && x.InstrumentId == fixture.Instrument.Id);
+        fixture.State.TargetPositions.Remove(target);
+        fixture.State.TargetPositions.Add(target with { TargetBaseQuantity = 0m, TargetVenueQuantity = 0m });
+        var session = new CapturingSession();
+        var gateway = new LmaxDemoStrategyVenueExecutionGateway(fixture.Repository, fixture.Options, session, fixture.Clock);
+
+        await gateway.SendOrderAsync(fixture.Request, CancellationToken.None);
+
+        Assert.Equal(1, session.SendCount);
+        Assert.Equal(fixture.Request.VenueQuantity, session.Request!.VenueQuantity);
+    }
+
     [Theory]
     [InlineData("approval", "", true, true, "DEMO_STRATEGY_ATTESTATION_APPROVAL_REQUIRED")]
     [InlineData("observed", "2026-08-31T08:00:00Z", true, true, "DEMO_STRATEGY_ATTESTATION_STALE")]

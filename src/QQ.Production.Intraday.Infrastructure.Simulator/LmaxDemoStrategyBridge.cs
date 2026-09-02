@@ -46,7 +46,7 @@ public sealed class LmaxDemoStrategyVenueExecutionGateway(
 
         var isQubesPromotion = state.ModelWeightBatches.Any(x =>
             x.PromotedModelRunId == run.Id &&
-            x.SourceSystem == ModelWeightSourceSystem.Qubes &&
+            x.SourceSystem is ModelWeightSourceSystem.Qubes or ModelWeightSourceSystem.LegacyAnubis &&
             x.Status == ModelWeightBatchStatus.Promoted);
         var isLegacyQubesRun = run.SourceFileName.Contains("qubes", StringComparison.OrdinalIgnoreCase)
             || run.SourceFileName.Contains("anubis", StringComparison.OrdinalIgnoreCase);
@@ -67,7 +67,7 @@ public sealed class LmaxDemoStrategyVenueExecutionGateway(
         if (market.IsStale(limitSet.MaxMarketDataAge, now))
             throw new InvalidOperationException("DEMO_STRATEGY_MARKET_DATA_STALE");
 
-        if (target.TargetBaseQuantity == 0m || target.TargetVenueQuantity == 0m)
+        if (request.BaseQuantity <= 0m || request.VenueQuantity <= 0m)
             throw new InvalidOperationException("DEMO_STRATEGY_ZERO_TARGET_NOT_EXECUTABLE");
         if (request.VenueQuantity != intent.RequestedVenueQuantity || request.BaseQuantity != intent.RequestedBaseQuantity)
             throw new InvalidOperationException("DEMO_STRATEGY_TARGET_ECONOMICS_MUTATED");
@@ -174,8 +174,6 @@ public sealed class LmaxDemoOperatorBrokerStateAttestationProvider(
     LmaxConnectivityLabOptions options,
     IClock clock) : IBrokerPositionProvider
 {
-    private bool preTradeAttestationConsumed;
-
     public async Task<IReadOnlyList<BrokerPositionSnapshot>> GetPositionsAsync(BrokerAccountId brokerAccountId, CancellationToken cancellationToken)
     {
         LmaxDemoStrategyVenueExecutionGateway.EnsureDemoOnly(options);
@@ -185,18 +183,26 @@ public sealed class LmaxDemoOperatorBrokerStateAttestationProvider(
         if (!string.Equals(account.AccountCode, options.AccountCode, StringComparison.Ordinal))
             throw new InvalidOperationException("DEMO_STRATEGY_ATTESTATION_TARGET_ACCOUNT_MISMATCH");
 
-        if (!preTradeAttestationConsumed)
-        {
-            Validate(options, clock.UtcNow, null);
-            var scope = ParseScope(options.DemoBrokerStateAttestationInstruments);
-            if (scope.Any(symbol => !state.Instruments.Any(x => x.IsEnabled && NormalizeSymbol(x.Symbol) == symbol)))
-                throw new InvalidOperationException("DEMO_STRATEGY_ATTESTATION_INSTRUMENT_UNMAPPED");
-            preTradeAttestationConsumed = true;
-        }
+        Validate(options, clock.UtcNow, null);
+        var scope = ParseScope(options.DemoBrokerStateAttestationInstruments);
+        if (scope.Any(symbol => !state.Instruments.Any(x => x.IsEnabled && NormalizeSymbol(x.Symbol) == symbol)))
+            throw new InvalidOperationException("DEMO_STRATEGY_ATTESTATION_INSTRUMENT_UNMAPPED");
+        if (!DateTimeOffset.TryParse(options.DemoBrokerStateAttestationObservedAtUtc, CultureInfo.InvariantCulture,
+                DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal, out var observedAtUtc))
+            throw new InvalidOperationException("DEMO_STRATEGY_ATTESTATION_OBSERVED_AT_INVALID");
 
         // The accepted pre-run UI observation establishes zero only for the configured scope.
-        // It is intentionally not repurposed as post-run broker authority.
-        return [];
+        // After that cold-start boundary, only persisted position-ledger events backed by
+        // actual normalized FIX fills project the QQ-generated session position.
+        var knownExecutionIds = state.Fills.Select(x => x.BrokerExecutionId).ToHashSet(StringComparer.Ordinal);
+        return state.PositionLedger
+            .Where(x => x.FundId == account.FundId && x.Type == PositionLedgerEventType.Fill
+                && x.CreatedAtUtc >= observedAtUtc && knownExecutionIds.Contains(x.ReferenceId))
+            .Where(x => state.Instruments.Any(i => i.Id == x.InstrumentId && scope.Contains(NormalizeSymbol(i.Symbol))))
+            .GroupBy(x => x.InstrumentId)
+            .Select(x => new BrokerPositionSnapshot(brokerAccountId, x.Key, x.Sum(y => y.BaseQuantityDelta), clock.UtcNow))
+            .Where(x => x.BaseQuantity != 0m)
+            .ToList();
     }
 
     public static void Validate(LmaxConnectivityLabOptions options, DateTimeOffset now, string? requiredInstrument)
