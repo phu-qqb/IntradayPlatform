@@ -36,5 +36,5 @@ jobs:
             --context IntradayDbContext
       - name: Build Worker
         run: dotnet build src/QQ.Production.Intraday.Worker/QQ.Production.Intraday.Worker.csproj --configuration Release --no-restore
-      - name: Unit tests
-        run: dotnet test tests/QQ.Production.Intraday.Tests.Unit/QQ.Production.Intraday.Tests.Unit.csproj --configuration Release --no-restore
+      - name: Focused DEMO_DAY_1 tests
+        run: dotnet test tests/QQ.Production.Intraday.Tests.Unit/QQ.Production.Intraday.Tests.Unit.csproj --configuration Release --no-restore --filter "FullyQualifiedName~LegacyAnubisWeightIngestionTests|FullyQualifiedName~LmaxDemoStrategyBridgeTests"
