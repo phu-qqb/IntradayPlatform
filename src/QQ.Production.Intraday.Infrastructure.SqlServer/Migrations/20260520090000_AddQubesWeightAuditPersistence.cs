@@ -1,4 +1,5 @@
 using System;
+using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Migrations;
 
 #nullable disable
@@ -6,6 +7,8 @@ using Microsoft.EntityFrameworkCore.Migrations;
 namespace QQ.Production.Intraday.Infrastructure.SqlServer.Migrations
 {
     /// <inheritdoc />
+    [DbContext(typeof(IntradayDbContext))]
+    [Migration("20260520090000_AddQubesWeightAuditPersistence")]
     public partial class AddQubesWeightAuditPersistence : Migration
     {
         /// <inheritdoc />
