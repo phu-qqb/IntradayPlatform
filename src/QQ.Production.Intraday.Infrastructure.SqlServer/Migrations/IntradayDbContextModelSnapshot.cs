@@ -1397,8 +1397,7 @@ namespace QQ.Production.Intraday.Infrastructure.SqlServer.Migrations
 
                     b.Property<string>("Currency")
                         .IsRequired()
-                        .HasMaxLength(3)
-                        .HasColumnType("nvarchar(3)");
+                        .HasColumnType("nvarchar(max)");
 
                     b.Property<DateTimeOffset>("DateTimeUtc")
                         .HasColumnType("datetimeoffset");
@@ -2603,7 +2602,8 @@ namespace QQ.Production.Intraday.Infrastructure.SqlServer.Migrations
 
                     b.Property<string>("Currency")
                         .IsRequired()
-                        .HasColumnType("nvarchar(max)");
+                        .HasMaxLength(3)
+                        .HasColumnType("nvarchar(3)");
 
                     b.Property<Guid?>("ModelRunId")
                         .HasColumnType("uniqueidentifier");
