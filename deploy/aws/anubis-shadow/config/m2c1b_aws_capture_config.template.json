@@ -74,6 +74,6 @@
                                            "5",
                                            "V"
                                        ],
-    "tool_commit":  "7e87f3b17c84ac8a0aeb79422e4caa97b915fbb6",
+    "tool_commit":  "__TOOL_COMMIT__",
     "config_hash":  "__CONFIG_HASH__"
 }
