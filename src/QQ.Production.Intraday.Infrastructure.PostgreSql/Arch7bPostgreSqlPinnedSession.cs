@@ -55,20 +55,20 @@ public sealed record Arch7bPostgreSqlPinnedTransportProfile(
     { get; } = new(
             Version,
             DirectPrimaryProfile,
-            "i-05535ebe6ce80a57b",
-            "10.0.2.94",
+            "i-05626133ca7892fb8",
+            "10.0.2.182",
             "subnet-06a16e14d266882ca",
-            "sg-0928052822c1b4c5b",
+            "sg-03233b311b56d35cf",
             "db-arch7b-pms-shadow-test",
             DirectEndpoint,
             5432,
             "vpc-0dcdbfc5ec569ac68",
             "sg-08a2c70bc6033a965",
-            "sgr-04ae47dda2d9e6938",
-            "sgr-06668dd7b02b3f444",
+            "sgr-07a13e1b3994ab26a",
+            "sgr-0f388b26ba25f8e91",
             18,
             "10.0.0",
-            "10.0.7",
+            "10.0.11",
             SslMode.VerifyFull,
             SslNegotiation.Postgres,
             GssEncryptionMode.Disable,
@@ -153,7 +153,7 @@ public static class Arch7bPostgreSqlPinnedTransportProfileContract
             "ARCH7B_POSTGRESQL_DIRECT_PORT_MISMATCH");
         Require(profile.PostgreSqlMajor == 18 &&
                 profile.NpgsqlVersion == "10.0.0" &&
-                profile.DotNetRuntimeVersion == "10.0.7",
+                profile.DotNetRuntimeVersion == "10.0.11",
             "ARCH7B_POSTGRESQL_RUNTIME_PROFILE_MISMATCH");
         Require(profile.SslMode == SslMode.VerifyFull,
             "ARCH7B_POSTGRESQL_VERIFY_FULL_REQUIRED");
