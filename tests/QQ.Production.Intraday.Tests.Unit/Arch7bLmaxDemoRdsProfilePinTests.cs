@@ -7,26 +7,36 @@ public sealed class Arch7bLmaxDemoRdsProfilePinTests
     [Fact]
     public void Direct_profiles_are_pinned_to_the_verified_lmax_demo_runtime()
     {
-        var profiles = new[]
-        {
-            Arch7bPostgreSqlPinnedTransportProfile.DirectPrimary,
-            Arch7bPostgreSqlTransportProfile.DirectPrimary
-        };
+        var pinned = Arch7bPostgreSqlPinnedTransportProfile.DirectPrimary;
+        AssertFacts(
+            pinned.ExecutionHostInstanceId, pinned.ExecutionHostPrivateIp,
+            pinned.ExecutionHostSubnetId, pinned.ExecutionHostSecurityGroupId,
+            pinned.RdsIngressRuleId, pinned.RunnerEgressRuleId,
+            pinned.DotNetRuntimeVersion);
 
-        foreach (var profile in profiles)
-        {
-            Assert.Equal("i-05626133ca7892fb8",
-                profile.ExecutionHostInstanceId);
-            Assert.Equal("10.0.2.182", profile.ExecutionHostPrivateIp);
-            Assert.Equal("subnet-06a16e14d266882ca",
-                profile.ExecutionHostSubnetId);
-            Assert.Equal("sg-03233b311b56d35cf",
-                profile.ExecutionHostSecurityGroupId);
-            Assert.Equal("sgr-07a13e1b3994ab26a",
-                profile.RdsIngressRuleId);
-            Assert.Equal("sgr-0f388b26ba25f8e91",
-                profile.RunnerEgressRuleId);
-            Assert.Equal("10.0.11", profile.DotNetRuntimeVersion);
-        }
+        var pooled = Arch7bPostgreSqlTransportProfile.DirectPrimary;
+        AssertFacts(
+            pooled.ExecutionHostInstanceId, pooled.ExecutionHostPrivateIp,
+            pooled.ExecutionHostSubnetId, pooled.ExecutionHostSecurityGroupId,
+            pooled.RdsIngressRuleId, pooled.RunnerEgressRuleId,
+            pooled.DotNetRuntimeVersion);
+    }
+
+    private static void AssertFacts(
+        string instanceId,
+        string privateIp,
+        string subnetId,
+        string securityGroupId,
+        string rdsIngressRuleId,
+        string runnerEgressRuleId,
+        string dotNetRuntimeVersion)
+    {
+        Assert.Equal("i-05626133ca7892fb8", instanceId);
+        Assert.Equal("10.0.2.182", privateIp);
+        Assert.Equal("subnet-06a16e14d266882ca", subnetId);
+        Assert.Equal("sg-03233b311b56d35cf", securityGroupId);
+        Assert.Equal("sgr-07a13e1b3994ab26a", rdsIngressRuleId);
+        Assert.Equal("sgr-0f388b26ba25f8e91", runnerEgressRuleId);
+        Assert.Equal("10.0.11", dotNetRuntimeVersion);
     }
 }
