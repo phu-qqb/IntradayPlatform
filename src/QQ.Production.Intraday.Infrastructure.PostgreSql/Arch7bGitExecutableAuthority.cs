@@ -11,8 +11,8 @@ public static class Arch7bGitExecutableAuthorityContract
     public const string Version = "arch7b_git_executable_authority_v1";
     public const string Qualified =
         "ARCH7B_REPOSITORY_AUTHORITY_QUALIFIED";
-    public const string ExecutionHostInstanceId = "i-05535ebe6ce80a57b";
-    public const string ExecutionHostName = "EC2AMAZ-SK6JMFA";
+    public const string ExecutionHostInstanceId = "i-05626133ca7892fb8";
+    public const string ExecutionHostName = "EC2AMAZ-1QPHTD8";
     public const string ExpectedRepositoryRemote =
         "https://github.com/phu-qqb/IntradayPlatform.git";
     public const int CommandTimeoutSeconds = 10;
