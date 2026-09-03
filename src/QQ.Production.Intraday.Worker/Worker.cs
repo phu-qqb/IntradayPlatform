@@ -11,6 +11,7 @@ public sealed class Worker(IServiceScopeFactory scopeFactory, IConfiguration con
         var pollInterval = configuration.GetValue("Worker:PollInterval", TimeSpan.FromMinutes(15));
         if (configuration.GetValue("Worker:ProcessImmediatelyOnStartup", true))
         {
+            await IngestLmaxCanonicalSnapshotsIfEnabled(stoppingToken);
             await IngestLegacyAnubisPortfolioIfEnabled(stoppingToken);
             await IngestLegacyAnubisWeightsIfEnabled(stoppingToken);
             await PromoteWeightsIfEnabled(stoppingToken);
@@ -22,6 +23,7 @@ public sealed class Worker(IServiceScopeFactory scopeFactory, IConfiguration con
         using var timer = new PeriodicTimer(pollInterval);
         while (!stoppingToken.IsCancellationRequested && await timer.WaitForNextTickAsync(stoppingToken))
         {
+            await IngestLmaxCanonicalSnapshotsIfEnabled(stoppingToken);
             await IngestLegacyAnubisPortfolioIfEnabled(stoppingToken);
             await IngestLegacyAnubisWeightsIfEnabled(stoppingToken);
             await PromoteWeightsIfEnabled(stoppingToken);
@@ -30,6 +32,42 @@ public sealed class Worker(IServiceScopeFactory scopeFactory, IConfiguration con
             await RunLocalSchedulerIfEnabled(stoppingToken);
             await RunIntradaySchedulerIfEnabled(stoppingToken);
         }
+    }
+
+    private async Task IngestLmaxCanonicalSnapshotsIfEnabled(CancellationToken cancellationToken)
+    {
+        if (!configuration.GetValue("LmaxCanonicalSnapshotIngestion:Enabled", false))
+            return;
+
+        static string Required(IConfiguration configuration, string key)
+            => configuration[key] ?? throw new InvalidOperationException($"{key.Replace(':', '_').ToUpperInvariant()}_REQUIRED");
+        static DateTimeOffset RequiredUtc(IConfiguration configuration, string key)
+        {
+            var value = Required(configuration, key);
+            if (!DateTimeOffset.TryParse(value, System.Globalization.CultureInfo.InvariantCulture,
+                    System.Globalization.DateTimeStyles.AssumeUniversal | System.Globalization.DateTimeStyles.AdjustToUniversal,
+                    out var parsed) || parsed.Offset != TimeSpan.Zero)
+                throw new InvalidOperationException($"{key.Replace(':', '_').ToUpperInvariant()}_UTC_REQUIRED");
+            return parsed;
+        }
+
+        var maximumSourceAgeSeconds = configuration.GetValue("LmaxCanonicalSnapshotIngestion:MaximumSourceAgeSeconds", 0);
+        if (maximumSourceAgeSeconds <= 0)
+            throw new InvalidOperationException("LMAX_CANONICAL_SNAPSHOT_INGESTION_MAXIMUM_SOURCE_AGE_SECONDS_POSITIVE_REQUIRED");
+
+        var request = new LmaxCanonicalSnapshotIngestionRequest(
+            Required(configuration, "LmaxCanonicalSnapshotIngestion:CaptureRunRoot"),
+            Required(configuration, "LmaxCanonicalSnapshotIngestion:ExpectedFinalManifestSha256"),
+            RequiredUtc(configuration, "LmaxCanonicalSnapshotIngestion:DecisionAtUtc"),
+            TimeSpan.FromSeconds(maximumSourceAgeSeconds));
+
+        using var scope = scopeFactory.CreateScope();
+        var service = scope.ServiceProvider.GetRequiredService<ILmaxCanonicalSnapshotIngestionService>();
+        var result = await service.IngestAsync(request, cancellationToken);
+        logger.LogInformation(
+            "Canonical LMAX snapshot handoff: RecorderRunId={RecorderRunId} Imported={Imported} AlreadyPersisted={AlreadyPersisted} Symbols={Symbols} FinalManifestSha256={FinalManifestSha256}",
+            result.RecorderRunId, result.ImportedSnapshotCount, result.AlreadyPersistedSnapshotCount,
+            string.Join(',', result.Symbols), result.FinalManifestSha256);
     }
 
     private async Task IngestLegacyAnubisPortfolioIfEnabled(CancellationToken cancellationToken)
