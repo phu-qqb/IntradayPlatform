@@ -5,6 +5,9 @@ param(
     [Parameter(Mandatory = $true)]
     [string]$RecorderRoot,
 
+    [Parameter(Mandatory = $true)]
+    [string]$ToolCommit,
+
     [string]$MarketDataEndpointAlias = "LMAX_DEMO_MARKET_DATA_ONLY",
 
     [string]$CredentialReference = "aws-secretsmanager:market-data-only",
@@ -13,6 +16,10 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+
+if ($ToolCommit -cnotmatch '^[0-9a-f]{40}$') {
+    throw "tool_commit_must_be_lowercase_git_sha1"
+}
 
 function ConvertTo-M2Json {
     param([Parameter(Mandatory = $true)] [object]$Value)
@@ -59,7 +66,7 @@ $config = [ordered]@{
     rotate_after_bytes = [int64]$template.rotate_after_bytes
     flush_interval_ms = [int]$template.flush_interval_ms
     allowed_outbound_fix_msg_types = @($template.allowed_outbound_fix_msg_types)
-    tool_commit = [string]$template.tool_commit
+    tool_commit = $ToolCommit
     config_hash = ""
 }
 
