@@ -1191,7 +1191,7 @@ public sealed partial class RawLmaxFixSessionClient(
         var marketDataSenderCompId = options.FixUsername!;
         var messages = new List<string>();
         var entries = new List<LmaxFixMarketDataEntry>();
-        var mdReqId = $"QQMD-{Guid.NewGuid():N}";
+        var mdReqId = DateTimeOffset.UtcNow.UtcDateTime.Ticks.ToString(CultureInfo.InvariantCulture);
         var attempts = new List<string> { $"{attemptLabel}: MDReqID={mdReqId}" };
         var tcpConnected = false;
         var tlsHandshakeCompleted = false;
