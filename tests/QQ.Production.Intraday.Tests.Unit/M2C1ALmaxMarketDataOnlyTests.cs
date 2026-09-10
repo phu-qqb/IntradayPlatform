@@ -750,6 +750,28 @@ public sealed class M2C1ALmaxMarketDataOnlyTests
         Assert.DoesNotContain("output_root_not_empty", report, StringComparison.Ordinal);
         Assert.Contains("GO_M2C1B_PREFLIGHT_READY", report, StringComparison.Ordinal);
     }
+    [Fact]
+    public void T38_raw_capture_entrypoint_remains_decoupled_from_arch7b_and_postgresql()
+    {
+        var root = FindRepoRoot();
+        var programPath = Path.Combine(root, "tools", "QQ.Production.Intraday.Tools.LmaxMarketDataCaptureOnly", "Program.cs");
+        var projectPath = Path.Combine(root, "tools", "QQ.Production.Intraday.Tools.LmaxMarketDataCaptureOnly", "QQ.Production.Intraday.Tools.LmaxMarketDataCaptureOnly.csproj");
+
+        var program = File.ReadAllText(programPath);
+        var project = File.ReadAllText(projectPath);
+
+        Assert.Contains("CaptureLiveAsync(config,cancellationToken)", program, StringComparison.Ordinal);
+        Assert.DoesNotContain("RequirePrearmedDraft", program, StringComparison.Ordinal);
+        Assert.DoesNotContain("PositionMarket", program, StringComparison.Ordinal);
+        Assert.DoesNotContain("Infrastructure.PostgreSql", program, StringComparison.Ordinal);
+        Assert.DoesNotContain("Infrastructure.PostgreSql", project, StringComparison.Ordinal);
+
+        var rawCaptureOverload = typeof(LmaxMarketDataOnlyCaptureRunner).GetMethod(
+            "CaptureLiveAsync",
+            [typeof(LmaxMarketDataOnlyPreflightConfig), typeof(CancellationToken)]);
+        Assert.NotNull(rawCaptureOverload);
+    }
+
     private static IReadOnlyList<LmaxMarketDataOnlyInstrument> Instruments =>
     [
         new("4001", "EURUSD", "EUR/USD"),
