@@ -2,7 +2,6 @@ using System.Reflection;
 using System.Text.Json;
 using QQ.Production.Intraday.Application.CanonicalRecorder;
 using QQ.Production.Intraday.Infrastructure.Lmax.MarketDataOnly;
-using QQ.Production.Intraday.Infrastructure.PostgreSql;
 
 namespace QQ.Production.Intraday.Tools.LmaxMarketDataCaptureOnly;
 
@@ -46,29 +45,7 @@ public static class LmaxMarketDataCaptureOnlyPreflightCommand
             await WriteJson(Path.Combine(config.OutputRoot,"m2c1b_capture_command_result.json"),synthetic,cancellationToken).ConfigureAwait(false);
             Console.WriteLine(synthetic.Status);return synthetic.Status=="GO_M2C2_CAPTURE_VALIDATED"?0:1;
         }
-        string RequiredCaptureArgument(string name)=>parsed.TryGetValue(name,out var value)
-            ?value:throw new InvalidDataException($"ARCH7B_POSITION_MARKET_CAPTURE_ARGUMENT_REQUIRED:{name}");
-        var draftPath=Path.GetFullPath(RequiredCaptureArgument("position-market-draft-path"));
-        var expectedDraftSha=RequiredCaptureArgument("expected-position-market-draft-sha256");
-        var draft=Arch7bPositionMarketLineageFileStore.ReadDraft(draftPath,expectedDraftSha);
-        _=Arch7bPositionMarketLiveWiring.RequirePrearmedDraft(
-            draftPath,expectedDraftSha,
-            new PmsShadowIntradaySlotWindow(draft.SlotId,draft.SlotStartUtc,draft.SlotEndUtc,
-                DateOnly.FromDateTime(draft.SlotEndUtc.UtcDateTime)),
-            draft.MarketCaptureSessionId,draft.CoreCommit,draft.IntradayCommit,
-            config.Instruments);
-        if(config.ToolCommit!=draft.IntradayCommit)
-            throw new InvalidDataException(
-                Arch7bPositionMarketSlotLineageContract.ManifestBindingMismatch);
-        var missing=RequiredCredentialLabels.Where(x=>string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable(x))).ToArray();
-        if(missing.Length>0)
-        {
-            var blocked=new{status="GO_OPERATOR_RUN_M2C1B",reason="credentials_not_available_to_codex_process",missing_labels=missing,operator_command=OperatorCommand(configPath)};
-            await WriteJson(Path.Combine(config.OutputRoot,"m2c1b_operator_run_required.json"),blocked,cancellationToken).ConfigureAwait(false);
-            Console.WriteLine("GO_OPERATOR_RUN_M2C1B");return 3;
-        }
-        var result=await runner.CaptureLiveAsync(config,draft.MarketCaptureSessionId,
-            cancellationToken).ConfigureAwait(false);
+        var result=await runner.CaptureLiveAsync(config,cancellationToken).ConfigureAwait(false);
         await WriteJson(Path.Combine(config.OutputRoot,"m2c1b_capture_command_result.json"),result,cancellationToken).ConfigureAwait(false);
         Console.WriteLine(result.Status);return result.Status=="GO_M2C2_CAPTURE_VALIDATED"?0:1;
     }
