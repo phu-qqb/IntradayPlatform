@@ -7,6 +7,13 @@ namespace QQ.Production.Intraday.Infrastructure.Lmax.MarketDataOnly;
 
 public sealed partial class LmaxMarketDataOnlyCaptureRunner
 {
+    public Task<LmaxMarketDataOnlyCaptureSummary> CaptureLiveAsync(
+        LmaxMarketDataOnlyPreflightConfig config,
+        CancellationToken cancellationToken=default)
+        => CaptureLiveAsync(config,
+            "M2C1B_LMAX_DEMO_MD_"+DateTimeOffset.UtcNow.ToString("yyyyMMddHHmmssfff",CultureInfo.InvariantCulture),
+            cancellationToken);
+
     public async Task<LmaxMarketDataOnlyCaptureSummary> CaptureLiveAsync(
         LmaxMarketDataOnlyPreflightConfig config,string recorderRunId,
         CancellationToken cancellationToken=default)
