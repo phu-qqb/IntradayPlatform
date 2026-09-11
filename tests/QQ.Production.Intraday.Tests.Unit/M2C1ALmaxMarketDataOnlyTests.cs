@@ -772,6 +772,56 @@ public sealed class M2C1ALmaxMarketDataOnlyTests
         Assert.NotNull(rawCaptureOverload);
     }
 
+    [Fact]
+    public async Task T39_inbound_session_diagnostic_redacts_text_secrets_and_never_persists_logon_credentials()
+    {
+        const string secret="QQ84_TEXT_SECRET_SENTINEL";
+        const string identity="QQ84_COMPID_SENTINEL";
+        var config=WithValidHash(ValidConfig() with { OutputRoot=Path.Combine(Path.GetTempPath(),"m2c1b-inbound-session-diagnostic-redaction",Guid.NewGuid().ToString("N")) });
+        var runner=new LmaxMarketDataOnlyCaptureRunner(LmaxMarketDataOnlyApprovedInstrumentCatalog.LoadFromConnectivityLab(FindRepoRoot()));
+
+        var result=await runner.CaptureSyntheticAsync(config,
+        [
+            FixFrame("5",1,[("58",$"rejected password={secret}; sendercompid={identity}"),("373","5"),("371","35"),("372","A"),("45","1")]),
+            FixFrame("A",2,[("553",secret),("554",secret)])
+        ]);
+
+        var emitted=string.Concat(Directory.EnumerateFiles(result.RunRoot,"*",SearchOption.AllDirectories).Select(File.ReadAllText));
+        Assert.DoesNotContain(secret,emitted,StringComparison.Ordinal);
+        Assert.DoesNotContain(identity,emitted,StringComparison.Ordinal);
+        Assert.Contains("\"msg_type\":\"5\"",emitted,StringComparison.Ordinal);
+        Assert.Contains("\"socket_receive_utc\":",emitted,StringComparison.Ordinal);
+        Assert.Contains("\"text_58_status\":\"redacted\"",emitted,StringComparison.Ordinal);
+        Assert.Contains("\"text_58\":null",emitted,StringComparison.Ordinal);
+        Assert.Contains("\"tag_373_status\":\"present\"",emitted,StringComparison.Ordinal);
+        Assert.Contains("\"tag_373\":\"5\"",emitted,StringComparison.Ordinal);
+        Assert.Contains("\"tag_371\":\"35\"",emitted,StringComparison.Ordinal);
+        Assert.Contains("\"tag_372\":\"A\"",emitted,StringComparison.Ordinal);
+        Assert.Contains("\"tag_45\":\"1\"",emitted,StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task T40_inbound_session_diagnostic_distinguishes_absent_fields_from_present_sanitized_text()
+    {
+        var config=WithValidHash(ValidConfig() with { OutputRoot=Path.Combine(Path.GetTempPath(),"m2c1b-inbound-session-diagnostic-absent",Guid.NewGuid().ToString("N")) });
+        var runner=new LmaxMarketDataOnlyCaptureRunner(LmaxMarketDataOnlyApprovedInstrumentCatalog.LoadFromConnectivityLab(FindRepoRoot()));
+
+        var result=await runner.CaptureSyntheticAsync(config,
+        [
+            FixFrame("3",1,[("58","Invalid sequence number")]),
+            FixFrame("5",2,[])
+        ]);
+
+        var emitted=string.Concat(Directory.EnumerateFiles(result.RunRoot,"*",SearchOption.AllDirectories).Select(File.ReadAllText));
+        Assert.Contains("\"msg_type\":\"3\"",emitted,StringComparison.Ordinal);
+        Assert.Contains("\"text_58_status\":\"present\"",emitted,StringComparison.Ordinal);
+        Assert.Contains("\"text_58\":\"Invalid sequence number\"",emitted,StringComparison.Ordinal);
+        Assert.Contains("\"tag_373_status\":\"absent\"",emitted,StringComparison.Ordinal);
+        Assert.Contains("\"tag_371_status\":\"absent\"",emitted,StringComparison.Ordinal);
+        Assert.Contains("\"tag_372_status\":\"absent\"",emitted,StringComparison.Ordinal);
+        Assert.Contains("\"tag_45_status\":\"absent\"",emitted,StringComparison.Ordinal);
+    }
+
     private static IReadOnlyList<LmaxMarketDataOnlyInstrument> Instruments =>
     [
         new("4001", "EURUSD", "EUR/USD"),

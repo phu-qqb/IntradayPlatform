@@ -235,8 +235,95 @@ public sealed partial class LmaxMarketDataOnlyCaptureRunner
                 if(obs.BookValid){BboUpdated++;await RecordAsync(new CanonicalRecorderV2Event("BBO_UPDATED",Component,"ReadOnlyMarketDataObservationV2","v2",new{local_event_order=frame.LocalEventOrder,obs.QuoteEventId,bid=obs.BidPrice,bid_qty=obs.BidQuantity,ask=obs.AskPrice,ask_qty=obs.AskQuantity,mid=(obs.BidPrice+obs.AskPrice)/2m},InstrumentId:obs.InstrumentId,Symbol:obs.Symbol,Venue:obs.Venue,SourceTimestampUtc:obs.SourceTimestampUtc,SessionId:obs.SessionInstanceId,FixMsgSeqNum:obs.FixMsgSeqNum,PossDup:obs.PossDup,QuoteEventId:obs.QuoteEventId,BidPrice:obs.BidPrice,BidQuantity:obs.BidQuantity,AskPrice:obs.AskPrice,AskQuantity:obs.AskQuantity,BookValid:true,SourceReceiveSequence:frame.LocalEventOrder),ct).ConfigureAwait(false);} else await RecordHealthAsync("invalid_market_data_book",obs.GapStatus,ct).ConfigureAwait(false);
                 return;
             }
-            HealthEvents++;await RecordAsync(new CanonicalRecorderV2Event("HEALTH_EVENT",Component,"LmaxInboundFixSessionFrame","v1",new{local_event_order=frame.LocalEventOrder,msg_type=msgType,fix_msg_seq_num=seq,poss_dup=possDup,category=msgType=="8"?"FORBIDDEN_INBOUND_EXECUTION_REPORT":"SESSION_OR_NON_BBO_FRAME"},FixMsgSeqNum:seq,PossDup:possDup,SourceReceiveSequence:frame.LocalEventOrder),ct).ConfigureAwait(false);
+            var text58=ProjectInboundSessionText(LmaxFixMarketDataCodec.GetTag(frame.RawFixMessage,"58"));
+            var tag373=ProjectInboundSessionTag(LmaxFixMarketDataCodec.GetTag(frame.RawFixMessage,"373"),"373");
+            var tag371=ProjectInboundSessionTag(LmaxFixMarketDataCodec.GetTag(frame.RawFixMessage,"371"),"371");
+            var tag372=ProjectInboundSessionTag(LmaxFixMarketDataCodec.GetTag(frame.RawFixMessage,"372"),"372");
+            var tag45=ProjectInboundSessionTag(LmaxFixMarketDataCodec.GetTag(frame.RawFixMessage,"45"),"45");
+            HealthEvents++;
+            await RecordAsync(new CanonicalRecorderV2Event(
+                "HEALTH_EVENT",Component,"LmaxInboundFixSessionFrame","v1",
+                new
+                {
+                    local_event_order=frame.LocalEventOrder,
+                    socket_receive_utc=frame.SocketReceiveUtc,
+                    msg_type=msgType,
+                    fix_msg_seq_num=seq,
+                    poss_dup=possDup,
+                    category=msgType=="8"?"FORBIDDEN_INBOUND_EXECUTION_REPORT":"SESSION_OR_NON_BBO_FRAME",
+                    text_58_status=text58.Status,
+                    text_58=text58.Value,
+                    tag_373_status=tag373.Status,
+                    tag_373=tag373.Value,
+                    tag_371_status=tag371.Status,
+                    tag_371=tag371.Value,
+                    tag_372_status=tag372.Status,
+                    tag_372=tag372.Value,
+                    tag_45_status=tag45.Status,
+                    tag_45=tag45.Value
+                },
+                FixMsgSeqNum:seq,PossDup:possDup,SourceReceiveSequence:frame.LocalEventOrder),ct).ConfigureAwait(false);
         }
+
+        private sealed record InboundSessionDiagnosticValue(string Status,string? Value);
+
+        private static InboundSessionDiagnosticValue ProjectInboundSessionText(string? value)
+        {
+            if(value is null)return new("absent",null);
+            if(ContainsSensitiveInboundText(value))return new("redacted",null);
+            var normalized=new string(value.Select(c=>char.IsControl(c)?' ':c).ToArray()).Trim();
+            return new(value.Length>512?"present_truncated":"present",normalized.Length>512?normalized[..512]:normalized);
+        }
+
+        private static InboundSessionDiagnosticValue ProjectInboundSessionTag(string? value,string tag)
+        {
+            if(value is null)return new("absent",null);
+            var permitted=tag=="372"
+                ? value.All(char.IsLetterOrDigit)
+                : value.All(char.IsDigit);
+            return permitted&&value.Length is >0 and <=10
+                ? new("present",value)
+                : new("redacted",null);
+        }
+
+        private static bool ContainsSensitiveInboundText(string value)
+        {
+            if(value.Contains("553=",StringComparison.Ordinal)||
+               value.Contains("554=",StringComparison.Ordinal)||
+               value.Contains("96=",StringComparison.Ordinal)||
+               value.Contains("925=",StringComparison.Ordinal))return true;
+
+            foreach(var credentialValue in new[]
+            {
+                Environment.GetEnvironmentVariable("LMAX_DEMO_SENDER_COMP_ID"),
+                Environment.GetEnvironmentVariable("LMAX_DEMO_TARGET_COMP_ID"),
+                Environment.GetEnvironmentVariable("LMAX_DEMO_FIX_USERNAME"),
+                Environment.GetEnvironmentVariable("LMAX_DEMO_FIX_PASSWORD")
+            })
+            {
+                if(!string.IsNullOrEmpty(credentialValue)&&value.Contains(credentialValue,StringComparison.Ordinal))return true;
+            }
+
+            var lower=value.ToLowerInvariant();
+            return lower.Contains("password=",StringComparison.Ordinal)||
+                   lower.Contains("password:",StringComparison.Ordinal)||
+                   lower.Contains("passwd=",StringComparison.Ordinal)||
+                   lower.Contains("passwd:",StringComparison.Ordinal)||
+                   lower.Contains("secret=",StringComparison.Ordinal)||
+                   lower.Contains("secret:",StringComparison.Ordinal)||
+                   lower.Contains("token=",StringComparison.Ordinal)||
+                   lower.Contains("token:",StringComparison.Ordinal)||
+                   lower.Contains("authorization=",StringComparison.Ordinal)||
+                   lower.Contains("authorization:",StringComparison.Ordinal)||
+                   lower.Contains("api_key=",StringComparison.Ordinal)||
+                   lower.Contains("api-key=",StringComparison.Ordinal)||
+                   lower.Contains("username=",StringComparison.Ordinal)||
+                   lower.Contains("username:",StringComparison.Ordinal)||
+                   lower.Contains("sendercompid=",StringComparison.Ordinal)||
+                   lower.Contains("targetcompid=",StringComparison.Ordinal)||
+                   lower.Contains("compid=",StringComparison.Ordinal);
+        }
+
         private async Task RecordAsync(CanonicalRecorderV2Event e,CancellationToken ct){if(await Recorder.RecordAsync(e,ct).ConfigureAwait(false)==false){WriterEvents++;MarkStopped("canonical_recorder_write_rejected");}}
     }
 }
