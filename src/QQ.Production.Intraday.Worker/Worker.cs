@@ -83,7 +83,7 @@ public sealed class Worker(
             using var scope = scopeFactory.CreateScope();
             var coordinator = scope.ServiceProvider.GetRequiredService<ILmaxDemoCycleCoordinator>();
             var result = await coordinator.RunAsync(ToRequest(manifest), cancellationToken);
-            await WriteCycleResultAsync(resultPath, manifestSha256, manifest.CycleId, "Completed", result, null, cancellationToken);
+            await WriteCycleResultAsync(resultPath, manifestSha256, Required(manifest.CycleId, "CycleId"), "Completed", result, null, cancellationToken);
             logger.LogInformation(
                 "LMAX Demo cycle completed: CycleId={CycleId} BatchId={BatchId} ModelRunId={ModelRunId} ProcessingStatus={ProcessingStatus}",
                 result.CycleId,
@@ -114,7 +114,7 @@ public sealed class Worker(
                 manifest.DecisionAtUtc,
                 TimeSpan.FromSeconds(manifest.MaximumSourceAgeSeconds)),
             new LegacyAnubisPortfolioWeightIngestionRequest(
-                manifest.Programmes.Select(ToContribution).ToArray(),
+                RequiredProgrammes(manifest.Programmes).Select(ToContribution).ToArray(),
                 Required(manifest.FundCode, "FundCode"),
                 Required(manifest.ModelName, "ModelName"),
                 manifest.DecisionAtUtc,
@@ -147,8 +147,9 @@ public sealed class Worker(
         if (manifest.DecisionAtUtc.Offset != TimeSpan.Zero || manifest.EffectiveAtUtc.Offset != TimeSpan.Zero ||
             manifest.EffectiveAtUtc < manifest.DecisionAtUtc)
             throw new InvalidOperationException("LMAX_DEMO_CYCLE_TIMESTAMPS_UTC_REQUIRED");
-        if (manifest.MaximumSourceAgeSeconds <= 0 || manifest.NavUsd <= 0 || manifest.Programmes is null)
+        if (manifest.MaximumSourceAgeSeconds <= 0 || manifest.NavUsd <= 0)
             throw new InvalidOperationException("LMAX_DEMO_CYCLE_NUMERICAL_CONFIGURATION_INVALID");
+        RequiredProgrammes(manifest.Programmes);
     }
 
     private static async Task WriteCycleResultAsync(
@@ -186,6 +187,18 @@ public sealed class Worker(
 
     private static string Required(string? value, string name)
         => !string.IsNullOrWhiteSpace(value) ? value : throw new InvalidOperationException($"LMAX_DEMO_CYCLE_{name.ToUpperInvariant()}_REQUIRED");
+
+    private static IReadOnlyList<LmaxDemoCycleProgrammeManifest> RequiredProgrammes(
+        IReadOnlyList<LmaxDemoCycleProgrammeManifest>? programmes)
+    {
+        var required = new[] { "INFX7", "INFX8", "INFX9", "INFX10" };
+        if (programmes is null || programmes.Count != required.Length ||
+            required.Any(name => programmes.Count(programme =>
+                string.Equals(programme.ProgramName, name, StringComparison.Ordinal)) != 1))
+            throw new InvalidOperationException("LMAX_DEMO_CYCLE_PROGRAMME_SET_INVALID");
+
+        return programmes;
+    }
 
     private static string TryReadCycleId(byte[] manifestBytes)
     {

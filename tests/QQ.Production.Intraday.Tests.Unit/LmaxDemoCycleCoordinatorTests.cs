@@ -53,6 +53,23 @@ public sealed class LmaxDemoCycleCoordinatorTests
         Assert.Empty(services.State.ModelWeightBatches);
     }
 
+    [Fact]
+    public async Task UnknownBrokerStateStopsTheExactRunBeforeAnyOrderIsSent()
+    {
+        using var files = new ProgrammeFiles();
+        files.Add("INFX9", "EURUSD Curncy;0.1\n");
+        var services = CreateServices(new UnknownBrokerStateProvider());
+
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => services.Coordinator.RunAsync(Request(files), CancellationToken.None));
+
+        Assert.Contains("broker-state-unknown", exception.Message);
+        Assert.Empty(services.State.ParentOrders);
+        Assert.Empty(services.State.ChildOrders);
+        Assert.Empty(services.State.ExecutionReports);
+        Assert.Empty(services.State.Fills);
+    }
+
     private static LmaxDemoCycleCoordinatorRequest Request(ProgrammeFiles files)
         => new(
             "20260915T080000Z",
@@ -71,7 +88,7 @@ public sealed class LmaxDemoCycleCoordinatorTests
                 1_000_000m,
                 TargetQuantityMode.PortfolioBaseCurrencyNotional));
 
-    private static TestServices CreateServices()
+    private static TestServices CreateServices(IBrokerPositionProvider? brokerPositionProvider = null)
     {
         var state = SeedData.Create(Decision);
         var clock = new FixedClock(Decision);
@@ -84,7 +101,7 @@ public sealed class LmaxDemoCycleCoordinatorTests
         var processing = new ProcessModelRunService(
             intraday,
             new FakeLmaxGateway(new FakeLmaxOptions { Behavior = FakeLmaxBehavior.FullFill }, clock),
-            new FakeBrokerPositionProvider(state, clock),
+            brokerPositionProvider ?? new FakeBrokerPositionProvider(state, clock),
             clock,
             integrity);
         return new TestServices(state, canonical, new LmaxDemoCycleCoordinator(canonical, portfolio, promotion, processing));
@@ -131,6 +148,14 @@ public sealed class LmaxDemoCycleCoordinatorTests
                 0,
                 ["EURUSD"]));
         }
+    }
+
+    private sealed class UnknownBrokerStateProvider : IBrokerPositionProvider
+    {
+        public Task<IReadOnlyList<BrokerPositionSnapshot>> GetPositionsAsync(
+            BrokerAccountId brokerAccountId,
+            CancellationToken cancellationToken)
+            => throw new InvalidOperationException("broker-state-unknown");
     }
 
     private sealed class ProgrammeFiles : IDisposable
