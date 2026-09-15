@@ -107,7 +107,7 @@ public sealed class Worker(
 
     private static LmaxDemoCycleCoordinatorRequest ToRequest(LmaxDemoCycleManifest manifest)
         => new(
-            manifest.CycleId,
+            Required(manifest.CycleId, "CycleId"),
             new LmaxCanonicalSnapshotIngestionRequest(
                 Required(manifest.CaptureRunRoot, "CaptureRunRoot"),
                 Required(manifest.ExpectedFinalManifestSha256, "ExpectedFinalManifestSha256"),

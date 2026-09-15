@@ -28,9 +28,9 @@ public sealed class LmaxDemoCycleCoordinatorTests
         Assert.Equal(ProcessModelRunStatus.Processed, first.Processing!.Status);
         Assert.Equal(ProcessModelRunStatus.AlreadyProcessed, second.Processing!.Status);
         Assert.Equal(ModelRunStatus.Received, services.State.ModelRuns.Single(x => x.Id == oldRun.Id).Status);
-        Assert.Empty(services.State.TradeIntents.Where(x => x.ModelRunId == oldRun.Id));
-        Assert.Single(services.State.ParentOrders.Where(x => x.TradeIntentId ==
-            services.State.TradeIntents.Single(x => x.ModelRunId == first.Promotion.ModelRunId).Id));
+        Assert.DoesNotContain(services.State.TradeIntents, x => x.ModelRunId == oldRun.Id);
+        Assert.Single(services.State.ParentOrders, x => x.TradeIntentId ==
+            services.State.TradeIntents.Single(x => x.ModelRunId == first.Promotion.ModelRunId).Id);
         Assert.Equal(2, services.CanonicalSnapshotIngestion.InvocationCount);
     }
 
