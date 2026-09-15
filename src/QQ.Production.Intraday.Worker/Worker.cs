@@ -60,20 +60,49 @@ public sealed class Worker(
         var manifestBytes = await File.ReadAllBytesAsync(manifestFullPath, cancellationToken);
         var manifestSha256 = Convert.ToHexString(SHA256.HashData(manifestBytes));
         var resultPath = manifestFullPath + ".result.json";
+        var attemptPath = manifestFullPath + ".attempt.json";
         if (File.Exists(resultPath))
         {
             var prior = await File.ReadAllTextAsync(resultPath, cancellationToken);
-            if (prior.Contains(manifestSha256, StringComparison.OrdinalIgnoreCase))
+            using var resultDocument = JsonDocument.Parse(prior);
+            var resultRoot = resultDocument.RootElement;
+            var resultManifestSha256 = resultRoot.TryGetProperty("manifestSha256", out var shaProperty)
+                ? shaProperty.GetString()
+                : null;
+            if (!string.Equals(resultManifestSha256, manifestSha256, StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException("LMAX_DEMO_CYCLE_RESULT_MANIFEST_MISMATCH");
+
+            var status = resultRoot.TryGetProperty("status", out var statusProperty)
+                ? statusProperty.GetString()
+                : null;
+            if (string.Equals(status, "Completed", StringComparison.Ordinal))
             {
                 logger.LogInformation("LMAX Demo cycle manifest was already finalized: ManifestPath={ManifestPath} ManifestSha256={ManifestSha256}",
                     manifestFullPath, manifestSha256);
                 return;
             }
 
-            throw new InvalidOperationException("LMAX_DEMO_CYCLE_RESULT_MANIFEST_MISMATCH");
+            throw new InvalidOperationException("LMAX_DEMO_CYCLE_RESULT_RECONCILIATION_REQUIRED");
+        }
+
+        if (File.Exists(attemptPath))
+        {
+            var priorAttempt = await File.ReadAllTextAsync(attemptPath, cancellationToken);
+            using var attemptDocument = JsonDocument.Parse(priorAttempt);
+            var attemptManifestSha256 = attemptDocument.RootElement.TryGetProperty("manifestSha256", out var shaProperty)
+                ? shaProperty.GetString()
+                : null;
+            if (!string.Equals(attemptManifestSha256, manifestSha256, StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException("LMAX_DEMO_CYCLE_ATTEMPT_MANIFEST_MISMATCH");
+
+            // A process death after the bridge call is not distinguishable from a
+            // pre-send death.  Do not make a second external attempt automatically.
+            throw new InvalidOperationException("LMAX_DEMO_CYCLE_PRIOR_ATTEMPT_UNRESOLVED");
         }
 
         LmaxDemoCycleManifest manifest;
+        var cycleId = manifestBytes.Length == 0 ? "unknown" : TryReadCycleId(manifestBytes);
+        await WriteCycleAttemptAsync(attemptPath, manifestSha256, cycleId, cancellationToken);
         try
         {
             manifest = JsonSerializer.Deserialize<LmaxDemoCycleManifest>(manifestBytes, JsonOptions)
@@ -90,11 +119,11 @@ public sealed class Worker(
                 result.PortfolioWeights.Batch.Id.Value,
                 result.Promotion?.ModelRunId?.Value,
                 result.Processing?.Status);
+            File.Delete(attemptPath);
         }
         catch (Exception exception)
         {
-            var cycleId = manifestBytes.Length == 0 ? "unknown" : TryReadCycleId(manifestBytes);
-            await WriteCycleResultAsync(resultPath, manifestSha256, cycleId, "Failed", null, exception.GetType().Name + ":" + exception.Message, cancellationToken);
+            await WriteCycleResultAsync(resultPath, manifestSha256, cycleId, "ReconciliationRequired", null, exception.GetType().Name + ":" + exception.Message, cancellationToken);
             throw;
         }
     }
@@ -183,6 +212,26 @@ public sealed class Worker(
         var tempPath = resultPath + ".tmp";
         await File.WriteAllTextAsync(tempPath, JsonSerializer.Serialize(output, JsonOptions), Encoding.UTF8, cancellationToken);
         File.Move(tempPath, resultPath, overwrite: false);
+    }
+
+    private static async Task WriteCycleAttemptAsync(
+        string attemptPath,
+        string manifestSha256,
+        string cycleId,
+        CancellationToken cancellationToken)
+    {
+        var output = new
+        {
+            schemaVersion = "lmax-demo-cycle-attempt-v1",
+            cycleId,
+            manifestSha256,
+            startedAtUtc = DateTimeOffset.UtcNow,
+            automaticRetryAllowed = false,
+            reconciliationRequiredOnInterruption = true
+        };
+        var tempPath = attemptPath + ".tmp";
+        await File.WriteAllTextAsync(tempPath, JsonSerializer.Serialize(output, JsonOptions), Encoding.UTF8, cancellationToken);
+        File.Move(tempPath, attemptPath, overwrite: false);
     }
 
     private static string Required(string? value, string name)
