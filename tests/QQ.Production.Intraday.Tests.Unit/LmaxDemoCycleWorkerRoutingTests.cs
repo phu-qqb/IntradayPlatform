@@ -27,4 +27,31 @@ public sealed class LmaxDemoCycleWorkerRoutingTests
         Assert.DoesNotContain("ProcessOnce", cycleOnlyBranch, StringComparison.Ordinal);
         Assert.DoesNotContain("ProcessNextAsync", cycleOnlyBranch, StringComparison.Ordinal);
     }
+
+    [Fact]
+    public void InterruptedCycleLeavesAnAttemptMarkerAndRefusesAutomaticReplay()
+    {
+        var workerPath = Path.GetFullPath(Path.Combine(
+            AppContext.BaseDirectory,
+            "..", "..", "..", "..", "..",
+            "src", "QQ.Production.Intraday.Worker", "Worker.cs"));
+        var workerSource = File.ReadAllText(workerPath);
+
+        var attemptPath = workerSource.IndexOf("var attemptPath = manifestFullPath + \".attempt.json\";", StringComparison.Ordinal);
+        var coordinator = workerSource.IndexOf("await coordinator.RunAsync", StringComparison.Ordinal);
+        var attemptWrite = workerSource.IndexOf("await WriteCycleAttemptAsync", StringComparison.Ordinal);
+        var priorAttemptRejection = workerSource.IndexOf("LMAX_DEMO_CYCLE_PRIOR_ATTEMPT_UNRESOLVED", StringComparison.Ordinal);
+        var nonCompletedResultRejection = workerSource.IndexOf("LMAX_DEMO_CYCLE_RESULT_RECONCILIATION_REQUIRED", StringComparison.Ordinal);
+        var reconciliationResult = workerSource.IndexOf("\"ReconciliationRequired\"", StringComparison.Ordinal);
+
+        Assert.True(attemptPath >= 0);
+        Assert.True(attemptWrite > attemptPath);
+        Assert.True(coordinator > attemptWrite);
+        Assert.True(priorAttemptRejection > attemptPath);
+        Assert.True(nonCompletedResultRejection > attemptPath);
+        Assert.True(reconciliationResult > coordinator);
+        Assert.Contains("automaticRetryAllowed = false", workerSource, StringComparison.Ordinal);
+        Assert.Contains("reconciliationRequiredOnInterruption = true", workerSource, StringComparison.Ordinal);
+    }
+
 }
