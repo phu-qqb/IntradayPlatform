@@ -34,6 +34,7 @@ builder.Services.AddScoped<IFakeModelWeightGenerator, FakeModelWeightGenerator>(
 builder.Services.AddScoped<ILegacyAnubisWeightIngestionService, LegacyAnubisWeightIngestionService>();
 builder.Services.AddScoped<ILegacyAnubisPortfolioWeightIngestionService, LegacyAnubisPortfolioWeightIngestionService>();
 builder.Services.AddScoped<ILmaxCanonicalSnapshotIngestionService, LmaxCanonicalSnapshotIngestionService>();
+builder.Services.AddScoped<ILmaxDemoCycleCoordinator, LmaxDemoCycleCoordinator>();
 builder.Services.AddScoped<QubesWeightPersistenceService>();
 builder.Services.AddSingleton(new LmaxEodReportOptions());
 builder.Services.AddScoped<ILmaxEodReportImportService, LmaxEodReportImportService>();
@@ -179,6 +180,21 @@ static void ValidateSafety(IHost host, string persistenceProvider)
     using var scope = host.Services.CreateScope();
     var configuration = scope.ServiceProvider.GetRequiredService<IConfiguration>();
     var gateway = scope.ServiceProvider.GetRequiredService<IVenueExecutionGateway>();
+    if (configuration.GetValue("LmaxDemoCycle:Enabled", false))
+    {
+        if (!configuration.GetValue("LmaxDemoStrategyBridge:Enabled", false))
+            throw new InvalidOperationException("LMAX Demo cycle requires LmaxDemoStrategyBridge:Enabled=true.");
+        if (configuration.GetValue("ModelWeights:PromoteReadyBatches", false))
+            throw new InvalidOperationException("LMAX Demo cycle forbids bulk ready-batch promotion.");
+        if (configuration.GetValue("LegacyAnubisPortfolio:Enabled", false) || configuration.GetValue("LegacyAnubisWeights:Enabled", false))
+            throw new InvalidOperationException("LMAX Demo cycle owns the only permitted Legacy Anubis portfolio ingestion.");
+        if (configuration.GetValue("LmaxCanonicalSnapshotIngestion:Enabled", false))
+            throw new InvalidOperationException("LMAX Demo cycle owns the only permitted canonical snapshot ingestion.");
+        if (configuration.GetValue("Intraday15m:Enabled", false))
+            throw new InvalidOperationException("LMAX Demo cycle cannot activate the PMS Shadow Intraday15m path.");
+        if (!configuration.GetValue("Worker:StopAfterInitialLmaxDemoCycle", false))
+            throw new InvalidOperationException("LMAX Demo cycle must be an explicit one-cycle worker invocation.");
+    }
     if (gateway is LmaxDemoStrategyVenueExecutionGateway)
     {
         if (configuration.GetValue("Safety:AllowLiveTrading", false))
