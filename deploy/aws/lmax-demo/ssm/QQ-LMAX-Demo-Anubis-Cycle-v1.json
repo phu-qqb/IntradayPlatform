@@ -1,0 +1,28 @@
+{
+  "schemaVersion": "2.2",
+  "description": "QQ LMAX Demo bounded Anubis V1 cycle; fixed local wrapper only, no order entry.",
+  "parameters": {
+    "CycleId": {"type": "String", "allowedPattern": "^[0-9]{8}T[0-9]{6}Z$"},
+    "CutoffUtc": {"type": "String", "allowedPattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"},
+    "Programmes": {
+      "type": "String",
+      "allowedValues": ["INFX7","INFX8","INFX9","INFX10","INFX7,INFX8","INFX7,INFX9","INFX7,INFX10","INFX8,INFX9","INFX8,INFX10","INFX9,INFX10","INFX7,INFX8,INFX9","INFX7,INFX8,INFX10","INFX7,INFX9,INFX10","INFX8,INFX9,INFX10","INFX7,INFX8,INFX9,INFX10"]
+    }
+  },
+  "mainSteps": [{
+    "action": "aws:runPowerShellScript",
+    "name": "RunBoundedAnubisCycle",
+    "inputs": {
+      "timeoutSeconds": "900",
+      "runCommand": [
+        "$ErrorActionPreference = 'Stop'",
+        "$cycleId = '{{ CycleId }}'",
+        "$cutoffUtc = '{{ CutoffUtc }}'",
+        "$programmes = '{{ Programmes }}'",
+        "if ($cycleId -notmatch '^[0-9]{8}T[0-9]{6}Z$') { throw 'LMAX_DEMO_CYCLE_ID_INVALID' }",
+        "if ($cutoffUtc -notmatch '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$') { throw 'LMAX_DEMO_CUTOFF_UTC_INVALID' }",
+        "& 'D:\\anubis-benchmark\\operator\\lmax-demo-orchestration\\Invoke-LmaxDemoAnubisCycle.ps1' -CycleId $cycleId -CutoffUtc $cutoffUtc -Programmes $programmes"
+      ]
+    }
+  }]
+}
