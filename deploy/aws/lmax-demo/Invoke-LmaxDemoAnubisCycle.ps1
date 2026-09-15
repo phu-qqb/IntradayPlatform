@@ -119,7 +119,7 @@ try {
         [IO.File]::WriteAllText($manifestPath, ($resultManifest | ConvertTo-Json -Depth 8), [Text.UTF8Encoding]::new($false))
         foreach ($file in @('v1-aggregated-weights.txt', 'v1-result-manifest.json')) {
             & aws s3api put-object --bucket $bucket --key "$baseKey/anubis-results/$programme/$file" --body (Join-Path $resultRoot $file) --region eu-west-2 | Out-Null
-            if ($LASTEXITCODE -ne 0) { throw "LMAX_DEMO_RESULT_UPLOAD_FAILED:$programme:$file" }
+            if ($LASTEXITCODE -ne 0) { throw "LMAX_DEMO_RESULT_UPLOAD_FAILED:${programme}:$file" }
         }
     }
     [pscustomobject]@{ marker = 'LMAX_DEMO_ANUBIS_CYCLE_COMPLETED'; cycle_id = $CycleId; cutoff_utc = $CutoffUtc; effective_at_utc = $effective.ToString('yyyy-MM-ddTHH:mm:ss.fffZ'); programmes = $selected; no_order = $true } | ConvertTo-Json -Compress
