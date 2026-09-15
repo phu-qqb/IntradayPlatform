@@ -17,15 +17,15 @@ public sealed class Worker(
     {
         var pollInterval = configuration.GetValue("Worker:PollInterval", TimeSpan.FromMinutes(15));
         var lmaxDemoCycleEnabled = configuration.GetValue("LmaxDemoCycle:Enabled", false);
+        if (lmaxDemoCycleEnabled)
+        {
+            await RunLmaxDemoCycleAsync(stoppingToken);
+            applicationLifetime.StopApplication();
+            return;
+        }
+
         if (configuration.GetValue("Worker:ProcessImmediatelyOnStartup", true))
         {
-            if (lmaxDemoCycleEnabled)
-            {
-                await RunLmaxDemoCycleAsync(stoppingToken);
-                applicationLifetime.StopApplication();
-                return;
-            }
-
             await IngestLmaxCanonicalSnapshotsIfEnabled(stoppingToken);
             await IngestLegacyAnubisPortfolioIfEnabled(stoppingToken);
             await IngestLegacyAnubisWeightsIfEnabled(stoppingToken);
