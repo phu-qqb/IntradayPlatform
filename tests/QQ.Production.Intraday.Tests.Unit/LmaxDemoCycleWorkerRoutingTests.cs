@@ -1,36 +1,30 @@
-using Microsoft.Extensions.Configuration;
-using Microsoft.Extensions.Logging.Abstractions;
-using System.Reflection;
-using WorkerService = QQ.Production.Intraday.Worker.Worker;
-
 namespace QQ.Production.Intraday.Tests.Unit;
 
 public sealed class LmaxDemoCycleWorkerRoutingTests
 {
     [Fact]
-    public async Task EnabledCycleRoutesToItsManifestBeforeTheOrdinaryLoopWhenImmediateStartupIsDisabled()
+    public void EnabledCycleRoutesBeforeEveryOrdinaryQueueProcessingPath()
     {
-        var missingManifest = Path.Combine(Path.GetTempPath(), $"lmax-demo-cycle-{Guid.NewGuid():N}.json");
-        var configuration = new ConfigurationBuilder()
-            .AddInMemoryCollection(new Dictionary<string, string?>
-            {
-                ["LmaxDemoCycle:Enabled"] = "true",
-                ["LmaxDemoCycle:ManifestPath"] = missingManifest,
-                ["Worker:ProcessImmediatelyOnStartup"] = "false",
-                ["Worker:PollInterval"] = "00:00:00"
-            })
-            .Build();
-        var worker = new WorkerService(null!, configuration, NullLogger<WorkerService>.Instance, null!);
+        var workerPath = Path.GetFullPath(Path.Combine(
+            AppContext.BaseDirectory,
+            "..", "..", "..", "..", "..",
+            "src", "QQ.Production.Intraday.Worker", "Worker.cs"));
+        var workerSource = File.ReadAllText(workerPath);
+        var cycleBranch = workerSource.IndexOf("if (lmaxDemoCycleEnabled)", StringComparison.Ordinal);
+        var ordinaryStartupBranch = workerSource.IndexOf(
+            "if (configuration.GetValue(\"Worker:ProcessImmediatelyOnStartup\", true))",
+            StringComparison.Ordinal);
+        var ordinaryTimer = workerSource.IndexOf("using var timer = new PeriodicTimer", StringComparison.Ordinal);
 
-        var exception = await Assert.ThrowsAsync<InvalidOperationException>(
-            () => ExecuteAsyncForTest(worker, CancellationToken.None));
+        Assert.True(cycleBranch >= 0);
+        Assert.True(ordinaryStartupBranch > cycleBranch);
+        Assert.True(ordinaryTimer > cycleBranch);
 
-        Assert.Equal("LMAX_DEMO_CYCLE_MANIFEST_NOT_FOUND", exception.Message);
+        var cycleOnlyBranch = workerSource.Substring(cycleBranch, ordinaryStartupBranch - cycleBranch);
+        Assert.Contains("await RunLmaxDemoCycleAsync(stoppingToken);", cycleOnlyBranch, StringComparison.Ordinal);
+        Assert.Contains("applicationLifetime.StopApplication();", cycleOnlyBranch, StringComparison.Ordinal);
+        Assert.Contains("return;", cycleOnlyBranch, StringComparison.Ordinal);
+        Assert.DoesNotContain("ProcessOnce", cycleOnlyBranch, StringComparison.Ordinal);
+        Assert.DoesNotContain("ProcessNextAsync", cycleOnlyBranch, StringComparison.Ordinal);
     }
-
-    private static Task ExecuteAsyncForTest(WorkerService worker, CancellationToken cancellationToken)
-        => (Task)(typeof(Worker)
-            .GetMethod("ExecuteAsync", BindingFlags.Instance | BindingFlags.NonPublic)!
-            .Invoke(worker, [cancellationToken])
-            ?? throw new InvalidOperationException("WORKER_EXECUTE_ASYNC_NOT_INVOKED"));
 }
