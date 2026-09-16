@@ -20,7 +20,7 @@
   <Actions Context="OwnerContext">
     <Exec>
       <Command>powershell.exe</Command>
-      <Arguments>-NoProfile -NonInteractive -ExecutionPolicy AllSigned -File &quot;C:\deploy\IntradayPlatform\operator\lmax-demo-orchestration\activation\Test-LmaxDemoOwnerContext.ps1&quot;</Arguments>
+      <Arguments>-NoProfile -NonInteractive -ExecutionPolicy Bypass -File &quot;C:\deploy\IntradayPlatform\operator\lmax-demo-orchestration\activation\Test-LmaxDemoOwnerContext.ps1&quot;</Arguments>
       <WorkingDirectory>C:\deploy\IntradayPlatform\operator\lmax-demo-orchestration\activation</WorkingDirectory>
     </Exec>
   </Actions>
