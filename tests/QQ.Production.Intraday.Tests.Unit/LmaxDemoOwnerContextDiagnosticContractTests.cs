@@ -34,7 +34,8 @@ public sealed class LmaxDemoOwnerContextDiagnosticContractTests
         Assert.Empty(document.Descendants(task + "CalendarTrigger"));
 
         var arguments = document.Descendants(task + "Arguments").Single().Value;
-        Assert.Contains("-ExecutionPolicy AllSigned", arguments, StringComparison.Ordinal);
+        Assert.Contains("-ExecutionPolicy Bypass", arguments, StringComparison.Ordinal);
+        Assert.DoesNotContain("-ExecutionPolicy AllSigned", arguments, StringComparison.Ordinal);
         Assert.Contains("Test-LmaxDemoOwnerContext.ps1", arguments, StringComparison.Ordinal);
         Assert.DoesNotContain("Invoke-LmaxDemoFullCycle.ps1", arguments, StringComparison.Ordinal);
         Assert.Equal(
