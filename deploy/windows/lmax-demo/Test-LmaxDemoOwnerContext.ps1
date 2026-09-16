@@ -4,10 +4,11 @@ param()
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-# Deployment invariant: the installed release copy of this script must have a
-# valid trusted Authenticode signature for the task's AllSigned owner context.
-# This diagnostic never starts the Worker, writes to LocalDB, opens a browser,
-# or sends an LMAX order.
+# Deployment invariant: this diagnostic uses task-local Bypass only because no
+# approved code-signing facility exists. The installed file must remain in the
+# protected activation directory and match the reviewed release receipt. This
+# diagnostic never starts the Worker, writes to LocalDB, opens a browser, or
+# sends an LMAX order.
 $release = 'C:\deploy\IntradayPlatform\releases\f1692d8e16f8ed707fe5e27748d18c11df4a8b64'
 $resultPath = Join-Path $PSScriptRoot 'owner-context-result.json'
 $startedAtUtc = [DateTimeOffset]::UtcNow
