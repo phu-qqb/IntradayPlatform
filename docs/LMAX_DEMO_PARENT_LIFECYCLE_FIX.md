@@ -22,10 +22,18 @@ ModelRun ID. Two instruments in one run must have distinct FIX identities.
 
 ## Verification status
 
-`git diff --check` passed. After the owner's explicit approval, the six-file
+**Latest result: compilation and all 28 simulated tests pass**, with no skipped
+tests, on `EC2AMAZ-1QPHTD8` under `Administrator`, SDK 10.0.400, at
+**2026-09-16T15:51:38Z**. The tested source commit is
+`367b2e3caf0073b5917109bdbea8bfa45a2bc04f`. The owner explicitly authorized the
+fixture correction and qualification iterations for these six files in the same
+isolated staging directory. No executable bridge source changed after the first
+compilation. The full suite was rerun, without filtering out the failed case.
+
+`git diff --check` also passed. After the owner's initial explicit approval, the six-file
 payload from commit `b86fa6d5a225101bf0fb8596d51df1f5d1587e8f` was transferred and
 all hashes verified on EC2. **Compilation succeeded; 27 of 28 tests passed** at
-2026-09-16T15:28:47Z with SDK 10.0.400. The complete suite is not green.
+2026-09-16T15:28:47Z with SDK 10.0.400. That initial run is retained as history.
 The proposed tests cover cancellation with residual quantity, partial fills
 across children, late and complete fills during cancellation, missing cancel
 acknowledgments, duplicate/conflicting executions, report inconsistencies, and
@@ -38,13 +46,19 @@ the original assertion remains unchanged. No executable bridge code changed.
 
 The corrected test file's SHA-256 is
 `5ed69038b179b9089a20d3016103ec217cabf4a4b5b7c00566e00413eb03fb6e`.
-**That fixture revision has not been transferred or rerun.** Automatic review
-rejected its transfer because its content/hash differs from the exact approved
-payload. No alternate transfer or indirect edit followed that rejection.
+Automatic review initially rejected that fixture revision because its
+content/hash differed from the original approved payload. No alternate transfer
+or indirect edit followed the rejection. The owner's subsequent explicit
+approval authorized the correction and further qualification iterations; the
+revised fixture then transferred with a matching hash and passed the full suite.
 
 Qualification receipts are retained in the staging directory:
 `qualification-result-01.json`, `qualification-output-01.log`, and
-`TestResults\parent-qualification.trx`. The result, artifact hashes and AWS
+`TestResults\parent-qualification.trx`, followed by the successful
+`qualification-result-02.json`, `qualification-output-02.log`, and
+`TestResults\parent-qualification-02.trx`. The successful run is recorded in
+`docs/evidence/2026-09-16/lmax-demo-parent-qualification-pass.json`.
+The initial result, artifact hashes and AWS
 identity check are recorded in
 `docs/evidence/2026-09-16/lmax-demo-parent-qualification-followup.json`.
 

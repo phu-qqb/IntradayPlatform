@@ -1,0 +1,57 @@
+{
+  "schema_version": "lmax-demo-parent-qualification-pass-v1",
+  "source_commit": "367b2e3caf0073b5917109bdbea8bfa45a2bc04f",
+  "host": "EC2AMAZ-1QPHTD8",
+  "windows_identity": "EC2AMAZ-1QPHTD8\\Administrator",
+  "sdk": "10.0.400",
+  "started_at_utc": "2026-09-16T15:51:27.6871041Z",
+  "completed_at_utc": "2026-09-16T15:51:38.2268496Z",
+  "compilation": "PASS",
+  "test_exit_code": 0,
+  "tests": {
+    "total": 28,
+    "passed": 28,
+    "failed": 0,
+    "not_executed": 0,
+    "filter": null
+  },
+  "assembly_sha256": "11c7afadd7a6deb9a78bc7ad2a45a5a8043633a8de3ec66f693dad1c6a6ee155",
+  "trx_sha256": "48187ac5f075dccbdf35d66736217da03ff62f5771c5ba9ddafd044fba77e7c4",
+  "files": [
+    {
+      "path": "tools/QQ.Production.Intraday.Lmax.ConnectivityLab/LmaxDemoParentLifecycle.cs",
+      "sha256": "1b45a9c53fd2b98bc1fd136d50d242bc93c60ad6d055ce6f718cff81825b8863"
+    },
+    {
+      "path": "tools/QQ.Production.Intraday.Lmax.ConnectivityLab/DemoStrategyExecutionBridge.cs",
+      "sha256": "f9c08bfdd57c92f8a28a663dcff137a41ad539a08c1089f0ed59100edb411108"
+    },
+    {
+      "path": "src/QQ.Production.Intraday.Infrastructure.Simulator/LmaxDemoStrategyBridge.cs",
+      "sha256": "9608999a588a8454ba147ef7cc1f15655a60b9cf86331966ac5f8d46b24cb2ef"
+    },
+    {
+      "path": "tests/QQ.Production.Intraday.Tests.Unit/LmaxDemoParentLifecycleTests.cs",
+      "sha256": "6007ea8a8eb5873cae11dc221c94a7dda5789d9fdd261c583e9f3278476698cb"
+    },
+    {
+      "path": "tests/QQ.Production.Intraday.Tests.Unit/LmaxDemoStrategyBridgeTests.cs",
+      "sha256": "5ed69038b179b9089a20d3016103ec217cabf4a4b5b7c00566e00413eb03fb6e"
+    },
+    {
+      "path": "deploy/windows/lmax-demo/qualification/DemoParent.Qualification.csproj",
+      "sha256": "f44de0b8249d073dfde3d684cd930642974aa362f2284da1f09e4d2d7909d74e"
+    }
+  ],
+  "qualification_limits": [
+    "Isolated harness; installed c81b739c Application/Domain/Lmax/PostgreSql dependencies and existing ConnectivityLab source",
+    "Not a full solution build",
+    "No real FIX connection or Demo order",
+    "Full-cycle launcher and persistent FIX/Worker integration remain incomplete"
+  ],
+  "prior_failed_run_preserved": true,
+  "demo_activated": false,
+  "orders_sent": 0,
+  "databento_requests": 0,
+  "localdb_diagnostic_rerun": false
+}
