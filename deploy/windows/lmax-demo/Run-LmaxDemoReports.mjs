@@ -30,7 +30,8 @@ export function buildReportInvocation({ date, execute = false, interactive = fal
     "--portal-url", "https://account.london-demo.lmax.com/", "--account-id", "1754288005",
     "--from", reportDate, "--to", reportDate,
     "--download-root", path.win32.join(REPORT_ROOT, "portal-downloads", runId),
-    "--staging-root", path.win32.join(REPORT_ROOT, "inbox", runId),
+    // Intraday resolves the broker account from the segment immediately after inbox.
+    "--staging-root", path.win32.join(REPORT_ROOT, "captures", runId, "inbox"),
     "--auth-mode", interactive ? "interactive-bootstrap" : "manual-session",
     "--user-data-dir", PROFILE, "--browser-channel", "chrome",
     "--auth-origin", "https://web-order.london-demo.lmax.com",

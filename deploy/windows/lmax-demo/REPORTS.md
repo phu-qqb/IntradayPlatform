@@ -19,11 +19,20 @@ MFA code in that browser. After a successful bootstrap, subsequent captures
 can use `--execute` without `--interactive`. Omit `--date` for the current UTC
 date. Run one capture at a time; the persistent Chrome profile must be free.
 
-Each invocation retains separate `portal-downloads`, `inbox`, and `logs`
-directories under `D:\data\lmax-eod`. Read the printed `command-result.json`
+Each invocation retains separate `portal-downloads/<run-id>` and `logs/<run-id>`
+directories under `D:\data\lmax-eod`. Its import staging directory is
+`captures/<run-id>/inbox/1754288005/<report-date>` so the existing Intraday
+account/date resolver sees the account immediately after `inbox`. Read the printed `command-result.json`
 location and acquisition manifest before importing anything. The launcher
 does not import reports into the database. Use the existing Intraday import
 path only after validating the actual downloaded set and account mapping.
+
+The first authenticated capture on 16 September 2026 completed at 13:51:50Z.
+All five current-day CSVs contained only headers; a separate 15 September
+control returned one row in each account-summary and currency-wallet report,
+with the expected account. This establishes acquisition and date selection,
+not a zero balance or the absence of working orders. Keep the header-only
+capture as evidence and do not substitute prior-day values for current state.
 
 This entry point does not implement or activate `Invoke-LmaxDemoFullCycle.ps1`.
 That full-day launcher remains absent. Its Worker path needs the separately
