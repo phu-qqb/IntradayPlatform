@@ -22,19 +22,39 @@ ModelRun ID. Two instruments in one run must have distinct FIX identities.
 
 ## Verification status
 
-`git diff --check` passed. **Compilation and the new tests have not run.**
+`git diff --check` passed. After the owner's explicit approval, the six-file
+payload from commit `b86fa6d5a225101bf0fb8596d51df1f5d1587e8f` was transferred and
+all hashes verified on EC2. **Compilation succeeded; 27 of 28 tests passed** at
+2026-09-16T15:28:47Z with SDK 10.0.400. The complete suite is not green.
 The proposed tests cover cancellation with residual quantity, partial fills
 across children, late and complete fills during cancellation, missing cancel
 acknowledgments, duplicate/conflicting executions, report inconsistencies, and
 distinct identities across two instruments in one ModelRun. Existing bridge
-tests are retained.
+tests are retained. The one failing case is
+`TwoInstrumentsInOneModelRun_UseDifferentFixIdentities`: its fixture assumed
+`SeedData` contained GBPUSD, but that seed contains only EURUSD. This revision
+explicitly adds a second simulated instrument, its venue mapping and alias;
+the original assertion remains unchanged. No executable bridge code changed.
+
+The corrected test file's SHA-256 is
+`5ed69038b179b9089a20d3016103ec217cabf4a4b5b7c00566e00413eb03fb6e`.
+**That fixture revision has not been transferred or rerun.** Automatic review
+rejected its transfer because its content/hash differs from the exact approved
+payload. No alternate transfer or indirect edit followed that rejection.
+
+Qualification receipts are retained in the staging directory:
+`qualification-result-01.json`, `qualification-output-01.log`, and
+`TestResults\parent-qualification.trx`. The result, artifact hashes and AWS
+identity check are recorded in
+`docs/evidence/2026-09-16/lmax-demo-parent-qualification-followup.json`.
 
 Automatic review rejected both a project-directory copy and the subsequent
 narrow transfer of five changed source/test files plus a test harness to EC2.
 The stated reason was that the exact private-source payload and staging
 destination lacked explicit authorization. No alternate transfer route was
-used after the narrow-transfer rejection. There is no repository CI workflow
-available in this checkout to provide an alternative build result.
+used after the narrow-transfer rejection. The owner subsequently approved the
+original six-file payload, allowing the run described above. There is no
+repository CI workflow available in this checkout to provide another build.
 
 The proposed isolated qualification is reviewable here:
 
@@ -54,7 +74,7 @@ The proposed isolated qualification is reviewable here:
 - A passing result would qualify this candidate against those installed
   dependencies; it would not constitute a full solution build or a Demo trade.
 
-## Separate AWS escalation
+## AWS escalation and authorized identity result
 
 Two metadata reads failed on the specified EC2 host:
 
@@ -66,18 +86,20 @@ existing transport mandate in issue #84 comment 5684741676 names the EC2 role
 `qq-role-ec2-intraday`. These failures do not prove that `S3 PutObject` or
 `SSM SendCommand` is denied; neither was attempted in this continuation.
 AWS calls stopped after the two failures, under the Control Tower/#84 escalation
-rule. No credentials, IAM policies, profiles or instance attachments changed.
+rule. The owner subsequently approved the separate read-only identity check.
+At **2026-09-16T15:29:48Z**, STS returned the expected identity:
+`arn:aws:sts::761018894194:assumed-role/qq-role-ec2-intraday/i-05626133ca7892fb8`.
+The temporary process environment was restored. No persistent credential,
+profile, IAM policy or instance attachment changed. This confirms the role is
+available on this host; it does not establish S3/SSM permissions or make the
+default IAM-user environment a valid launcher binding.
 
-Proposed next access action, requiring owner resolution of that escalation:
-perform a read-only identity check using the **already authorized EC2 role** on
-`EC2AMAZ-1QPHTD8` / `i-05626133ca7892fb8`. Use a temporary process environment
-that excludes the selected IAM-user profile and inherits credentials solely
-from that instance's attached role, then run `aws sts get-caller-identity` in
-`eu-west-2`. Check the expected account and role, expose only identity metadata,
-and restore the process environment. Stop on a mismatch or refusal. This
-proposal adds no IAM permissions and does not run SSM, start a GPU or send an
-order. Its purpose is to establish the correct launcher identity before any
-further access decision.
+The authorized check used the **already authorized EC2 role** on
+`EC2AMAZ-1QPHTD8` / `i-05626133ca7892fb8`, in a temporary process environment
+excluding the selected IAM-user profile and inheriting credentials solely from
+the attached role. Only `aws sts get-caller-identity` in `eu-west-2` was invoked,
+with the expected account, role and instance session checked. Only identity
+metadata was exposed. No SSM command, GPU start or order was performed.
 
 ## Execution limits and next integration work
 

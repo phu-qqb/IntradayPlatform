@@ -52,9 +52,13 @@ public sealed class LmaxDemoStrategyBridgeTests
         await gateway.SendOrderAsync(fixture.Request, CancellationToken.None);
         var firstRoot = session.Request!.RootClientOrderId;
 
-        var instrument = fixture.State.Instruments.Single(x => x.Symbol == "GBPUSD");
         var now = fixture.Clock.UtcNow;
         var venueId = fixture.Request.VenueId;
+        var instrument = fixture.Instrument with { Id = new InstrumentId(Guid.NewGuid()), Symbol = "GBPUSD", BaseCurrency = new Currency("GBP") };
+        fixture.State.Instruments.Add(instrument);
+        var mapping = fixture.State.VenueInstrumentMappings.Single(x => x.InstrumentId == fixture.Instrument.Id && x.VenueId == venueId);
+        fixture.State.VenueInstrumentMappings.Add(mapping with { Id = new VenueInstrumentId(Guid.NewGuid()), InstrumentId = instrument.Id, VenueSymbol = "GBPUSD", VenueInstrumentCode = "GBP/USD" });
+        fixture.State.InstrumentAliases.Add(new InstrumentAlias(new InstrumentAliasId(Guid.NewGuid()), instrument.Id, "LMAX_REPORT", "GBP/USD", "SIMULATED-GBPUSD", true, now));
         fixture.Options.DemoBrokerStateAttestationInstruments = "EURUSD,GBPUSD";
         fixture.State.TargetPositions.Add(new TargetPosition(fixture.Run.Id, instrument.Id, 1_100m, 1_000m, 0.1m, TargetQuantityMode.FxBaseCurrencyQuantity));
         var intent = new TradeIntent(TradeIntentId.New(), fixture.Run.Id, fixture.Fund.Id, instrument.Id, TradeSide.Buy, 1_000m, 0.1m, "Model drift", TradeIntentStatus.Ordered, now);
