@@ -47,6 +47,10 @@ public sealed class LmaxDemoContinuingSession(
             || string.IsNullOrWhiteSpace(Sender) || options.FixSenderCompId != Sender
             || string.IsNullOrWhiteSpace(options.FixPassword) || string.IsNullOrWhiteSpace(Target))
             throw new InvalidOperationException("DEMO_CONTINUING_ACCOUNT_OR_OPTIONS_INVALID");
+        if (!start.Simulated && (start.DeadlineUtc != LmaxDemoDaySchedule.FinalClose(clock.UtcNow)
+            || start.Instruments.Any(x => x.Symbol.Length != 6 || !x.Symbol.All(char.IsAsciiLetterUpper))
+            || start.Instruments.Select(x => x.SecurityId).Distinct(StringComparer.Ordinal).Count() != start.Instruments.Count))
+            throw new InvalidOperationException("DEMO_CONTINUING_DAY_OR_FX_SCOPE_INVALID");
         ownership = LmaxDemoSessionOwnership.Begin(start, clock.UtcNow, simulatedJournalRoot);
         try
         {

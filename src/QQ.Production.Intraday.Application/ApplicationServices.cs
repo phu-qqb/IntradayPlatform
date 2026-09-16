@@ -2085,7 +2085,7 @@ public static class ModelWeightHash
     }
 }
 
-public sealed record RiskContext(Fund Fund, Venue Venue, Instrument Instrument, ModelRun ModelRun, MarketDataSnapshot MarketData, decimal CurrentBaseQuantity, bool PositionsMatch, decimal ExistingGrossExposureUsd, DateTimeOffset Now);
+public sealed record RiskContext(Fund Fund, Venue Venue, Instrument Instrument, ModelRun ModelRun, MarketDataSnapshot MarketData, decimal CurrentBaseQuantity, bool PositionsMatch, decimal ExistingGrossExposureUsd, DateTimeOffset Now, bool DemoScheduledReduction = false);
 
 public sealed class RiskEngine
 {
@@ -2097,6 +2097,14 @@ public sealed class RiskEngine
         var reject = RiskRejectReason.None;
         var status = RiskDecisionStatus.Approved;
         var notional = Math.Abs(intent.RequestedBaseQuantity * context.MarketData.Mid);
+        var signedQuantity = intent.Side == TradeSide.Buy ? intent.RequestedBaseQuantity : -intent.RequestedBaseQuantity;
+        var scheduledReduction = context.DemoScheduledReduction && LmaxDemoDaySchedule.IsFinalExit(context.ModelRun.AsOfUtc)
+            && context.CurrentBaseQuantity != 0m && Math.Sign(signedQuantity) != Math.Sign(context.CurrentBaseQuantity)
+            && Math.Abs(signedQuantity) <= Math.Abs(context.CurrentBaseQuantity);
+        var instrumentExposure = scheduledReduction ? Math.Abs((context.CurrentBaseQuantity + signedQuantity) * context.MarketData.Mid)
+            : Math.Abs(context.CurrentBaseQuantity * context.MarketData.Mid) + notional;
+        var grossExposure = scheduledReduction ? Math.Max(0m, context.ExistingGrossExposureUsd - notional) : context.ExistingGrossExposureUsd + notional;
+        var windowOpen = IsTradingWindowOpen(tradingWindow, context.Now, scheduledReduction);
         var details = new List<RiskDecisionDetail>();
 
         if (!limitSet.GlobalTradingEnabled) reject = RiskRejectReason.GlobalTradingDisabled;
@@ -2110,9 +2118,9 @@ public sealed class RiskEngine
         else if (intent.RequestedBaseQuantity <= 0 || intent.RequestedVenueQuantity <= 0) reject = RiskRejectReason.InvalidQuantity;
         else if (intent.RequestedBaseQuantity < instrumentLimit.MinTradeQuantity) reject = RiskRejectReason.InvalidQuantity;
         else if (notional > instrumentLimit.MaxTradeNotionalUsd || notional > venueLimit.MaxTradeNotionalUsd) reject = RiskRejectReason.MaxTradeNotionalExceeded;
-        else if (Math.Abs(context.CurrentBaseQuantity * context.MarketData.Mid) + notional > instrumentLimit.MaxExposureUsd) reject = RiskRejectReason.MaxInstrumentExposureExceeded;
-        else if (context.ExistingGrossExposureUsd + notional > limitSet.MaxGrossExposureUsd) reject = RiskRejectReason.MaxGrossExposureExceeded;
-        else if (!IsTradingWindowOpen(tradingWindow, context.Now)) reject = RiskRejectReason.TradingWindowClosed;
+        else if (instrumentExposure > instrumentLimit.MaxExposureUsd) reject = RiskRejectReason.MaxInstrumentExposureExceeded;
+        else if (grossExposure > limitSet.MaxGrossExposureUsd) reject = RiskRejectReason.MaxGrossExposureExceeded;
+        else if (!windowOpen) reject = RiskRejectReason.TradingWindowClosed;
 
         if (reject != RiskRejectReason.None)
         {
@@ -2129,9 +2137,9 @@ public sealed class RiskEngine
         details.Add(Compare(decision.Id, "MarketDataStalenessSeconds", (decimal)(context.Now - context.MarketData.ReceivedAtUtc).TotalSeconds, (decimal)limitSet.MaxMarketDataAge.TotalSeconds, "seconds", RiskRejectReason.StaleMarketData, context.Now));
         details.Add(Compare(decision.Id, "MinInstrumentTradeQuantity", intent.RequestedBaseQuantity, instrumentLimit.MinTradeQuantity, "baseQuantity", RiskRejectReason.InvalidQuantity, context.Now, greaterThanOrEqual: true));
         details.Add(Compare(decision.Id, "MaxTradeNotionalUsd", notional, Math.Min(instrumentLimit.MaxTradeNotionalUsd, venueLimit.MaxTradeNotionalUsd), "USD", RiskRejectReason.MaxTradeNotionalExceeded, context.Now));
-        details.Add(Compare(decision.Id, "MaxInstrumentExposureUsd", Math.Abs(context.CurrentBaseQuantity * context.MarketData.Mid) + notional, instrumentLimit.MaxExposureUsd, "USD", RiskRejectReason.MaxInstrumentExposureExceeded, context.Now));
-        details.Add(Compare(decision.Id, "MaxGrossExposureUsd", context.ExistingGrossExposureUsd + notional, limitSet.MaxGrossExposureUsd, "USD", RiskRejectReason.MaxGrossExposureExceeded, context.Now));
-        details.Add(Detail(decision.Id, "TradingWindow", IsTradingWindowOpen(tradingWindow, context.Now), "Trading window and no-new-orders cutoff checked.", context.Now));
+        details.Add(Compare(decision.Id, "MaxInstrumentExposureUsd", instrumentExposure, instrumentLimit.MaxExposureUsd, "USD", RiskRejectReason.MaxInstrumentExposureExceeded, context.Now));
+        details.Add(Compare(decision.Id, "MaxGrossExposureUsd", grossExposure, limitSet.MaxGrossExposureUsd, "USD", RiskRejectReason.MaxGrossExposureExceeded, context.Now));
+        details.Add(Detail(decision.Id, "TradingWindow", windowOpen, scheduledReduction ? "Scheduled Demo reduction inside the session close window." : "Trading window and no-new-orders cutoff checked.", context.Now));
         return (decision, details);
     }
 
@@ -2148,7 +2156,7 @@ public sealed class RiskEngine
         return new RiskDecisionDetail(Guid.NewGuid(), decisionId, name, passed ? RiskDecisionCheckStatus.Passed : RiskDecisionCheckStatus.Failed, passed ? null : reason, observed, limit, unit, message, now);
     }
 
-    private static bool IsTradingWindowOpen(TradingWindow window, DateTimeOffset now)
+    private static bool IsTradingWindowOpen(TradingWindow window, DateTimeOffset now, bool scheduledReduction = false)
     {
         if (!window.IsEnabled || !window.TradingEnabled || now.DayOfWeek != window.DayOfWeek)
         {
@@ -2156,7 +2164,8 @@ public sealed class RiskEngine
         }
 
         var time = TimeOnly.FromTimeSpan(now.UtcDateTime.TimeOfDay);
-        return time >= window.OpensAtUtc && time <= window.ClosesAtUtc && time <= window.NoNewOrdersAfterUtc;
+        return time >= window.OpensAtUtc && time <= window.ClosesAtUtc
+            && (time <= window.NoNewOrdersAfterUtc || scheduledReduction && now < LmaxDemoDaySchedule.FinalClose(now));
     }
 }
 
@@ -2364,7 +2373,8 @@ public sealed class ProcessModelRunService(IIntradayRepository repository, IVenu
                 return BuildResult(state, run.Id, false, ProcessModelRunStatus.Blocked, ProcessModelRunBlockedReason.ReferenceDataInvalid, "Risk configuration is missing for the requested instrument or venue.", false, now);
             }
 
-            var riskContext = new RiskContext(fund, venue, instrument, run, marketData, currentBase, true, CalculateGrossExposure(state, fund.Id, marketData.Mid) + reservedGross, demoBatch is null ? now : clock.UtcNow);
+            var scheduledReduction = demoBatch is not null && LmaxDemoDaySchedule.IsFinalExit(run.AsOfUtc) && targetWeights.All(x => x.Weight == 0m);
+            var riskContext = new RiskContext(fund, venue, instrument, run, marketData, currentBase, true, CalculateGrossExposure(state, fund.Id, marketData.Mid) + reservedGross, demoBatch is null ? now : clock.UtcNow, scheduledReduction);
             var (decision, details) = riskEngine.EvaluateDetailed(intent, riskContext, riskLimitSet, instrumentLimit, venueLimit, tradingWindow, state.KillSwitch);
             await repository.AddRiskDecisionAsync(decision, details, cancellationToken);
             if (decision.Status != RiskDecisionStatus.Approved)

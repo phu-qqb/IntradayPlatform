@@ -171,6 +171,18 @@ public sealed class Worker(
                 throw new InvalidOperationException("DEMO_CONTINUING_NATURAL_CYCLE_EXPIRED_OR_INVALID");
 
             using var scope = scopeFactory.CreateScope();
+            if (explicitPath is not null)
+            {
+                var session = scope.ServiceProvider.GetRequiredService<LmaxDemoContinuingSession>();
+                if (manifest.DemoScheduledExitScope is { } exitScope)
+                {
+                    if (!exitScope.Order(StringComparer.Ordinal).SequenceEqual(session.StartingObservation.Instruments.Select(x => x.Symbol).Order(StringComparer.Ordinal)))
+                        throw new InvalidOperationException("DEMO_EXIT_OBSERVED_SCOPE_MISMATCH");
+                }
+                else if (manifest.Programmes!.Any(x => LmaxDemoDaySchedule.IsEligible(x.ProgramName!, manifest.DecisionAtUtc)
+                    != (x.State == LegacyAnubisProgrammeContributionState.Present)))
+                    throw new InvalidOperationException("DEMO_PROGRAMME_CURRENT_CUTOFF_PROVENANCE_MISMATCH");
+            }
             var coordinator = scope.ServiceProvider.GetRequiredService<ILmaxDemoCycleCoordinator>();
             var result = await coordinator.RunAsync(ToRequest(manifest), cancellationToken);
             if (explicitPath is not null && (!result.Validation.Succeeded || result.Promotion?.Succeeded != true
@@ -213,7 +225,8 @@ public sealed class Worker(
                 manifest.DecisionAtUtc,
                 manifest.EffectiveAtUtc,
                 manifest.NavUsd,
-                manifest.TargetQuantityMode));
+                manifest.TargetQuantityMode,
+                manifest.DemoScheduledExitScope));
 
     private static LegacyAnubisProgrammeContribution ToContribution(LmaxDemoCycleProgrammeManifest programme)
         => new(
@@ -337,7 +350,8 @@ public sealed class Worker(
         string? ModelName,
         decimal NavUsd,
         TargetQuantityMode TargetQuantityMode,
-        IReadOnlyList<LmaxDemoCycleProgrammeManifest>? Programmes);
+        IReadOnlyList<LmaxDemoCycleProgrammeManifest>? Programmes,
+        IReadOnlyList<string>? DemoScheduledExitScope = null);
 
     private sealed record LmaxDemoCycleProgrammeManifest(
         string? ProgramName,

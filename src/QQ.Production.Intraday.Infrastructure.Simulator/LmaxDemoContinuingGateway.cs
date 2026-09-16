@@ -16,6 +16,9 @@ public sealed class LmaxDemoContinuingGateway(
         var state = await repository.LoadStateAsync(token);
         var targetMap = targets.ToDictionary(
             x => state.Instruments.Single(i => i.Id == x.InstrumentId).Symbol, x => x.TargetBaseQuantity, StringComparer.Ordinal);
+        if (run.AsOfUtc >= LmaxDemoDaySchedule.FinalClose(run.AsOfUtc).AddMinutes(-15)
+            && (!LmaxDemoDaySchedule.IsFinalExit(run.AsOfUtc) || targetMap.Values.Any(x => x != 0m)))
+            throw new InvalidOperationException("DEMO_CONTINUING_NEW_RISK_AFTER_EXIT_CUTOFF");
         // Missing positions must never disappear from a portfolio target.
         if (session.Positions().Any(x => x.Value != 0m && !targetMap.ContainsKey(x.Key)))
             throw new InvalidOperationException("DEMO_CONTINUING_TARGET_OMITS_EXISTING_POSITION");

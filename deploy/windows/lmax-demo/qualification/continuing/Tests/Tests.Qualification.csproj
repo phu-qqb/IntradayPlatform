@@ -5,6 +5,10 @@
 <Compile Include="$(DemoOverlayRoot)/tests/QQ.Production.Intraday.Tests.Unit/LmaxDemoParentLifecycleTests.cs" />
 <Compile Include="$(DemoOverlayRoot)/tests/QQ.Production.Intraday.Tests.Unit/LmaxDemoStrategyBridgeTests.cs" />
 <Compile Include="$(DemoOverlayRoot)/tests/QQ.Production.Intraday.Tests.Unit/LmaxDemoContinuingSessionTests.cs" />
+<Compile Include="$(DemoOverlayRoot)/tests/QQ.Production.Intraday.Tests.Unit/LmaxDemoDayScheduleTests.cs" />
+<Compile Include="$(DemoOverlayRoot)/tests/QQ.Production.Intraday.Tests.Unit/LmaxDemoBatchExecutionTests.cs" />
+<Compile Include="$(DemoBaselineRoot)/tests/QQ.Production.Intraday.Tests.Unit/DomainAndRiskTests.cs" />
+<Compile Include="$(DemoBaselineRoot)/tests/QQ.Production.Intraday.Tests.Unit/LegacyAnubisPortfolioWeightIngestionTests.cs" />
 <Compile Include="$(DemoOverlayRoot)/tests/QQ.Production.Intraday.Tests.DemoSession/LmaxDemoControlledSessionTests.cs" />
 <ProjectReference Include="../Application/Application.Qualification.csproj" />
 <ProjectReference Include="../Connectivity/Connectivity.Qualification.csproj" />

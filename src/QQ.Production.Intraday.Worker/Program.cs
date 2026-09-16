@@ -10,6 +10,21 @@ using Serilog;
 using System.Text.Json;
 
 var builder = Host.CreateApplicationBuilder(args);
+if (args.Contains("--demo-config-inspect=true", StringComparer.Ordinal))
+{
+    var inspected = LmaxConnectivityLabOptions.FromEnvironmentAndArgs(args);
+    Console.WriteLine(JsonSerializer.Serialize(new {
+        marker = "DEMO_CONFIG_INSPECTION_ONLY", host = Environment.MachineName,
+        accountMatches = inspected.AccountCode == LmaxDemoControlledSession.DemoAccountId,
+        demoEndpoint = inspected.FixOrderHost == "fix-order.london-demo.lmax.com" && inspected.FixOrderPort == 443 && inspected.UseTls,
+        credentialsPresent = !string.IsNullOrWhiteSpace(inspected.FixUsername) && !string.IsNullOrWhiteSpace(inspected.FixPassword),
+        senderMatches = !string.IsNullOrWhiteSpace(inspected.FixUsername) && inspected.FixSenderCompId == inspected.FixUsername,
+        existingQuantityLimitIsPointOne = inspected.MaxDemoOrderQuantity == .1m,
+        existingNotionalLimitIsFiveThousand = inspected.MaxDemoOrderNotionalUsd == 5000m,
+        brokerConnectionOpened = false, databaseAccessed = false
+    }));
+    return;
+}
 var demoStrategyBridgeEnabled = builder.Configuration.GetValue("LmaxDemoStrategyBridge:Enabled", false);
 var demoContinuingEnabled = builder.Configuration.GetValue("LmaxDemoContinuing:Enabled", false);
 if (demoContinuingEnabled && (!demoStrategyBridgeEnabled || !builder.Configuration.GetValue("LmaxDemoCycle:Enabled", false)))
