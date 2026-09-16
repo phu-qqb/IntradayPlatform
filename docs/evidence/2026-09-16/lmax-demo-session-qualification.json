@@ -1,0 +1,35 @@
+{
+  "contract": "LMAX_DEMO_CONTROLLED_SESSION_COMPONENT_QUALIFICATION_V1",
+  "source_base": "717364a5ead468bfc60134f5319b974ec9c3b843",
+  "finished_at_utc": "2026-09-16T14:40:47.0810066Z",
+  "computer": "EC2AMAZ-1QPHTD8",
+  "windows_identity": "EC2AMAZ-1QPHTD8\\Administrator",
+  "sdk_version": "10.0.400",
+  "simulated": true,
+  "exit_code": 0,
+  "tests": { "total": 34, "passed": 34, "failed": 0, "skipped": 0 },
+  "qualification_scope": "New C# component and fixtures compiled against existing nonactive EC2 Application/Domain assemblies; not a full solution build.",
+  "source_sha256": {
+    "src/QQ.Production.Intraday.Application/LmaxDemoControlledSession.cs": "3a2200d3778b092d8744f42c1841c5f4f0f8bad9cf75d7f653b10e71b0bf0386",
+    "tests/QQ.Production.Intraday.Tests.DemoSession/LmaxDemoControlledSessionTests.cs": "429d183ca2409dd18c0712fa8176531b94e3e63a73a5344302514ec78a5e5b72"
+  },
+  "qualification_harness_sha256": "6cf3ed233e65030d51f6eb4353a1cb4fda29e3185f2589c19a438bff6d4f159e",
+  "existing_assembly_sha256": {
+    "QQ.Production.Intraday.Application.dll": "63e96a87c171cc103e65d0dbeec169aaf03a26e72cef03dbe2dac1fcaee217bc",
+    "QQ.Production.Intraday.Domain.dll": "4cd315cd67c959be5d4d8db1da458acd18ed339840cf07031210eacd98fe9808"
+  },
+  "evidence_directory": "C:\\deploy\\IntradayPlatform\\staging\\lmax-session-qualification-20260916",
+  "trx": "TestResults\\simulated-session-qualified.trx",
+  "analyzer_warnings": ["xUnit2031: filtered Assert.Single style"],
+  "worker_pid_preserved": 10380,
+  "runtime_integration_enabled": false,
+  "broker_order_submissions": 0,
+  "localdb_diagnostic_rerun": false,
+  "databento_api_requests": 0,
+  "limitations": [
+    "No continuous FIX receiver, send-boundary integration or Worker scheduling is added.",
+    "Existing journal restart is inspection-only; an account-wide owner/catalog remains required to prevent alternate-path resets.",
+    "No atomic integration with repository execution/fill/position persistence is claimed.",
+    "Simulated fixtures are not real execution or TCA evidence."
+  ]
+}
