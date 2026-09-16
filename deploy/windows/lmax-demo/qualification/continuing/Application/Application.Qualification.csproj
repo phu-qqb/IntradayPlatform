@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+<PropertyGroup><TargetFramework>net10.0</TargetFramework><ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable><LangVersion>latest</LangVersion><EnableDefaultCompileItems>false</EnableDefaultCompileItems><DemoBaselineRoot>C:\deploy\IntradayPlatform\operator\qq84-demo-cycle-coordinator-f1692d8e-20260915T000000Z</DemoBaselineRoot><DemoReleaseRoot>C:\deploy\IntradayPlatform\releases\lmax-demo-cycle-c81b739c</DemoReleaseRoot><DemoOverlayRoot>C:\deploy\IntradayPlatform\staging\lmax-continuing-qualification-20260916</DemoOverlayRoot></PropertyGroup>
+<PropertyGroup><AssemblyName>QQ.Production.Intraday.Application</AssemblyName></PropertyGroup>
+<ItemGroup>
+<Compile Include="$(DemoBaselineRoot)/src/QQ.Production.Intraday.Application/*.cs" Exclude="$(DemoBaselineRoot)/src/QQ.Production.Intraday.Application/ApplicationServices.cs" />
+<Compile Include="$(DemoOverlayRoot)/src/QQ.Production.Intraday.Application/ApplicationServices.cs" />
+<Compile Include="$(DemoOverlayRoot)/src/QQ.Production.Intraday.Application/LmaxDemoBatchExecution.cs" />
+<Compile Include="$(DemoOverlayRoot)/src/QQ.Production.Intraday.Application/LmaxDemoControlledSession.cs" />
+<Compile Include="$(DemoOverlayRoot)/src/QQ.Production.Intraday.Application/LmaxDemoSessionOwnership.cs" />
+<Reference Include="QQ.Production.Intraday.Domain"><HintPath>$(DemoReleaseRoot)/QQ.Production.Intraday.Domain.dll</HintPath></Reference>
+</ItemGroup>
+</Project>

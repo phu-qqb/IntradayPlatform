@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+<PropertyGroup><TargetFramework>net10.0</TargetFramework><ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable><LangVersion>latest</LangVersion><EnableDefaultCompileItems>false</EnableDefaultCompileItems><DemoBaselineRoot>C:\deploy\IntradayPlatform\operator\qq84-demo-cycle-coordinator-f1692d8e-20260915T000000Z</DemoBaselineRoot><DemoReleaseRoot>C:\deploy\IntradayPlatform\releases\lmax-demo-cycle-c81b739c</DemoReleaseRoot><DemoOverlayRoot>C:\deploy\IntradayPlatform\staging\lmax-continuing-qualification-20260916</DemoOverlayRoot></PropertyGroup>
+<PropertyGroup><AssemblyName>QQ.Production.Intraday.Tests.ContinuingQualification</AssemblyName><IsTestProject>true</IsTestProject><IsPackable>false</IsPackable></PropertyGroup>
+<ItemGroup>
+<Compile Include="$(DemoOverlayRoot)/tests/QQ.Production.Intraday.Tests.Unit/LmaxDemoParentLifecycleTests.cs" />
+<Compile Include="$(DemoOverlayRoot)/tests/QQ.Production.Intraday.Tests.Unit/LmaxDemoStrategyBridgeTests.cs" />
+<Compile Include="$(DemoOverlayRoot)/tests/QQ.Production.Intraday.Tests.Unit/LmaxDemoContinuingSessionTests.cs" />
+<Compile Include="$(DemoOverlayRoot)/tests/QQ.Production.Intraday.Tests.DemoSession/LmaxDemoControlledSessionTests.cs" />
+<ProjectReference Include="../Application/Application.Qualification.csproj" />
+<ProjectReference Include="../Connectivity/Connectivity.Qualification.csproj" />
+<ProjectReference Include="../Simulator/Simulator.Qualification.csproj" />
+<Reference Include="QQ.Production.Intraday.Domain"><HintPath>$(DemoReleaseRoot)/QQ.Production.Intraday.Domain.dll</HintPath></Reference>
+<PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
+<PackageReference Include="xunit" Version="2.9.3" />
+<PackageReference Include="xunit.runner.visualstudio" Version="3.1.4" />
+<Using Include="Xunit" />
+</ItemGroup>
+</Project>

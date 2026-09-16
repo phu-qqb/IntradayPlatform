@@ -1500,7 +1500,7 @@ public sealed partial class RawLmaxFixSessionClient(
             cleanup);
     }
 
-    private static string BuildLogonMessage(LmaxConnectivityLabOptions options, int sequenceNumber, string targetCompId)
+    internal static string BuildLogonMessage(LmaxConnectivityLabOptions options, int sequenceNumber, string targetCompId)
         => LmaxFixMarketDataCodec.BuildMessage("A", sequenceNumber, options.FixUsername!, targetCompId,
         [
             ("98", "0"),

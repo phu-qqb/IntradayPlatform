@@ -7,9 +7,13 @@ using QQ.Production.Intraday.Infrastructure.SqlServer;
 using QQ.Production.Intraday.Lmax.ConnectivityLab;
 using QQ.Production.Intraday.Worker;
 using Serilog;
+using System.Text.Json;
 
 var builder = Host.CreateApplicationBuilder(args);
 var demoStrategyBridgeEnabled = builder.Configuration.GetValue("LmaxDemoStrategyBridge:Enabled", false);
+var demoContinuingEnabled = builder.Configuration.GetValue("LmaxDemoContinuing:Enabled", false);
+if (demoContinuingEnabled && (!demoStrategyBridgeEnabled || !builder.Configuration.GetValue("LmaxDemoCycle:Enabled", false)))
+    throw new InvalidOperationException("DEMO_CONTINUING_REQUIRES_EXPLICIT_DEMO_COORDINATOR");
 builder.Services.AddSingleton<IClock, SystemClock>();
 builder.Services.AddSingleton<IOperatorContext>(new StaticOperatorContext(OperatorAuditActorType.Worker, "system", "Local Worker"));
 builder.Services.AddScoped<IOperatorAuditService, OperatorAuditService>();
@@ -49,8 +53,26 @@ if (demoStrategyBridgeEnabled)
     LmaxDemoStrategyVenueExecutionGateway.EnsureDemoOnly(lmaxOptions);
     builder.Services.AddSingleton(lmaxOptions);
     builder.Services.AddSingleton<LmaxConnectivityLabSafetyValidator>();
-    builder.Services.AddScoped<ILmaxDemoStrategySession>(provider =>
-        new RawLmaxFixSessionClient(provider.GetRequiredService<LmaxConnectivityLabSafetyValidator>()));
+    if (demoContinuingEnabled)
+    {
+        var startPath = builder.Configuration["LmaxDemoContinuing:StartObservationPath"]
+            ?? throw new InvalidOperationException("DEMO_CONTINUING_START_OBSERVATION_REQUIRED");
+        var observation = JsonSerializer.Deserialize<LmaxDemoSessionStart>(File.ReadAllText(startPath),
+            new JsonSerializerOptions { PropertyNameCaseInsensitive = true })
+            ?? throw new InvalidOperationException("DEMO_CONTINUING_START_OBSERVATION_INVALID");
+        if (observation.Simulated || Environment.MachineName != "EC2AMAZ-1QPHTD8")
+            throw new InvalidOperationException("DEMO_CONTINUING_REAL_HOST_REQUIRED");
+        builder.Services.AddSingleton(observation);
+        builder.Services.AddSingleton<ILmaxDemoFixTransport, LmaxDemoTlsTransport>();
+        builder.Services.AddSingleton(provider => new LmaxDemoContinuingSession(lmaxOptions, observation,
+            provider.GetRequiredService<ILmaxDemoFixTransport>(),
+            new RawLmaxFixSessionClient(provider.GetRequiredService<LmaxConnectivityLabSafetyValidator>()),
+            provider.GetRequiredService<IClock>()));
+        builder.Services.AddSingleton<ILmaxDemoStrategySession>(p => p.GetRequiredService<LmaxDemoContinuingSession>());
+    }
+    else
+        builder.Services.AddScoped<ILmaxDemoStrategySession>(provider =>
+            new RawLmaxFixSessionClient(provider.GetRequiredService<LmaxConnectivityLabSafetyValidator>()));
 }
 
 if (builder.Configuration.GetValue("Intraday15m:Enabled", false))
@@ -122,7 +144,12 @@ else
     throw new InvalidOperationException($"Unsupported persistence provider '{persistenceProvider}'.");
 }
 
-if (demoStrategyBridgeEnabled)
+if (demoContinuingEnabled)
+{
+    builder.Services.AddScoped<IVenueExecutionGateway, LmaxDemoContinuingGateway>();
+    builder.Services.AddScoped<IBrokerPositionProvider, LmaxDemoContinuingBrokerPositionProvider>();
+}
+else if (demoStrategyBridgeEnabled)
 {
     builder.Services.AddScoped<IVenueExecutionGateway, LmaxDemoStrategyVenueExecutionGateway>();
     builder.Services.AddScoped<IBrokerPositionProvider>(provider =>
@@ -136,8 +163,8 @@ builder.Services.AddHostedService<Worker>();
 builder.Services.AddSerilog(new LoggerConfiguration().WriteTo.Console().CreateLogger());
 
 var host = builder.Build();
-await InitializeDatabaseAsync(host, persistenceProvider);
 ValidateSafety(host, persistenceProvider);
+await InitializeDatabaseAsync(host, persistenceProvider);
 await ValidateReferenceDataAsync(host);
 host.Run();
 
@@ -192,10 +219,20 @@ static void ValidateSafety(IHost host, string persistenceProvider)
             throw new InvalidOperationException("LMAX Demo cycle owns the only permitted canonical snapshot ingestion.");
         if (configuration.GetValue("Intraday15m:Enabled", false))
             throw new InvalidOperationException("LMAX Demo cycle cannot activate the PMS Shadow Intraday15m path.");
-        if (!configuration.GetValue("Worker:StopAfterInitialLmaxDemoCycle", false))
+        if (!configuration.GetValue("LmaxDemoContinuing:Enabled", false) && !configuration.GetValue("Worker:StopAfterInitialLmaxDemoCycle", false))
             throw new InvalidOperationException("LMAX Demo cycle must be an explicit one-cycle worker invocation.");
+        if (configuration.GetValue("LmaxDemoContinuing:Enabled", false))
+        {
+            if (configuration.GetValue("Worker:StopAfterInitialLmaxDemoCycle", true)
+                || configuration.GetValue("Database:ApplyMigrationsOnStartup", false)
+                || configuration.GetValue("Database:SeedReferenceDataOnStartup", true)
+                || configuration.GetValue("Database:SeedDemoDataOnStartup", false)
+                || configuration.GetValue("LocalScheduler:Enabled", false)
+                || persistenceProvider != "SqlServerLocal")
+                throw new InvalidOperationException("DEMO_CONTINUING_STARTUP_CONFIGURATION_INVALID");
+        }
     }
-    if (gateway is LmaxDemoStrategyVenueExecutionGateway)
+    if (gateway is LmaxDemoStrategyVenueExecutionGateway or LmaxDemoContinuingGateway)
     {
         if (configuration.GetValue("Safety:AllowLiveTrading", false))
             throw new InvalidOperationException("Demo strategy bridge requires Safety:AllowLiveTrading=false.");

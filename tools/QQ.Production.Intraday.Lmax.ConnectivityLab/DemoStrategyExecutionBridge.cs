@@ -35,7 +35,8 @@ public sealed record LmaxDemoStrategyExecutionRequest(
     DateTimeOffset TargetCloseUtc,
     TimeSpan MaxMarketDataAge,
     int MaxWaitSeconds,
-    bool ShowFixMessages);
+    bool ShowFixMessages,
+    string? PersistedChildOrderId = null);
 
 public sealed record LmaxDemoStrategyExecutionResult(
     IReadOnlyList<LmaxFixExecutionReport> ExecutionReports,

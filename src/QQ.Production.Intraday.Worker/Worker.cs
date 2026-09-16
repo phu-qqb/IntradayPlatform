@@ -1,6 +1,7 @@
 using QQ.Production.Intraday.Application;
 using QQ.Production.Intraday.Domain;
 using QQ.Production.Intraday.Infrastructure.PostgreSql;
+using QQ.Production.Intraday.Lmax.ConnectivityLab;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -19,6 +20,11 @@ public sealed class Worker(
         var lmaxDemoCycleEnabled = configuration.GetValue("LmaxDemoCycle:Enabled", false);
         if (lmaxDemoCycleEnabled)
         {
+            if (configuration.GetValue("LmaxDemoContinuing:Enabled", false))
+            {
+                await RunContinuingDemoAsync(stoppingToken);
+                return;
+            }
             await RunLmaxDemoCycleAsync(stoppingToken);
             applicationLifetime.StopApplication();
             return;
@@ -49,9 +55,60 @@ public sealed class Worker(
         }
     }
 
-    private async Task RunLmaxDemoCycleAsync(CancellationToken cancellationToken)
+    private async Task RunContinuingDemoAsync(CancellationToken stoppingToken)
     {
-        var manifestPath = configuration["LmaxDemoCycle:ManifestPath"]
+        using var scope = scopeFactory.CreateScope();
+        var session = scope.ServiceProvider.GetRequiredService<LmaxDemoContinuingSession>();
+        var directory = Path.Combine(LmaxDemoSessionOwnership.RealAccountRoot, session.StartingObservation.SessionId);
+        var inbox = Path.Combine(directory, "inbox");
+        Directory.CreateDirectory(inbox);
+        await session.InitializeAsync(stoppingToken);
+        var consumed = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        logger.LogInformation("Controlled LMAX Demo session owns continuous FIX reception: SessionId={SessionId}", session.StartingObservation.SessionId);
+        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(1));
+        while (!stoppingToken.IsCancellationRequested)
+        {
+            try
+            {
+                var finalPath = Path.Combine(directory, "final-observation.json");
+                if (File.Exists(finalPath))
+                {
+                    var final = JsonSerializer.Deserialize<FinalObservation>(await File.ReadAllTextAsync(finalPath, stoppingToken), JsonOptions)
+                        ?? throw new InvalidOperationException("DEMO_FINAL_OBSERVATION_INVALID");
+                    if (final.SessionId != session.StartingObservation.SessionId || final.AccountId != session.StartingObservation.AccountId)
+                        throw new InvalidOperationException("DEMO_FINAL_OBSERVATION_SCOPE_MISMATCH");
+                    session.FinalObservation(final.ObservedAtUtc, final.ApprovalId, final.Flat, final.NoWorkingOrders);
+                    logger.LogInformation("Controlled LMAX Demo session closed after final reconciliation: SessionId={SessionId}", final.SessionId);
+                    applicationLifetime.StopApplication();
+                    return;
+                }
+                if (session.BlockingReason is null)
+                {
+                    foreach (var path in Directory.EnumerateFiles(inbox, "*.cycle.json").Order(StringComparer.Ordinal))
+                    {
+                        if (consumed.Contains(path)) continue;
+                        await RunLmaxDemoCycleAsync(stoppingToken, path);
+                        consumed.Add(path);
+                    }
+                }
+            }
+            catch (Exception error) when (error is not OperationCanceledException)
+            {
+                session.Block("COORDINATOR_RECONCILIATION_REQUIRED");
+                // Keep receiving durable FIX facts. No shared queue, retry, or cold restart.
+                logger.LogError("Controlled LMAX Demo requires reconciliation; owner retained. ErrorType={ErrorType} Blocker={Blocker}",
+                    error.GetType().Name, session.BlockingReason);
+            }
+            if (!await timer.WaitForNextTickAsync(stoppingToken)) return;
+        }
+    }
+
+    private sealed record FinalObservation(string SessionId, string AccountId, DateTimeOffset ObservedAtUtc,
+        string ApprovalId, bool Flat, bool NoWorkingOrders);
+
+    private async Task RunLmaxDemoCycleAsync(CancellationToken cancellationToken, string? explicitPath = null)
+    {
+        var manifestPath = explicitPath ?? configuration["LmaxDemoCycle:ManifestPath"]
             ?? throw new InvalidOperationException("LMAX_DEMO_CYCLE_MANIFEST_PATH_REQUIRED");
         var manifestFullPath = Path.GetFullPath(manifestPath);
         if (!File.Exists(manifestFullPath))
@@ -108,10 +165,17 @@ public sealed class Worker(
             manifest = JsonSerializer.Deserialize<LmaxDemoCycleManifest>(manifestBytes, JsonOptions)
                 ?? throw new InvalidOperationException("LMAX_DEMO_CYCLE_MANIFEST_INVALID");
             ValidateManifest(manifest);
+            if (explicitPath is not null && (manifest.DecisionAtUtc > DateTimeOffset.UtcNow
+                || manifest.EffectiveAtUtc <= DateTimeOffset.UtcNow
+                || manifest.EffectiveAtUtc - manifest.DecisionAtUtc != TimeSpan.FromMinutes(15)))
+                throw new InvalidOperationException("DEMO_CONTINUING_NATURAL_CYCLE_EXPIRED_OR_INVALID");
 
             using var scope = scopeFactory.CreateScope();
             var coordinator = scope.ServiceProvider.GetRequiredService<ILmaxDemoCycleCoordinator>();
             var result = await coordinator.RunAsync(ToRequest(manifest), cancellationToken);
+            if (explicitPath is not null && (!result.Validation.Succeeded || result.Promotion?.Succeeded != true
+                || result.Processing?.Processed != true || result.Processing.Blocked))
+                throw new InvalidOperationException("DEMO_CONTINUING_CYCLE_NOT_EXECUTED");
             await WriteCycleResultAsync(resultPath, manifestSha256, Required(manifest.CycleId, "CycleId"), "Completed", result, null, cancellationToken);
             logger.LogInformation(
                 "LMAX Demo cycle completed: CycleId={CycleId} BatchId={BatchId} ModelRunId={ModelRunId} ProcessingStatus={ProcessingStatus}",

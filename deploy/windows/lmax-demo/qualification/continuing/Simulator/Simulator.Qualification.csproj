@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+<PropertyGroup><TargetFramework>net10.0</TargetFramework><ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable><LangVersion>latest</LangVersion><EnableDefaultCompileItems>false</EnableDefaultCompileItems><DemoBaselineRoot>C:\deploy\IntradayPlatform\operator\qq84-demo-cycle-coordinator-f1692d8e-20260915T000000Z</DemoBaselineRoot><DemoReleaseRoot>C:\deploy\IntradayPlatform\releases\lmax-demo-cycle-c81b739c</DemoReleaseRoot><DemoOverlayRoot>C:\deploy\IntradayPlatform\staging\lmax-continuing-qualification-20260916</DemoOverlayRoot></PropertyGroup>
+<PropertyGroup><AssemblyName>QQ.Production.Intraday.Infrastructure.Simulator</AssemblyName></PropertyGroup>
+<ItemGroup>
+<Compile Include="$(DemoBaselineRoot)/src/QQ.Production.Intraday.Infrastructure.Simulator/FakeLmaxGateway.cs" />
+<Compile Include="$(DemoOverlayRoot)/src/QQ.Production.Intraday.Infrastructure.Simulator/LmaxDemoStrategyBridge.cs" />
+<Compile Include="$(DemoOverlayRoot)/src/QQ.Production.Intraday.Infrastructure.Simulator/LmaxDemoContinuingGateway.cs" />
+<ProjectReference Include="../Application/Application.Qualification.csproj" />
+<ProjectReference Include="../Connectivity/Connectivity.Qualification.csproj" />
+<Reference Include="QQ.Production.Intraday.Domain"><HintPath>$(DemoReleaseRoot)/QQ.Production.Intraday.Domain.dll</HintPath></Reference>
+</ItemGroup>
+</Project>
