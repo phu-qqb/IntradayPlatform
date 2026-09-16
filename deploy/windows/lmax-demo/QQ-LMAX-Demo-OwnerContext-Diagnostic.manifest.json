@@ -9,11 +9,13 @@
     "uri": "\\QQ-LMAX-Demo-OwnerContext-Diagnostic",
     "principal": "Administrator",
     "logon_type": "Password",
-    "execution_policy": "AllSigned",
+    "execution_policy": "Bypass",
     "working_directory": "C:\\deploy\\IntradayPlatform\\operator\\lmax-demo-orchestration\\activation",
     "has_automatic_trigger": false,
     "may_start_worker": false,
-    "may_send_lmax_order": false
+    "may_send_lmax_order": false,
+    "execution_policy_scope": "Task action only; no system execution-policy change.",
+    "protected_activation_directory_required": true
   },
   "result": {
     "path": "C:\\deploy\\IntradayPlatform\\operator\\lmax-demo-orchestration\\activation\\owner-context-result.json",
@@ -35,9 +37,10 @@
   },
   "release_receipt_requirements": [
     "Record the source commit and source blob identifiers.",
-    "Record the deployed signed script SHA-256 and task XML SHA-256.",
-    "Verify Get-AuthenticodeSignature Status=Valid under the Administrator Password-logon task context.",
-    "Verify the signer is trusted by that context before running the task.",
-    "Do not substitute Bypass, Set-ExecutionPolicy, a self-signed certificate, copied credentials, or a global trust-policy change."
+    "Record the deployed script SHA-256 and task XML SHA-256.",
+    "Verify the activation directory ACL remains restricted to Administrator, BUILTIN\\\\Administrators and SYSTEM before registration.",
+    "Verify the registered task action is exactly this manifest's Bypass action and working directory.",
+    "Verify the task creates the required result receipt and reports no_worker_started=true.",
+    "Do not alter global execution policy, copy credentials, create a certificate, or reuse this task for Worker or order execution."
   ]
 }
