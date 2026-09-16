@@ -1,0 +1,46 @@
+{
+  "schema_version": "qq_lmax_demo_owner_context_diagnostic_manifest_v1",
+  "scope": "read_only_owner_context_preflight",
+  "source": {
+    "script_path": "deploy/windows/lmax-demo/Test-LmaxDemoOwnerContext.ps1",
+    "task_xml_path": "deploy/windows/lmax-demo/QQ-LMAX-Demo-OwnerContext-Diagnostic.xml"
+  },
+  "task": {
+    "uri": "\\QQ-LMAX-Demo-OwnerContext-Diagnostic",
+    "principal": "Administrator",
+    "logon_type": "Password",
+    "execution_policy": "Bypass",
+    "working_directory": "C:\\deploy\\IntradayPlatform\\operator\\lmax-demo-orchestration\\activation",
+    "has_automatic_trigger": false,
+    "may_start_worker": false,
+    "may_send_lmax_order": false,
+    "execution_policy_scope": "Task action only; no system execution-policy change.",
+    "protected_activation_directory_required": true
+  },
+  "result": {
+    "path": "C:\\deploy\\IntradayPlatform\\operator\\lmax-demo-orchestration\\activation\\owner-context-result.json",
+    "schema_version": "lmax_demo_owner_context_result_v1",
+    "required_fields": [
+      "status",
+      "failure_code",
+      "identity",
+      "sid",
+      "localdb_instance",
+      "database",
+      "localdb_instance_visible",
+      "sql_access_verified",
+      "broker_gui_authenticated",
+      "no_worker_started",
+      "started_at_utc",
+      "completed_at_utc"
+    ]
+  },
+  "release_receipt_requirements": [
+    "Record the source commit and source blob identifiers.",
+    "Record the deployed script SHA-256 and task XML SHA-256.",
+    "Verify the activation directory ACL remains restricted to Administrator, BUILTIN\\\\Administrators and SYSTEM before registration.",
+    "Verify the registered task action is exactly this manifest's Bypass action and working directory.",
+    "Verify the task creates the required result receipt and reports no_worker_started=true.",
+    "Do not alter global execution policy, copy credentials, create a certificate, or reuse this task for Worker or order execution."
+  ]
+}

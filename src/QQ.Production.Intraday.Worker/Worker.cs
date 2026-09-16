@@ -1,14 +1,29 @@
 using QQ.Production.Intraday.Application;
 using QQ.Production.Intraday.Domain;
 using QQ.Production.Intraday.Infrastructure.PostgreSql;
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json;
 
 namespace QQ.Production.Intraday.Worker;
 
-public sealed class Worker(IServiceScopeFactory scopeFactory, IConfiguration configuration, ILogger<Worker> logger) : BackgroundService
+public sealed class Worker(
+    IServiceScopeFactory scopeFactory,
+    IConfiguration configuration,
+    ILogger<Worker> logger,
+    IHostApplicationLifetime applicationLifetime) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         var pollInterval = configuration.GetValue("Worker:PollInterval", TimeSpan.FromMinutes(15));
+        var lmaxDemoCycleEnabled = configuration.GetValue("LmaxDemoCycle:Enabled", false);
+        if (lmaxDemoCycleEnabled)
+        {
+            await RunLmaxDemoCycleAsync(stoppingToken);
+            applicationLifetime.StopApplication();
+            return;
+        }
+
         if (configuration.GetValue("Worker:ProcessImmediatelyOnStartup", true))
         {
             await IngestLmaxCanonicalSnapshotsIfEnabled(stoppingToken);
@@ -33,6 +48,247 @@ public sealed class Worker(IServiceScopeFactory scopeFactory, IConfiguration con
             await RunIntradaySchedulerIfEnabled(stoppingToken);
         }
     }
+
+    private async Task RunLmaxDemoCycleAsync(CancellationToken cancellationToken)
+    {
+        var manifestPath = configuration["LmaxDemoCycle:ManifestPath"]
+            ?? throw new InvalidOperationException("LMAX_DEMO_CYCLE_MANIFEST_PATH_REQUIRED");
+        var manifestFullPath = Path.GetFullPath(manifestPath);
+        if (!File.Exists(manifestFullPath))
+            throw new InvalidOperationException("LMAX_DEMO_CYCLE_MANIFEST_NOT_FOUND");
+
+        var manifestBytes = await File.ReadAllBytesAsync(manifestFullPath, cancellationToken);
+        var manifestSha256 = Convert.ToHexString(SHA256.HashData(manifestBytes));
+        var resultPath = manifestFullPath + ".result.json";
+        var attemptPath = manifestFullPath + ".attempt.json";
+        if (File.Exists(resultPath))
+        {
+            var prior = await File.ReadAllTextAsync(resultPath, cancellationToken);
+            using var resultDocument = JsonDocument.Parse(prior);
+            var resultRoot = resultDocument.RootElement;
+            var resultManifestSha256 = resultRoot.TryGetProperty("manifestSha256", out var shaProperty)
+                ? shaProperty.GetString()
+                : null;
+            if (!string.Equals(resultManifestSha256, manifestSha256, StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException("LMAX_DEMO_CYCLE_RESULT_MANIFEST_MISMATCH");
+
+            var status = resultRoot.TryGetProperty("status", out var statusProperty)
+                ? statusProperty.GetString()
+                : null;
+            if (string.Equals(status, "Completed", StringComparison.Ordinal))
+            {
+                logger.LogInformation("LMAX Demo cycle manifest was already finalized: ManifestPath={ManifestPath} ManifestSha256={ManifestSha256}",
+                    manifestFullPath, manifestSha256);
+                return;
+            }
+
+            throw new InvalidOperationException("LMAX_DEMO_CYCLE_RESULT_RECONCILIATION_REQUIRED");
+        }
+
+        if (File.Exists(attemptPath))
+        {
+            var priorAttempt = await File.ReadAllTextAsync(attemptPath, cancellationToken);
+            using var attemptDocument = JsonDocument.Parse(priorAttempt);
+            var attemptManifestSha256 = attemptDocument.RootElement.TryGetProperty("manifestSha256", out var shaProperty)
+                ? shaProperty.GetString()
+                : null;
+            if (!string.Equals(attemptManifestSha256, manifestSha256, StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException("LMAX_DEMO_CYCLE_ATTEMPT_MANIFEST_MISMATCH");
+
+            // A process death after the bridge call is not distinguishable from a
+            // pre-send death.  Do not make a second external attempt automatically.
+            throw new InvalidOperationException("LMAX_DEMO_CYCLE_PRIOR_ATTEMPT_UNRESOLVED");
+        }
+
+        LmaxDemoCycleManifest manifest;
+        var cycleId = manifestBytes.Length == 0 ? "unknown" : TryReadCycleId(manifestBytes);
+        await WriteCycleAttemptAsync(attemptPath, manifestSha256, cycleId, cancellationToken);
+        try
+        {
+            manifest = JsonSerializer.Deserialize<LmaxDemoCycleManifest>(manifestBytes, JsonOptions)
+                ?? throw new InvalidOperationException("LMAX_DEMO_CYCLE_MANIFEST_INVALID");
+            ValidateManifest(manifest);
+
+            using var scope = scopeFactory.CreateScope();
+            var coordinator = scope.ServiceProvider.GetRequiredService<ILmaxDemoCycleCoordinator>();
+            var result = await coordinator.RunAsync(ToRequest(manifest), cancellationToken);
+            await WriteCycleResultAsync(resultPath, manifestSha256, Required(manifest.CycleId, "CycleId"), "Completed", result, null, cancellationToken);
+            logger.LogInformation(
+                "LMAX Demo cycle completed: CycleId={CycleId} BatchId={BatchId} ModelRunId={ModelRunId} ProcessingStatus={ProcessingStatus}",
+                result.CycleId,
+                result.PortfolioWeights.Batch.Id.Value,
+                result.Promotion?.ModelRunId?.Value,
+                result.Processing?.Status);
+            File.Delete(attemptPath);
+        }
+        catch (Exception exception)
+        {
+            await WriteCycleResultAsync(resultPath, manifestSha256, cycleId, "ReconciliationRequired", null, exception.GetType().Name + ":" + exception.Message, cancellationToken);
+            throw;
+        }
+    }
+
+    private static readonly JsonSerializerOptions JsonOptions = new()
+    {
+        PropertyNameCaseInsensitive = true,
+        WriteIndented = true
+    };
+
+    private static LmaxDemoCycleCoordinatorRequest ToRequest(LmaxDemoCycleManifest manifest)
+        => new(
+            Required(manifest.CycleId, "CycleId"),
+            new LmaxCanonicalSnapshotIngestionRequest(
+                Required(manifest.CaptureRunRoot, "CaptureRunRoot"),
+                Required(manifest.ExpectedFinalManifestSha256, "ExpectedFinalManifestSha256"),
+                manifest.DecisionAtUtc,
+                TimeSpan.FromSeconds(manifest.MaximumSourceAgeSeconds)),
+            new LegacyAnubisPortfolioWeightIngestionRequest(
+                RequiredProgrammes(manifest.Programmes).Select(ToContribution).ToArray(),
+                Required(manifest.FundCode, "FundCode"),
+                Required(manifest.ModelName, "ModelName"),
+                manifest.DecisionAtUtc,
+                manifest.EffectiveAtUtc,
+                manifest.NavUsd,
+                manifest.TargetQuantityMode));
+
+    private static LegacyAnubisProgrammeContribution ToContribution(LmaxDemoCycleProgrammeManifest programme)
+        => new(
+            Required(programme.ProgramName, "ProgramName"),
+            programme.UniverseId,
+            programme.ModelId,
+            Required(programme.Session, "Session"),
+            programme.FrequencyMinutes,
+            programme.Coefficient,
+            programme.State,
+            programme.AsOfUtc,
+            programme.ExecDeskWeightFilePath,
+            programme.ExpectedExecDeskWeightFileSha256,
+            programme.AggregatedWeightsFilePath,
+            programme.ExpectedAggregatedWeightsFileSha256,
+            programme.Reason);
+
+    private static void ValidateManifest(LmaxDemoCycleManifest manifest)
+    {
+        if (!string.Equals(manifest.SchemaVersion, "lmax-demo-cycle-v1", StringComparison.Ordinal))
+            throw new InvalidOperationException("LMAX_DEMO_CYCLE_SCHEMA_VERSION_INVALID");
+        if (string.IsNullOrWhiteSpace(manifest.CycleId))
+            throw new InvalidOperationException("LMAX_DEMO_CYCLE_ID_REQUIRED");
+        if (manifest.DecisionAtUtc.Offset != TimeSpan.Zero || manifest.EffectiveAtUtc.Offset != TimeSpan.Zero ||
+            manifest.EffectiveAtUtc < manifest.DecisionAtUtc)
+            throw new InvalidOperationException("LMAX_DEMO_CYCLE_TIMESTAMPS_UTC_REQUIRED");
+        if (manifest.MaximumSourceAgeSeconds <= 0 || manifest.NavUsd <= 0)
+            throw new InvalidOperationException("LMAX_DEMO_CYCLE_NUMERICAL_CONFIGURATION_INVALID");
+        RequiredProgrammes(manifest.Programmes);
+    }
+
+    private static async Task WriteCycleResultAsync(
+        string resultPath,
+        string manifestSha256,
+        string cycleId,
+        string status,
+        LmaxDemoCycleCoordinatorResult? result,
+        string? error,
+        CancellationToken cancellationToken)
+    {
+        var output = new
+        {
+            schemaVersion = "lmax-demo-cycle-result-v1",
+            cycleId,
+            status,
+            manifestSha256,
+            completedAtUtc = DateTimeOffset.UtcNow,
+            batchId = result?.PortfolioWeights.Batch.Id.Value,
+            modelRunId = result?.Promotion?.ModelRunId?.Value,
+            validationSucceeded = result?.Validation.Succeeded,
+            processingStatus = result?.Processing?.Status.ToString(),
+            processingBlockedReason = result?.Processing?.BlockedReason?.ToString(),
+            processingMessage = result?.Processing?.Message,
+            orderCount = result?.Processing?.OrderCount,
+            executionReportCount = result?.Processing?.ExecutionReportCount,
+            fillCount = result?.Processing?.FillCount,
+            reconciliationBreakCount = result?.Processing?.ReconciliationBreakCount,
+            error
+        };
+        var tempPath = resultPath + ".tmp";
+        await File.WriteAllTextAsync(tempPath, JsonSerializer.Serialize(output, JsonOptions), Encoding.UTF8, cancellationToken);
+        File.Move(tempPath, resultPath, overwrite: false);
+    }
+
+    private static async Task WriteCycleAttemptAsync(
+        string attemptPath,
+        string manifestSha256,
+        string cycleId,
+        CancellationToken cancellationToken)
+    {
+        var output = new
+        {
+            schemaVersion = "lmax-demo-cycle-attempt-v1",
+            cycleId,
+            manifestSha256,
+            startedAtUtc = DateTimeOffset.UtcNow,
+            automaticRetryAllowed = false,
+            reconciliationRequiredOnInterruption = true
+        };
+        var tempPath = attemptPath + ".tmp";
+        await File.WriteAllTextAsync(tempPath, JsonSerializer.Serialize(output, JsonOptions), Encoding.UTF8, cancellationToken);
+        File.Move(tempPath, attemptPath, overwrite: false);
+    }
+
+    private static string Required(string? value, string name)
+        => !string.IsNullOrWhiteSpace(value) ? value : throw new InvalidOperationException($"LMAX_DEMO_CYCLE_{name.ToUpperInvariant()}_REQUIRED");
+
+    private static IReadOnlyList<LmaxDemoCycleProgrammeManifest> RequiredProgrammes(
+        IReadOnlyList<LmaxDemoCycleProgrammeManifest>? programmes)
+    {
+        var required = new[] { "INFX7", "INFX8", "INFX9", "INFX10" };
+        if (programmes is null || programmes.Count != required.Length ||
+            required.Any(name => programmes.Count(programme =>
+                string.Equals(programme.ProgramName, name, StringComparison.Ordinal)) != 1))
+            throw new InvalidOperationException("LMAX_DEMO_CYCLE_PROGRAMME_SET_INVALID");
+
+        return programmes;
+    }
+
+    private static string TryReadCycleId(byte[] manifestBytes)
+    {
+        try
+        {
+            return JsonSerializer.Deserialize<LmaxDemoCycleManifest>(manifestBytes, JsonOptions)?.CycleId ?? "unknown";
+        }
+        catch (JsonException)
+        {
+            return "unknown";
+        }
+    }
+
+    private sealed record LmaxDemoCycleManifest(
+        string? SchemaVersion,
+        string? CycleId,
+        string? CaptureRunRoot,
+        string? ExpectedFinalManifestSha256,
+        DateTimeOffset DecisionAtUtc,
+        DateTimeOffset EffectiveAtUtc,
+        int MaximumSourceAgeSeconds,
+        string? FundCode,
+        string? ModelName,
+        decimal NavUsd,
+        TargetQuantityMode TargetQuantityMode,
+        IReadOnlyList<LmaxDemoCycleProgrammeManifest>? Programmes);
+
+    private sealed record LmaxDemoCycleProgrammeManifest(
+        string? ProgramName,
+        int UniverseId,
+        int ModelId,
+        string? Session,
+        int FrequencyMinutes,
+        decimal Coefficient,
+        LegacyAnubisProgrammeContributionState State,
+        DateTimeOffset? AsOfUtc,
+        string? ExecDeskWeightFilePath,
+        string? ExpectedExecDeskWeightFileSha256,
+        string? AggregatedWeightsFilePath,
+        string? ExpectedAggregatedWeightsFileSha256,
+        string? Reason);
 
     private async Task IngestLmaxCanonicalSnapshotsIfEnabled(CancellationToken cancellationToken)
     {
