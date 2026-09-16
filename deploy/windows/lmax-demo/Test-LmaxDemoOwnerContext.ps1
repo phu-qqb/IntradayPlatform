@@ -80,7 +80,7 @@ try {
     $result['worker_release_visible'] = $true
     $config = Get-Content -LiteralPath $configPath -Raw | ConvertFrom-Json
     $connection = [string]$config.ConnectionStrings.IntradaySqlServer
-    if ($connection -notmatch '(?i)localdb|Trusted_Connection\s*=\s*True|Integrated Security\s*=\s*True') {
+    if ($connection -notmatch '(?i)\(localdb\)\\' -or $connection -notmatch '(?i)(?:Trusted_Connection|Integrated Security)\s*=\s*True') {
         throw 'LMAX_DEMO_OWNER_CONTEXT_NOT_LOCALDB_INTEGRATED'
     }
 
