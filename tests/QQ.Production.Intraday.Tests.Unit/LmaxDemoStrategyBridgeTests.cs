@@ -44,6 +44,37 @@ public sealed class LmaxDemoStrategyBridgeTests
     }
 
     [Fact]
+    public async Task TwoInstrumentsInOneModelRun_UseDifferentFixIdentities()
+    {
+        var fixture = Fixture();
+        var session = new CapturingSession();
+        var gateway = new LmaxDemoStrategyVenueExecutionGateway(fixture.Repository, fixture.Options, session, fixture.Clock);
+        await gateway.SendOrderAsync(fixture.Request, CancellationToken.None);
+        var firstRoot = session.Request!.RootClientOrderId;
+
+        var now = fixture.Clock.UtcNow;
+        var venueId = fixture.Request.VenueId;
+        var instrument = fixture.Instrument with { Id = new InstrumentId(Guid.NewGuid()), Symbol = "GBPUSD", BaseCurrency = new Currency("GBP") };
+        fixture.State.Instruments.Add(instrument);
+        var mapping = fixture.State.VenueInstrumentMappings.Single(x => x.InstrumentId == fixture.Instrument.Id && x.VenueId == venueId);
+        fixture.State.VenueInstrumentMappings.Add(mapping with { Id = new VenueInstrumentId(Guid.NewGuid()), InstrumentId = instrument.Id, VenueSymbol = "GBPUSD", VenueInstrumentCode = "GBP/USD" });
+        fixture.State.InstrumentAliases.Add(new InstrumentAlias(new InstrumentAliasId(Guid.NewGuid()), instrument.Id, "LMAX_REPORT", "GBP/USD", "SIMULATED-GBPUSD", true, now));
+        fixture.Options.DemoBrokerStateAttestationInstruments = "EURUSD,GBPUSD";
+        fixture.State.TargetPositions.Add(new TargetPosition(fixture.Run.Id, instrument.Id, 1_100m, 1_000m, 0.1m, TargetQuantityMode.FxBaseCurrencyQuantity));
+        var intent = new TradeIntent(TradeIntentId.New(), fixture.Run.Id, fixture.Fund.Id, instrument.Id, TradeSide.Buy, 1_000m, 0.1m, "Model drift", TradeIntentStatus.Ordered, now);
+        var parent = new ParentOrder(ParentOrderId.New(), intent.Id, new ClientOrderId("PSECOND"), OrderSide.Buy, 1_000m, ExecutionAlgo.CloseSeeking15m, OrderStatus.Created, now);
+        var child = new ChildOrder(ChildOrderId.New(), parent.Id, venueId, new ClientOrderId("CSECOND"), OrderSide.Buy, OrderType.Limit, TimeInForce.GFD, 1_000m, 0.1m, OrderStatus.PendingNew, now);
+        fixture.State.TradeIntents.Add(intent);
+        fixture.State.ParentOrders.Add(parent);
+        fixture.State.ChildOrders.Add(child);
+        fixture.State.MarketData.Add(new MarketDataSnapshot(MarketDataSnapshotId.New(), instrument.Id, venueId, 1.1m, 1.1001m, null, "LMAX Demo", now, now));
+        await gateway.SendOrderAsync(new VenueOrderRequest(child.Id, venueId, instrument.Id, child.ClientOrderId, child.Side, child.OrderType, child.TimeInForce, child.BaseQuantity, child.VenueQuantity), CancellationToken.None);
+
+        Assert.Equal(2, session.SendCount);
+        Assert.NotEqual(firstRoot, session.Request!.RootClientOrderId);
+    }
+
+    [Fact]
     public async Task DuplicateEconomicParent_IsBlockedBeforeSecondVenueSend()
     {
         var fixture = Fixture();

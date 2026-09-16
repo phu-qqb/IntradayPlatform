@@ -125,10 +125,8 @@ public sealed partial class RawLmaxFixSessionClient : ILmaxDemoStrategySession
         var sender = options.FixUsername!;
         var sideFix = request.Side == LmaxFixDemoOrderSide.Buy ? "1" : "2";
         var sequenceNumber = 1;
-        decimal cumQty = 0m;
-        decimal leavesQty = request.VenueQuantity;
+        var lifecycle = new LmaxDemoParentLifecycle(request.VenueQuantity);
         string? brokerOrderId = null;
-        string? workingClOrdId = null;
         var childSequence = 0;
 
         using var tcp = new TcpClient();
@@ -152,7 +150,7 @@ public sealed partial class RawLmaxFixSessionClient : ILmaxDemoStrategySession
 
         async Task ReadUntilAsync(DateTimeOffset deadlineUtc, bool stopOnCancel)
         {
-            while (DateTimeOffset.UtcNow < deadlineUtc && leavesQty > 0m && !cancellationToken.IsCancellationRequested)
+            while (DateTimeOffset.UtcNow < deadlineUtc && lifecycle.WorkingClientOrderId is not null && !cancellationToken.IsCancellationRequested)
             {
                 var remaining = deadlineUtc - DateTimeOffset.UtcNow;
                 using var wait = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -166,11 +164,13 @@ public sealed partial class RawLmaxFixSessionClient : ILmaxDemoStrategySession
                     if (msgType == "8")
                     {
                         var normalized = LmaxFixRecoveryCodec.NormalizeExecutionReport(message, options).Report;
+                        if (normalized.Account != request.Account || normalized.SecurityId != request.SecurityId
+                            || normalized.SideRaw != sideFix)
+                            throw new InvalidOperationException("DEMO_STRATEGY_REPORT_SCOPE_MISMATCH");
+                        if (!lifecycle.Observe(normalized)) continue;
                         reports.Add(normalized);
                         brokerOrderId ??= normalized.OrderId;
-                        if (normalized.CumQty.HasValue) cumQty = Math.Max(cumQty, normalized.CumQty.Value);
-                        if (normalized.LeavesQty.HasValue) leavesQty = Math.Max(0m, normalized.LeavesQty.Value);
-                        if (normalized.OrdStatus is LmaxFixOrderStatus.Filled or LmaxFixOrderStatus.Rejected or LmaxFixOrderStatus.Expired)
+                        if (lifecycle.WorkingClientOrderId is null)
                             return;
                         if (stopOnCancel && normalized.OrdStatus == LmaxFixOrderStatus.Canceled)
                             return;
@@ -190,14 +190,17 @@ public sealed partial class RawLmaxFixSessionClient : ILmaxDemoStrategySession
         async Task SubmitLimitAsync(LmaxDemoStrategyPhase phase, decimal price, DateTimeOffset untilUtc)
         {
             phases.Add(phase);
+            if (DateTimeOffset.UtcNow >= request.TargetCloseUtc) throw new InvalidOperationException("DEMO_STRATEGY_TARGET_DEADLINE_EXPIRED");
             childSequence++;
-            workingClOrdId = ChildClOrdId(request.RootClientOrderId, childSequence, phase == LmaxDemoStrategyPhase.PassivePosted ? "P" : "R");
+            var workingClOrdId = ChildClOrdId(request.RootClientOrderId, childSequence, phase == LmaxDemoStrategyPhase.PassivePosted ? "P" : "R");
+            var leavesQty = lifecycle.RemainingQuantity;
             var child = new LmaxFixDemoOrderRequest(
                 request.InstrumentSymbol, request.SecurityId, request.Side,
                 LmaxFixDemoOrderType.Limit, LmaxFixDemoOrderTimeInForce.Day,
                 leavesQty, price, options.MaxDemoOrderNotionalUsd, workingClOrdId,
                 request.Account, true, false, request.MaxWaitSeconds, request.ShowFixMessages);
             var fix = LmaxFixRecoveryCodec.BuildNewOrderSingle(sender, target, sequenceNumber++, child, workingClOrdId, options.FixSecurityIdSource);
+            lifecycle.RegisterChild(workingClOrdId, leavesQty);
             await WriteAsciiAsync(stream, fix, cancellationToken);
             diagnostics.Add($"{phase}: NewOrderSingle sent; quantity={leavesQty}; price={price}");
             await ReadUntilAsync(untilUtc, stopOnCancel: false);
@@ -205,20 +208,26 @@ public sealed partial class RawLmaxFixSessionClient : ILmaxDemoStrategySession
 
         async Task CancelWorkingAsync()
         {
-            if (string.IsNullOrWhiteSpace(workingClOrdId) || leavesQty <= 0m) return;
+            var workingClOrdId = lifecycle.WorkingClientOrderId;
+            if (workingClOrdId is null) return;
+            var leavesQty = lifecycle.WorkingLeavesQuantity;
             var cancelId = ChildClOrdId(request.RootClientOrderId, ++childSequence, "X");
             var cancel = LmaxFixRecoveryCodec.BuildOrderCancelRequest(
                 sender, target, sequenceNumber++, cancelId, workingClOrdId,
-                request.InstrumentSymbol, sideFix, leavesQty, request.SecurityId, options.FixSecurityIdSource);
+                request.InstrumentSymbol, sideFix, lifecycle.WorkingOrderQuantity, request.SecurityId, options.FixSecurityIdSource);
+            lifecycle.RegisterCancel(cancelId, workingClOrdId);
             await WriteAsciiAsync(stream, cancel, cancellationToken);
             diagnostics.Add($"Cancel sent for residual={leavesQty}");
             await ReadUntilAsync(DateTimeOffset.UtcNow.AddSeconds(Math.Max(1, options.RequestTimeoutSeconds)), stopOnCancel: true);
-            workingClOrdId = null;
+            if (lifecycle.WorkingClientOrderId is not null)
+                throw new InvalidOperationException("DEMO_STRATEGY_CANCEL_UNCONFIRMED_RECONCILIATION_REQUIRED");
         }
 
         async Task SubmitResidualAsync()
         {
+            var leavesQty = lifecycle.RemainingQuantity;
             if (leavesQty <= 0m) return;
+            if (DateTimeOffset.UtcNow >= request.TargetCloseUtc) throw new InvalidOperationException("DEMO_STRATEGY_TARGET_DEADLINE_EXPIRED");
             phases.Add(LmaxDemoStrategyPhase.AggressiveResidual);
             childSequence++;
             var residualId = ChildClOrdId(request.RootClientOrderId, childSequence, "A");
@@ -228,6 +237,7 @@ public sealed partial class RawLmaxFixSessionClient : ILmaxDemoStrategySession
                 leavesQty, null, options.MaxDemoOrderNotionalUsd, residualId,
                 request.Account, true, false, request.MaxWaitSeconds, request.ShowFixMessages);
             var fix = LmaxFixRecoveryCodec.BuildNewOrderSingle(sender, target, sequenceNumber++, residual, residualId, options.FixSecurityIdSource);
+            lifecycle.RegisterChild(residualId, leavesQty);
             await WriteAsciiAsync(stream, fix, cancellationToken);
             diagnostics.Add($"Aggressive residual sent; quantity={leavesQty}");
             await ReadUntilAsync(DateTimeOffset.UtcNow.AddSeconds(Math.Max(1, request.MaxWaitSeconds)), stopOnCancel: false);
@@ -242,21 +252,24 @@ public sealed partial class RawLmaxFixSessionClient : ILmaxDemoStrategySession
             await SubmitLimitAsync(phase, LmaxDemoStrategyPolicy.PassivePrice(request.Side, quote, request.PriceTickSize), request.TargetCloseUtc.AddMinutes(-5));
         }
 
-        if (leavesQty > 0m && DateTimeOffset.UtcNow < request.TargetCloseUtc.AddMinutes(-1))
+        if (lifecycle.RemainingQuantity > 0m && DateTimeOffset.UtcNow < request.TargetCloseUtc.AddMinutes(-1))
         {
             await CancelWorkingAsync();
-            var quote = await GetTopOfBookAsync(options, request.MaxMarketDataAge, cancellationToken);
-            quotes.Add(quote);
-            await SubmitLimitAsync(LmaxDemoStrategyPhase.PassiveReprice, LmaxDemoStrategyPolicy.Reprice(request.Side, quote, request.PriceTickSize), request.TargetCloseUtc.AddMinutes(-1));
+            if (lifecycle.RemainingQuantity > 0m)
+            {
+                var quote = await GetTopOfBookAsync(options, request.MaxMarketDataAge, cancellationToken);
+                quotes.Add(quote);
+                await SubmitLimitAsync(LmaxDemoStrategyPhase.PassiveReprice, LmaxDemoStrategyPolicy.Reprice(request.Side, quote, request.PriceTickSize), request.TargetCloseUtc.AddMinutes(-1));
+            }
         }
 
-        if (leavesQty > 0m)
+        if (lifecycle.RemainingQuantity > 0m)
         {
             await CancelWorkingAsync();
             await SubmitResidualAsync();
         }
 
-        phases.Add(LmaxDemoStrategyPhase.Complete);
+        if (lifecycle.AllChildrenTerminal) phases.Add(LmaxDemoStrategyPhase.Complete);
         try
         {
             await TrySendLogoutAsync(stream, options, target, sequenceNumber, diagnostics, "DemoStrategy", sender, CancellationToken.None);
@@ -264,8 +277,8 @@ public sealed partial class RawLmaxFixSessionClient : ILmaxDemoStrategySession
         catch { }
 
         return new LmaxDemoStrategyExecutionResult(
-            reports, phases, quotes, request.VenueQuantity, cumQty, leavesQty,
-            leavesQty == 0m || reports.Any(x => x.OrdStatus is LmaxFixOrderStatus.Filled or LmaxFixOrderStatus.Rejected or LmaxFixOrderStatus.Expired),
+            reports, phases, quotes, request.VenueQuantity, lifecycle.CumulativeQuantity, lifecycle.RemainingQuantity,
+            lifecycle.AllChildrenTerminal,
             brokerOrderId, startedAt, DateTimeOffset.UtcNow, diagnostics);
     }
 
@@ -289,6 +302,8 @@ public sealed partial class RawLmaxFixSessionClient : ILmaxDemoStrategySession
     {
         if (request.TargetKnownAtUtc.Offset != TimeSpan.Zero || request.TargetCloseUtc.Offset != TimeSpan.Zero || request.TargetKnownAtUtc > request.TargetCloseUtc)
             throw new InvalidOperationException("DEMO_STRATEGY_TARGET_TIME_INVALID");
+        if (DateTimeOffset.UtcNow >= request.TargetCloseUtc)
+            throw new InvalidOperationException("DEMO_STRATEGY_TARGET_DEADLINE_EXPIRED");
         if (request.VenueQuantity <= 0m || request.VenueQuantity > options.MaxDemoOrderQuantity)
             throw new InvalidOperationException("DEMO_STRATEGY_QUANTITY_OUTSIDE_CONFIGURED_DEMO_LIMIT");
         if (request.PriceTickSize <= 0m) throw new InvalidOperationException("DEMO_STRATEGY_PRICE_TICK_INVALID");
