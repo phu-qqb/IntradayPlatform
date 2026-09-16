@@ -92,7 +92,9 @@ public sealed class LmaxDemoStrategyVenueExecutionGateway(
         requestOptions.LmaxInstrumentId = securityId;
         requestOptions.LmaxSlashSymbol = mapping.VenueInstrumentCode;
 
-        var rootClOrdId = $"DS{run.Id.Value:N}"[..18];
+        // A ModelRun contains several instruments. Bind the FIX identity to the
+        // persisted child, not a run prefix shared by every instrument.
+        var rootClOrdId = $"DS{child.Id.Value:N}"[..18];
         var execution = await session.ExecuteStrategyParentAsync(
             requestOptions,
             new LmaxDemoStrategyExecutionRequest(
