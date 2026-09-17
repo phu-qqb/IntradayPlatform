@@ -33,6 +33,14 @@ internal static class Program
             Runtime.VerifyLocal();
             if (command == "inspect-worker") { await SessionBindings.Inspect(); return 0; }
             if (command == "start-worker") { await SessionBindings.Start(Arg("--observation")); return 0; }
+            if (command == "verify-capture-credentials")
+            {
+                await Runtime.VerifyRole();
+                var credentials = await Runtime.CaptureCredentials();
+                credentials.Clear();
+                Console.WriteLine("DEMO_CAPTURE_CREDENTIAL_BINDINGS_VERIFIED_NO_ORDER");
+                return 0;
+            }
             if (command == "verify-runtime")
             {
                 await Runtime.VerifyTransport();
@@ -40,18 +48,14 @@ internal static class Program
                 return 0;
             }
             Files.Require(command is "prepare-cycle" or "run-day", "UNKNOWN_COMMAND");
-            using var mutex = new Mutex(false, @"Global\QQ-LMAX-Demo-Day-Launcher");
-            Files.Require(mutex.WaitOne(0), "DEMO_DAY_LAUNCHER_ALREADY_RUNNING");
-            try
+            // File ownership survives await continuations and is released on process exit.
+            using var lease = Runtime.AcquireLauncherLease(Path.Combine(Runtime.Root, "launcher.lock"));
+            if (command == "prepare-cycle")
             {
-                if (command == "prepare-cycle")
-                {
-                    await Pipeline.Prepare(Files.Utc(Arg("--cutoff")));
-                    Console.WriteLine("PREPARED_ONLY_NO_WORKER_HANDOFF");
-                }
-                else await RunDay(Arg("--session-id"));
+                await Pipeline.Prepare(Files.Utc(Arg("--cutoff")));
+                Console.WriteLine("PREPARED_ONLY_NO_WORKER_HANDOFF");
             }
-            finally { mutex.ReleaseMutex(); }
+            else await RunDay(Arg("--session-id"));
             return 0;
         }
         catch (Exception error)

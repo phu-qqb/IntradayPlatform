@@ -73,6 +73,18 @@ internal static class SelfTests
         Reject(() => SessionBindings.ValidateObservation(observation, t.AddSeconds(901)), "STALE_START_OBSERVATION");
         Reject(() => SessionBindings.ValidateObservation(observation with { Simulated = true }, t), "SIMULATED_START");
         Reject(() => SessionBindings.ValidateObservation(observation with { ObservedNoWorkingOrders = false }, t), "UNKNOWN_WORKING_ORDERS");
+        var captureSecret = JsonSerializer.Serialize(new Dictionary<string, string>
+        {
+            ["LMAX_DEMO_SENDER_COMP_ID"] = "simulated-sender", ["LMAX_DEMO_TARGET_COMP_ID"] = "simulated-target",
+            ["LMAX_DEMO_FIX_USERNAME"] = "simulated-user", ["LMAX_DEMO_FIX_PASSWORD"] = "simulated-not-a-credential"
+        });
+        var captureBindings = Runtime.BindCaptureCredentials(captureSecret);
+        Check(captureBindings.Count == 4 && captureBindings["LMAX_DEMO_FIX_USERNAME"] == "simulated-user", "CAPTURE_JSON_BINDINGS");
+        Check(Runtime.BindCaptureCredentials(" \n\uFEFF" + captureSecret).OrderBy(x => x.Key).SequenceEqual(captureBindings.OrderBy(x => x.Key)), "CAPTURE_NATIVE_BOM");
+        Reject(() => Runtime.BindCaptureCredentials("unknown-prefix" + captureSecret), "CAPTURE_UNKNOWN_PREFIX");
+        Reject(() => Runtime.BindCaptureCredentials("{}"), "CAPTURE_MISSING_BINDINGS");
+        var awsInfo = Runtime.StartInfo("aws.exe", ["--version"]);
+        Check(awsInfo.StandardOutputEncoding?.CodePage == 65001 && awsInfo.Environment["PYTHONIOENCODING"] == "utf-8", "AWS_UTF8_TRANSPORT");
         var temp = Path.Combine(Path.GetTempPath(), "lmax-launcher-self-test-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(temp);
         try
@@ -82,6 +94,12 @@ internal static class SelfTests
             var before = Files.Hash(path);
             try { Files.Atomic(path, new { value = 2 }); throw new Exception("OVERWRITE_ACCEPTED"); } catch (IOException) { checks++; }
             Check(Files.Hash(path) == before, "IMMUTABLE_FILE");
+            var leasePath = Path.Combine(temp, "launcher.lock");
+            var lease = Runtime.AcquireLauncherLease(leasePath);
+            try { Reject(() => { using var duplicate = Runtime.AcquireLauncherLease(leasePath); }, "DUPLICATE_LAUNCHER"); }
+            finally { Task.Run(() => lease.Dispose()).GetAwaiter().GetResult(); }
+            using var reacquired = Runtime.AcquireLauncherLease(leasePath);
+            Check(reacquired.CanWrite, "LEASE_RELEASED_ON_ANOTHER_THREAD");
         }
         finally { Directory.Delete(temp, true); }
         Console.WriteLine(JsonSerializer.Serialize(new { marker = "DEMO_LAUNCHER_SELF_TEST_PASS", checks, externalCalls = 0, brokerSends = 0 }));

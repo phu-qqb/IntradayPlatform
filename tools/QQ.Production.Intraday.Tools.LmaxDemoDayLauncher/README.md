@@ -12,15 +12,16 @@ NAV, execution masks, quantity conventions or risk limits. Default command: `pla
 | `self-test` | Simulated contract and boundary checks; local temporary files only. |
 | `normalize --capture-root ROOT --cutoff UTC --output DIR` | Validates retained canonical capture and writes normalized files locally. |
 | `verify-runtime` | Checks pinned files, current instance role, exact GPU/document and SSM status access. |
+| `verify-capture-credentials` | Verifies role and the four market-data secret bindings in memory; prints only a success marker. No FIX or database call. |
 | `inspect-worker` | Reads the existing Demo secret into child-process memory and invokes the pinned Worker's inspection-only early return. No broker or database access. |
 | `prepare-cycle --cutoff UTC` | Captures genuine Demo market data, uploads two immutable S3 inputs, dispatches the fixed Anubis document, downloads current outputs and invokes the existing ExecDesk adapter. Writes a prepared manifest without sending it to the Worker. |
 | `start-worker --observation FILE` | Starts one continuing Demo Worker from a genuine fresh observation; retains output supervision until the Worker exits. Does not schedule cycles. |
 | `run-day --session-id ID` | Requires an existing account owner and current FIX reception; prepares and atomically delivers fresh cycles through the final scheduled reduction. |
 
 `prepare-cycle`, `start-worker` and `run-day` have external effects and must not
-be described as dry runs. The first end-to-end invocation remains unqualified.
-The 2026-09-17 automatic approval review rejected that invocation twice; do not
-retry it until the explicit execution approval described in the evidence receipt.
+be described as dry runs. The owner explicitly approved the full Demo chain on
+2026-09-17 after the earlier automatic-review blocks. That approval does not
+establish successful end-to-end execution; retain actual stage receipts.
 
 ## Fixed boundaries
 
@@ -39,10 +40,18 @@ retry it until the explicit execution approval described in the evidence receipt
 
 ## Start and recovery
 
-Build with the installed SDK 10.0.400. Run `self-test`, `verify-runtime` and
-`inspect-worker` before activation. As of the current receipt, SSM status access
-is blocked: ListCommandInvocations exited 254 and GetCommandInvocation was
-explicitly AccessDenied. No third status attempt or IAM change was made.
+Build with the installed SDK 10.0.400. Run `self-test`, `verify-runtime`,
+`verify-capture-credentials` and `inspect-worker` before initial activation.
+The owner-approved regional status-read amendment was applied separately by the
+existing IAM operator on 2026-09-17; `verify-runtime` then passed. Runtime code
+still performs no IAM administration.
+
+AWS child output is explicitly UTF-8. The market-data JSON parser accepts a
+single leading native BOM, without changing the secret or accepting arbitrary
+prefixes. The launcher uses an exclusive file lease that survives async thread
+changes and is released on process exit. This does not replace the Worker's
+separate account ownership lock. The blocked 09:15 UTC attempt is retained;
+recovery must use a new admissible cutoff and the existing continuing owner.
 
 The starting observation must be produced from the official LMAX UI, show the
 correct account flat with no working orders, declare exclusive order activity,

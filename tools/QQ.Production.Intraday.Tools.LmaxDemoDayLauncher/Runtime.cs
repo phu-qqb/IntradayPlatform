@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Text;
 using System.Text.Json;
 
 namespace QQ.Production.Intraday.Tools.LmaxDemoDayLauncher;
@@ -46,6 +47,12 @@ internal static class Runtime
         info.Environment["AWS_CONFIG_FILE"] = @"C:\deploy\IntradayPlatform\staging\role-only-no-config";
         info.Environment["AWS_EC2_METADATA_DISABLED"] = "false";
         info.Environment["AWS_PAGER"] = "";
+        if (Path.GetFileName(executable).Equals("aws.exe", StringComparison.OrdinalIgnoreCase))
+        {
+            info.StandardOutputEncoding = new UTF8Encoding(false, true);
+            info.StandardErrorEncoding = new UTF8Encoding(false, true);
+            info.Environment["PYTHONIOENCODING"] = "utf-8";
+        }
         if (environment is not null) foreach (var pair in environment) info.Environment[pair.Key] = pair.Value;
         return info;
     }
@@ -95,10 +102,30 @@ internal static class Runtime
             && instances[0].GetProperty("State").GetProperty("Name").GetString() == "running", "EXACT_ANUBIS_INSTANCE_MUST_BE_RUNNING");
         await Aws(deadline, "SSM_STATUS_READ", "ssm", "list-command-invocations", "--instance-id", Gpu, "--max-results", "1");
     }
+    internal static FileStream AcquireLauncherLease(string path)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        try { return new FileStream(path, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None); }
+        catch (IOException error) when ((error.HResult & 0xffff) is 32 or 33)
+        { throw new InvalidOperationException("DEMO_DAY_LAUNCHER_ALREADY_RUNNING"); }
+    }
+    private static JsonDocument ParseCaptureSecret(string json)
+    {
+        try { return JsonDocument.Parse(json); }
+        catch (JsonException) { throw new InvalidOperationException("MD_SECRET_JSON_INVALID"); }
+    }
     internal static async Task<Dictionary<string, string>> CaptureCredentials()
     {
         using var response = JsonDocument.Parse(await Aws(DateTimeOffset.UtcNow.AddSeconds(45), "MD_SECRET", "secretsmanager", "get-secret-value", "--secret-id", "qq/fund-platform/demo/lmax/market-data"));
-        using var secret = JsonDocument.Parse(response.RootElement.GetProperty("SecretString").GetString()!);
+        return BindCaptureCredentials(response.RootElement.GetProperty("SecretString").GetString()!);
+    }
+    internal static Dictionary<string, string> BindCaptureCredentials(string secretString)
+    {
+        var json = secretString.Trim();
+        // SecretString is already decoded text. Remove only its optional native BOM.
+        if (json.StartsWith('\uFEFF')) json = json[1..];
+        using var secret = ParseCaptureSecret(json);
+        Files.Require(secret.RootElement.ValueKind == JsonValueKind.Object, "MD_SECRET_JSON_OBJECT_REQUIRED");
         string Get(params string[] candidates)
         {
             foreach (var property in secret.RootElement.EnumerateObject())
