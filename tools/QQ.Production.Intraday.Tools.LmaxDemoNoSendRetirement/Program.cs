@@ -18,6 +18,7 @@ internal static class Program
                 || !Environment.UserName.Equals("Administrator", StringComparison.OrdinalIgnoreCase))
                 throw new InvalidOperationException("EXACT_DEMO_OPERATOR_REQUIRED");
             var mode = args.FirstOrDefault() ?? "inspect";
+            if (mode == "retire-bbo-no-send") return await BboNoSendRetirementCommand.Run(args);
             if (mode == "retire-unsent-parent") return await UnsentParentRetirementCommand.Run(args);
             if (mode is not ("inspect" or "retire")) throw new InvalidOperationException("UNKNOWN_MODE");
             string Arg(string key)

@@ -31,6 +31,7 @@ internal static class Program
                 return 0;
             }
             Runtime.VerifyLocal();
+            if (command == "inspect-marketdata") { await SessionBindings.InspectMarketData(); return 0; }
             if (command == "inspect-worker") { await SessionBindings.Inspect(); return 0; }
             if (command == "start-worker") { await SessionBindings.Start(Arg("--observation")); return 0; }
             if (command == "verify-capture-credentials")

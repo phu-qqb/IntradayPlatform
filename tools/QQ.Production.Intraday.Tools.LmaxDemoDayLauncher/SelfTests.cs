@@ -67,6 +67,8 @@ internal static class SelfTests
         Check(bound["QQ_LMAX_FIX_SENDER_COMP_ID"] == "simulated-username", "POST_LOGON_SENDER_CONTINUITY");
         Check(bound["QQ_LMAX_ALLOW_LIVE_TRADING"] == "false" && bound["Safety__AllowLiveTrading"] == "false", "DEMO_ONLY_BINDING");
         Check(bound["QQ_LMAX_DEMO_ORDER_CAPS_ENABLED"] == "false", "OWNER_REMOVED_DEMO_CAPS");
+        Check(bound["QQ_LMAX_MARKET_DATA_REQUEST_MODE"] == "SnapshotPlusUpdates"
+            && bound["QQ_LMAX_MARKET_DATA_SYMBOL_ENCODING_MODE"] == "SecurityId", "LMAX_ACCEPTED_BBO_REQUEST_BINDING");
         secret["QQ_LMAX_FIX_MARKETDATA_USERNAME"] = "different-simulated-user";
         Reject(() => SessionBindings.Bind(JsonSerializer.SerializeToElement(secret)), "MISMATCHED_MD_CREDENTIALS");
         var observation = new LmaxDemoSessionStart("simulated-test", "1754288005", "Demo", "test-approval", t, LmaxDemoDaySchedule.FinalClose(t),

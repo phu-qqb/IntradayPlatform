@@ -29,7 +29,8 @@ public sealed class LmaxDemoSessionOwnership : IDisposable
                 var priorSession = LmaxDemoControlledSession.Inspect(prior);
                 if (priorSession.Start.AccountId != start.AccountId
                     || !priorSession.IsClosed && !LmaxDemoNoSendRetirement.IsValidated(path, prior, now, start.Simulated)
-                        && !LmaxDemoUnsentParentRetirement.IsValidated(path, prior, now, start.Simulated))
+                        && !LmaxDemoUnsentParentRetirement.IsValidated(path, prior, now, start.Simulated)
+                        && !LmaxDemoBboNoSendRetirement.IsValidated(path, prior, now, start.Simulated))
                     throw new InvalidOperationException("DEMO_SESSION_PRIOR_ACCOUNT_OWNER_UNRESOLVED");
             }
             journal = LmaxDemoSessionJournal.CreateNew(Path.Combine(root, start.SessionId + ".journal.jsonl"));

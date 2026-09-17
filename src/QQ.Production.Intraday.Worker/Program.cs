@@ -20,8 +20,21 @@ if (args.Contains("--demo-config-inspect=true", StringComparer.Ordinal))
         credentialsPresent = !string.IsNullOrWhiteSpace(inspected.FixUsername) && !string.IsNullOrWhiteSpace(inspected.FixPassword),
         senderMatches = !string.IsNullOrWhiteSpace(inspected.FixUsername) && inspected.FixSenderCompId == inspected.FixUsername,
         demoOrderCapsDisabled = !inspected.DemoOrderCapsEnabled,
+        streamingMarketData = inspected.MarketDataRequestMode == LmaxFixMarketDataRequestMode.SnapshotPlusUpdates,
+        securityIdMarketData = inspected.MarketDataSymbolEncodingMode == LmaxFixMarketDataSymbolEncodingMode.SecurityId,
         brokerConnectionOpened = false, databaseAccessed = false
     }));
+    return;
+}
+if (args.Contains("--demo-marketdata-inspect=true", StringComparer.Ordinal))
+{
+    var options = LmaxConnectivityLabOptions.FromEnvironmentAndArgs(args);
+    using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+    var client = new RawLmaxFixSessionClient(new LmaxConnectivityLabSafetyValidator());
+    var quote = await client.GetTopOfBookAsync(options, TimeSpan.FromSeconds(60), timeout.Token);
+    Console.WriteLine(JsonSerializer.Serialize(new { marker = "DEMO_MARKET_DATA_PREFLIGHT_PASS",
+        quote.BestBid, quote.BestAsk, quote.Mid, quote.ObservedAtUtc,
+        orderConnectionOpened = false, orderSends = 0, databaseAccessed = false }));
     return;
 }
 var demoStrategyBridgeEnabled = builder.Configuration.GetValue("LmaxDemoStrategyBridge:Enabled", false);

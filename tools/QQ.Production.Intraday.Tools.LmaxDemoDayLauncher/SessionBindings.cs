@@ -6,8 +6,8 @@ namespace QQ.Production.Intraday.Tools.LmaxDemoDayLauncher;
 
 internal static class SessionBindings
 {
-    internal const string Worker = @"C:\deploy\IntradayPlatform\staging\lmax-demo-uncapped-20260917\src\QQ.Production.Intraday.Worker\bin\Release\net10.0\QQ.Production.Intraday.Worker.dll";
-    internal const string WorkerHash = "1979993286309f733b4315b4a4ba5f563c6f5c8aa544a8c30a7cb34deb119f0a";
+    internal const string Worker = @"C:\deploy\IntradayPlatform\staging\lmax-demo-streaming-bbo-20260917\src\QQ.Production.Intraday.Worker\bin\Release\net10.0\QQ.Production.Intraday.Worker.dll";
+    internal const string WorkerHash = "2c50c3b57a800186ebe271206c8de06c5cd153ce4b118b8ba786aa36f999d0f8";
 
     internal static Dictionary<string, string> Bind(JsonElement secret)
     {
@@ -37,6 +37,9 @@ internal static class SessionBindings
             ["QQ_LMAX_FIX_PASSWORD"] = Get("ORDER_PASSWORD"),
             // Owner amendment: #84, issuecomment-5716970587. General portfolio risk controls remain active.
             ["QQ_LMAX_DEMO_ORDER_CAPS_ENABLED"] = "false",
+            // Exact read-only LMAX probe rejected 263=0 and accepted 263=1 with SecurityId encoding.
+            ["QQ_LMAX_MARKET_DATA_REQUEST_MODE"] = "SnapshotPlusUpdates",
+            ["QQ_LMAX_MARKET_DATA_SYMBOL_ENCODING_MODE"] = "SecurityId",
             ["LmaxDemoCycle__Enabled"] = "true", ["LmaxDemoStrategyBridge__Enabled"] = "true", ["LmaxDemoContinuing__Enabled"] = "true",
             ["Worker__StopAfterInitialLmaxDemoCycle"] = "false", ["Safety__AllowExternalConnections"] = "true",
             ["Safety__AllowLiveTrading"] = "false", ["Safety__RequireFakeExecutionGateway"] = "false",
@@ -67,10 +70,36 @@ internal static class SessionBindings
             using var document = JsonDocument.Parse(result);
             var root = document.RootElement;
             Files.Require(root.GetProperty("marker").GetString() == "DEMO_CONFIG_INSPECTION_ONLY"
-                && new[] { "accountMatches", "demoEndpoint", "credentialsPresent", "senderMatches", "demoOrderCapsDisabled" }.All(k => root.GetProperty(k).GetBoolean())
+                && new[] { "accountMatches", "demoEndpoint", "credentialsPresent", "senderMatches", "demoOrderCapsDisabled", "streamingMarketData", "securityIdMarketData" }.All(k => root.GetProperty(k).GetBoolean())
                 && !root.GetProperty("brokerConnectionOpened").GetBoolean() && !root.GetProperty("databaseAccessed").GetBoolean(), "WORKER_BINDING_INSPECTION_FAILED");
             Console.WriteLine(result);
         }
+        finally { environment.Clear(); }
+    }
+
+    private static async Task VerifyMarketData(IReadOnlyDictionary<string, string> environment)
+    {
+        // Worker exits before DI/database setup. Its quote adapter opens only the market-data connection.
+        var result = await Runtime.Run(Runtime.Dotnet, [Worker, "--demo-marketdata-inspect=true"],
+            DateTimeOffset.UtcNow.AddSeconds(40), "DEMO_MARKET_DATA_PREFLIGHT", environment: environment);
+        using var document = JsonDocument.Parse(result);
+        var root = document.RootElement;
+        var observedAt = root.GetProperty("ObservedAtUtc").GetDateTimeOffset();
+        var now = DateTimeOffset.UtcNow;
+        Files.Require(root.GetProperty("marker").GetString() == "DEMO_MARKET_DATA_PREFLIGHT_PASS"
+            && root.GetProperty("BestBid").GetDecimal() > 0m
+            && root.GetProperty("BestAsk").GetDecimal() > root.GetProperty("BestBid").GetDecimal()
+            && observedAt <= now && now - observedAt <= TimeSpan.FromSeconds(60)
+            && !root.GetProperty("orderConnectionOpened").GetBoolean()
+            && root.GetProperty("orderSends").GetInt32() == 0 && !root.GetProperty("databaseAccessed").GetBoolean(),
+            "DEMO_MARKET_DATA_PREFLIGHT_FAILED");
+        Console.WriteLine(result);
+    }
+
+    internal static async Task InspectMarketData()
+    {
+        var environment = await Load();
+        try { await VerifyMarketData(environment); }
         finally { environment.Clear(); }
     }
 
@@ -99,6 +128,8 @@ internal static class SessionBindings
         {
             ValidateObservation(start, DateTimeOffset.UtcNow);
             Files.Require(Files.Hash(observationPath) == observationHash, "STARTING_OBSERVATION_MUTATED");
+            await VerifyMarketData(environment);
+            ValidateObservation(start, DateTimeOffset.UtcNow);
             environment["LmaxDemoContinuing__StartObservationPath"] = Path.GetFullPath(observationPath);
             var directory = Path.Combine(LmaxDemoSessionOwnership.RealAccountRoot, start.SessionId);
             Files.Require(!Directory.Exists(directory), "SESSION_START_REPLAY_BLOCKED");
