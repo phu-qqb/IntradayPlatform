@@ -30,6 +30,89 @@ public sealed class LmaxDemoBatchExecutionTests
         Assert.Equal(2, f.State.RiskDecisions.Count);
     }
 
+    [Fact]
+    public async Task ObservedScopeExecutesOnlyEurUsdAndRetainsTheFullNaturalPortfolio()
+    {
+        var f = Fixture();
+        var eurusd = f.State.Instruments.Single(x => x.Symbol == "EURUSD").Id;
+        f.Gateway.ExecutionScope = [eurusd];
+        f.State.VenueInstrumentMappings[1] = f.State.VenueInstrumentMappings[1] with { IsEnabled = false };
+        f.State.MarketData.RemoveAll(x => x.InstrumentId != eurusd);
+        var weights = f.State.TargetWeights.ToArray();
+        var limits = f.State.RiskLimitSets.ToArray();
+        var nav = f.State.ModelRuns.Single().NavUsd;
+
+        var result = await f.Service.ProcessAsync(f.State.ModelRuns.Single().Id);
+
+        Assert.True(result.Processed, result.Message);
+        Assert.Equal(weights, f.State.TargetWeights);
+        Assert.Equal(limits, f.State.RiskLimitSets);
+        Assert.Equal(nav, f.State.ModelRuns.Single().NavUsd);
+        Assert.Equal(eurusd, Assert.Single(f.State.TargetPositions).InstrumentId);
+        Assert.Equal(eurusd, Assert.Single(f.State.RiskDecisions).InstrumentId);
+        Assert.Equal(eurusd, Assert.Single(f.State.Fills).InstrumentId);
+        Assert.Equal(1, f.Gateway.BatchCalls);
+    }
+
+    [Theory]
+    [InlineData("empty")]
+    [InlineData("duplicate")]
+    [InlineData("unknown")]
+    public async Task InvalidObservedScopeBlocksBeforeRiskAndSend(string kind)
+    {
+        var f = Fixture();
+        var id = f.State.Instruments[0].Id;
+        f.Gateway.ExecutionScope = kind switch
+        {
+            "empty" => [],
+            "duplicate" => [id, id],
+            _ => [new InstrumentId(Guid.NewGuid())]
+        };
+        var result = await f.Service.ProcessAsync(f.State.ModelRuns.Single().Id);
+        Assert.True(result.Blocked);
+        Assert.Equal(ProcessModelRunBlockedReason.ReferenceDataInvalid, result.BlockedReason);
+        Assert.Empty(f.State.RiskDecisions);
+        Assert.Equal(0, f.Gateway.BatchCalls);
+    }
+
+    [Fact]
+    public async Task MissingObservedTargetIsNotInventedAsAZeroPosition()
+    {
+        var f = Fixture();
+        f.Gateway.ExecutionScope = [f.State.Instruments[0].Id];
+        f.State.TargetWeights.RemoveAt(0);
+        var result = await f.Service.ProcessAsync(f.State.ModelRuns.Single().Id);
+        Assert.True(result.Blocked);
+        Assert.Equal(ProcessModelRunBlockedReason.NoTargetWeights, result.BlockedReason);
+        Assert.Empty(f.State.TargetPositions);
+        Assert.Equal(0, f.Gateway.BatchCalls);
+    }
+
+    [Fact]
+    public async Task ExistingPositionOutsideObservedScopeCannotDisappearFromReconciliation()
+    {
+        var f = Fixture();
+        f.Gateway.ExecutionScope = [f.State.Instruments[0].Id];
+        f.Gateway.SetBrokerPosition(f.State.Instruments[1].Id, 1000m);
+        var result = await f.Service.ProcessAsync(f.State.ModelRuns.Single().Id);
+        Assert.True(result.Blocked);
+        Assert.Equal(ProcessModelRunBlockedReason.PositionMismatch, result.BlockedReason);
+        Assert.Empty(f.State.RiskDecisions);
+        Assert.Equal(0, f.Gateway.BatchCalls);
+    }
+
+    [Fact]
+    public async Task DisabledMappingInsideObservedScopeStillBlocks()
+    {
+        var f = Fixture();
+        f.Gateway.ExecutionScope = [f.State.Instruments[0].Id];
+        f.State.VenueInstrumentMappings[0] = f.State.VenueInstrumentMappings[0] with { IsEnabled = false };
+        var result = await f.Service.ProcessAsync(f.State.ModelRuns.Single().Id);
+        Assert.True(result.Blocked);
+        Assert.Empty(f.State.TargetPositions);
+        Assert.Equal(0, f.Gateway.BatchCalls);
+    }
+
     private static (PlatformState State, BatchGateway Gateway, ProcessModelRunService Service, DateTimeOffset Start) Fixture()
     {
         var at = new DateTimeOffset(2026, 9, 16, 13, 0, 0, TimeSpan.Zero);
@@ -54,6 +137,10 @@ public sealed class LmaxDemoBatchExecutionTests
     private sealed class BatchGateway(PlatformState state, MovingClock clock) : ILmaxDemoBatchExecutionGateway, IBrokerPositionProvider
     {
         private readonly Dictionary<InstrumentId, decimal> positions = [];
+        public IReadOnlyList<InstrumentId> ExecutionScope { get; set; } = state.Instruments.Select(x => x.Id).ToArray();
+        public Task<IReadOnlyList<InstrumentId>> GetExecutionScopeAsync(CancellationToken token)
+            => Task.FromResult(ExecutionScope);
+        public void SetBrokerPosition(InstrumentId id, decimal quantity) => positions[id] = quantity;
         public int BatchCalls { get; private set; }
         public int PreparedRiskCount { get; private set; }
         public Task<IReadOnlyList<VenueExecutionResult>> SendModelRunAsync(ModelRun run, IReadOnlyList<TargetPosition> targets,

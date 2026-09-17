@@ -2297,6 +2297,23 @@ public sealed class ProcessModelRunService(IIntradayRepository repository, IVenu
             ?? state.TradingWindows.FirstOrDefault(x => x.FundId == fund.Id)
             ?? new TradingWindow(Guid.Empty, fund.Id, run.ModelName, "UTC", now.DayOfWeek, TimeOnly.MaxValue, TimeOnly.MinValue, TimeOnly.MinValue, null, false, false);
         var targetWeights = state.TargetWeights.Where(x => x.ModelRunId == run.Id).ToList();
+        var demoBatch = venueGateway as ILmaxDemoBatchExecutionGateway;
+        HashSet<InstrumentId>? demoScope = null;
+        if (demoBatch is not null)
+        {
+            var scope = await demoBatch.GetExecutionScopeAsync(cancellationToken);
+            demoScope = scope.ToHashSet();
+            if (scope.Count == 0 || demoScope.Count != scope.Count
+                || demoScope.Any(id => !state.Instruments.Any(x => x.Id == id && x.IsEnabled && x.IsTradingEnabled)))
+                return BuildResult(state, run.Id, false, ProcessModelRunStatus.Blocked, ProcessModelRunBlockedReason.ReferenceDataInvalid,
+                    "The observed Demo execution scope is empty, duplicated or invalid.", false, now);
+            // Retain the full model portfolio. Only the continuing session's explicit
+            // observed instruments may create targets, risk decisions and orders.
+            targetWeights = targetWeights.Where(x => demoScope.Contains(x.InstrumentId)).ToList();
+            if (!demoScope.SetEquals(targetWeights.Select(x => x.InstrumentId)))
+                return BuildResult(state, run.Id, false, ProcessModelRunStatus.Blocked, ProcessModelRunBlockedReason.NoTargetWeights,
+                    "The model portfolio omits an observed Demo execution instrument.", false, now);
+        }
         if (targetWeights.Count == 0)
         {
             return BuildResult(state, run.Id, false, ProcessModelRunStatus.Blocked, ProcessModelRunBlockedReason.NoTargetWeights, "No target weights exist for the model run.", false, now);
@@ -2304,6 +2321,10 @@ public sealed class ProcessModelRunService(IIntradayRepository repository, IVenu
 
         var brokerPositions = await brokerPositionProvider.GetPositionsAsync(brokerAccount.Id, cancellationToken);
         var internalPositions = BuildInternalPositions(state, fund.Id, now);
+        if (demoScope is not null && (internalPositions.Any(x => x.Value != 0m && !demoScope.Contains(x.Key))
+            || brokerPositions.Any(x => x.BaseQuantity != 0m && !demoScope.Contains(x.InstrumentId))))
+            return BuildResult(state, run.Id, false, ProcessModelRunStatus.Blocked, ProcessModelRunBlockedReason.PositionMismatch,
+                "An existing position lies outside the observed Demo execution scope.", false, now);
         var reconciliation = Reconcile(run.Id, ReconciliationPhase.PreTrade, targetWeights.Select(x => x.InstrumentId).ToList(), internalPositions, brokerPositions, riskLimitSet.PositionToleranceBaseQuantity, now);
         await repository.SaveReconciliationAsync(reconciliation.Run, reconciliation.Breaks, cancellationToken);
         await CreateExceptionCasesAsync(reconciliation.Run, reconciliation.Breaks, cancellationToken);
@@ -2315,7 +2336,6 @@ public sealed class ProcessModelRunService(IIntradayRepository repository, IVenu
 
         var calculator = new TargetPositionCalculator();
         var riskEngine = new RiskEngine();
-        var demoBatch = venueGateway as ILmaxDemoBatchExecutionGateway;
         var prepared = new List<(VenueOrderRequest Request, ChildOrder Child, Instrument Instrument, VenueInstrumentMapping Mapping)>();
         var preparedTargets = new List<TargetPosition>();
         decimal reservedGross = 0m;

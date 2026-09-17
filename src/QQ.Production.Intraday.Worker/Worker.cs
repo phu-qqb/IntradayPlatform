@@ -160,6 +160,7 @@ public sealed class Worker(
         LmaxDemoCycleManifest manifest;
         var cycleId = manifestBytes.Length == 0 ? "unknown" : TryReadCycleId(manifestBytes);
         await WriteCycleAttemptAsync(attemptPath, manifestSha256, cycleId, cancellationToken);
+        LmaxDemoCycleCoordinatorResult? coordinatorResult = null;
         try
         {
             manifest = JsonSerializer.Deserialize<LmaxDemoCycleManifest>(manifestBytes, JsonOptions)
@@ -189,6 +190,7 @@ public sealed class Worker(
                 request = request with { PortfolioWeights = request.PortfolioWeights with {
                     DemoScheduledExitInternalAccountCode = scope.ServiceProvider.GetRequiredService<LmaxDemoContinuingSession>().StartingObservation.InternalBrokerAccountCode } };
             var result = await coordinator.RunAsync(request, cancellationToken);
+            coordinatorResult = result;
             if (explicitPath is not null && (!result.Validation.Succeeded || result.Promotion?.Succeeded != true
                 || result.Processing?.Processed != true || result.Processing.Blocked))
                 throw new InvalidOperationException("DEMO_CONTINUING_CYCLE_NOT_EXECUTED");
@@ -203,7 +205,7 @@ public sealed class Worker(
         }
         catch (Exception exception)
         {
-            await WriteCycleResultAsync(resultPath, manifestSha256, cycleId, "ReconciliationRequired", null, exception.GetType().Name + ":" + exception.Message, cancellationToken);
+            await WriteCycleResultAsync(resultPath, manifestSha256, cycleId, "ReconciliationRequired", coordinatorResult, exception.GetType().Name + ":" + exception.Message, cancellationToken);
             throw;
         }
     }

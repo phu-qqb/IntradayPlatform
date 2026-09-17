@@ -10,10 +10,34 @@ public sealed class LmaxDemoContinuingGateway(
     IIntradayRepository repository, LmaxConnectivityLabOptions options,
     LmaxDemoContinuingSession session, IClock clock) : ILmaxDemoBatchExecutionGateway
 {
+    public async Task<IReadOnlyList<InstrumentId>> GetExecutionScopeAsync(CancellationToken token)
+    {
+        var state = await repository.LoadStateAsync(token);
+        var venue = state.Venues.Single(x => x.Name == "LMAX" && x.IsEnabled);
+        var scope = new List<InstrumentId>();
+        foreach (var binding in session.StartingObservation.Instruments)
+        {
+            var instrument = state.Instruments.SingleOrDefault(x => x.IsEnabled && x.IsTradingEnabled && x.Symbol == binding.Symbol)
+                ?? throw new InvalidOperationException("DEMO_CONTINUING_EXECUTION_INSTRUMENT_UNMAPPED");
+            if (!state.VenueInstrumentMappings.Any(x => x.InstrumentId == instrument.Id && x.VenueId == venue.Id
+                    && x.IsEnabled && x.ContractSize == binding.ContractSize)
+                || !state.InstrumentAliases.Any(x => x.InstrumentId == instrument.Id && x.IsEnabled && x.ExternalInstrumentId == binding.SecurityId))
+                throw new InvalidOperationException("DEMO_CONTINUING_EXECUTION_BINDING_MISMATCH");
+            scope.Add(instrument.Id);
+        }
+        if (scope.Count == 0 || scope.Distinct().Count() != scope.Count)
+            throw new InvalidOperationException("DEMO_CONTINUING_EXECUTION_SCOPE_INVALID");
+        return scope;
+    }
+
     public async Task<IReadOnlyList<VenueExecutionResult>> SendModelRunAsync(ModelRun run,
         IReadOnlyList<TargetPosition> targets, IReadOnlyList<VenueOrderRequest> orders, CancellationToken token)
     {
         var state = await repository.LoadStateAsync(token);
+        var executionScope = (await GetExecutionScopeAsync(token)).ToHashSet();
+        if (targets.Any(x => !executionScope.Contains(x.InstrumentId))
+            || orders.Any(x => !executionScope.Contains(x.InstrumentId)))
+            throw new InvalidOperationException("DEMO_CONTINUING_ORDER_OUTSIDE_OBSERVED_SCOPE");
         var targetMap = targets.ToDictionary(
             x => state.Instruments.Single(i => i.Id == x.InstrumentId).Symbol, x => x.TargetBaseQuantity, StringComparer.Ordinal);
         if (run.AsOfUtc >= LmaxDemoDaySchedule.FinalClose(run.AsOfUtc).AddMinutes(-15)
