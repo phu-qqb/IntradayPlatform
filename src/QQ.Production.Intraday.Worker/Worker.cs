@@ -184,7 +184,11 @@ public sealed class Worker(
                     throw new InvalidOperationException("DEMO_PROGRAMME_CURRENT_CUTOFF_PROVENANCE_MISMATCH");
             }
             var coordinator = scope.ServiceProvider.GetRequiredService<ILmaxDemoCycleCoordinator>();
-            var result = await coordinator.RunAsync(ToRequest(manifest), cancellationToken);
+            var request = ToRequest(manifest);
+            if (explicitPath is not null && request.PortfolioWeights.DemoScheduledExitScope is not null)
+                request = request with { PortfolioWeights = request.PortfolioWeights with {
+                    DemoScheduledExitInternalAccountCode = scope.ServiceProvider.GetRequiredService<LmaxDemoContinuingSession>().StartingObservation.InternalBrokerAccountCode } };
+            var result = await coordinator.RunAsync(request, cancellationToken);
             if (explicitPath is not null && (!result.Validation.Succeeded || result.Promotion?.Succeeded != true
                 || result.Processing?.Processed != true || result.Processing.Blocked))
                 throw new InvalidOperationException("DEMO_CONTINUING_CYCLE_NOT_EXECUTED");

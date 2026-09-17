@@ -35,7 +35,8 @@ public sealed record LegacyAnubisPortfolioWeightIngestionRequest(
     DateTimeOffset EffectiveAtUtc,
     decimal NavUsd,
     TargetQuantityMode TargetQuantityMode,
-    IReadOnlyList<string>? DemoScheduledExitScope = null);
+    IReadOnlyList<string>? DemoScheduledExitScope = null,
+    string? DemoScheduledExitInternalAccountCode = null);
 
 public sealed record LegacyAnubisPortfolioWeightIngestionResult(
     ModelWeightBatch Batch,
@@ -120,7 +121,7 @@ public sealed class LegacyAnubisPortfolioWeightIngestionService(
         if (request.DemoScheduledExitScope is { } exitScope)
         {
             var fund = state.Funds.Single(x => x.Name == request.FundCode && x.IsEnabled);
-            if (!state.BrokerAccounts.Any(x => x.FundId == fund.Id && x.IsEnabled && x.AccountCode == LmaxDemoControlledSession.DemoAccountId)
+            if (!state.BrokerAccounts.Any(x => x.FundId == fund.Id && x.IsEnabled && x.AccountCode == (request.DemoScheduledExitInternalAccountCode ?? LmaxDemoControlledSession.DemoAccountId))
                 || exitScope.Any(x => !enabledBySymbol.ContainsKey(x)))
                 throw new DomainRuleViolationException("Scheduled session exit requires the observed Demo account and mapped scope.");
             executableContributions = exitScope.Select(x => new ParsedWeight(x + " Curncy", x, 0m)).ToList();

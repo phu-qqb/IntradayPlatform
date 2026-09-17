@@ -20,7 +20,7 @@ public sealed class LmaxDemoStrategyVenueExecutionGateway(
     public async Task<VenueExecutionResult> SendOrderAsync(VenueOrderRequest request, CancellationToken cancellationToken)
         => await ExecutePreparedAsync(await PrepareAsync(request, cancellationToken), cancellationToken);
 
-    internal sealed record PreparedParent(VenueOrderRequest Order, LmaxConnectivityLabOptions Options, LmaxDemoStrategyExecutionRequest Execution);
+    internal sealed record PreparedParent(VenueOrderRequest Order, LmaxConnectivityLabOptions Options, LmaxDemoStrategyExecutionRequest Execution, ChildOrder InitialChild, decimal ContractSize, string InternalAccountCode);
 
     internal async Task<PreparedParent> PrepareAsync(VenueOrderRequest request, CancellationToken cancellationToken)
     {
@@ -118,7 +118,8 @@ public sealed class LmaxDemoStrategyVenueExecutionGateway(
                 limitSet.MaxMarketDataAge,
                 Math.Max(1, options.RequestTimeoutSeconds),
                 options.ShowFixMessages,
-                child.Id.Value.ToString("N")));
+                child.Id.Value.ToString("N")), child, mapping.ContractSize,
+                state.BrokerAccounts.Single(x => x.FundId == run.FundId && x.IsEnabled).AccountCode);
     }
 
     internal async Task<VenueExecutionResult> ExecutePreparedAsync(PreparedParent prepared, CancellationToken cancellationToken)
@@ -128,6 +129,12 @@ public sealed class LmaxDemoStrategyVenueExecutionGateway(
         if (!execution.Terminal)
             throw new InvalidOperationException("DEMO_STRATEGY_PARENT_NOT_TERMINAL");
 
+        if (session is LmaxDemoContinuingSession continuing)
+        {
+            var persisted = LmaxDemoPhysicalExecutionMapper.Map(prepared.InitialChild, prepared.ContractSize, prepared.InternalAccountCode,
+                continuing.StartingObservation, continuing.OrdersForCompletedParent(prepared.Execution.PersistedChildOrderId!), execution);
+            return new VenueExecutionResult(persisted.Reports) { DemoPersistence = persisted };
+        }
         return new VenueExecutionResult(execution.ExecutionReports.Select(x => ToDomainReport(x, prepared.Order)).ToList());
     }
 

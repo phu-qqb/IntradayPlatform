@@ -9,7 +9,7 @@
 <ProjectReference Include="../Simulator/Simulator.Qualification.csproj" />
 <Reference Include="QQ.Production.Intraday.Domain"><HintPath>$(DemoReleaseRoot)/QQ.Production.Intraday.Domain.dll</HintPath></Reference>
 <Reference Include="QQ.Production.Intraday.Infrastructure.PostgreSql"><HintPath>$(DemoReleaseRoot)/QQ.Production.Intraday.Infrastructure.PostgreSql.dll</HintPath></Reference>
-<Reference Include="QQ.Production.Intraday.Infrastructure.SqlServer"><HintPath>$(DemoReleaseRoot)/QQ.Production.Intraday.Infrastructure.SqlServer.dll</HintPath></Reference>
+<ProjectReference Include="../SqlServer/SqlServer.Qualification.csproj" />
 <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.7" />
 <PackageReference Include="Microsoft.EntityFrameworkCore.SqlServer" Version="10.0.0" />
 <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="10.0.0" />

@@ -3,6 +3,8 @@ using System.Globalization;
 using System.Text;
 using System.Threading.Channels;
 using QQ.Production.Intraday.Application;
+using QQ.Production.Intraday.Domain;
+using QQ.Production.Intraday.Infrastructure.Simulator;
 using QQ.Production.Intraday.Lmax.ConnectivityLab;
 
 namespace QQ.Production.Intraday.Tests.Unit;
@@ -161,6 +163,54 @@ public sealed class LmaxDemoContinuingSessionTests
         Directory.Delete(root, true);
     }
 
+    [Fact]
+    public async Task PartialCancelAndResidual_PersistAsSeparatePhysicalChildrenWithoutInventedAcknowledgement()
+    {
+        await using var f = new Fixture(simulatedQuotes: true);
+        f.Transport.AutoFill = false;
+        f.Transport.AutoFillMarkets = true;
+        await f.Session.InitializeAsync(CancellationToken.None);
+        f.Session.BeginCycle("physical", new Dictionary<string, decimal> { ["EURUSD"] = 1000m });
+        var request = f.Request("EURUSD", LmaxFixDemoOrderSide.Buy, .1m) with { TargetCloseUtc = f.Clock.UtcNow.AddSeconds(61) };
+        var running = f.Session.ExecuteStrategyParentAsync(f.Options, request, CancellationToken.None);
+        await Until(() => f.Transport.OrderFrames.Count == 1);
+        f.Transport.Report(f.Transport.OrderFrames.Single(), "partial-physical", "F", "1", .04m, .06m, .04m);
+        var result = await running.WaitAsync(TimeSpan.FromSeconds(8));
+        var state = SeedData.Create(f.Clock.UtcNow);
+        var run = state.ModelRuns.Single();
+        var instrument = state.Instruments.Single();
+        var venue = state.Venues.Single();
+        var intent = new TradeIntent(TradeIntentId.New(), run.Id, run.FundId, instrument.Id, TradeSide.Buy,
+            1000m, .1m, "simulated natural target", TradeIntentStatus.Created, f.Clock.UtcNow);
+        var parent = new ParentOrder(ParentOrderId.New(), intent.Id, new ClientOrderId("simulated-parent"),
+            OrderSide.Buy, 1000m, ExecutionAlgo.CloseSeeking15m, OrderStatus.Created, f.Clock.UtcNow);
+        var initial = new ChildOrder(new ChildOrderId(Guid.ParseExact(request.PersistedChildOrderId!, "N")), parent.Id,
+            venue.Id, new ClientOrderId("persisted-before-send"), OrderSide.Buy, OrderType.Market, TimeInForce.IOC,
+            1000m, .1m, OrderStatus.PendingNew, f.Clock.UtcNow);
+        state.TradeIntents.Add(intent);
+        state.ParentOrders.Add(parent);
+        state.ChildOrders.Add(initial);
+        var mapped = LmaxDemoPhysicalExecutionMapper.Map(initial, 10000m, state.BrokerAccounts.Single().AccountCode,
+            f.Start, f.Session.OrdersForCompletedParent(request.PersistedChildOrderId!), result);
+        Assert.Equal(2, mapped.PhysicalChildren.Count);
+        Assert.Contains(mapped.PhysicalChildren, x => x.Status == OrderStatus.Cancelled && x.VenueQuantity == .1m);
+        Assert.Contains(mapped.PhysicalChildren, x => x.Status == OrderStatus.Filled && x.VenueQuantity == .06m);
+        Assert.DoesNotContain(mapped.Reports, x => x.ExecutionReportType == ExecutionReportType.OrderAck);
+        var fills = mapped.Reports.Where(x => x.ExecutionReportType is ExecutionReportType.Fill or ExecutionReportType.PartialFill)
+            .Select(x => new Fill(FillId.New(), x.BrokerExecutionId!, x.ChildOrderId, instrument.Id, venue.Id, TradeSide.Buy,
+                x.LastQuantity * 10000m, x.LastQuantity, x.LastPrice, x.ReceivedAtUtc, x.ReceivedAtUtc)).ToArray();
+        mapped = mapped with { Fills = fills, Ledger = fills.Select(x => new PositionLedgerEvent(Guid.NewGuid(), run.FundId,
+            instrument.Id, PositionLedgerEventType.Fill, x.BaseQuantity, x.BrokerExecutionId, x.ReceivedAtUtc)).ToArray() };
+        var repository = new InMemoryIntradayRepository(state);
+        await repository.PersistDemoParentAsync(mapped, CancellationToken.None);
+        await repository.PersistDemoParentAsync(mapped, CancellationToken.None);
+        Assert.Equal(2, state.ChildOrders.Count);
+        Assert.Equal(2, state.Fills.Count);
+        Assert.Equal(1000m, state.PositionLedger.Sum(x => x.BaseQuantityDelta));
+        Assert.Equal(f.Session.Positions()["EURUSD"], state.PositionLedger.Sum(x => x.BaseQuantityDelta));
+        Assert.Equal(OrderStatus.Filled, state.ParentOrders.Single().Status);
+    }
+
     private static async Task Until(Func<bool> predicate)
     {
         using var limit = new CancellationTokenSource(TimeSpan.FromSeconds(5));
@@ -191,11 +241,11 @@ public sealed class LmaxDemoContinuingSessionTests
         public SimulatedTransport Transport { get; }
         public LmaxDemoContinuingSession Session { get; }
         public bool Disposed { get; set; }
-        public Fixture()
+        public Fixture(bool simulatedQuotes = false)
         {
             Start = LmaxDemoContinuingSessionTests.Start(Clock.UtcNow);
             Transport = new SimulatedTransport(Clock);
-            Session = new(Options, Start, Transport, new NoMarketAccess(), Clock, Root);
+            Session = new(Options, Start, Transport, simulatedQuotes ? new SimulatedQuotes(Clock) : new NoMarketAccess(), Clock, Root);
         }
         public LmaxDemoStrategyExecutionRequest Request(string symbol, LmaxFixDemoOrderSide side, decimal quantity)
         {
@@ -208,6 +258,13 @@ public sealed class LmaxDemoContinuingSessionTests
             if (!Disposed) await Session.DisposeAsync();
             if (Directory.Exists(Root)) Directory.Delete(Root, true);
         }
+    }
+    private sealed class SimulatedQuotes(MovingClock clock) : ILmaxDemoStrategySession
+    {
+        public Task<LmaxDemoStrategyQuote> GetTopOfBookAsync(LmaxConnectivityLabOptions o, TimeSpan age, CancellationToken token)
+            => Task.FromResult(new LmaxDemoStrategyQuote(1.0999m, 1.1001m, 1.1m, clock.UtcNow));
+        public Task<LmaxDemoStrategyExecutionResult> ExecuteStrategyParentAsync(LmaxConnectivityLabOptions o, LmaxDemoStrategyExecutionRequest r, CancellationToken t)
+            => throw new NotSupportedException();
     }
     private sealed class NoMarketAccess : ILmaxDemoStrategySession
     {
@@ -223,6 +280,8 @@ public sealed class LmaxDemoContinuingSessionTests
         public int ConnectionCount { get; private set; }
         public int LogonCount { get; private set; }
         public bool AutoFill { get; set; } = true;
+        public bool AutoFillMarkets { get; set; }
+        private readonly ConcurrentDictionary<string, decimal> cumulative = new();
         public bool FailOrderWrite { get; set; }
         public Action? BeforeOrderWrite { get; set; }
         public ConcurrentQueue<string> OrderFrames { get; } = new();
@@ -239,7 +298,19 @@ public sealed class LmaxDemoContinuingSessionTests
                 OrderFrames.Enqueue(frame);
                 if (FailOrderWrite) throw new IOException("SIMULATED_PARTIAL_SOCKET_WRITE");
                 var qty = decimal.Parse(Tag(frame, "38"), CultureInfo.InvariantCulture);
-                if (AutoFill) Report(frame, "fill-" + Tag(frame, "11"), "F", "2", qty, 0m, qty);
+                if (AutoFill || AutoFillMarkets && Tag(frame, "40") == "1") Report(frame, "fill-" + Tag(frame, "11"), "F", "2", qty, 0m, qty);
+            }
+            if (type == "F")
+            {
+                var original = OrderFrames.Single(x => Tag(x, "11") == Tag(frame, "41"));
+                var qty = decimal.Parse(Tag(original, "38"), CultureInfo.InvariantCulture);
+                var cum = cumulative.GetValueOrDefault(Tag(original, "11"));
+                Emit("8", [("1", "1754288005"), ("37", "broker-" + Tag(original, "11")), ("11", Tag(frame, "11")),
+                    ("41", Tag(original, "11")), ("17", "canceled-" + Tag(frame, "11")), ("150", "4"), ("39", "4"),
+                    ("48", Tag(original, "48")), ("55", Tag(original, "55")), ("54", Tag(original, "54")),
+                    ("38", qty.ToString(CultureInfo.InvariantCulture)), ("14", cum.ToString(CultureInfo.InvariantCulture)),
+                    ("151", "0"), ("32", "0"), ("31", "0"), ("6", "1.1"),
+                    ("60", clock.UtcNow.ToString("yyyyMMdd-HH:mm:ss.fff", CultureInfo.InvariantCulture))]);
             }
             return Task.CompletedTask;
         }
@@ -258,10 +329,13 @@ public sealed class LmaxDemoContinuingSessionTests
             return frame;
         }
         public string Report(string order, string execution, string type, string status, decimal cum, decimal leaves, decimal last)
-            => Emit("8", [("1", "1754288005"), ("37", "broker-" + Tag(order, "11")), ("11", Tag(order, "11")), ("17", execution),
+        {
+            cumulative[Tag(order, "11")] = cum;
+            return Emit("8", [("1", "1754288005"), ("37", "broker-" + Tag(order, "11")), ("11", Tag(order, "11")), ("17", execution),
                 ("150", type), ("39", status), ("48", Tag(order, "48")), ("55", Tag(order, "55")), ("54", Tag(order, "54")),
                 ("38", Tag(order, "38")), ("14", cum.ToString(CultureInfo.InvariantCulture)), ("151", leaves.ToString(CultureInfo.InvariantCulture)),
                 ("32", last.ToString(CultureInfo.InvariantCulture)), ("31", "1.1"), ("6", "1.1"), ("60", clock.UtcNow.ToString("yyyyMMdd-HH:mm:ss.fff", CultureInfo.InvariantCulture))]);
+        }
         public void Duplicate(string original)
         {
             var excluded = new HashSet<string> { "8", "9", "10", "35", "34", "49", "56", "52", "43" };

@@ -47,7 +47,8 @@ public sealed class LmaxDemoContinuingSession(
             || string.IsNullOrWhiteSpace(Sender) || options.FixSenderCompId != Sender
             || string.IsNullOrWhiteSpace(options.FixPassword) || string.IsNullOrWhiteSpace(Target))
             throw new InvalidOperationException("DEMO_CONTINUING_ACCOUNT_OR_OPTIONS_INVALID");
-        if (!start.Simulated && (start.DeadlineUtc != LmaxDemoDaySchedule.FinalClose(clock.UtcNow)
+        if (!start.Simulated && (string.IsNullOrWhiteSpace(start.InternalBrokerAccountCode)
+            || start.DeadlineUtc != LmaxDemoDaySchedule.FinalClose(clock.UtcNow)
             || start.Instruments.Any(x => x.Symbol.Length != 6 || !x.Symbol.All(char.IsAsciiLetterUpper))
             || start.Instruments.Select(x => x.SecurityId).Distinct(StringComparer.Ordinal).Count() != start.Instruments.Count))
             throw new InvalidOperationException("DEMO_CONTINUING_DAY_OR_FX_SCOPE_INVALID");
@@ -92,6 +93,16 @@ public sealed class LmaxDemoContinuingSession(
     public IReadOnlyList<LmaxDemoSessionOrder> Orders()
     {
         lock (stateLock) { State.RequireContinuity(clock.UtcNow); return State.KnownOrders; }
+    }
+    public IReadOnlyList<LmaxDemoSessionOrder> OrdersForCompletedParent(string parentId)
+    {
+        lock (stateLock)
+        {
+            var orders = State.KnownOrders.Where(x => x.Intent.ParentId == parentId).ToArray();
+            if (orders.Length == 0 || orders.Any(x => !x.Terminal))
+                throw new InvalidOperationException("DEMO_PARENT_FACTS_NOT_TERMINAL");
+            return orders;
+        }
     }
     public string? BlockingReason { get { lock (stateLock) return State.BlockingReason; } }
     public bool IsClosed { get { lock (stateLock) return State.IsClosed; } }
@@ -271,7 +282,9 @@ public sealed class LmaxDemoContinuingSession(
                     var intent = new LmaxDemoSessionSendIntent(cycleId!, request.PersistedChildOrderId!, id,
                         original is null ? "D" : "F", original, request.InstrumentSymbol, request.SecurityId,
                         request.Side == LmaxFixDemoOrderSide.Buy ? "BUY" : "SELL", quantity,
-                        Convert.ToHexString(SHA256.HashData(Encoding.ASCII.GetBytes(frame))));
+                        Convert.ToHexString(SHA256.HashData(Encoding.ASCII.GetBytes(frame))),
+                        original is null ? (market ? "1" : "2") : null,
+                        original is null ? (market ? "3" : "0") : null, price);
                     State.RecordSendIntent(intent, clock.UtcNow);
                     routes.Add(id, mailbox);
                 }

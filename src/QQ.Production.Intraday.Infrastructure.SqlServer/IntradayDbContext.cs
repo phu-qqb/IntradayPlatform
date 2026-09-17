@@ -651,7 +651,7 @@ public sealed class SqlServerExceptionCaseRepository(IntradayDbContext dbContext
         => await dbContext.ExceptionCaseNotes.AsNoTracking().Where(x => x.CaseId == id).OrderBy(x => x.CreatedAtUtc).ToListAsync(cancellationToken);
 }
 
-public sealed class SqlServerIntradayRepository(IntradayDbContext dbContext) : IIntradayRepository
+public sealed class SqlServerIntradayRepository(IntradayDbContext dbContext) : IIntradayRepository, ILmaxDemoExecutionRepository
 {
     public async Task<PlatformState> LoadStateAsync(CancellationToken cancellationToken)
     {
@@ -796,6 +796,30 @@ public sealed class SqlServerIntradayRepository(IntradayDbContext dbContext) : I
         dbContext.ParentOrders.Add(parentOrder);
         dbContext.ChildOrders.Add(childOrder);
         await dbContext.SaveChangesAsync(cancellationToken);
+    }
+
+    public async Task PersistDemoParentAsync(LmaxDemoExecutionPersistence execution, CancellationToken cancellationToken)
+    {
+        await using var transaction = await dbContext.Database.BeginTransactionAsync(cancellationToken);
+        execution.Validate(await LoadStateAsync(cancellationToken));
+        foreach (var child in execution.PhysicalChildren)
+        {
+            var existing = await dbContext.ChildOrders.SingleOrDefaultAsync(x => x.Id == child.Id, cancellationToken);
+            if (existing is null) dbContext.ChildOrders.Add(child);
+            else dbContext.Entry(existing).CurrentValues.SetValues(child);
+        }
+        foreach (var report in execution.Reports)
+            if (!await dbContext.ExecutionReports.AnyAsync(x => x.Id == report.Id, cancellationToken)) dbContext.ExecutionReports.Add(report);
+        foreach (var fill in execution.Fills)
+            if (!await dbContext.Fills.AnyAsync(x => x.VenueId == fill.VenueId && x.BrokerExecutionId == fill.BrokerExecutionId, cancellationToken))
+            {
+                dbContext.Fills.Add(fill);
+                dbContext.PositionLedgerEvents.Add(execution.Ledger.Single(x => x.ReferenceId == fill.BrokerExecutionId));
+            }
+        var parent = await dbContext.ParentOrders.SingleAsync(x => x.Id == execution.ParentId, cancellationToken);
+        dbContext.Entry(parent).CurrentValues.SetValues(parent with { Status = execution.ParentStatus });
+        await dbContext.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
     }
 
     public async Task AddExecutionReportAsync(ExecutionReport report, CancellationToken cancellationToken)

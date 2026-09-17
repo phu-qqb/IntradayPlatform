@@ -52,7 +52,7 @@ public sealed class LmaxDemoContinuingBrokerPositionProvider(
     {
         var state = await repository.LoadStateAsync(token);
         var account = state.BrokerAccounts.SingleOrDefault(x => x.Id == accountId && x.IsEnabled
-            && x.AccountCode == session.StartingObservation.AccountId)
+            && x.AccountCode == (session.StartingObservation.InternalBrokerAccountCode ?? session.StartingObservation.AccountId))
             ?? throw new InvalidOperationException("DEMO_CONTINUING_BROKER_ACCOUNT_MISMATCH");
         var positions = session.Positions();
         var venueId = state.Venues.Single(x => x.Name == "LMAX" && x.IsEnabled).Id;

@@ -18,7 +18,8 @@ public sealed record LmaxDemoSessionStart(
     bool ExclusiveOrderActivityDeclared,
     bool Simulated,
     IReadOnlyList<LmaxDemoSessionInstrument> Instruments,
-    int InitialObservationMaxAgeSeconds = 900);
+    int InitialObservationMaxAgeSeconds = 900,
+    string? InternalBrokerAccountCode = null);
 
 public sealed record LmaxDemoSessionSendIntent(
     string CycleId,
@@ -30,7 +31,10 @@ public sealed record LmaxDemoSessionSendIntent(
     string SecurityId,
     string Side,
     decimal VenueQuantity,
-    string PayloadSha256);
+    string PayloadSha256,
+    string? OrderTypeRaw = null,
+    string? TimeInForceRaw = null,
+    decimal? LimitPrice = null);
 
 public sealed record LmaxDemoSessionOrder(
     LmaxDemoSessionSendIntent Intent,

@@ -65,9 +65,13 @@ public sealed class LmaxDemoBatchExecutionTests
             return Task.FromResult<IReadOnlyList<VenueExecutionResult>>(orders.Select(x =>
             {
                 positions[x.InstrumentId] = (x.Side == OrderSide.Buy ? 1m : -1m) * x.BaseQuantity;
-                return new VenueExecutionResult([new ExecutionReport(ExecutionReportId.New(), x.ChildOrderId, x.VenueId,
+                var reports = new[] { new ExecutionReport(ExecutionReportId.New(), x.ChildOrderId, x.VenueId,
                     "simulated-order-" + x.ChildOrderId.Value, "simulated-fill-" + x.ChildOrderId.Value, x.ClientOrderId,
-                    ExecutionReportType.Fill, x.VenueQuantity, 1.1m, 0m, x.VenueQuantity, 1.1m, clock.UtcNow)]);
+                    ExecutionReportType.Fill, x.VenueQuantity, 1.1m, 0m, x.VenueQuantity, 1.1m, clock.UtcNow) };
+                var child = state.ChildOrders.Single(c => c.Id == x.ChildOrderId);
+                return new VenueExecutionResult(reports) { DemoPersistence = new LmaxDemoExecutionPersistence(
+                    "1754288005", state.BrokerAccounts.Single().AccountCode, "simulated-batch", child.ParentOrderId, child.Id,
+                    [child with { Status = OrderStatus.Filled }], reports, OrderStatus.Filled) };
             }).ToArray());
         }
         public Task<IReadOnlyList<BrokerPositionSnapshot>> GetPositionsAsync(BrokerAccountId id, CancellationToken token)

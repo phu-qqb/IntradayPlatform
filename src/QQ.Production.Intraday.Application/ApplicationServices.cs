@@ -9,7 +9,10 @@ namespace QQ.Production.Intraday.Application;
 public sealed record VenueOrderRequest(ChildOrderId ChildOrderId, VenueId VenueId, InstrumentId InstrumentId, ClientOrderId ClientOrderId, OrderSide Side, OrderType OrderType, TimeInForce TimeInForce, decimal BaseQuantity, decimal VenueQuantity);
 public sealed record VenueCancelRequest(ChildOrderId ChildOrderId, VenueId VenueId, ClientOrderId ClientOrderId);
 public sealed record VenueOpenOrder(ChildOrderId ChildOrderId, VenueId VenueId, string BrokerOrderId, decimal LeavesQuantity);
-public sealed record VenueExecutionResult(IReadOnlyList<ExecutionReport> Reports);
+public sealed record VenueExecutionResult(IReadOnlyList<ExecutionReport> Reports)
+{
+    public LmaxDemoExecutionPersistence? DemoPersistence { get; init; }
+}
 
 public interface IVenueExecutionGateway
 {
@@ -1125,7 +1128,7 @@ public sealed class ExceptionCaseService(IExceptionCaseRepository repository, IO
         => exceptionCase.Severity is ExceptionCaseSeverity.Critical or ExceptionCaseSeverity.Blocking ? OperatorAuditSeverity.Warning : OperatorAuditSeverity.Info;
 }
 
-public sealed class InMemoryIntradayRepository(PlatformState state) : IIntradayRepository
+public sealed class InMemoryIntradayRepository(PlatformState state) : IIntradayRepository, ILmaxDemoExecutionRepository
 {
     private readonly object _sync = new();
 
@@ -1257,6 +1260,30 @@ public sealed class InMemoryIntradayRepository(PlatformState state) : IIntradayR
             state.ChildOrders.Add(childOrder);
         }
 
+        return Task.CompletedTask;
+    }
+
+    public Task PersistDemoParentAsync(LmaxDemoExecutionPersistence execution, CancellationToken cancellationToken)
+    {
+        lock (_sync)
+        {
+            execution.Validate(state);
+            foreach (var child in execution.PhysicalChildren)
+            {
+                var index = state.ChildOrders.FindIndex(x => x.Id == child.Id);
+                if (index >= 0) state.ChildOrders[index] = child; else state.ChildOrders.Add(child);
+            }
+            foreach (var report in execution.Reports)
+                if (!state.ExecutionReports.Any(x => x.Id == report.Id)) state.ExecutionReports.Add(report);
+            foreach (var fill in execution.Fills)
+                if (!state.Fills.Any(x => x.VenueId == fill.VenueId && x.BrokerExecutionId == fill.BrokerExecutionId))
+                {
+                    state.Fills.Add(fill);
+                    state.PositionLedger.Add(execution.Ledger.Single(x => x.ReferenceId == fill.BrokerExecutionId));
+                }
+            var parentIndex = state.ParentOrders.FindIndex(x => x.Id == execution.ParentId);
+            state.ParentOrders[parentIndex] = state.ParentOrders[parentIndex] with { Status = execution.ParentStatus };
+        }
         return Task.CompletedTask;
     }
 
@@ -2298,6 +2325,19 @@ public sealed class ProcessModelRunService(IIntradayRepository repository, IVenu
 
         async Task PersistResultAsync(VenueExecutionResult result, ChildOrder child, Instrument instrument, VenueInstrumentMapping mapping)
         {
+            if (result.DemoPersistence is { } demo)
+            {
+                if (demoBatch is null || repository is not ILmaxDemoExecutionRepository demoRepository)
+                    throw new InvalidOperationException("DEMO_PHYSICAL_ORDER_PERSISTENCE_REQUIRED");
+                var fills = result.Reports.Where(x => x.ExecutionReportType is ExecutionReportType.Fill or ExecutionReportType.PartialFill)
+                    .Select(x => new Fill(FillId.New(), x.BrokerExecutionId!, x.ChildOrderId, instrument.Id, venue.Id,
+                        child.Side == OrderSide.Buy ? TradeSide.Buy : TradeSide.Sell, x.LastQuantity * mapping.ContractSize,
+                        x.LastQuantity, x.LastPrice, x.ReceivedAtUtc, x.ReceivedAtUtc)).ToArray();
+                await demoRepository.PersistDemoParentAsync(demo with { Fills = fills,
+                    Ledger = fills.Select(x => new PositionLedgerEvent(Guid.NewGuid(), fund.Id, instrument.Id, PositionLedgerEventType.Fill,
+                        x.Side == TradeSide.Buy ? x.BaseQuantity : -x.BaseQuantity, x.BrokerExecutionId, x.ReceivedAtUtc)).ToArray() }, cancellationToken);
+                return;
+            }
             foreach (var report in result.Reports)
             {
                 await repository.AddExecutionReportAsync(report, cancellationToken);

@@ -8,6 +8,7 @@
 <Compile Include="$(DemoOverlayRoot)/src/QQ.Production.Intraday.Application/LmaxDemoControlledSession.cs" />
 <Compile Include="$(DemoOverlayRoot)/src/QQ.Production.Intraday.Application/LmaxDemoSessionOwnership.cs" />
 <Compile Include="$(DemoOverlayRoot)/src/QQ.Production.Intraday.Application/LmaxDemoDaySchedule.cs" />
+<Compile Include="$(DemoOverlayRoot)/src/QQ.Production.Intraday.Application/LmaxDemoExecutionPersistence.cs" />
 <Compile Include="$(DemoOverlayRoot)/src/QQ.Production.Intraday.Application/LegacyAnubisPortfolioWeightIngestion.cs" />
 <Reference Include="QQ.Production.Intraday.Domain"><HintPath>$(DemoReleaseRoot)/QQ.Production.Intraday.Domain.dll</HintPath></Reference>
 </ItemGroup>
