@@ -1,0 +1,70 @@
+# Controlled LMAX Demo day launcher
+
+This operator tool joins the existing collector, fixed Anubis V1 SSM document,
+static ExecDesk writer and continuing Worker. It does not change target weights,
+NAV, execution masks, quantity conventions or risk limits. Default command: `plan`.
+
+## Modes and effects
+
+| Command | Effects |
+|---|---|
+| `plan` | Prints the next eligible same-day cutoff; no external calls. |
+| `self-test` | Simulated contract and boundary checks; local temporary files only. |
+| `normalize --capture-root ROOT --cutoff UTC --output DIR` | Validates retained canonical capture and writes normalized files locally. |
+| `verify-runtime` | Checks pinned files, current instance role, exact GPU/document and SSM status access. |
+| `inspect-worker` | Reads the existing Demo secret into child-process memory and invokes the pinned Worker's inspection-only early return. No broker or database access. |
+| `prepare-cycle --cutoff UTC` | Captures genuine Demo market data, uploads two immutable S3 inputs, dispatches the fixed Anubis document, downloads current outputs and invokes the existing ExecDesk adapter. Writes a prepared manifest without sending it to the Worker. |
+| `start-worker --observation FILE` | Starts one continuing Demo Worker from a genuine fresh observation; retains output supervision until the Worker exits. Does not schedule cycles. |
+| `run-day --session-id ID` | Requires an existing account owner and current FIX reception; prepares and atomically delivers fresh cycles through the final scheduled reduction. |
+
+`prepare-cycle`, `start-worker` and `run-day` have external effects and must not
+be described as dry runs. The first end-to-end invocation remains unqualified.
+The 2026-09-17 automatic approval review rejected that invocation twice; do not
+retry it until the explicit execution approval described in the evidence receipt.
+
+## Fixed boundaries
+
+- Demo host `EC2AMAZ-1QPHTD8`, Administrator, account `1754288005`.
+- Existing role `qq-role-ec2-intraday` on `i-05626133ca7892fb8`.
+- Anubis instance `i-019ec3c94b9d234f6`, eu-west-2, must already be running.
+- Document `QQ-LMAX-Demo-Anubis-Cycle-v1`, version 1, pinned content hash.
+- S3 transport uses only the established per-cycle input and result paths.
+- Existing collector, catalog, template, ExecDesk binary and mapping are hashed.
+- EURUSD is the current execution mask; venue contract size 10000, quantity cap
+  0.1 and notional cap USD 5000. NAV USD 1000000, PortfolioBaseCurrencyNotional.
+- Existing approved Demo TLS/revocation and post-logon sender continuity are
+  retained. Credentials never enter source, files, logs or command arguments.
+- No IAM administration, generic SSM document, Production, PMS, Databento or
+  alternate data-provider route is implemented.
+
+## Start and recovery
+
+Build with the installed SDK 10.0.400. Run `self-test`, `verify-runtime` and
+`inspect-worker` before activation. As of the current receipt, SSM status access
+is blocked: ListCommandInvocations exited 254 and GetCommandInvocation was
+explicitly AccessDenied. No third status attempt or IAM change was made.
+
+The starting observation must be produced from the official LMAX UI, show the
+correct account flat with no working orders, declare exclusive order activity,
+and be no older than 900 seconds. The launcher does not create or refresh that
+observation. The fixed session journal prevents restarting an unresolved owner.
+The observed prior fake Worker must be reconciled and stopped separately before
+`start-worker`; this tool does not terminate any existing process.
+
+Run `start-worker` under a supervised process, then `run-day` after genuine FIX
+logon. A session beginning intraday starts at the next admissible cutoff; there
+is no replay of a qualification cycle. The collector starts two minutes before
+cutoff. Every stage retains the original cutoff and its next-M15-close deadline.
+Off-cadence programme contributions are absent, with no prior-result carry.
+
+On any ambiguous dispatch, missing data, stale result, failed previous cycle or
+lost account owner, planning stops. Do not retry that cycle or delete its evidence.
+The Worker and FIX receiver remain running for reconciliation. A genuine final
+UI observation is still required; a report download is not a flatness attestation.
+The existing report acquisition path is unchanged.
+
+## Qualification limits
+
+The checked-in receipt distinguishes source/build/simulated/historical checks
+from real external execution. Passing those checks does not establish S3/SSM
+round-trip operation, broker acceptance, fills, TCA or a completed Demo day.
