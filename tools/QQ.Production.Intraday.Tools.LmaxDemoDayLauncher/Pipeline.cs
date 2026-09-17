@@ -51,15 +51,16 @@ internal static class Pipeline
             && manifest.GetProperty("no_order").GetBoolean()
             && manifest.GetProperty("broker_send_status").GetString() == "DISABLED_NO_ORDER_ENTRY", "ANUBIS_RESULT_LINEAGE_INVALID");
     }
-    internal static async Task WaitUntil(DateTimeOffset at)
+    internal static async Task WaitUntil(DateTimeOffset at, Action? requireOwner = null)
     {
         while (at > DateTimeOffset.UtcNow)
         {
+            requireOwner?.Invoke();
             var left = at - DateTimeOffset.UtcNow;
             if (left > TimeSpan.Zero) await Task.Delay(left < TimeSpan.FromSeconds(10) ? left : TimeSpan.FromSeconds(10));
         }
     }
-    internal static async Task<CycleManifest> Prepare(DateTimeOffset cutoff)
+    internal static async Task<CycleManifest> Prepare(DateTimeOffset cutoff, Action? requireOwner = null)
     {
         ValidateCutoff(cutoff, DateTimeOffset.UtcNow);
         Runtime.VerifyLocal();
@@ -71,7 +72,11 @@ internal static class Pipeline
         Directory.CreateDirectory(root);
         Files.Atomic(Path.Combine(root, "attempt.json"), new { cycleId, cutoffUtc = cutoff, effectiveAtUtc = cutoff.AddMinutes(15), startedAtUtc = DateTimeOffset.UtcNow,
             automaticRetryAllowed = false, document = Runtime.Document, documentVersion = "1", documentHash = Runtime.DocumentHash, target = Runtime.Gpu });
-        void Stage(string name) => Console.WriteLine(JsonSerializer.Serialize(new { cycleId, stage = name, atUtc = DateTimeOffset.UtcNow }));
+        void Stage(string name)
+        {
+            requireOwner?.Invoke();
+            Console.WriteLine(JsonSerializer.Serialize(new { cycleId, stage = name, atUtc = DateTimeOffset.UtcNow }));
+        }
         try
         {
             var configDirectory = Path.Combine(root, "config");
@@ -88,7 +93,7 @@ internal static class Pipeline
             var credentials = await Runtime.CaptureCredentials();
             Files.Require(DateTimeOffset.UtcNow < cutoff.AddMinutes(-2), "CAPTURE_PREPARATION_MISSED_START");
             Stage("WAITING_CAPTURE_START");
-            await WaitUntil(cutoff.AddMinutes(-2));
+            await WaitUntil(cutoff.AddMinutes(-2), requireOwner);
             Stage("CAPTURING");
             try
             {

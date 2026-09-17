@@ -6,8 +6,8 @@ namespace QQ.Production.Intraday.Tools.LmaxDemoDayLauncher;
 
 internal static class SessionBindings
 {
-    internal const string Worker = @"C:\deploy\IntradayPlatform\staging\lmax-source-recovery-20260917\src\QQ.Production.Intraday.Worker\bin\Release\net10.0\QQ.Production.Intraday.Worker.dll";
-    internal const string WorkerHash = "21fa757bac9f82af583b1e6cb877b3017a5c71c2df617a8bd73e8745c23ce819";
+    internal const string Worker = @"C:\deploy\IntradayPlatform\staging\lmax-demo-execution-scope-20260917\src\QQ.Production.Intraday.Worker\bin\Release\net10.0\QQ.Production.Intraday.Worker.dll";
+    internal const string WorkerHash = "d1d389e2c0960966d2cc38d25b9aa1d0ff259a7f6f983083e0f2ad0fb9c43712";
 
     internal static Dictionary<string, string> Bind(JsonElement secret)
     {

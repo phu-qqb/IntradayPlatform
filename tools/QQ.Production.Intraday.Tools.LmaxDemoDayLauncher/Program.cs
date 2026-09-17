@@ -98,7 +98,7 @@ internal static class Program
         {
             VerifyOwner(sessionId);
             var cutoff = Pipeline.NextCutoff(DateTimeOffset.UtcNow);
-            var manifest = await Pipeline.Prepare(cutoff);
+            var manifest = await Pipeline.Prepare(cutoff, () => VerifyOwner(sessionId));
             VerifyOwner(sessionId);
             if (previous is not null)
             {

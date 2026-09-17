@@ -42,6 +42,8 @@ internal static class SelfTests
         Check(Pipeline.NextCutoff(t.AddMinutes(13)) == t.AddMinutes(30), "LATE_CAPTURE_SKIPPED");
         Reject(() => Pipeline.ValidateCutoff(t, t), "NO_REPLAY");
         Reject(() => Pipeline.ValidateCutoff(t.AddSeconds(1), t.AddMinutes(-5)), "NO_SHIFTED_CUTOFF");
+        Reject(() => Pipeline.WaitUntil(DateTimeOffset.UtcNow.AddSeconds(5),
+            () => throw new InvalidOperationException("FAULTED_OWNER")).GetAwaiter().GetResult(), "FAULTED_OWNER_ABORTS_PENDING_CAPTURE");
         var hash = new string('a', 64);
         var cycle = t.ToString("yyyyMMddTHHmmssZ");
         var result = JsonSerializer.SerializeToElement(new { schema = "lmax_demo_anubis_result_v1", cycle_id = cycle, programme = "INFX9",
