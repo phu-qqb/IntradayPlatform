@@ -65,6 +65,30 @@ public sealed class LmaxDemoContinuingSessionTests
     }
 
     [Fact]
+    public async Task DisabledDemoCaps_SendNaturalTwoContractTargetOnSimulatedTransport()
+    {
+        await using var f = new Fixture();
+        f.Options.DemoOrderCapsEnabled = false;
+        await f.Session.InitializeAsync(CancellationToken.None);
+        f.Session.BeginCycle("natural", new Dictionary<string, decimal> { ["EURUSD"] = -20000m });
+        await f.Session.ExecuteStrategyParentAsync(f.Options, f.Request("EURUSD", LmaxFixDemoOrderSide.Sell, 2m), CancellationToken.None);
+        Assert.Equal(-20000m, f.Session.Positions()["EURUSD"]);
+        Assert.Single(f.Transport.OrderFrames);
+        Assert.Null(f.Session.BlockingReason);
+    }
+
+    [Fact]
+    public async Task DefaultDemoCap_RejectsTwoContractsBeforeSimulatedSend()
+    {
+        await using var f = new Fixture();
+        await f.Session.InitializeAsync(CancellationToken.None);
+        f.Session.BeginCycle("natural", new Dictionary<string, decimal> { ["EURUSD"] = -20000m });
+        await Assert.ThrowsAsync<InvalidOperationException>(() => f.Session.ExecuteStrategyParentAsync(f.Options,
+            f.Request("EURUSD", LmaxFixDemoOrderSide.Sell, 2m), CancellationToken.None));
+        Assert.Empty(f.Transport.OrderFrames);
+    }
+
+    [Fact]
     public async Task WorkingPartialAndDuplicate_RemainVisibleAndBlockAnotherCycle()
     {
         await using var f = new Fixture();
@@ -346,3 +370,4 @@ public sealed class LmaxDemoContinuingSessionTests
         public ValueTask DisposeAsync() { inbound.Writer.TryComplete(); return ValueTask.CompletedTask; }
     }
 }
+

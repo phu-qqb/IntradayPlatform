@@ -1189,6 +1189,32 @@ public sealed class LmaxConnectivityLabTests
     }
 
     [Fact]
+    public void Explicitly_disabled_demo_caps_allow_natural_size_but_keep_other_gates()
+    {
+        var options = CompleteFixOptions(orderSubmission: true);
+        options.AllowExternalConnections = true;
+        options.DryRun = false;
+        options.DemoOrderCapsEnabled = false;
+        var request = DemoOrderRequest(options) with { DryRun = false, ConfirmDemoOrder = true,
+            VenueQuantity = 2m, OrderType = LmaxFixDemoOrderType.Limit, LimitPrice = 100000m, MaxNotionalUsd = 5000m };
+        var validator = new LmaxConnectivityLabSafetyValidator();
+        Assert.All(validator.ValidateForDemoOrderLifecycle(options, request, true), x => Assert.True(x.Passed, x.Gate));
+        foreach (var quantity in new[] { 0m, -2m })
+            Assert.Contains(validator.ValidateForDemoOrderLifecycle(options, request with { VenueQuantity = quantity }, true),
+                x => x.Gate == "QuantityLimit" && !x.Passed);
+        Assert.Contains(validator.ValidateForDemoOrderLifecycle(options, request with { LimitPrice = null }, true),
+            x => x.Gate == "LimitPrice" && !x.Passed);
+        options.EnvironmentName = "Production";
+        options.AllowLiveTrading = true;
+        var blocked = validator.ValidateForDemoOrderLifecycle(options, request, false);
+        Assert.Contains(blocked, x => x.Gate == "Environment" && !x.Passed);
+        Assert.Contains(blocked, x => x.Gate == "AllowLiveTrading" && !x.Passed);
+        Assert.Contains(blocked, x => x.Gate == "ExplicitCommandFlag" && !x.Passed);
+        Assert.False(LmaxConnectivityLabOptions.FromEnvironmentAndArgs(["--demo-order-caps-enabled=false"]).DemoOrderCapsEnabled);
+        Assert.True(new LmaxConnectivityLabOptions().DemoOrderCapsEnabled);
+    }
+
+    [Fact]
     public void New_order_single_builder_emits_market_ioc_demo_order()
     {
         var request = DemoOrderRequest(CompleteFixOptions()) with { ClientOrderId = "DL26050607000101" };
@@ -1885,3 +1911,4 @@ public sealed class LmaxConnectivityLabTests
         public Task<LmaxFixLifecycleEvidenceResult> DemoLifecycleEvidenceAsync(LmaxConnectivityLabOptions options, LmaxFixDemoOrderRequest request, LmaxFixTradeCaptureRequestOptions tradeCaptureRequest, bool explicitConfirmation, CancellationToken cancellationToken) => placeholder.DemoLifecycleEvidenceAsync(options, request, tradeCaptureRequest, explicitConfirmation, cancellationToken);
     }
 }
+

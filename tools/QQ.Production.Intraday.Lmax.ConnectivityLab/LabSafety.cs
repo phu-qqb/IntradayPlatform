@@ -34,12 +34,16 @@ public sealed class LmaxConnectivityLabSafetyValidator
             Decision("ConfirmDemoOrder", request.ConfirmDemoOrder, "ConfirmDemoOrder must be true."),
             Decision("ExplicitCommandFlag", explicitConfirmation, "Command must include --confirm-demo-order."),
             Decision("DemoHost", IsKnownLmaxDemoOrUatHost(options.FixOrderHost ?? string.Empty), "FIX order host must be an LMAX demo/UAT host."),
-            Decision("QuantityLimit", request.VenueQuantity > 0m && request.VenueQuantity <= options.MaxDemoOrderQuantity, $"VenueQuantity must be > 0 and <= {options.MaxDemoOrderQuantity}.")
+            Decision("QuantityLimit", request.VenueQuantity > 0m && (!options.DemoOrderCapsEnabled || request.VenueQuantity <= options.MaxDemoOrderQuantity), options.DemoOrderCapsEnabled ? $"VenueQuantity must be > 0 and <= {options.MaxDemoOrderQuantity}." : "VenueQuantity must be > 0; Demo quantity ceiling is disabled.")
         };
 
         if (request.OrderType == LmaxFixDemoOrderType.Limit && request.LimitPrice is null)
         {
             decisions.Add(Decision("LimitPrice", false, "LimitPrice is required for Limit demo orders."));
+        }
+        else if (!options.DemoOrderCapsEnabled)
+        {
+            decisions.Add(Decision("NotionalLimit", true, "Demo notional ceiling is disabled."));
         }
         else if (request.LimitPrice.HasValue && request.MaxNotionalUsd.HasValue)
         {
@@ -135,3 +139,4 @@ public sealed class LmaxConnectivityLabSafetyValidator
     private static LmaxFixDemoOrderSafetyDecision Decision(string gate, bool passed, string message)
         => new(gate, passed, message);
 }
+

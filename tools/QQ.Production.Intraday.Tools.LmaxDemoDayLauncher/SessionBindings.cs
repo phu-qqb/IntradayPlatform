@@ -6,8 +6,8 @@ namespace QQ.Production.Intraday.Tools.LmaxDemoDayLauncher;
 
 internal static class SessionBindings
 {
-    internal const string Worker = @"C:\deploy\IntradayPlatform\staging\lmax-demo-execution-scope-20260917\src\QQ.Production.Intraday.Worker\bin\Release\net10.0\QQ.Production.Intraday.Worker.dll";
-    internal const string WorkerHash = "d1d389e2c0960966d2cc38d25b9aa1d0ff259a7f6f983083e0f2ad0fb9c43712";
+    internal const string Worker = @"C:\deploy\IntradayPlatform\staging\lmax-demo-uncapped-20260917\src\QQ.Production.Intraday.Worker\bin\Release\net10.0\QQ.Production.Intraday.Worker.dll";
+    internal const string WorkerHash = "1979993286309f733b4315b4a4ba5f563c6f5c8aa544a8c30a7cb34deb119f0a";
 
     internal static Dictionary<string, string> Bind(JsonElement secret)
     {
@@ -35,7 +35,8 @@ internal static class SessionBindings
             // Logon uses username for tag 49; all subsequent order messages must use that same accepted identity.
             ["QQ_LMAX_FIX_SENDER_COMP_ID"] = Get("ORDER_USERNAME"), ["QQ_LMAX_FIX_USERNAME"] = Get("ORDER_USERNAME"),
             ["QQ_LMAX_FIX_PASSWORD"] = Get("ORDER_PASSWORD"),
-            ["QQ_LMAX_MAX_DEMO_ORDER_QUANTITY"] = "0.1", ["QQ_LMAX_MAX_DEMO_ORDER_NOTIONAL_USD"] = "5000",
+            // Owner amendment: #84, issuecomment-5716970587. General portfolio risk controls remain active.
+            ["QQ_LMAX_DEMO_ORDER_CAPS_ENABLED"] = "false",
             ["LmaxDemoCycle__Enabled"] = "true", ["LmaxDemoStrategyBridge__Enabled"] = "true", ["LmaxDemoContinuing__Enabled"] = "true",
             ["Worker__StopAfterInitialLmaxDemoCycle"] = "false", ["Safety__AllowExternalConnections"] = "true",
             ["Safety__AllowLiveTrading"] = "false", ["Safety__RequireFakeExecutionGateway"] = "false",
@@ -66,7 +67,7 @@ internal static class SessionBindings
             using var document = JsonDocument.Parse(result);
             var root = document.RootElement;
             Files.Require(root.GetProperty("marker").GetString() == "DEMO_CONFIG_INSPECTION_ONLY"
-                && new[] { "accountMatches", "demoEndpoint", "credentialsPresent", "senderMatches", "existingQuantityLimitIsPointOne", "existingNotionalLimitIsFiveThousand" }.All(k => root.GetProperty(k).GetBoolean())
+                && new[] { "accountMatches", "demoEndpoint", "credentialsPresent", "senderMatches", "demoOrderCapsDisabled" }.All(k => root.GetProperty(k).GetBoolean())
                 && !root.GetProperty("brokerConnectionOpened").GetBoolean() && !root.GetProperty("databaseAccessed").GetBoolean(), "WORKER_BINDING_INSPECTION_FAILED");
             Console.WriteLine(result);
         }

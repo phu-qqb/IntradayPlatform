@@ -314,7 +314,7 @@ public sealed class LmaxDemoContinuingSession(
         await WaitForReconciledAsync(token);
         if (!start.Instruments.Any(x => x.Symbol == request.InstrumentSymbol))
             throw new InvalidOperationException("DEMO_CONTINUING_SYMBOL_OUTSIDE_OBSERVED_SCOPE");
-        if (request.Account != start.AccountId || request.VenueQuantity <= 0m || request.VenueQuantity > options.MaxDemoOrderQuantity
+        if (request.Account != start.AccountId || request.VenueQuantity <= 0m || (options.DemoOrderCapsEnabled && request.VenueQuantity > options.MaxDemoOrderQuantity)
             || request.TargetKnownAtUtc.Offset != TimeSpan.Zero || request.TargetCloseUtc.Offset != TimeSpan.Zero
             || request.TargetKnownAtUtc > clock.UtcNow || request.TargetCloseUtc <= clock.UtcNow
             || request.TargetCloseUtc > start.DeadlineUtc || request.TargetCloseUtc - request.TargetKnownAtUtc > TimeSpan.FromMinutes(15)
@@ -417,3 +417,4 @@ public sealed class LmaxDemoContinuingSession(
         lifetime.Dispose();
     }
 }
+

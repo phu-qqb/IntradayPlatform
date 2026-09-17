@@ -56,6 +56,7 @@ public sealed class LmaxConnectivityLabOptions
     public LmaxFixMarketDataSymbolEncodingMode MarketDataSymbolEncodingMode { get; set; } = LmaxFixMarketDataSymbolEncodingMode.SecurityIdAndSymbol;
     public bool ShowFixMessages { get; set; } = false;
     public int RequestTimeoutSeconds { get; set; } = 10;
+    public bool DemoOrderCapsEnabled { get; set; } = true;
     public decimal MaxDemoOrderQuantity { get; set; } = 0.1m;
     public decimal MaxDemoOrderNotionalUsd { get; set; } = 5000m;
 
@@ -115,6 +116,7 @@ public sealed class LmaxConnectivityLabOptions
             if (key == "logon-timeout-seconds") options.LogonTimeoutSeconds = int.Parse(value);
             if (key == "max-wait-seconds") options.MarketDataMaxWaitSeconds = int.Parse(value);
             if (key == "max-messages") options.MarketDataMaxMessages = int.Parse(value);
+            if (key == "demo-order-caps-enabled") options.DemoOrderCapsEnabled = bool.Parse(value);
             if (key == "max-demo-order-quantity") options.MaxDemoOrderQuantity = decimal.Parse(value, CultureInfo.InvariantCulture);
             if (key == "max-demo-order-notional-usd") options.MaxDemoOrderNotionalUsd = decimal.Parse(value, CultureInfo.InvariantCulture);
         }
@@ -173,6 +175,7 @@ public sealed class LmaxConnectivityLabOptions
             ["MarketDataSymbolEncodingMode"] = MarketDataSymbolEncodingMode.ToString(),
             ["ShowFixMessages"] = ShowFixMessages.ToString(),
             ["RequestTimeoutSeconds"] = RequestTimeoutSeconds.ToString(),
+            ["DemoOrderCapsEnabled"] = DemoOrderCapsEnabled.ToString(),
             ["MaxDemoOrderQuantity"] = MaxDemoOrderQuantity.ToString(),
             ["MaxDemoOrderNotionalUsd"] = MaxDemoOrderNotionalUsd.ToString()
         };
@@ -288,6 +291,7 @@ public sealed class LmaxConnectivityLabOptions
         SetIfPresent(values, "LmaxConnectivityLab:MarketDataSymbolEncodingMode", "QQ_LMAX_MARKET_DATA_SYMBOL_ENCODING_MODE", "LmaxConnectivityLab__MarketDataSymbolEncodingMode");
         SetIfPresent(values, "LmaxConnectivityLab:ShowFixMessages", "QQ_LMAX_SHOW_FIX_MESSAGES", "LmaxConnectivityLab__ShowFixMessages");
         SetIfPresent(values, "LmaxConnectivityLab:RequestTimeoutSeconds", "QQ_LMAX_REQUEST_TIMEOUT_SECONDS", "LmaxConnectivityLab__RequestTimeoutSeconds");
+        SetIfPresent(values, "LmaxConnectivityLab:DemoOrderCapsEnabled", "QQ_LMAX_DEMO_ORDER_CAPS_ENABLED", "LmaxConnectivityLab__DemoOrderCapsEnabled");
         SetIfPresent(values, "LmaxConnectivityLab:MaxDemoOrderQuantity", "QQ_LMAX_MAX_DEMO_ORDER_QUANTITY", "LmaxConnectivityLab__MaxDemoOrderQuantity");
         SetIfPresent(values, "LmaxConnectivityLab:MaxDemoOrderNotionalUsd", "QQ_LMAX_MAX_DEMO_ORDER_NOTIONAL_USD", "LmaxConnectivityLab__MaxDemoOrderNotionalUsd");
     }
@@ -356,6 +360,7 @@ public sealed class LmaxConnectivityLabOptions
         options.MarketDataSymbolEncodingMode = GetEnum(values, nameof(MarketDataSymbolEncodingMode), options.MarketDataSymbolEncodingMode);
         options.ShowFixMessages = GetBool(values, nameof(ShowFixMessages), options.ShowFixMessages);
         options.RequestTimeoutSeconds = GetInt(values, nameof(RequestTimeoutSeconds), options.RequestTimeoutSeconds) ?? options.RequestTimeoutSeconds;
+        options.DemoOrderCapsEnabled = GetBool(values, nameof(DemoOrderCapsEnabled), options.DemoOrderCapsEnabled);
         options.MaxDemoOrderQuantity = GetDecimal(values, nameof(MaxDemoOrderQuantity), options.MaxDemoOrderQuantity) ?? options.MaxDemoOrderQuantity;
         options.MaxDemoOrderNotionalUsd = GetDecimal(values, nameof(MaxDemoOrderNotionalUsd), options.MaxDemoOrderNotionalUsd) ?? options.MaxDemoOrderNotionalUsd;
         options.AccountApiKey = GetString(values, nameof(AccountApiKey), options.AccountApiKey);
@@ -529,3 +534,4 @@ public sealed class PlaceholderLmaxFixSessionClient : ILmaxFixSessionClient
         if (string.IsNullOrWhiteSpace(options.FixUsername)) yield return nameof(options.FixUsername);
     }
 }
+

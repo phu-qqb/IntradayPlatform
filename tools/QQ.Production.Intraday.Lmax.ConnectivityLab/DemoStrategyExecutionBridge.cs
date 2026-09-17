@@ -305,7 +305,7 @@ public sealed partial class RawLmaxFixSessionClient : ILmaxDemoStrategySession
             throw new InvalidOperationException("DEMO_STRATEGY_TARGET_TIME_INVALID");
         if (DateTimeOffset.UtcNow >= request.TargetCloseUtc)
             throw new InvalidOperationException("DEMO_STRATEGY_TARGET_DEADLINE_EXPIRED");
-        if (request.VenueQuantity <= 0m || request.VenueQuantity > options.MaxDemoOrderQuantity)
+        if (request.VenueQuantity <= 0m || (options.DemoOrderCapsEnabled && request.VenueQuantity > options.MaxDemoOrderQuantity))
             throw new InvalidOperationException("DEMO_STRATEGY_QUANTITY_OUTSIDE_CONFIGURED_DEMO_LIMIT");
         if (request.PriceTickSize <= 0m) throw new InvalidOperationException("DEMO_STRATEGY_PRICE_TICK_INVALID");
         LmaxFixRecoveryCodec.ValidateClientOrderId(request.RootClientOrderId);
@@ -355,7 +355,9 @@ public sealed partial class RawLmaxFixSessionClient : ILmaxDemoStrategySession
             MarketDataSymbolEncodingMode = source.MarketDataSymbolEncodingMode,
             ShowFixMessages = source.ShowFixMessages,
             RequestTimeoutSeconds = source.RequestTimeoutSeconds,
+            DemoOrderCapsEnabled = source.DemoOrderCapsEnabled,
             MaxDemoOrderQuantity = source.MaxDemoOrderQuantity,
             MaxDemoOrderNotionalUsd = source.MaxDemoOrderNotionalUsd
         };
 }
+

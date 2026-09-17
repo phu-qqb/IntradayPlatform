@@ -19,8 +19,7 @@ if (args.Contains("--demo-config-inspect=true", StringComparer.Ordinal))
         demoEndpoint = inspected.FixOrderHost == "fix-order.london-demo.lmax.com" && inspected.FixOrderPort == 443 && inspected.UseTls,
         credentialsPresent = !string.IsNullOrWhiteSpace(inspected.FixUsername) && !string.IsNullOrWhiteSpace(inspected.FixPassword),
         senderMatches = !string.IsNullOrWhiteSpace(inspected.FixUsername) && inspected.FixSenderCompId == inspected.FixUsername,
-        existingQuantityLimitIsPointOne = inspected.MaxDemoOrderQuantity == .1m,
-        existingNotionalLimitIsFiveThousand = inspected.MaxDemoOrderNotionalUsd == 5000m,
+        demoOrderCapsDisabled = !inspected.DemoOrderCapsEnabled,
         brokerConnectionOpened = false, databaseAccessed = false
     }));
     return;
@@ -299,3 +298,4 @@ static async Task ValidateReferenceDataAsync(IHost host)
         throw new InvalidOperationException($"Reference data integrity check failed with {check.BlockingIssueCount} blocking issue(s). Run scripts/check-reference-data.ps1 for details or reset the local dev database if it contains old duplicate seed rows.");
     }
 }
+
