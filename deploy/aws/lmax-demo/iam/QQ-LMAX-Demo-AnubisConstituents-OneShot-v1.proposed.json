@@ -1,0 +1,68 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "CreateReadRemoveExactRepairDocument",
+      "Effect": "Allow",
+      "Action": [
+        "ssm:CreateDocument",
+        "ssm:GetDocument",
+        "ssm:DeleteDocument"
+      ],
+      "Resource": "arn:aws:ssm:eu-west-2:761018894194:document/QQ-LMAX-Demo-Anubis-RepairConstituents-v1",
+      "Condition": {
+        "DateLessThan": {
+          "aws:CurrentTime": "2026-09-17T23:59:59Z"
+        },
+        "StringEquals": {
+          "aws:RequestedRegion": "eu-west-2"
+        }
+      }
+    },
+    {
+      "Sid": "InvokeExactRepairOnlyOnAnubisBeforeExpiry",
+      "Effect": "Allow",
+      "Action": "ssm:SendCommand",
+      "Resource": [
+        "arn:aws:ssm:eu-west-2:761018894194:document/QQ-LMAX-Demo-Anubis-RepairConstituents-v1",
+        "arn:aws:ec2:eu-west-2:761018894194:instance/i-019ec3c94b9d234f6"
+      ],
+      "Condition": {
+        "DateLessThan": {
+          "aws:CurrentTime": "2026-09-17T23:59:59Z"
+        },
+        "StringEquals": {
+          "aws:RequestedRegion": "eu-west-2"
+        }
+      }
+    },
+    {
+      "Sid": "AllowServiceDeliveryOfExactRepairWithoutTimeContext",
+      "Effect": "Allow",
+      "Action": "ssm:SendCommand",
+      "Resource": [
+        "arn:aws:ssm:eu-west-2:761018894194:document/QQ-LMAX-Demo-Anubis-RepairConstituents-v1",
+        "arn:aws:ec2:eu-west-2:761018894194:instance/i-019ec3c94b9d234f6"
+      ],
+      "Condition": {
+        "Bool": {
+          "aws:ViaAWSService": "true"
+        }
+      }
+    },
+    {
+      "Sid": "ReadRepairOutputWithRegionalApiLimitation",
+      "Effect": "Allow",
+      "Action": "ssm:GetCommandInvocation",
+      "Resource": "*",
+      "Condition": {
+        "DateLessThan": {
+          "aws:CurrentTime": "2026-09-17T23:59:59Z"
+        },
+        "StringEquals": {
+          "aws:RequestedRegion": "eu-west-2"
+        }
+      }
+    }
+  ]
+}
