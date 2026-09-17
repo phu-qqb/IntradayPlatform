@@ -160,7 +160,7 @@ try {
             throw "LMAX_DEMO_NATIVE_CONTRACT_SOURCE_CUTOFF_MISMATCH:$programme"
         }
         $runRoot = Join-Path 'D:\anubis-benchmark\runs' "lmax-demo-$CycleId-$programme"
-        $list = Join-Path $immutableRoot "inputs\home\data\$programme\specs\ticker.txt"
+        $list = Join-Path $immutableRoot "inputs\home\data\$programme\specs\listOfSUs.txt"
         if ([DateTimeOffset]::UtcNow -ge $effective) { throw 'LMAX_DEMO_EXECUTION_DEADLINE_EXPIRED' }
         & $node $runSmoke --no-order --execute --contract $contract --immutable-bundle-root $immutableRoot --tooling-root $tooling --run-root $runRoot --executable (Join-Path $immutableRoot 'bin\PRODAnubisV4.exe') --benchmark-bundle-root (Join-Path $immutableRoot 'inputs\home\data') --prod-bundle-root (Join-Path $immutableRoot 'inputs\home\prod') --list $list --hash-manifest $hashManifest --bundle-inventory-manifest $inventory --qubes-overlay-root (Join-Path $candidate 'qubes-overlay') --qubes-snapshot-sha256 $snapshot.qubes_snapshot_sha256
         if ($LASTEXITCODE -ne 0) { throw "LMAX_DEMO_ANUBIS_RUN_FAILED:$programme" }
