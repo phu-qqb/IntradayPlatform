@@ -184,8 +184,26 @@ public sealed class LmaxDemoContinuingSession(
                 }
                 catch (Exception error) when (error is not OperationCanceledException)
                 {
-                    // Preserve reception/evidence after a semantic fault; never resume submissions.
-                    Block("FIX_PROTOCOL_RECONCILIATION_REQUIRED");
+                    // Retain bounded, allowlisted evidence even when normalization fails.
+                    // Credentials, free-text fields, and complete logon frames are never persisted.
+                    var fields = new Dictionary<string, string>(StringComparer.Ordinal);
+                    foreach (var tag in new[] { "35", "34", "1", "48", "22", "55", "11", "41", "37", "17",
+                        "150", "39", "54", "38", "14", "151", "32", "31", "6", "44", "60", "45", "371", "372", "373" })
+                    {
+                        var value = LmaxFixMarketDataCodec.GetTag(frame, tag);
+                        if (value is not null) fields[tag] = value.Length <= 128 ? value : "[OVERSIZE]";
+                    }
+                    var code = error.Message is "DEMO_FIX_INBOUND_SESSION_SCOPE_INVALID" or "DEMO_FIX_TEST_REQUEST_ID_MISSING"
+                        or "DEMO_FIX_UNKNOWN_SECURITY" or "DEMO_FIX_REPORT_SCOPE_OR_FIELDS_INVALID"
+                        or "DEMO_FIX_REPORT_ROUTE_MISSING" or "DEMO_FIX_REPORT_ROUTE_CLOSED"
+                        or "DEMO_FIX_UNSUPPORTED_SESSION_TRANSITION" ? error.Message : "DEMO_FIX_PROCESSING_FAILED";
+                    lock (stateLock)
+                    {
+                        State.RecordProtocolFailure(code, fields.GetValueOrDefault("35") ?? "UNKNOWN",
+                            long.TryParse(fields.GetValueOrDefault("34"), out var failedSequence) ? failedSequence : null,
+                            Convert.ToHexString(SHA256.HashData(Encoding.ASCII.GetBytes(frame))), fields, clock.UtcNow);
+                        Pulse();
+                    }
                     logon.TrySetException(new InvalidOperationException("DEMO_FIX_LOGON_OR_PROTOCOL_FAILED"));
                 }
             }
@@ -417,4 +435,3 @@ public sealed class LmaxDemoContinuingSession(
         lifetime.Dispose();
     }
 }
-

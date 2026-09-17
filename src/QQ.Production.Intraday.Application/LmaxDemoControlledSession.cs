@@ -273,6 +273,16 @@ public sealed class LmaxDemoControlledSession
 
     public void RecordTransportLost(DateTimeOffset now) => Fault("TRANSPORT_LOST_RECONCILIATION_REQUIRED", now);
 
+    // Diagnostic evidence does not acknowledge a message or advance FIX/position state.
+    public void RecordProtocolFailure(string code, string messageType, long? sequence,
+        string frameSha256, IReadOnlyDictionary<string, string> fields, DateTimeOffset now)
+    {
+        CheckWritableTime(now);
+        Save("ProtocolFailure", new { Code = code, MessageType = messageType, Sequence = sequence,
+            FrameSha256 = frameSha256, Fields = fields }, now);
+        Fault("FIX_PROTOCOL_RECONCILIATION_REQUIRED", now);
+    }
+
     public void RecordRuntimeFault(string reason, DateTimeOffset now)
     {
         if (string.IsNullOrWhiteSpace(reason) || reason.Length > 80 || reason.Any(c => c is not (>= 'A' and <= 'Z') and not '_'))
@@ -436,6 +446,7 @@ public sealed class LmaxDemoControlledSession
             case "DuplicateReport":
                 var duplicate = Read<Arch7bExecutionReportEvent>(); lastSequence = Math.Max(lastSequence, duplicate.SequenceNumber); lastInbound = entry.AtUtc; break;
             case "RejectedReport": blocker = Read<RejectedReport>().Reason; break;
+            case "ProtocolFailure": blocker = "FIX_PROTOCOL_RECONCILIATION_REQUIRED"; break;
             case "Fault": blocker = Read<string>(); break;
             case "Closed": closed = true; break;
             default: throw Error("JOURNAL_EVENT_KIND_UNKNOWN");

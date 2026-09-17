@@ -12,6 +12,26 @@ namespace QQ.Production.Intraday.Tests.Unit;
 public sealed class LmaxDemoContinuingSessionTests
 {
     [Fact]
+    public async Task InvalidReport_RetainsDiagnosticWithoutCredentialsOrSyntheticExecution()
+    {
+        await using var f = new Fixture();
+        await f.Session.InitializeAsync(CancellationToken.None);
+        f.Transport.InvalidReport();
+        await Until(() => f.Session.BlockingReason is not null);
+        using var journal = LmaxDemoSessionJournal.OpenForInspection(Path.Combine(f.Root, f.Start.SessionId + ".journal.jsonl"));
+        var failure = Assert.Single(journal.Entries.Where(x => x.Kind == "ProtocolFailure"));
+        Assert.Contains("DEMO_FIX_UNKNOWN_SECURITY", failure.Data);
+        Assert.Contains("unmapped-security", failure.Data);
+        Assert.DoesNotContain("SIMULATED-SECRET-MARKER", failure.Data);
+        Assert.DoesNotContain("SIMULATED-FREE-TEXT", failure.Data);
+        Assert.DoesNotContain(journal.Entries, x => x.Kind is "Report" or "SendIntent" or "SendCompleted");
+        var inspected = LmaxDemoControlledSession.Inspect(journal);
+        Assert.Equal("FIX_PROTOCOL_RECONCILIATION_REQUIRED", inspected.BlockingReason);
+        Assert.Empty(inspected.KnownOrders);
+        Assert.Throws<InvalidOperationException>(() => f.Session.BeginCycle("unsafe", new Dictionary<string, decimal> { ["EURUSD"] = 1000m }));
+    }
+
+    [Fact]
     public void Framing_RetainsEveryFragmentAndCoalescedMessage()
     {
         var one = Frame("0", 1, []);
@@ -298,6 +318,8 @@ public sealed class LmaxDemoContinuingSessionTests
     private sealed class SimulatedTransport(MovingClock clock) : ILmaxDemoFixTransport
     {
         private readonly Channel<string> inbound = Channel.CreateUnbounded<string>();
+        public void InvalidReport() => Emit("8", [("48", "unmapped-security"), ("553", "SIMULATED-SECRET-MARKER"),
+            ("554", "SIMULATED-SECRET-MARKER"), ("58", "SIMULATED-FREE-TEXT")]);
         private readonly ConcurrentDictionary<string, TaskCompletionSource<bool>> probes = new();
         private int sequence;
         public bool IsSimulated => true;
@@ -370,4 +392,3 @@ public sealed class LmaxDemoContinuingSessionTests
         public ValueTask DisposeAsync() { inbound.Writer.TryComplete(); return ValueTask.CompletedTask; }
     }
 }
-
