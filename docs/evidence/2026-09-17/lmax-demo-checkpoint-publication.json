@@ -1,21 +1,29 @@
 {
-  "schemaVersion": "lmax-demo-checkpoint-recovery-v1",
-  "baseCommit": "5268369be2198c3a05bde199f7ac68394148bd35",
-  "checkpointSha256": "4a522d774632141789646ea1203214f4fab1236720867a709cb92c413503b022",
-  "sourceFiles": 16,
-  "sourceHashComparison": "16 of 16 files match the retained qualification source",
-  "qualificationCompletedAtUtc": "2026-09-16T17:32:27.0972494Z",
-  "buildExitCode": 0,
-  "tests": {
-    "passed": 118,
-    "failed": 0,
-    "simulated": true
-  },
-  "publicationStatus": "BLOCKED_BY_AUTOMATIC_APPROVAL_REVIEW",
-  "destination": "phu-qqb/IntradayPlatform",
-  "branch": "feat/lmax-demo-continuing-worker-20260916",
-  "repositoryVisibility": "public",
-  "brokerConnectionOpened": false,
-  "workerActivated": false,
-  "ordersSent": 0
+    "schemaVersion":  "lmax-demo-checkpoint-recovery-v1",
+    "baseCommit":  "5268369be2198c3a05bde199f7ac68394148bd35",
+    "checkpointSha256":  "4a522d774632141789646ea1203214f4fab1236720867a709cb92c413503b022",
+    "sourceFiles":  16,
+    "sourceHashComparison":  "16 of 16 files match the retained qualification source",
+    "qualificationCompletedAtUtc":  "2026-09-16T17:32:27.0972494Z",
+    "buildExitCode":  0,
+    "tests":  {
+                  "passed":  118,
+                  "failed":  0,
+                  "simulated":  true
+              },
+    "publicationStatus":  "BLOCKED_BY_AUTOMATIC_APPROVAL_REVIEW",
+    "destination":  "phu-qqb/IntradayPlatform",
+    "branch":  "feat/lmax-demo-continuing-worker-20260916",
+    "repositoryVisibility":  "public",
+    "brokerConnectionOpened":  false,
+    "workerActivated":  false,
+    "ordersSent":  0,
+    "ordinaryWorkerProjectBuild":  {
+                                       "sdk":  "10.0.400",
+                                       "exitCode":  0,
+                                       "warnings":  37,
+                                       "errors":  0,
+                                       "logSha256":  "a1e7088900a49e7a6c13579b4d1031a7215f9bfb57000b0dcd24d0d006d6506f",
+                                       "activated":  false
+                                   }
 }
