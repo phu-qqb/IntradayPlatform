@@ -1,6 +1,6 @@
-# LMAX Demo daily recap: offline fallbacks
+# LMAX Demo daily acquisition and recap
 
-This additive reporting command produces a recap even when report acquisition
+The standalone `Build-LmaxDemoDailyRecap.mjs` produces a recap even when report acquisition
 fails. It does not start the downloader, the Worker, an API or a database. It
 never sends email. It currently validates **EUR/USD Individual Trades only**;
 the existing report-set importer remains responsible for trades/wallet matching.
@@ -29,24 +29,32 @@ the machine must be running and Administrator must remain logged on. A
 disconnected RDP session may remain logged on; logging off prevents the task.
 No claim of unattended service operation while logged off is made.
 
-Runtime: `C:\deploy\IntradayPlatform\operator\lmax-demo-orchestration\daily-eod-20260918`.
+Runtime: `C:\deploy\IntradayPlatform\operator\lmax-demo-orchestration\daily-eod-portal-20260918`.
 Inputs: `D:\data\lmax-eod\inbox\1754288005\YYYY-MM-DD\individual-trades.csv`,
-or existing capture-run inboxes with the same exact account/date. Optional
+or verified successful capture-run inboxes with the same exact account/date. Optional
 `trades.csv` and `currency-wallets.csv` must accompany the selected individual
 file in the same directory. They feed the existing report-set importer.
-The latest valid candidate wins; exports are never concatenated. Header-only
+The latest verified capture precedes an operator-supplied inbox file; exports are never concatenated. Header-only
 reports do not prove zero activity. Do not overwrite retained input files;
 use a new capture directory for a subsequent export.
 
-**Acquisition remains `LOCAL_EXPORTS_ONLY_UNATTENDED_PORTAL_NOT_QUALIFIED`.**
-The task does not call the remote downloader, another browser, an account API
-or credentials. Existing report-launcher captures are consumed when available;
-the successful cloud export does not qualify a different unattended browser
-session. Do not route earlier security refusals through the remote downloader.
-This is recurring import/reconciliation/reporting, not a completed autonomous
-portal-acquisition chain.
+The daily runner invokes the existing, pinned Core PR #61 downloader through
+`Run-LmaxDemoReports.mjs`. The wrapper verifies source hashes and the intended
+EC2 role, enables its existing AWS Secrets session recovery, and validates the
+real six-report manifest before import. Actual secret login, profile reopen and
+historical report acquisition were qualified on 18 September; see
+[retained evidence and remaining limits](AUTONOMY.md). No model-visible secrets,
+new browser adapter, account API or raw-endpoint fallback is introduced.
+Any security denial is terminal for that acquisition attempt.
 
-Each invocation uses an exclusive reporting lock (never forcibly cleared),
+Daily startup requires hashed qualification receipt references in the runtime
+pin. `--verify-only` verifies those and runtime hashes without executing the
+pipeline. `--local-only` skips acquisition and keeps provisional reporting
+available. `Update-LmaxDemoDailyEod.ps1` upgrades the existing task only after
+a successful authenticated acquisition/import receipt for the exact script.
+It preserves principal, settings, triggers and the previous task XML.
+
+Each invocation uses exclusive daily and portal reporting locks (never forcibly cleared),
 an immutable dated run directory and hashed source/runtime evidence. The EOD
 executable validates the account, dates and source hashes, previews before
 writing, imports/reconciles in one database transaction and rejects conflicting
@@ -59,12 +67,16 @@ Every ordinary missing-export/import failure produces a PROVISIONAL recap
 and unsent email draft. No fabricated current observation or synthetic TCA is
 enabled in scheduled runs. Real M15 TCA remains unavailable without benchmarks.
 The latest operational receipt is `D:\data\lmax-eod\latest-daily-eod.json`;
-immutable bundles are under `daily-runs`. Exit 2 means evidence or reconciliation
+immutable bundles are under `daily-runs`. The downloader has a five-minute
+deadline and the importer a three-minute deadline, within the existing
+ten-minute task limit. An uncertain downloader termination retains its portal
+lock for inspection; no unrelated process is killed. There is one acquisition
+attempt, with no blind credential retries. Exit 2 means evidence or reconciliation
 remains incomplete, even if the report was successfully written. Exit 1 means
 an execution/integrity problem; inspect the retained logs and scheduler result.
 
 Qualification commands:
-`node --test Build-LmaxDemoDailyRecap.test.mjs Run-LmaxDemoDailyEod.test.mjs`;
+`node --test Build-LmaxDemoDailyRecap.test.mjs Run-LmaxDemoDailyEod.test.mjs Run-LmaxDemoReports.test.mjs`;
 `node Run-LmaxDemoDailyEod.mjs --date 2026-09-17`.
 The latter is a historical replay/import, never a current-state attestation.
 
@@ -109,7 +121,9 @@ ratios use the sum of notionals, never the average of individual ratios.
 
 Security or access denials are terminal for acquisition; this command must not
 be used to route a denied download through another browser, host, API or proxy.
-No Databento requests, credentials, network or email transport exist in the code.
+No Databento requests or email transport exist in these commands. The standalone
+recap builder remains entirely offline; only the separately qualified downloader
+performs portal access and reads the exact Demo credential secret.
 
 The unsent email draft includes date, status, observed PnL/position, official
 coverage, breaks and an unmistakable synthetic TCA label when present. Email

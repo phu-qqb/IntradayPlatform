@@ -1,36 +1,94 @@
-# LMAX Demo reporting autonomy: verified gap and proposed change
+# LMAX Demo reporting autonomy
 
-Status at 2026-09-18 08:01:42 UTC: credential access blocked; no portal login attempted. This is a proposal, not an IAM deployment or a successful unattended capture.
+## Verified on 18 September 2026
 
-## Verified runtime
+Only EC2AMAZ-1QPHTD8 / Administrator / Demo account 1754288005 is in scope.
+Control Tower QQ.Investment.Platform#100 and IntradayPlatform#84 remain authoritative.
 
-- Host: EC2AMAZ-1QPHTD8, Administrator; Demo account 1754288005.
-- Downloader: Core PR #61, commit `6dce3375aaaa7e8042c61a36467e81fe5e97cb49`, still open and unmerged. Its AWS Secrets bootstrap and session-recovery implementation already exists.
-- The report wrapper currently omits `--session-recovery aws-secrets` and the exact credential reference. The installed daily pipeline consumes local official exports; it does not acquire them.
-- The default AWS CLI identity was the legacy IAM user `qq-intraday-ec2`; the default SDK credential-access check was denied. Repeating the access check with the launcher's documented child-only role binding proved the intended instance role `qq-role-ec2-intraday` on instance `i-05626133ca7892fb8`.
-- At 08:01:42.807 UTC that exact role received `AccessDeniedException` for `secretsmanager:GetSecretValue`; the classified AWS reason was `NO_IDENTITY_BASED_ALLOW`. No credential values were obtained. Private receipt: `D:\data\lmax-demo-orchestration\reconciliation-20260918\portal-credential-access-1789718502807.json`.
-- The daily EOD task remains Ready, Administrator / Interactive / Limited, next run 2026-09-18 20:15 UTC. It requires an existing Windows logon. It does not establish recovery after Windows logoff or reboot.
+Philippe approved and applied the exact `QQ-LMAX-Demo-PortalReports-Read-v1`
+policy on `qq-role-ec2-intraday`. His IAM readback matched the proposed policy.
+At 08:34:58 UTC the EC2 role independently succeeded in reading the exact Demo
+secret at AWSCURRENT; its contract was valid. Only presence booleans were
+recorded. This supersedes the 08:01:42 `NO_IDENTITY_BASED_ALLOW` failure.
+No IAM management permission was added to EC2. The policy artifact retains its
+`.proposed.json` name for traceability; this document records its applied state.
 
-## Concrete IAM proposal; owner authorization required before application
+The existing Core PR #61 application, pinned to
+`6dce3375aaaa7e8042c61a36467e81fe5e97cb49`, was invoked on its existing profile.
+The PR remains open/unmerged. No alternate browser adapter, account API or
+raw report endpoint was introduced. Source-manifest hashes are checked before
+every invocation. Earlier download refusals must not be bypassed; a fresh
+security denial remains terminal for the acquisition attempt.
 
-Attach the adjacent [proposed inline policy](../iam/QQ-LMAX-Demo-PortalReports-Read-v1.proposed.json) to the existing role `qq-role-ec2-intraday`, with policy name `QQ-LMAX-Demo-PortalReports-Read-v1`. It permits only `GetSecretValue`, only the exact Demo portal-report secret ARN, and only explicitly requested `AWSCURRENT`. Do not attach it to the legacy IAM user.
+At **08:51:33.506 UTC**, the real application recorded `session_already_active=false`,
+`secret_fetched=true`, `login_performed=true`, and `mfa_mode=NOT_CHALLENGED`.
+The account-scoped account-summary response was HTTP 200; its server date was
+18 September 08:51:33 UTC. Closing and reopening the same profile then yielded
+`AUTHENTICATED_REPORT_FORM_PRESENT`, with no secret read during the reopen probe.
+Bootstrap receipt: `demo-reports-20260918T085026155Z-9b9a7105-75fb-4057-a93a-7081e3375eb0`.
+Its acquisition-manifest SHA-256 is
+`55cfbea5d0525596111e79136e01ec055b8f86bf5e8c109795bd6f662dbb65d8`.
 
-This adds no ListSecrets, write, Production, FIX, Databento, KMS or IAM-management permission. The secret's encryption-key configuration has not been established by this check. If a customer-managed KMS key independently blocks decryption, obtain its exact metadata and prepare a separate, constrained proposal; do not widen this policy speculatively.
+At **08:52:55.502 UTC**, a separate normal invocation downloaded all six
+reports for **17 September**: account summary, account statement, currency
+wallets, trades, individual trades and open positions. Account, selected
+date range, report forms, file paths, sizes and hashes were validated.
+Receipt: `demo-reports-20260918T085251578Z-ebf4eb4c-22b4-4cca-aa6c-039f966f3b38`.
+The individual-trades hash is the same as the previously obtained official
+post-close export: `1f05ccf6f127f75e5d240aab9186f5f2c69a2fc4533f445f395b411a0553107b`.
+These are historical-day reports acquired today, not an observation that the
+account is currently flat or has no working orders.
 
-Before applying: read the current role and this policy name, preserve any existing policy, check for a collision, and require exact owner approval because the standing scope excludes IAM modifications. After applying: read back and compare the policy, repeat a secret-access-only check under the verified instance role, keep credential values solely in process memory, and record only contract-validity/presence booleans. Success is not evidence of a portal login or a download. Rollback may remove only a newly created matching policy after checking that it has not been changed concurrently.
+Private receipts and manifests remain under `D:\data\lmax-eod\logs\<run-id>`;
+raw captures remain under `D:\data\lmax-eod\captures`. Public GitHub contains
+sanitized operational status only, never credentials or raw account reports.
 
-The proposal has been checked as JSON, not deployed or qualified by an AWS access test. See [AWS GetSecretValue permissions and KMS dependency](https://docs.aws.amazon.com/secretsmanager/latest/apireference/API_GetSecretValue.html).
+## Daily integration and qualification gate
 
-## Remaining implementation and qualification
+`Run-LmaxDemoReports.mjs` reuses that existing application and profile. Its
+child-only environment removes legacy credentials/config references, then
+requires the exact EC2 assumed-role identity before any authenticated run.
+There is one acquisition attempt per run, no blind login retry. The exclusive
+portal lock is never stolen. An uncertain child termination retains its lock
+for inspection. Credentials stay within the existing downloader process.
 
-1. Bind report processes to the documented EC2 role before secret access and verify that identity. Do not persistently alter machine/user environment or expose credentials.
-2. Qualify the existing AWS Secrets bootstrap on the approved Demo runtime, using the supported authentication surface and respecting prior browser/download refusals. Confirm the exact account and an authentic account-scoped report response, then close/reopen the same profile and qualify reuse. An MFA challenge without the supported seed remains a block.
-3. Integrate qualified report acquisition before the existing daily import: select the actual report date, verify manifest/account/date/hashes, and preserve bounded retries, exclusive ownership, immutable receipts, and provisional reporting on failure. Do not treat old exports or header-only files as current account evidence.
-4. Prepare and separately authorize a Windows execution mode that works without an interactive Administrator logon. Qualify Chrome/profile access, networking, and the same LocalDB under that execution identity. Changing the scheduled task to S4U alone is not an established solution: Microsoft documents network/encrypted-file limitations. No OS, account, password-storage or task-principal change is part of this proposal.
-5. Verify the complete report-only flow from an expired portal session, then after a controlled Windows logoff/restart. Do not perform a disruptive restart or kill unrelated processes merely to test autonomy.
+`Run-LmaxDemoDailyEod.mjs` calls acquisition before choosing an import source.
+Only complete, successful captures with a matching manifest and file hashes
+are eligible as retained captures. An ordinary portal failure still produces
+a provisional recap from valid same-date local data when available, with the
+failure retained in its receipt and exit status. A partial failed download
+cannot silently become a fallback source. No different-day data is substituted.
 
-[Microsoft task logon modes](https://learn.microsoft.com/en-us/windows/win32/api/taskschd/ne-taskschd-task_logon_type).
+The runtime pin must include `portal_acquisition_qualified=true` and hashed
+bootstrap/download receipt references. Startup validates the retained evidence,
+including an actual secret-based login and the reopen proof. `--verify-only`
+checks these references and runtime hashes without login, download or import.
+`--local-only` retains the independent provisional reporting fallback.
 
-## Separate trading gate
+Before upgrading the existing scheduled task, run the entire pinned daily
+pipeline against the historical 17 September reports. Require an authenticated
+acquisition and successful EOD import receipt; open reconciliation breaks must
+remain visible. `Update-LmaxDemoDailyEod.ps1 -QualificationReceiptPath <receipt>`
+requires that evidence, checks the old task target, saves its XML, and changes
+only its action and description. It verifies unchanged principal, settings and
+triggers after the update. The prior runtime remains available for rollback.
+The deployment result and exact commit are recorded in issue #84 after readback.
 
-Reporting autonomy does not resolve the four broker executions missing internally, certify the old actual-send session, qualify the new FIX runtime, or create a fresh official flat/no-orders observation. Trading stays blocked until those existing requirements are satisfied. Production credentials are outside this change. Emails remain deferred.
+## Remaining limits
+
+- The daily task is Administrator / Interactive / Limited, at 20:15 UTC on
+  weekdays. It requires the host running and Administrator logged on. Windows
+  logoff/reboot recovery is not qualified; no task-principal, OS account or
+  credential-storage change is included.
+- The Demo secret has no TOTP seed. More importantly, this pinned browser
+  adapter does not submit TOTP: an actual MFA challenge stops acquisition.
+  Adding a seed alone would not qualify unattended MFA.
+- Core PR #61 and Intraday PR #103 remain reviewable candidates, not merged
+  production releases. This deployment is the explicitly authorized Demo scope.
+- Reporting does not resolve the four official executions missing internally,
+  certify the old actual-send session, qualify/deploy the corrected FIX Worker,
+  or create a fresh official flat/no-orders observation. Trading stays blocked.
+- Email remains a draft only. Real M15 TCA remains unavailable. Synthetic TCA
+  is reserved for explicitly labelled test reports and is off in daily runs.
+- Production credentials, PMS, Databento requests/downloads and unrelated
+  processes are outside this workflow.
