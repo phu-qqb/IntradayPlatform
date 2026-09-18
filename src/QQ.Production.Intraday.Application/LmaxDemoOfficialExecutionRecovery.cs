@@ -11,7 +11,7 @@ public sealed record LmaxDemoOfficialRecoveryRequest(
     string ReportSha256, string JournalSha256, string OwnerAuthorizationReference, DateTimeOffset AcceptedAtUtc);
 
 public sealed record LmaxDemoOfficialRecoveryBefore(ModelRun Model, TradeIntent Intent, ParentOrder Parent, ChildOrder Child,
-    BrokerAccount Account, VenueInstrumentMapping Mapping, IReadOnlyList<EodReconciliationBreak> OpenBreaks);
+    BrokerAccount Account, VenueInstrumentMapping Mapping, InstrumentAlias ReportAlias, IReadOnlyList<EodReconciliationBreak> OpenBreaks);
 
 public sealed record LmaxDemoOfficialRecoveryPlan(
     Guid RecoveryId, LmaxDemoOfficialRecoveryRequest Request, LmaxDemoOfficialRecoveryBefore Before,
@@ -62,10 +62,14 @@ public static class LmaxDemoOfficialExecutionRecovery
         var venue = state.Venues.Single(x => x.Name == "LMAX" && x.IsEnabled);
         var instrument = state.Instruments.Single(x => x.Id == intent.InstrumentId);
         var mapping = state.VenueInstrumentMappings.Single(x => x.IsEnabled && x.VenueId == venue.Id && x.InstrumentId == instrument.Id);
+        var alias = state.InstrumentAliases.Single(x => x.IsEnabled && x.Source == "LMAX_REPORT" && x.InstrumentId == instrument.Id);
+        var binding = session.Start.Instruments.Single(x => x.Symbol == instrument.Symbol);
         Require(model.FundId == account.FundId && intent.FundId == account.FundId && !model.IsProcessed
             && DateOnly.FromDateTime(model.AsOfUtc.UtcDateTime) == r.ReportDate && child.Id == r.InitialChildId
             && child.VenueId == venue.Id && intent.Side == TradeSide.Buy && parent.Side == OrderSide.Buy && child.Side == OrderSide.Buy
-            && instrument.Symbol == "EURUSD" && mapping.VenueInstrumentCode == "4001" && mapping.ContractSize == 10_000m,
+            && instrument.Symbol == "EURUSD" && mapping.VenueSymbol == "EURUSD" && mapping.VenueInstrumentCode == "EUR/USD"
+            && alias.ExternalSymbol == "EUR/USD" && alias.ExternalInstrumentId == "4001"
+            && binding.SecurityId == alias.ExternalInstrumentId && binding.ContractSize == mapping.ContractSize && mapping.ContractSize == 10_000m,
             "RECOVERY_INTERNAL_BINDING_MISMATCH");
         Require(parent.Status == OrderStatus.Created && child.Status == OrderStatus.PendingNew
             && model.Status == ModelRunStatus.Received && intent.Status == TradeIntentStatus.Created && intent.RequestedBaseQuantity == parent.BaseQuantity
@@ -81,7 +85,7 @@ public static class LmaxDemoOfficialExecutionRecovery
         var send = sent.Intent;
         Require(sent.SendCompleted && send.MessageType == "D" && send.OriginalClientOrderId is null
             && send.CycleId == model.Id.Value.ToString("N") && send.ParentId == child.Id.Value.ToString("N")
-            && send.Side == "BUY" && send.Symbol == instrument.Symbol && send.SecurityId == mapping.VenueInstrumentCode
+            && send.Side == "BUY" && send.Symbol == instrument.Symbol && send.SecurityId == binding.SecurityId
             && send.VenueQuantity == child.VenueQuantity && send.OrderTypeRaw == "2" && send.TimeInForceRaw == "0" && send.LimitPrice > 0m
             && journal.Count(x => x.Kind == "SendIntent") == 1 && journal.Count(x => x.Kind == "SendCompleted") == 1
             && journal.All(x => x.Kind != "ExecutionReport"), "RECOVERY_DURABLE_SEND_BINDING_MISMATCH");
@@ -144,7 +148,7 @@ public static class LmaxDemoOfficialExecutionRecovery
             Math.Abs(x.UnitsBoughtSold),Math.Abs(x.TradeQuantity),x.TradePrice,x.TimestampUtc,r.AcceptedAtUtc)).ToArray();
         var ledger = fills.Select(x => new PositionLedgerEvent(Identity(r,"ledger",x.BrokerExecutionId),account.FundId,instrument.Id,
             PositionLedgerEventType.Fill,x.Side==TradeSide.Buy?x.BaseQuantity:-x.BaseQuantity,x.BrokerExecutionId,x.TradeDateUtc)).ToArray();
-        return new(id,r,new(model,intent,parent,child,account,mapping,oldBreaks),
+        return new(id,r,new(model,intent,parent,child,account,mapping,alias,oldBreaks),
             model with {IsProcessed=true,Status=ModelRunStatus.RecoveredFromOfficialReport},intent with {Status=TradeIntentStatus.Ordered},
             parent with {Status=OrderStatus.Filled},recoveredChild,manualIntent,manualParent,manualChild,fills,ledger,
             official.OrderBy(x => x.TimestampUtc).ToArray());

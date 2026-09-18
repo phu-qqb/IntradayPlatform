@@ -96,6 +96,8 @@ public sealed class LmaxDemoOfficialExecutionRecoveryTests
     [InlineData("position")]
     [InlineData("break_resolved")]
     [InlineData("child_changed")]
+    [InlineData("report_alias")]
+    [InlineData("mapping")]
     public void ChangedInternalStateRequiresAnotherRecoveryDecision(string scenario)
     {
         using var f = new Fixture();
@@ -108,6 +110,8 @@ public sealed class LmaxDemoOfficialExecutionRecoveryTests
             case "position": f.State.PositionLedger.Add(p.Ledger[0]); break;
             case "break_resolved": f.State.EodReconciliationBreaks[0] = f.State.EodReconciliationBreaks[0] with { Status = ReconciliationBreakStatus.Resolved }; break;
             case "child_changed": f.State.ChildOrders[0] = f.State.ChildOrders[0] with { Status = OrderStatus.Cancelled }; break;
+            case "report_alias": f.State.InstrumentAliases[0] = f.State.InstrumentAliases[0] with { ExternalInstrumentId = "WRONG" }; break;
+            case "mapping": f.State.VenueInstrumentMappings[0] = f.State.VenueInstrumentMappings[0] with { VenueInstrumentCode = "OTHER/PAIR" }; break;
         }
         Assert.Throws<InvalidOperationException>(() => f.Prepare());
     }
@@ -138,7 +142,8 @@ public sealed class LmaxDemoOfficialExecutionRecoveryTests
             var account = new BrokerAccount(BrokerAccountId.New(), fund.Id, "LMAX_DEMO_LOCAL", true, "1754288005");
             var venue = new Venue(VenueId.New(), "LMAX", VenueType.Broker);
             var instrument = new Instrument(InstrumentId.New(), "EURUSD", AssetClass.FxSpot, Currency.Eur, Currency.Usd, 5, 2);
-            var mapping = new VenueInstrumentMapping(VenueInstrumentId.New(), venue.Id, instrument.Id, "EUR/USD", "4001", 10000m, .1m, .1m, .00001m);
+            var mapping = new VenueInstrumentMapping(VenueInstrumentId.New(), venue.Id, instrument.Id, "EURUSD", "EUR/USD", 10000m, .1m, .1m, .00001m);
+            State.InstrumentAliases.Add(new(InstrumentAliasId.New(), instrument.Id, "LMAX_REPORT", "EUR/USD", "4001", true, StartAt));
             var model = new ModelRun(ModelRunId.New(), fund.Id, "TEST", StartAt, StartAt, StartAt, 15, 100000m, ModelRunStatus.Received, "TEST", "TEST", false);
             var intent = new TradeIntent(TradeIntentId.New(), model.Id, fund.Id, instrument.Id, TradeSide.Buy, 5000m, .5m, "TEST", TradeIntentStatus.Created, StartAt);
             var parent = new ParentOrder(ParentOrderId.New(), intent.Id, new("TEST-PARENT"), OrderSide.Buy, 5000m, ExecutionAlgo.MarketImmediate, OrderStatus.Created, StartAt);
