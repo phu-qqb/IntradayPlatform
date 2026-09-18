@@ -11,7 +11,8 @@ if (Environment.MachineName != "EC2AMAZ-1QPHTD8" || Environment.UserName != "Adm
     throw new InvalidOperationException("RECOVERY_DEMO_HOST_OWNER_REQUIRED");
 if (args.Length != 2 && args.Length != 4) throw new ArgumentException("plan INPUT_JSON | apply/verify PLAN_JSON EXPECTED_PLAN_SHA256 NEW_RECEIPT_JSON");
 if (args[0] == "plan" && args.Length == 2) await Plan(args[1]);
-else if ((args[0] == "apply" || args[0] == "verify") && args.Length == 4) await Apply(args[1], args[2], args[3], args[0] == "apply");
+else if ((args[0] == "apply" || args[0] == "verify" || args[0] == "correct-audit") && args.Length == 4)
+    await Apply(args[1], args[2], args[3], args[0]);
 else throw new ArgumentException("RECOVERY_INVALID_COMMAND");
 
 static string PathUnder(string path, string root)
@@ -88,8 +89,9 @@ static async Task Plan(string path)
         ledger_net_delta = plan.Ledger.Sum(x => x.BaseQuantityDelta), historical_breaks_to_resolve = plan.Before.OpenBreaks.Count,
         fix_reports_to_add = 0, journal_mutation = false, trading_started = false }));
 }
-static async Task Apply(string path, string expectedHash, string receiptPath, bool commit)
+static async Task Apply(string path, string expectedHash, string receiptPath, string mode)
 {
+    bool commit = mode == "apply";
     var envelope = JsonSerializer.Deserialize<RecoveryEnvelope>(File.ReadAllText(PrivatePath(path))) ?? throw new InvalidOperationException("RECOVERY_PLAN_INVALID");
     var plan = envelope.Plan;
     if (expectedHash != envelope.PlanSha256 || expectedHash != plan.Sha256()
@@ -107,15 +109,50 @@ static async Task Apply(string path, string expectedHash, string receiptPath, bo
     var priorAudit = await db.OperatorAuditEvents.AsNoTracking().SingleOrDefaultAsync(x => x.Id == new OperatorAuditEventId(plan.RecoveryId));
     if (priorAudit is not null)
     {
-        if (priorAudit.Source != LmaxDemoOfficialRecoveryPlan.Source || priorAudit.AfterJson != JsonSerializer.Serialize(plan)
-            || priorAudit.Result != OperatorAuditResult.Succeeded) throw new InvalidOperationException("RECOVERY_AUDIT_CONFLICT");
-        LmaxDemoOfficialExecutionRecovery.VerifyApplied(await repo.LoadStateAsync(default), plan);
+        var state = await repo.LoadStateAsync(default);
+        LmaxDemoOfficialExecutionRecovery.VerifyApplied(state, plan);
+        if (plan.Before.OpenBreaks.Any(b => state.EodReconciliationBreaks.Single(x => x.Id == b.Id) != (b with { Status = ReconciliationBreakStatus.Resolved })))
+            throw new InvalidOperationException("RECOVERY_BREAK_READBACK_CONFLICT");
+        var exact = priorAudit.Source == LmaxDemoOfficialRecoveryPlan.Source && priorAudit.AfterJson == JsonSerializer.Serialize(plan)
+            && priorAudit.BeforeJson == JsonSerializer.Serialize(plan.Before) && priorAudit.Result == OperatorAuditResult.Succeeded;
+        if (!exact)
+        {
+            if (!LmaxDemoOfficialExecutionRecovery.IsKnownAuditProjectionDefect(priorAudit, plan))
+                throw new InvalidOperationException("RECOVERY_AUDIT_CONFLICT");
+            var correctionId = new OperatorAuditEventId(LmaxDemoOfficialExecutionRecovery.AuditCorrectionId(plan.RecoveryId));
+            var correction = state.OperatorAuditEvents.SingleOrDefault(x => x.Id == correctionId);
+            if (correction is null && mode == "correct-audit")
+            {
+                var corrected = new OperatorAuditEvent(correctionId, DateTimeOffset.UtcNow, OperatorAuditActorType.Operator,
+                    "philippe-authorized-demo-recovery", "Philippe-authorized Demo recovery audit correction",
+                    OperatorAuditEventType.OfficialExecutionRecovered, OperatorAuditSeverity.Warning, OperatorAuditResult.Succeeded,
+                    "RecoveryAuditCorrection", plan.RecoveryId.ToString("D"), plan.RecoveryId.ToString("D"), priorAudit.Id.Value.ToString("D"),
+                    null, LmaxDemoOfficialExecutionRecovery.AuditCorrectionSource,
+                    "Append-only correction of EF-mutated before-state projection. Original audit and economic records retained unchanged.",
+                    plan.Request.OwnerAuthorizationReference, JsonSerializer.Serialize(plan.Before), JsonSerializer.Serialize(plan),
+                    JsonSerializer.Serialize(new { plan_sha256 = expectedHash, original_audit_id = priorAudit.Id.Value,
+                        original_after_json_sha256 = LmaxDemoOfficialExecutionRecovery.Hash(priorAudit.AfterJson!), economic_mutation = false }));
+                db.OperatorAuditEvents.Add(corrected);
+                await db.SaveChangesAsync();
+                VerifySources(envelope.Input);
+                await tx.CommitAsync();
+                WriteNew(receiptPath, new { status = "AUDIT_PROJECTION_CORRECTED_APPEND_ONLY", correction_id = correctionId.Value,
+                    recovery_id = plan.RecoveryId, plan_sha256 = expectedHash, economic_mutation = false, original_audit_preserved = true,
+                    at_utc = DateTimeOffset.UtcNow, trading_started = false });
+                Console.WriteLine("AUDIT_PROJECTION_CORRECTED_APPEND_ONLY");
+                return;
+            }
+            if (correction is null || correction.Source != LmaxDemoOfficialExecutionRecovery.AuditCorrectionSource
+                || correction.BeforeJson != JsonSerializer.Serialize(plan.Before) || correction.AfterJson != JsonSerializer.Serialize(plan)
+                || correction.Result != OperatorAuditResult.Succeeded) throw new InvalidOperationException("RECOVERY_AUDIT_CORRECTION_REQUIRED");
+        }
         await tx.RollbackAsync();
         WriteNew(receiptPath, new { status = "ALREADY_APPLIED_VERIFIED", recovery_id = plan.RecoveryId, plan_sha256 = expectedHash,
             at_utc = DateTimeOffset.UtcNow, database_mutation = false, trading_started = false });
         Console.WriteLine("ALREADY_APPLIED_VERIFIED");
         return;
     }
+    if (mode == "correct-audit") throw new InvalidOperationException("RECOVERY_EXISTING_AUDIT_REQUIRED");
     var current = await Prepare(db, envelope.Input);
     if (current.Sha256() != expectedHash) throw new InvalidOperationException("RECOVERY_PLAN_STALE_OR_STATE_CHANGED");
     Set(plan.Before.Model, plan.RecoveredModel);
@@ -132,6 +169,7 @@ static async Task Apply(string path, string expectedHash, string receiptPath, bo
         .RunAsync(plan.Request.ReportDate, "LMAX", "LMAX_DEMO_LOCAL", default);
     if (reconciled.BreakCount != 0) throw new InvalidOperationException("RECOVERY_RECONCILIATION_NOT_CLEAN_ROLLBACK");
     foreach (var old in plan.Before.OpenBreaks) Set(old, old with { Status = ReconciliationBreakStatus.Resolved });
+    if (plan.Sha256() != expectedHash) throw new InvalidOperationException("RECOVERY_IMMUTABLE_PLAN_CHANGED_ROLLBACK");
     var metadata = JsonSerializer.Serialize(new { plan_sha256 = expectedHash, reconciliation_run_id = reconciled.RunId,
         blocking_breaks = 0, recovery_source = "AUTHENTIC_OFFICIAL_REPORT_NOT_FIX", source_report_sha256 = plan.Request.ReportSha256,
         source_journal_sha256 = plan.Request.JournalSha256, owner_lock_sha256 = ownerHash.ToLowerInvariant(),
@@ -163,8 +201,10 @@ static async Task Apply(string path, string expectedHash, string receiptPath, bo
 
     void Set<T>(T before, T after) where T : class
     {
-        db.Attach(before);
-        db.Entry(before).CurrentValues.SetValues(after);
+        // EF can mutate init-only record properties. Never attach the retained
+        // before object and then call CurrentValues.SetValues on it.
+        db.Attach(after);
+        db.Entry(after).State = EntityState.Modified;
     }
 }
 record RecoveryInput(LmaxDemoOfficialRecoveryRequest Request, string ReportPath, string JournalPath, string PlanPath);

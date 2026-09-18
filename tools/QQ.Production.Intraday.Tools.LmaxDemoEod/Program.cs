@@ -71,8 +71,19 @@ var reconciled=await new EodReconciliationService(repo,eod,clock).RunAsync(date,
 var after=await repo.LoadStateAsync(default);
 if(after.Fills.Count!=state.Fills.Count || after.ExecutionReports.Count!=state.ExecutionReports.Count) throw new Exception("CONCURRENT_TRADING_ACTIVITY_RETRY_AFTER_CLOSE");
 var recoveries=after.OperatorAuditEvents.Where(x=>x.Source==LmaxDemoOfficialRecoveryPlan.Source && x.Result==OperatorAuditResult.Succeeded)
-    .Select(x=>JsonSerializer.Deserialize<LmaxDemoOfficialRecoveryPlan>(x.AfterJson ?? throw new Exception("RECOVERY_PROVENANCE_MISSING"))
-        ?? throw new Exception("RECOVERY_PROVENANCE_INVALID"))
+    .Select(audit=>
+    {
+        var correction=after.OperatorAuditEvents.SingleOrDefault(x=>x.Source==LmaxDemoOfficialExecutionRecovery.AuditCorrectionSource
+            && x.CausationId==audit.Id.Value.ToString("D") && x.Result==OperatorAuditResult.Succeeded);
+        var plan=JsonSerializer.Deserialize<LmaxDemoOfficialRecoveryPlan>((correction??audit).AfterJson ?? throw new Exception("RECOVERY_PROVENANCE_MISSING"))
+            ?? throw new Exception("RECOVERY_PROVENANCE_INVALID");
+        using var metadata=JsonDocument.Parse(audit.MetadataJson ?? "{}");
+        if(metadata.RootElement.GetProperty("plan_sha256").GetString()!=plan.Sha256()
+            || (correction??audit).BeforeJson!=JsonSerializer.Serialize(plan.Before)
+            || (correction is not null && !LmaxDemoOfficialExecutionRecovery.IsKnownAuditProjectionDefect(audit,plan)))
+            throw new Exception("RECOVERY_PROVENANCE_INVALID");
+        return plan;
+    })
     .Where(x=>x.Request.ReportDate==date && x.Request.AccountId==account.ExternalAccountId).ToArray();
 foreach(var recovery in recoveries) LmaxDemoOfficialExecutionRecovery.VerifyApplied(after,recovery);
 var recoveredExecutions=recoveries.SelectMany(x=>x.Fills.Select(f=>f.BrokerExecutionId)).ToHashSet(StringComparer.Ordinal);

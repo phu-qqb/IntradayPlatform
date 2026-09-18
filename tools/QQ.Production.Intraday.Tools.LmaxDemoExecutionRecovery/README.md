@@ -20,6 +20,12 @@ plan is still current (less than 15 minutes old), readback matches and the exist
 EOD reconciler finds no breaks. Repeating an applied plan verifies its durable
 audit and existing records, without inserting duplicates.
 
+For the first qualified run only, `correct-audit` with the same reviewed-plan
+arguments recognizes the exact EF before-object mutation defect and appends a
+separate correction audit. It cannot change economic rows or replace the original
+audit. Any other discrepancy is rejected. Future applies attach only after-state
+records and verify the original plan hash again before creating the audit.
+
 The original child retains its internal ID but receives the authentic physical
 ClOrdID and Limit/GFD properties from the send journal. The original model is
 marked `RecoveredFromOfficialReport` and processed to prevent replay. A separate

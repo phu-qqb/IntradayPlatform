@@ -126,6 +126,27 @@ public sealed class LmaxDemoOfficialExecutionRecoveryTests
         Assert.Throws<InvalidOperationException>(() => LmaxDemoOfficialExecutionRecovery.VerifyApplied(f.State, p));
     }
 
+    [Fact]
+    public void AuditCorrectionRecognizesOnlyTheExactProjectionDefectAndPreservesThePlan()
+    {
+        using var f = new Fixture();
+        var p = f.Prepare();
+        var hash = p.Sha256();
+        var mutated = LmaxDemoOfficialExecutionRecovery.LegacyMutatedAuditProjection(p);
+        var audit = new OperatorAuditEvent(new(p.RecoveryId), f.Now, OperatorAuditActorType.Operator, "TEST", "TEST",
+            OperatorAuditEventType.OfficialExecutionRecovered, OperatorAuditSeverity.Warning, OperatorAuditResult.Succeeded,
+            "ModelRun", p.RecoveredModel.Id.Value.ToString("D"), null, null, null, LmaxDemoOfficialRecoveryPlan.Source,
+            "TEST projection defect", f.Request.OwnerAuthorizationReference, JsonSerializer.Serialize(mutated.Before),
+            JsonSerializer.Serialize(mutated), JsonSerializer.Serialize(new { plan_sha256 = hash }));
+        Assert.True(LmaxDemoOfficialExecutionRecovery.IsKnownAuditProjectionDefect(audit, p));
+        Assert.False(p.Before.Model.IsProcessed);
+        Assert.All(p.Before.OpenBreaks, x => Assert.Equal(ReconciliationBreakStatus.Open, x.Status));
+        Assert.Equal(hash, p.Sha256());
+        Assert.False(LmaxDemoOfficialExecutionRecovery.IsKnownAuditProjectionDefect(audit with { Source = "other" }, p));
+        Assert.False(LmaxDemoOfficialExecutionRecovery.IsKnownAuditProjectionDefect(audit with { BeforeJson = "{}" }, p));
+        Assert.False(LmaxDemoOfficialExecutionRecovery.IsKnownAuditProjectionDefect(audit with { MetadataJson = "{\"plan_sha256\":\"wrong\"}" }, p));
+    }
+
     // Entirely synthetic fixture: no private broker rows or real order IDs.
     private sealed class Fixture : IDisposable
     {

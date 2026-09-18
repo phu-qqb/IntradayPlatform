@@ -32,6 +32,22 @@ public sealed record LmaxDemoOfficialRecoveryPlan(
 /// </summary>
 public static class LmaxDemoOfficialExecutionRecovery
 {
+    public const string AuditCorrectionSource = "LMAX_DEMO_OFFICIAL_RECOVERY_AUDIT_CORRECTION_V1";
+    public static Guid AuditCorrectionId(Guid recoveryId) => new(SHA256.HashData(Encoding.UTF8.GetBytes(AuditCorrectionSource + "|" + recoveryId.ToString("D"))).AsSpan(0,16));
+    // Recognize only the precisely identified EF CurrentValues mutation of the
+    // original audit projection. The immutable reviewed plan remains authoritative.
+    public static LmaxDemoOfficialRecoveryPlan LegacyMutatedAuditProjection(LmaxDemoOfficialRecoveryPlan plan)
+        => plan with { Before = plan.Before with { Model = plan.RecoveredModel, Intent = plan.RecoveredIntent,
+            Parent = plan.RecoveredParent, Child = plan.RecoveredChild,
+            OpenBreaks = plan.Before.OpenBreaks.Select(x => x with { Status = ReconciliationBreakStatus.Resolved }).ToArray() } };
+    public static bool IsKnownAuditProjectionDefect(OperatorAuditEvent audit, LmaxDemoOfficialRecoveryPlan plan)
+    {
+        var legacy = LegacyMutatedAuditProjection(plan);
+        return audit.Id.Value == plan.RecoveryId && audit.Source == LmaxDemoOfficialRecoveryPlan.Source
+            && audit.Result == OperatorAuditResult.Succeeded && audit.AfterJson == JsonSerializer.Serialize(legacy)
+            && audit.BeforeJson == JsonSerializer.Serialize(legacy.Before)
+            && JsonDocument.Parse(audit.MetadataJson ?? "{}").RootElement.GetProperty("plan_sha256").GetString() == plan.Sha256();
+    }
     private static void Require(bool condition, string code)
     { if (!condition) throw new InvalidOperationException(code); }
     public static string Hash(string value) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value))).ToLowerInvariant();
