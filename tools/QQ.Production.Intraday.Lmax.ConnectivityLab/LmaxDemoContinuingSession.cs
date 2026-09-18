@@ -160,7 +160,9 @@ public sealed class LmaxDemoContinuingSession(
                             || normalized.OrderQty is null || normalized.CumQty is null || normalized.LeavesQty is null
                             || string.IsNullOrWhiteSpace(normalized.ExecId) || string.IsNullOrWhiteSpace(normalized.ClOrdId)
                             || string.IsNullOrWhiteSpace(normalized.OrderId)
-                            || NormalizeSymbol(normalized.Symbol) != binding.Symbol)
+                            // LMAX can omit tag 55; the exact tag 48 binding above is authoritative.
+                            // A supplied symbol must still agree with that binding.
+                            || (normalized.Symbol is not null && NormalizeSymbol(normalized.Symbol) != binding.Symbol))
                             throw new InvalidDataException("DEMO_FIX_REPORT_SCOPE_OR_FIELDS_INVALID");
                         var fact = new Arch7bExecutionReportEvent(start.SessionId, inboundSequence, normalized.Account,
                             normalized.OrderId, normalized.ClOrdId, normalized.OrigClOrdId, normalized.ExecId,

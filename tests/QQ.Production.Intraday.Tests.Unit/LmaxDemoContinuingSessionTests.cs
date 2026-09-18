@@ -12,6 +12,33 @@ namespace QQ.Production.Intraday.Tests.Unit;
 public sealed class LmaxDemoContinuingSessionTests
 {
     [Fact]
+    public async Task SecurityIdOnlyReport_ProcessesFillWithoutOptionalSymbol()
+    {
+        await using var f = new Fixture();
+        f.Transport.OmitReportSymbol = true;
+        await f.Session.InitializeAsync(CancellationToken.None);
+        f.Session.BeginCycle("security-id-only", new Dictionary<string, decimal> { ["EURUSD"] = 1000m });
+        await f.Session.ExecuteStrategyParentAsync(f.Options, f.Request("EURUSD", LmaxFixDemoOrderSide.Buy, .1m), CancellationToken.None);
+        Assert.Equal(1000m, f.Session.Positions()["EURUSD"]);
+        Assert.Null(f.Session.BlockingReason);
+    }
+
+    [Fact]
+    public async Task ConflictingReportSymbol_RemainsBlocked()
+    {
+        await using var f = new Fixture();
+        f.Transport.ReportSymbolOverride = "GBPUSD";
+        await f.Session.InitializeAsync(CancellationToken.None);
+        f.Session.BeginCycle("conflicting-symbol", new Dictionary<string, decimal> { ["EURUSD"] = 1000m });
+        await Assert.ThrowsAnyAsync<Exception>(() => f.Session.ExecuteStrategyParentAsync(f.Options,
+            f.Request("EURUSD", LmaxFixDemoOrderSide.Buy, .1m), CancellationToken.None));
+        Assert.NotNull(f.Session.BlockingReason);
+        using var journal = LmaxDemoSessionJournal.OpenForInspection(Path.Combine(f.Root, f.Start.SessionId + ".journal.jsonl"));
+        Assert.DoesNotContain(journal.Entries, x => x.Kind == "Report");
+        Assert.Contains(journal.Entries, x => x.Kind == "ProtocolFailure" && x.Data.Contains("DEMO_FIX_REPORT_SCOPE_OR_FIELDS_INVALID"));
+    }
+
+    [Fact]
     public async Task InvalidReport_RetainsDiagnosticWithoutCredentialsOrSyntheticExecution()
     {
         await using var f = new Fixture();
@@ -327,6 +354,8 @@ public sealed class LmaxDemoContinuingSessionTests
         public int LogonCount { get; private set; }
         public bool AutoFill { get; set; } = true;
         public bool AutoFillMarkets { get; set; }
+        public bool OmitReportSymbol { get; set; }
+        public string? ReportSymbolOverride { get; set; }
         private readonly ConcurrentDictionary<string, decimal> cumulative = new();
         public bool FailOrderWrite { get; set; }
         public Action? BeforeOrderWrite { get; set; }
@@ -370,6 +399,8 @@ public sealed class LmaxDemoContinuingSessionTests
         }
         private string Emit(string type, IReadOnlyList<(string Tag, string Value)> fields)
         {
+            if (type == "8") fields = fields.Where(x => !OmitReportSymbol || x.Tag != "55")
+                .Select(x => x.Tag == "55" && ReportSymbolOverride is not null ? (x.Tag, ReportSymbolOverride) : x).ToArray();
             var frame = Frame(type, Interlocked.Increment(ref sequence), fields);
             if (!inbound.Writer.TryWrite(frame)) throw new IOException("SIMULATED_READER_CLOSED");
             return frame;
