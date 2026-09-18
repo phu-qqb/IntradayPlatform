@@ -7,6 +7,7 @@
     <Using Include="Xunit" />
     <Compile Include="../../../../../tests/QQ.Production.Intraday.Tests.Unit/LmaxDemoRecoveredSendRetirementTests.cs" />
     <Compile Include="../../../../../tests/QQ.Production.Intraday.Tests.Unit/LmaxDemoUsdNettingTests.cs" />
+    <Compile Include="../../../../../tests/QQ.Production.Intraday.Tests.Unit/LmaxDemoGmvRiskTests.cs" />
     <Compile Include="../../../../../tests/QQ.Production.Intraday.Tests.Unit/LegacyAnubisPortfolioWeightIngestionTests.cs" />
     <Compile Include="../../../../../tests/QQ.Production.Intraday.Tests.Unit/LmaxDemoBatchExecutionTests.cs" />
     <Compile Include="../../../../../tests/QQ.Production.Intraday.Tests.Unit/LmaxDemoContinuingSessionTests.cs" />

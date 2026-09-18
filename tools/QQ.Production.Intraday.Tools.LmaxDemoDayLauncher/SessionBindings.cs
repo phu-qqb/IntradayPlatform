@@ -8,10 +8,10 @@ namespace QQ.Production.Intraday.Tools.LmaxDemoDayLauncher;
 
 internal static class SessionBindings
 {
-    internal const string Worker = @"C:\deploy\IntradayPlatform\operator\lmax-demo-orchestration\owner-approved-20260918\worker\QQ.Production.Intraday.Worker.dll";
-    internal const string WorkerHash = "74343c827e3772056647e572128685ac2589da7a1efc7dd0e21c0214555a664c";
-    internal const string WorkerManifest = @"C:\deploy\IntradayPlatform\operator\lmax-demo-orchestration\owner-approved-20260918\worker-manifest.json";
-    internal const string WorkerManifestHash = "6613a8608bcb71bb6f74801aaf82e6c3ac5d1d95330e7a93c854610f93b7f283";
+    internal const string Worker = @"C:\deploy\IntradayPlatform\operator\lmax-demo-orchestration\gmv-policy-20260918\worker\QQ.Production.Intraday.Worker.dll";
+    internal const string WorkerHash = "3671263e8e5ea9a9161d53379cd0402ae6f7b989961bfb87895bbbf459f998c9";
+    internal const string WorkerManifest = @"C:\deploy\IntradayPlatform\operator\lmax-demo-orchestration\gmv-policy-20260918\worker-manifest.json";
+    internal const string WorkerManifestHash = "9f2bbbc516ec4ef88aebf8335510aeee711913b24297175b986a42ffb7018030";
 
     internal static void VerifyWorkerClosure()
     {
@@ -90,10 +90,13 @@ internal static class SessionBindings
         await using var db = new IntradayDbContext(new DbContextOptionsBuilder<IntradayDbContext>()
             .UseSqlServer(@"Server=(localdb)\MSSQLLocalDB;Database=QQProductionIntraday;Integrated Security=true;TrustServerCertificate=true;Application Name=QQ84UsdScopePreflight").Options);
         var state = await new SqlServerIntradayRepository(db).LoadStateAsync(default);
-        var issues = LmaxDemoUsdExecutionUniverse.ConfigurationIssues(state, DateTimeOffset.UtcNow);
+        var now = DateTimeOffset.UtcNow;
+        var issues = LmaxDemoUsdExecutionUniverse.ConfigurationIssues(state, now)
+            .Concat(LmaxDemoGmvRiskProfile.ConfigurationIssues(state, now)).ToArray();
         Console.WriteLine(JsonSerializer.Serialize(new { marker = "DEMO_USD_REFERENCE_PREFLIGHT", instruments = LmaxDemoUsdExecutionUniverse.Symbols,
-            issues, passed = issues.Count == 0, databaseWrites = 0, brokerSends = 0 }));
-        Files.Require(issues.Count == 0, "FULL_USD_REFERENCE_AND_RISK_BINDINGS_REQUIRED");
+            positionGmvUsd = LmaxDemoGmvRiskProfile.PositionGmvUsd, portfolioGmvUsd = LmaxDemoGmvRiskProfile.PortfolioGmvUsd,
+            authorizedDays = Enum.GetNames<DayOfWeek>(), issues, passed = issues.Length == 0, databaseWrites = 0, brokerSends = 0 }));
+        Files.Require(issues.Length == 0, "FULL_USD_REFERENCE_AND_APPROVED_GMV_CALENDAR_REQUIRED");
     }
     internal static async Task Inspect()
     {

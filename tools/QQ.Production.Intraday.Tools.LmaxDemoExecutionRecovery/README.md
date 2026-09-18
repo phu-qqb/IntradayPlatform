@@ -108,3 +108,40 @@ and the new question/answer recorded at 13:08:41.1204102Z. Only the latter event
 can authorize this start, under its own unchanged 900-second bound. This does not
 refresh or relabel the earlier declaration. The qualified candidate is deployed
 under `owner-approved-20260918`; actual start still requires all existing controls.
+# Approved GMV/calendar amendment — 18 September 2026
+
+Authority: [Philippe's exact instruction](https://github.com/phu-qqb/IntradayPlatform/issues/84#issuecomment-5731020741).
+The new version 2 Demo profile permits all seven weekdays, USD 2,000,000 GMV per
+native position and USD 10,000,000 portfolio GMV. Programme hours are unchanged.
+The instrument/venue order bound is USD 4,000,000, derived from a full reversal
+between two legal USD 2,000,000 positions. Netted Demo risk checks the resulting
+position; portfolio checks reserve other pending increases without assuming
+reductions in different legs fill first. Non-netted risk semantics are unchanged.
+
+The exact scoped migration commands are:
+
+```text
+LmaxDemoExecutionRecovery verify-gmv-policy D:\data\lmax-demo-reference\NEW-VERIFY-RECEIPT.json
+LmaxDemoExecutionRecovery apply-gmv-policy D:\data\lmax-demo-reference\NEW-APPLY-RECEIPT.json
+```
+
+These commands require EC2AMAZ-1QPHTD8/Administrator, Demo 1754288005 and the
+exact immutable start/fault anchors of `lmax-demo-20260918-full-usd-130841`.
+The session must remain quarantined with no journal sends, orders or fills and
+an internally reconciled flat ledger. This configuration-only transaction does
+not acquire, force or change the account ownership lock. It verifies quarantine
+again before commit; it cannot clear a fault, retire a session or start trading.
+The old risk records remain attached to the original rejected decision. Old
+calendar rows remain disabled; new rows cover seven days. Other settings and
+all economic facts remain unchanged. Verification rolls back the complete
+transaction, including its candidate audit. Apply retains before/after audit and
+a new receipt. A repeat apply validates the existing profile without new changes.
+
+Qualification: 91 focused C# tests passed; 44 launcher self-tests passed. The
+real verify/rollback passed at 2026-09-18T14:11:34Z with zero configuration issues.
+The GMV candidate is under `operator\lmax-demo-orchestration\gmv-policy-20260918`.
+Its launcher pins the new 152-file Worker closure and checks the approved limits
+and every weekday before activation. Source/build qualification does not prove
+that the configuration is committed or that the faulted session has resumed;
+use the latest #84 receipt for the applied operational state. Do not replay the
+expired 13:30Z model or reuse the expired owner-confirmation observation.

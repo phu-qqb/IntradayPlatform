@@ -2132,9 +2132,16 @@ public sealed class RiskEngine
         var scheduledReduction = context.DemoScheduledReduction && LmaxDemoDaySchedule.IsFinalExit(context.ModelRun.AsOfUtc)
             && context.CurrentBaseQuantity != 0m && Math.Sign(signedQuantity) != Math.Sign(context.CurrentBaseQuantity)
             && Math.Abs(signedQuantity) <= Math.Abs(context.CurrentBaseQuantity);
-        var instrumentExposure = scheduledReduction ? Math.Abs((context.CurrentBaseQuantity + signedQuantity) * unitValueUsd)
-            : Math.Abs(context.CurrentBaseQuantity * unitValueUsd) + notional;
-        var grossExposure = scheduledReduction ? Math.Max(0m, context.ExistingGrossExposureUsd - notional) : context.ExistingGrossExposureUsd + notional;
+        var currentInstrumentExposure = Math.Abs(context.CurrentBaseQuantity * unitValueUsd);
+        var instrumentExposure = context.DemoUsdNetting || scheduledReduction
+            ? Math.Abs((context.CurrentBaseQuantity + signedQuantity) * unitValueUsd)
+            : currentInstrumentExposure + notional;
+        // Pending increases in other instruments are included by the batch caller.
+        // Never finance an increase with an unfilled reduction in another leg.
+        var grossExposure = scheduledReduction ? Math.Max(0m, context.ExistingGrossExposureUsd - notional)
+            : context.DemoUsdNetting
+                ? context.ExistingGrossExposureUsd + Math.Max(0m, instrumentExposure - currentInstrumentExposure)
+                : context.ExistingGrossExposureUsd + notional;
         var windowOpen = IsTradingWindowOpen(tradingWindow, context.Now, scheduledReduction);
         var details = new List<RiskDecisionDetail>();
 
