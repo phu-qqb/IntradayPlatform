@@ -105,3 +105,12 @@ exclusive ownership, exact journal hash, no internal orders/positions/breaks and
 all normal trading controls remain mandatory. This dated owner source is not a
 new daily unattended attestation or a generic way to manufacture broker evidence.
 The startup journal retains observation source, evidence path and SHA256.
+
+The initial owner-declaration retirement attempt was rejected by automatic approval
+review (#84 comment 5730414562). Philippe then explicitly approved replacing
+independent observation with his current flat/no-orders confirmation (#84 comment
+5730453334). Version 2 retains both events: the original 12:52:03.0232487Z statement
+and the new question/answer recorded at 13:08:41.1204102Z. Only the latter event
+can authorize this start, under its own unchanged 900-second bound. This does not
+refresh or relabel the earlier declaration. The qualified candidate is deployed
+under `owner-approved-20260918`; actual start still requires all existing controls.

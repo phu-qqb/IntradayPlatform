@@ -71,14 +71,21 @@ public sealed class LmaxDemoRecoveredSendRetirementTests
     [Theory]
     [InlineData("valid")][InlineData("account")][InlineData("refresh")][InlineData("source")]
     [InlineData("working")][InlineData("automated")][InlineData("approval")][InlineData("report")]
+    [InlineData("original")][InlineData("response")][InlineData("question")]
     public void OwnerConfirmationIsExactDatedAndNeverMislabelledAsBrokerCapture(string defect)
     {
         var values = new Dictionary<string, object> {
-            ["schema"]="lmax_demo_owner_confirmation_v1", ["source"]=LmaxDemoOwnerConfirmedOpening.Source,
+            ["schema"]="lmax_demo_owner_confirmation_v2", ["source"]=LmaxDemoOwnerConfirmedOpening.Source,
             ["accountId"]="1754288005", ["owner"]="Philippe", ["ownerApprovalReference"]=LmaxDemoOwnerConfirmedOpening.Approval,
             ["quote"]=LmaxDemoOwnerConfirmedOpening.Quote, ["recordedAtUtc"]=LmaxDemoOwnerConfirmedOpening.RecordedAt,
+            ["originalRecordedAtUtc"]=LmaxDemoOwnerConfirmedOpening.OriginalRecordedAt,
+            ["originalReference"]=LmaxDemoOwnerConfirmedOpening.OriginalReference,
+            ["approvalQuestion"]=LmaxDemoOwnerConfirmedOpening.ApprovalQuestion, ["approvalResponse"]="oui",
             ["flat"]=true, ["noWorkingOrders"]=true, ["automatedBrokerObservation"]=false,
             ["openingReceiptSha256"]=LmaxDemoOwnerConfirmedOpening.OpeningReceiptHash };
+        if (defect == "original") values["originalRecordedAtUtc"]=LmaxDemoOwnerConfirmedOpening.RecordedAt;
+        if (defect == "response") values["approvalResponse"]="non";
+        if (defect == "question") values["approvalQuestion"]="unrelated";
         if (defect == "account") values["accountId"]="other";
         if (defect == "refresh") values["recordedAtUtc"]=LmaxDemoOwnerConfirmedOpening.RecordedAt.AddSeconds(1);
         if (defect == "source") values["source"]="OFFICIAL_UI";

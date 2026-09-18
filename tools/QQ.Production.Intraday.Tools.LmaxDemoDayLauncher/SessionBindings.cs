@@ -8,10 +8,10 @@ namespace QQ.Production.Intraday.Tools.LmaxDemoDayLauncher;
 
 internal static class SessionBindings
 {
-    internal const string Worker = @"C:\deploy\IntradayPlatform\operator\lmax-demo-orchestration\owner-start-20260918\worker\QQ.Production.Intraday.Worker.dll";
-    internal const string WorkerHash = "f804fe969668f4cd4aa3bfcf355cb8ffd7535a947d118edbbe1cbc501fa3242a";
-    internal const string WorkerManifest = @"C:\deploy\IntradayPlatform\operator\lmax-demo-orchestration\owner-start-20260918\worker-manifest.json";
-    internal const string WorkerManifestHash = "767a16964a107b52546d6586c957359240a690e047857ccb5b99af0f778343f9";
+    internal const string Worker = @"C:\deploy\IntradayPlatform\operator\lmax-demo-orchestration\owner-approved-20260918\worker\QQ.Production.Intraday.Worker.dll";
+    internal const string WorkerHash = "74343c827e3772056647e572128685ac2589da7a1efc7dd0e21c0214555a664c";
+    internal const string WorkerManifest = @"C:\deploy\IntradayPlatform\operator\lmax-demo-orchestration\owner-approved-20260918\worker-manifest.json";
+    internal const string WorkerManifestHash = "6613a8608bcb71bb6f74801aaf82e6c3ac5d1d95330e7a93c854610f93b7f283";
 
     internal static void VerifyWorkerClosure()
     {

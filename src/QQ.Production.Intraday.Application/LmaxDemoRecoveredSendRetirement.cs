@@ -94,7 +94,7 @@ public static class LmaxDemoRecoveredSendRetirement
             "RETAINED_OBSERVATION_EVIDENCE_REQUIRED");
         using var capture = JsonDocument.Parse(File.ReadAllBytes(c.ObservationEvidencePath));
         var proof = capture.RootElement;
-        if (proof.GetProperty("schema").GetString() == "lmax_demo_owner_confirmation_v1")
+        if (proof.GetProperty("schema").GetString() == "lmax_demo_owner_confirmation_v2")
         {
             Require(o.EvidenceReference == LmaxDemoOwnerConfirmedOpening.Approval, "OWNER_DECLARATION_REFERENCE_REQUIRED");
             LmaxDemoOwnerConfirmedOpening.ValidateFile(c.ObservationEvidencePath, c.ObservationEvidenceSha256, o.ObservedAtUtc, c.RetiredAtUtc);
