@@ -15,8 +15,58 @@ node --test Build-LmaxDemoDailyRecap.test.mjs
 The output parent must exist. Every run gets a new output directory and writes
 `recap.json`, `recap.md`, `email-draft.txt`, and a SHA-256 `manifest.json`.
 Reports always remain provisional until the existing EOD reconciliation is run.
-This is a separately runnable reporting component, not a scheduled task or an
-automatic hook into the trading launcher. Email scheduling/transport is deferred.
+The recurring entry point is now `Run-LmaxDemoDailyEod.mjs`, backed by the
+report-only `QQ.Production.Intraday.Tools.LmaxDemoEod` executable. The original
+standalone recap command remains available. Email delivery is deferred.
+
+## Recurring Demo installation (18 September)
+
+`Install-LmaxDemoDailyEod.ps1` registers `QQ-LMAX-Demo-Daily-EOD` at 20:15 UTC
+(22:15 Swiss summer / 21:15 winter), with an explicit weekday check. This is
+after the latest existing programme close and does not alter order timing.
+The task uses Administrator's interactive logon, without stored credentials;
+the machine must be running and Administrator must remain logged on. A
+disconnected RDP session may remain logged on; logging off prevents the task.
+No claim of unattended service operation while logged off is made.
+
+Runtime: `C:\deploy\IntradayPlatform\operator\lmax-demo-orchestration\daily-eod-20260918`.
+Inputs: `D:\data\lmax-eod\inbox\1754288005\YYYY-MM-DD\individual-trades.csv`,
+or existing capture-run inboxes with the same exact account/date. Optional
+`trades.csv` and `currency-wallets.csv` must accompany the selected individual
+file in the same directory. They feed the existing report-set importer.
+The latest valid candidate wins; exports are never concatenated. Header-only
+reports do not prove zero activity. Do not overwrite retained input files;
+use a new capture directory for a subsequent export.
+
+**Acquisition remains `LOCAL_EXPORTS_ONLY_UNATTENDED_PORTAL_NOT_QUALIFIED`.**
+The task does not call the remote downloader, another browser, an account API
+or credentials. Existing report-launcher captures are consumed when available;
+the successful cloud export does not qualify a different unattended browser
+session. Do not route earlier security refusals through the remote downloader.
+This is recurring import/reconciliation/reporting, not a completed autonomous
+portal-acquisition chain.
+
+Each invocation uses an exclusive reporting lock (never forcibly cleared),
+an immutable dated run directory and hashed source/runtime evidence. The EOD
+executable validates the account, dates and source hashes, previews before
+writing, imports/reconciles in one database transaction and rejects conflicting
+existing execution or wallet evidence. No schema migration runs automatically.
+Execution IDs deduplicate repeated imports. Internal fills, FIX reports, owner
+journals and trading readiness remain unchanged. A receipt is written only
+after commit; a crash around commit is ambiguous and requires inspection.
+
+Every ordinary missing-export/import failure produces a PROVISIONAL recap
+and unsent email draft. No fabricated current observation or synthetic TCA is
+enabled in scheduled runs. Real M15 TCA remains unavailable without benchmarks.
+The latest operational receipt is `D:\data\lmax-eod\latest-daily-eod.json`;
+immutable bundles are under `daily-runs`. Exit 2 means evidence or reconciliation
+remains incomplete, even if the report was successfully written. Exit 1 means
+an execution/integrity problem; inspect the retained logs and scheduler result.
+
+Qualification commands:
+`node --test Build-LmaxDemoDailyRecap.test.mjs Run-LmaxDemoDailyEod.test.mjs`;
+`node Run-LmaxDemoDailyEod.mjs --date 2026-09-17`.
+The latter is a historical replay/import, never a current-state attestation.
 
 ## Input contract
 

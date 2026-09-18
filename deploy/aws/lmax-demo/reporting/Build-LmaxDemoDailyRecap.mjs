@@ -49,7 +49,8 @@ function readTrades(candidate, config) {
     const units = numeric(r['Units Bought/Sold']), price = numeric(r['Trade Price']);
     required(units !== 0 && price > 0, 'INVALID_TRADE');
     return { execution_id: r['Execution ID'], order_id: r['Order ID'], symbol: r.Symbol,
-      timestamp: r.Timestamp, units, price, commission_usd: numeric(r['Total Commission']), source: 'OFFICIAL_CSV' };
+      timestamp: r.Timestamp, units, price, commission_usd: numeric(r['Total Commission']),
+      reported_profit_loss_usd: r['Total Profit Loss'] ? numeric(r['Total Profit Loss']) : null, source: 'OFFICIAL_CSV' };
   });
   for (const order of config.expected_order_ids ?? [])
     required(trades.some(t => t.order_id === order), 'EXPECTED_ORDER_MISSING');
@@ -91,6 +92,21 @@ export function buildRecap(config) {
     breaks: [...(selected ? [] : ['NO_COMPLETE_OFFICIAL_TRADES_EXPORT']), 'REPORT_SET_RECONCILIATION_PENDING', 'M15_BENCHMARK_MISSING'],
     email: { status: 'DRAFT_ONLY', sent: false } };
   if (config.internal_evidence?.status === 'FIX_CONTINUITY_LOST') recap.breaks.push('FIX_CONTINUITY_LOST');
+  recap.acquisition_status = config.acquisition_status ?? 'NOT_AUTOMATED';
+  if (config.pipeline_error) recap.breaks.push(config.pipeline_error);
+  if (config.eod_result) {
+    const e = config.eod_result;
+    required(e.schema === 'lmax_demo_daily_eod_v1' && e.date === config.date && e.account_id === config.account_id
+      && e.individual_sha256 === selected?.sha256 && e.import_performed === true
+      && Number.isInteger(e.blocking_breaks) && e.blocking_breaks >= 0, 'EOD_RECEIPT_SCOPE_MISMATCH');
+    recap.reconciliation = { status: e.blocking_breaks ? 'BREAKS_OPEN' : 'EXECUTIONS_MATCHED_SCOPE_LIMITED',
+      official_report_import_performed: true, ledger_mutation_performed: false, receipt: e };
+    if (e.blocking_breaks) recap.breaks.push('BROKER_EXECUTIONS_MISSING_OR_DIFFERENT_INTERNALLY');
+    if (e.report_set_imported && e.blocking_breaks === 0) recap.breaks = recap.breaks.filter(x => x !== 'REPORT_SET_RECONCILIATION_PENDING');
+  }
+  const reported = trades.filter(t => t.reported_profit_loss_usd !== null);
+  recap.selected_rows_reported_gross_usd = reported.length ? round(reported.reduce((a,t)=>a+t.reported_profit_loss_usd,0)) : null;
+  recap.selected_rows_net_after_commissions_usd = reported.length ? round(recap.selected_rows_reported_gross_usd + commissions) : null;
   if (config.simulated_tca) {
     const s = config.simulated_tca;
     required(s.label === 'SIMULATED_NOT_FOR_ECONOMIC_VALIDATION' && s.owner_authorized === true, 'SIMULATION_OPT_IN_REQUIRED');
@@ -115,7 +131,9 @@ export function renderRecap(r) {
   let body = `# LMAX Demo — récapitulatif du ${r.date}\n\n**PROVISOIRE — réconciliation ouverte.**\n\n`;
   body += `## Résultat constaté\n\n`;
   body += o ? `Position observée : **${o.position_units} EUR**, ordres actifs : **${o.working_orders}** (${o.observed_at_utc}).\n\nPnL brut : **${money(o.gross_pnl_usd)} USD**. Net après commissions : **≈ ${money(r.observed_round_trip_net_usd)} USD** (sortie arrondie au centime).\n\nSource : ${o.source_reference}.\n\n` : 'État du compte et PnL : indisponibles. Absence de preuve ≠ activité nulle.\n\n';
-  body += `CSV complet retenu : ${r.selected_source ? r.selected_source.path : 'aucun'}. ${r.official_trades.length} exécution(s) dans la source retenue. Les exports incomplets restent conservés mais ne sont pas présentés comme une journée complète.\n\n`;
+  body += `CSV validé pour le compte et la date : ${r.selected_source ? r.selected_source.path : 'aucun'}. ${r.official_trades.length} exécution(s). La complétude de la journée et l'état actuel du compte ne sont pas déduits du CSV.\n\n`;
+  if (r.selected_rows_reported_gross_usd !== null) body += `PnL renseigné dans les lignes sélectionnées : **${r.selected_rows_reported_gross_usd} USD** ; commissions : **${r.official_commissions_usd} USD** ; net après ces commissions : **${r.selected_rows_net_after_commissions_usd} USD**. Périmètre des lignes du rapport, hors autres flux éventuels.\n\n`;
+  body += `Acquisition : ${r.acquisition_status}. Import EOD effectué : ${r.reconciliation.official_report_import_performed ? 'oui' : 'non'}. Réconciliation : ${r.reconciliation.status}.\n\n`;
   if (o?.orders?.length) {
     body += '## Ordres constatés dans le portail\n\n| Ordre LMAX | Sens | EUR | Prix moyen | Statut |\n|---|---|---:|---:|---|\n';
     for (const t of o.orders) body += `| ${t.order_id} | ${t.side} | ${t.units} | ${t.average_price} | ${t.status} |\n`;
