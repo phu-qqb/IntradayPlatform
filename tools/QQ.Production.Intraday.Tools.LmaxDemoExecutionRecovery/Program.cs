@@ -15,6 +15,7 @@ if (args.Length == 3 && args[0] is "verify-reference" or "apply-reference")
 { await ConfigureUsdReference.Run(args[1], args[2], args[0] == "apply-reference"); return; }
 if (args.Length == 2 && args[0] is "verify-gmv-policy" or "apply-gmv-policy")
 { await ConfigureGmvRiskProfile.Run(args[1], args[0] == "apply-gmv-policy"); return; }
+if(args.Length==3 && args[0]=="retire-risk-rejected") {await RetireRiskRejectedSession.Run(args[1],args[2]);return;}
 if (args.Length != 2 && args.Length != 4) throw new ArgumentException("plan INPUT_JSON | apply/verify PLAN_JSON EXPECTED_PLAN_SHA256 NEW_RECEIPT_JSON");
 if (args[0] == "plan" && args.Length == 2) await Plan(args[1]);
 else if ((args[0] == "apply" || args[0] == "verify" || args[0] == "correct-audit") && args.Length == 4)

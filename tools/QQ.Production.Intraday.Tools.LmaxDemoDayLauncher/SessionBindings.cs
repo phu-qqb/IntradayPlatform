@@ -8,10 +8,10 @@ namespace QQ.Production.Intraday.Tools.LmaxDemoDayLauncher;
 
 internal static class SessionBindings
 {
-    internal const string Worker = @"C:\deploy\IntradayPlatform\operator\lmax-demo-orchestration\gmv-policy-20260918\worker\QQ.Production.Intraday.Worker.dll";
-    internal const string WorkerHash = "3671263e8e5ea9a9161d53379cd0402ae6f7b989961bfb87895bbbf459f998c9";
-    internal const string WorkerManifest = @"C:\deploy\IntradayPlatform\operator\lmax-demo-orchestration\gmv-policy-20260918\worker-manifest.json";
-    internal const string WorkerManifestHash = "9f2bbbc516ec4ef88aebf8335510aeee711913b24297175b986a42ffb7018030";
+    internal const string Worker = @"C:\deploy\IntradayPlatform\operator\lmax-demo-orchestration\gmv-resume-20260918\worker\QQ.Production.Intraday.Worker.dll";
+    internal const string WorkerHash = "83396ce71e70cd06b32cb438445fbb4cec35f2a412927a09b6673647eedf141c";
+    internal const string WorkerManifest = @"C:\deploy\IntradayPlatform\operator\lmax-demo-orchestration\gmv-resume-20260918\worker-manifest.json";
+    internal const string WorkerManifestHash = "9389ba693c7a3ed12ec673406f27a319d1bd48d84b53fdd4df34c831a9d3564f";
 
     internal static void VerifyWorkerClosure()
     {
@@ -150,7 +150,7 @@ internal static class SessionBindings
     {
         if (start.ObservationSource != "OFFICIAL_UI")
         {
-            Files.Require(start.ObservationSource == LmaxDemoOwnerConfirmedOpening.Source && start.OwnerApprovalId == LmaxDemoOwnerConfirmedOpening.Approval, "UNKNOWN_OBSERVATION_SOURCE");
+            Files.Require(start.ObservationSource == LmaxDemoOwnerConfirmedOpening.Source && LmaxDemoOwnerConfirmedOpening.IsApprovedReference(start.OwnerApprovalId), "UNKNOWN_OBSERVATION_SOURCE");
             LmaxDemoOwnerConfirmedOpening.ValidateFile(start.ObservationEvidencePath!, start.ObservationEvidenceSha256!, start.ObservedAtUtc, now);
         }
         Files.Require(!start.Simulated && start.Environment == "Demo" && start.AccountId == "1754288005"

@@ -110,6 +110,23 @@ refresh or relabel the earlier declaration. The qualified candidate is deployed
 under `owner-approved-20260918`; actual start still requires all existing controls.
 # Approved GMV/calendar amendment — 18 September 2026
 
+Resumption amendment: [5731948618](https://github.com/phu-qqb/IntradayPlatform/issues/84#issuecomment-5731948618)
+authorizes stopping exactly Worker11736 and accepts the new owner-confirmed
+flat/no-working-order declaration, first recorded at 15:05:09.1458831Z. Stop
+completed at 15:06:51Z; journal SHA256 is
+`e5adde154edffe3f473d1bd32a98a4cc83a1276e36381b92898ac4401ae49dbc`.
+`retire-risk-rejected OWNER_PROOF_JSON EXPECTED_PROOF_SHA256` requires that exact
+journal, the pinned authorized-stop receipt, current zero-order/flat DB proof,
+one GBPUSD target/intent/rejected risk and the applied GMV profile. It writes a
+separate immutable certificate under the account lease; the original journal,
+failed model and risk decision remain unchanged. The no-send journal bridges
+the pre-stop owner declaration to actual shutdown. The declaration is never
+relabeled as an independent broker observation or retimestamped. The new
+session still must start within 900 seconds of that recorded declaration.
+Qualification: 111 focused tests passed, including no-send/certificate/ownership
+and stale/changed-observation rejection. Use the latest #84 operational receipt
+to determine whether retirement and startup actually completed.
+
 Authority: [Philippe's exact instruction](https://github.com/phu-qqb/IntradayPlatform/issues/84#issuecomment-5731020741).
 The new version 2 Demo profile permits all seven weekdays, USD 2,000,000 GMV per
 native position and USD 10,000,000 portfolio GMV. Programme hours are unchanged.

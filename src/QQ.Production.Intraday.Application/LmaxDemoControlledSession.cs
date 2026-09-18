@@ -406,7 +406,7 @@ public sealed class LmaxDemoControlledSession
             || s.DeadlineUtc.UtcDateTime.Date != now.UtcDateTime.Date) throw Error("INITIAL_TIME_BOUNDARY_INVALID");
         if (s.ObservationSource != "OFFICIAL_UI")
         {
-            if (s.ObservationSource != LmaxDemoOwnerConfirmedOpening.Source || s.OwnerApprovalId != LmaxDemoOwnerConfirmedOpening.Approval)
+            if (s.ObservationSource != LmaxDemoOwnerConfirmedOpening.Source || !LmaxDemoOwnerConfirmedOpening.IsApprovedReference(s.OwnerApprovalId))
                 throw Error("UNKNOWN_OBSERVATION_SOURCE");
             LmaxDemoOwnerConfirmedOpening.ValidateFile(s.ObservationEvidencePath!, s.ObservationEvidenceSha256!, s.ObservedAtUtc, now);
         }
