@@ -36,7 +36,8 @@ public sealed record LegacyAnubisPortfolioWeightIngestionRequest(
     decimal NavUsd,
     TargetQuantityMode TargetQuantityMode,
     IReadOnlyList<string>? DemoScheduledExitScope = null,
-    string? DemoScheduledExitInternalAccountCode = null);
+    string? DemoScheduledExitInternalAccountCode = null,
+    IReadOnlyList<string>? DemoUsdNettedExecutionScope = null);
 
 public sealed record LegacyAnubisPortfolioWeightIngestionResult(
     ModelWeightBatch Batch,
@@ -118,6 +119,20 @@ public sealed class LegacyAnubisPortfolioWeightIngestionService(
             .SelectMany(x => x)
             .Where(x => enabledBySymbol.ContainsKey(x.Symbol))
             .ToList();
+        if (request.DemoUsdNettedExecutionScope is { } nettedScope)
+        {
+            LmaxDemoUsdNetting.ValidateScope(nettedScope);
+            if (request.TargetQuantityMode != TargetQuantityMode.PortfolioBaseCurrencyNotional
+                || nettedScope.Any(x => !enabledBySymbol.ContainsKey(x)))
+                throw new DomainRuleViolationException("Full native USD execution scope and USD-notional sizing are required.");
+            if (request.DemoScheduledExitScope is null)
+                executableContributions = LmaxDemoUsdNetting.Net(
+                    parsedByProgramme.Values.SelectMany(x => x).Select(x => (x.Symbol, x.Weight)),
+                    nettedScope, request.DecisionAtUtc, request.EffectiveAtUtc, request.NavUsd)
+                    .Select(x => new ParsedWeight(x.Key + " Curncy", x.Key, x.Value)).ToList();
+            else if (!request.DemoScheduledExitScope.Order(StringComparer.Ordinal).SequenceEqual(nettedScope.Order(StringComparer.Ordinal)))
+                throw new DomainRuleViolationException("Scheduled exit must cover the full netted USD scope.");
+        }
         if (request.DemoScheduledExitScope is { } exitScope)
         {
             var fund = state.Funds.Single(x => x.Name == request.FundCode && x.IsEnabled);
@@ -140,7 +155,8 @@ public sealed class LegacyAnubisPortfolioWeightIngestionService(
             .ToList();
 
         var portfolioLineageSha256 = PortfolioLineageSha256(request, lineage);
-        var externalBatchId = $"legacy_anubis_portfolio_{portfolioLineageSha256[..16]}";
+        var externalBatchId = (request.DemoUsdNettedExecutionScope is null ? "legacy_anubis_portfolio_" : LmaxDemoUsdNetting.BatchPrefix)
+            + portfolioLineageSha256[..16];
         var existing = await repository.GetBatchByExternalIdAsync(
             ModelWeightSourceSystem.LegacyAnubis,
             externalBatchId,
@@ -308,6 +324,8 @@ public sealed class LegacyAnubisPortfolioWeightIngestionService(
             .Append("TargetQuantityMode=").Append(request.TargetQuantityMode).Append('\n');
         if (request.DemoScheduledExitScope is { } exitScope)
             canonical.Append("ScheduledDemoExitScope=").AppendJoin(',', exitScope.Order(StringComparer.Ordinal)).Append('\n');
+        if (request.DemoUsdNettedExecutionScope is { } nettedScope)
+            canonical.Append("ExistingQubesUsdNetting=v1|").AppendJoin(',', nettedScope.Order(StringComparer.Ordinal)).Append('\n');
         foreach (var item in lineage)
         {
             var contract = Contracts[item.ProgramName];
@@ -335,7 +353,7 @@ public sealed class LegacyAnubisPortfolioWeightIngestionService(
         var source = request.DemoScheduledExitScope is null ? "Genuine four-programme legacy Anubis portfolio import" : "Scheduled Demo session exit under the four-programme zero-if-absent policy; no Anubis output manufactured";
         return $"{source}; Decision={request.DecisionAtUtc:O}; {contributions}; " +
                $"ZeroIfAbsent=true; CarryForward=false; AdditionalNormalization=false; SourceRows={parsed.Values.Sum(x => x.Count)}; " +
-               $"ExecutableRows={executableRows}; PortfolioLineageSha256={lineageSha256}.";
+               $"ExecutableRows={executableRows}; ExistingQubesUsdNetting={request.DemoUsdNettedExecutionScope is not null}; PortfolioLineageSha256={lineageSha256}.";
     }
 
     private static IEnumerable<LegacyAnubisProgrammeContribution> Order(

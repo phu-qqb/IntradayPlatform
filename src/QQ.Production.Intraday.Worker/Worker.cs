@@ -186,6 +186,10 @@ public sealed class Worker(
             }
             var coordinator = scope.ServiceProvider.GetRequiredService<ILmaxDemoCycleCoordinator>();
             var request = ToRequest(manifest);
+            if (explicitPath is not null)
+                request = request with { PortfolioWeights = request.PortfolioWeights with {
+                    DemoUsdNettedExecutionScope = scope.ServiceProvider.GetRequiredService<LmaxDemoContinuingSession>()
+                        .StartingObservation.Instruments.Select(x => x.Symbol).ToArray() } };
             if (explicitPath is not null && request.PortfolioWeights.DemoScheduledExitScope is not null)
                 request = request with { PortfolioWeights = request.PortfolioWeights with {
                     DemoScheduledExitInternalAccountCode = scope.ServiceProvider.GetRequiredService<LmaxDemoContinuingSession>().StartingObservation.InternalBrokerAccountCode } };

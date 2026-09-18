@@ -113,6 +113,37 @@ public sealed class LmaxDemoBatchExecutionTests
         Assert.Equal(0, f.Gateway.BatchCalls);
     }
 
+    [Fact]
+    public async Task NettedCurrencyCannotBeDroppedByOldEurUsdExecutionMask()
+    {
+        var f = Fixture();
+        f.State.ModelRuns[0] = f.State.ModelRuns[0] with { SourceFileName = "legacy-anubis:" + LmaxDemoUsdNetting.BatchPrefix + "test" };
+        f.Gateway.ExecutionScope = [f.State.Instruments[0].Id];
+        var result = await f.Service.ProcessAsync(f.State.ModelRuns[0].Id);
+        Assert.True(result.Blocked);
+        Assert.Contains("cannot be discarded", result.Message);
+        Assert.Equal(0, f.Gateway.BatchCalls);
+        Assert.Empty(f.State.TargetPositions);
+    }
+
+    [Fact]
+    public async Task NettedUsdJpyIsSizedAndRiskCheckedInUsdThroughoutExistingBatchPipeline()
+    {
+        var f = Fixture();
+        f.State.ModelRuns[0] = f.State.ModelRuns[0] with { SourceFileName = "legacy-anubis:" + LmaxDemoUsdNetting.BatchPrefix + "test" };
+        var id = f.State.Instruments[1].Id;
+        f.State.Instruments[1] = f.State.Instruments[1] with { Symbol = "USDJPY", BaseCurrency = Currency.Usd, QuoteCurrency = new("JPY") };
+        f.State.VenueInstrumentMappings[1] = f.State.VenueInstrumentMappings[1] with { VenueSymbol = "USDJPY", VenueInstrumentCode = "USD/JPY" };
+        f.State.InstrumentAliases[1] = f.State.InstrumentAliases[1] with { ExternalSymbol = "USD/JPY", ExternalInstrumentId = "4004" };
+        f.State.MarketData[1] = f.State.MarketData[1] with { Bid = 149.99m, Ask = 150.01m, ExplicitMid = null };
+        f.State.TargetWeights[1] = f.State.TargetWeights[1] with { Weight = -.01m, RawSecurityId = "USDJPY Curncy" };
+        var result = await f.Service.ProcessAsync(f.State.ModelRuns[0].Id);
+        Assert.True(result.Processed, result.Message);
+        Assert.Equal(-10_000m, f.State.TargetPositions.Single(x => x.InstrumentId == id).TargetBaseQuantity);
+        Assert.Equal(10_000m, f.State.TradeIntents.Single(x => x.InstrumentId == id).RequestedBaseQuantity);
+        Assert.DoesNotContain(f.State.ReconciliationRuns, x => x.HasBlockingBreaks);
+    }
+
     private static (PlatformState State, BatchGateway Gateway, ProcessModelRunService Service, DateTimeOffset Start) Fixture()
     {
         var at = new DateTimeOffset(2026, 9, 16, 13, 0, 0, TimeSpan.Zero);

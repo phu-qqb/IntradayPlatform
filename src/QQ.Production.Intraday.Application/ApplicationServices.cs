@@ -2112,7 +2112,7 @@ public static class ModelWeightHash
     }
 }
 
-public sealed record RiskContext(Fund Fund, Venue Venue, Instrument Instrument, ModelRun ModelRun, MarketDataSnapshot MarketData, decimal CurrentBaseQuantity, bool PositionsMatch, decimal ExistingGrossExposureUsd, DateTimeOffset Now, bool DemoScheduledReduction = false);
+public sealed record RiskContext(Fund Fund, Venue Venue, Instrument Instrument, ModelRun ModelRun, MarketDataSnapshot MarketData, decimal CurrentBaseQuantity, bool PositionsMatch, decimal ExistingGrossExposureUsd, DateTimeOffset Now, bool DemoScheduledReduction = false, bool DemoUsdNetting = false);
 
 public sealed class RiskEngine
 {
@@ -2123,13 +2123,17 @@ public sealed class RiskEngine
     {
         var reject = RiskRejectReason.None;
         var status = RiskDecisionStatus.Approved;
-        var notional = Math.Abs(intent.RequestedBaseQuantity * context.MarketData.Mid);
+        if (context.DemoUsdNetting && !LmaxDemoUsdNetting.IsNettedRun(context.ModelRun))
+            throw new DomainRuleViolationException("Netted USD risk valuation requires netted model provenance.");
+        var unitValueUsd = context.DemoUsdNetting
+            ? LmaxDemoUsdNetting.BaseUnitValueUsd(context.Instrument, context.MarketData) : context.MarketData.Mid;
+        var notional = Math.Abs(intent.RequestedBaseQuantity * unitValueUsd);
         var signedQuantity = intent.Side == TradeSide.Buy ? intent.RequestedBaseQuantity : -intent.RequestedBaseQuantity;
         var scheduledReduction = context.DemoScheduledReduction && LmaxDemoDaySchedule.IsFinalExit(context.ModelRun.AsOfUtc)
             && context.CurrentBaseQuantity != 0m && Math.Sign(signedQuantity) != Math.Sign(context.CurrentBaseQuantity)
             && Math.Abs(signedQuantity) <= Math.Abs(context.CurrentBaseQuantity);
-        var instrumentExposure = scheduledReduction ? Math.Abs((context.CurrentBaseQuantity + signedQuantity) * context.MarketData.Mid)
-            : Math.Abs(context.CurrentBaseQuantity * context.MarketData.Mid) + notional;
+        var instrumentExposure = scheduledReduction ? Math.Abs((context.CurrentBaseQuantity + signedQuantity) * unitValueUsd)
+            : Math.Abs(context.CurrentBaseQuantity * unitValueUsd) + notional;
         var grossExposure = scheduledReduction ? Math.Max(0m, context.ExistingGrossExposureUsd - notional) : context.ExistingGrossExposureUsd + notional;
         var windowOpen = IsTradingWindowOpen(tradingWindow, context.Now, scheduledReduction);
         var details = new List<RiskDecisionDetail>();
@@ -2298,6 +2302,10 @@ public sealed class ProcessModelRunService(IIntradayRepository repository, IVenu
             ?? new TradingWindow(Guid.Empty, fund.Id, run.ModelName, "UTC", now.DayOfWeek, TimeOnly.MaxValue, TimeOnly.MinValue, TimeOnly.MinValue, null, false, false);
         var targetWeights = state.TargetWeights.Where(x => x.ModelRunId == run.Id).ToList();
         var demoBatch = venueGateway as ILmaxDemoBatchExecutionGateway;
+        var nettedUsd = LmaxDemoUsdNetting.IsNettedRun(run);
+        if (nettedUsd && demoBatch is null)
+            return BuildResult(state, run.Id, false, ProcessModelRunStatus.Blocked, ProcessModelRunBlockedReason.ReferenceDataInvalid,
+                "Netted Demo targets require the explicit continuing Demo gateway.", false, now);
         HashSet<InstrumentId>? demoScope = null;
         if (demoBatch is not null)
         {
@@ -2309,6 +2317,9 @@ public sealed class ProcessModelRunService(IIntradayRepository repository, IVenu
                     "The observed Demo execution scope is empty, duplicated or invalid.", false, now);
             // Retain the full model portfolio. Only the continuing session's explicit
             // observed instruments may create targets, risk decisions and orders.
+            if (nettedUsd && targetWeights.Any(x => !demoScope.Contains(x.InstrumentId)))
+                return BuildResult(state, run.Id, false, ProcessModelRunStatus.Blocked, ProcessModelRunBlockedReason.ReferenceDataInvalid,
+                    "Netted currency exposure cannot be discarded by an execution mask.", false, now);
             targetWeights = targetWeights.Where(x => demoScope.Contains(x.InstrumentId)).ToList();
             if (!demoScope.SetEquals(targetWeights.Select(x => x.InstrumentId)))
                 return BuildResult(state, run.Id, false, ProcessModelRunStatus.Blocked, ProcessModelRunBlockedReason.NoTargetWeights,
@@ -2392,7 +2403,8 @@ public sealed class ProcessModelRunService(IIntradayRepository repository, IVenu
                 return BuildResult(state, run.Id, false, ProcessModelRunStatus.Blocked, ProcessModelRunBlockedReason.NoMarketData, $"No market data exists for {instrument.Symbol}.", false, now);
             }
 
-            var target = calculator.Calculate(run, weight, marketData, mapping);
+            var target = nettedUsd ? LmaxDemoUsdNetting.Size(run, weight, instrument, marketData, mapping)
+                : calculator.Calculate(run, weight, marketData, mapping);
             preparedTargets.Add(target);
             var currentBase = internalPositions.GetValueOrDefault(instrument.Id, 0m);
             var currentVenue = currentBase / mapping.ContractSize;
@@ -2434,7 +2446,11 @@ public sealed class ProcessModelRunService(IIntradayRepository repository, IVenu
             }
 
             var scheduledReduction = demoBatch is not null && LmaxDemoDaySchedule.IsFinalExit(run.AsOfUtc) && targetWeights.All(x => x.Weight == 0m);
-            var riskContext = new RiskContext(fund, venue, instrument, run, marketData, currentBase, true, CalculateGrossExposure(state, fund.Id, marketData.Mid) + reservedGross, demoBatch is null ? now : clock.UtcNow, scheduledReduction);
+            var riskNow = demoBatch is null ? now : clock.UtcNow;
+            var existingGross = nettedUsd ? LmaxDemoUsdNetting.GrossExposure(state, fund.Id, venue.Id, riskNow, riskLimitSet.MaxMarketDataAge)
+                : CalculateGrossExposure(state, fund.Id, marketData.Mid);
+            var riskContext = new RiskContext(fund, venue, instrument, run, marketData, currentBase, true,
+                existingGross + reservedGross, riskNow, scheduledReduction, nettedUsd);
             var (decision, details) = riskEngine.EvaluateDetailed(intent, riskContext, riskLimitSet, instrumentLimit, venueLimit, tradingWindow, state.KillSwitch);
             await repository.AddRiskDecisionAsync(decision, details, cancellationToken);
             if (decision.Status != RiskDecisionStatus.Approved)
@@ -2454,7 +2470,8 @@ public sealed class ProcessModelRunService(IIntradayRepository repository, IVenu
             {
                 prepared.Add((request, child, instrument, mapping));
                 // Do not assume a reducing order fills before a different instrument opens.
-                reservedGross += Math.Max(0m, Math.Abs(target.TargetBaseQuantity) - Math.Abs(currentBase)) * marketData.Mid;
+                reservedGross += Math.Max(0m, Math.Abs(target.TargetBaseQuantity) - Math.Abs(currentBase))
+                    * (nettedUsd ? LmaxDemoUsdNetting.BaseUnitValueUsd(instrument, marketData) : marketData.Mid);
             }
         }
 
