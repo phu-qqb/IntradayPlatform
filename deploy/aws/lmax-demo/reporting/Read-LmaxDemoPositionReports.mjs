@@ -4,12 +4,69 @@ import crypto from 'node:crypto';
 import {spawnSync} from 'node:child_process';
 import {fileURLToPath,pathToFileURL} from 'node:url';
 import {parseArgs} from 'node:util';
-import {assertOwner,verifyDownloader,roleOnlyEnvironment,buildReportInvocation,DOWNLOADER_ROOT,REPORT_ROOT,SOURCE_COMMIT} from './Run-LmaxDemoReports.mjs';
+import {assertOwner,verifyDownloader,roleOnlyEnvironment,buildReportInvocation,runReports,validateAcquisition,DOWNLOADER_ROOT,REPORT_ROOT,SOURCE_COMMIT} from './Run-LmaxDemoReports.mjs';
 
 const sha=p=>crypto.createHash('sha256').update(fs.readFileSync(p)).digest('hex');
 const json=p=>JSON.parse(fs.readFileSync(p,'utf8').replace(/^\uFEFF/,''));
 const require=(ok,code)=>{if(!ok)throw Error(code);};
 const write=(p,x)=>fs.writeFileSync(p,JSON.stringify(x,null,2),{flag:'wx'});
+
+export function previousReportDay(openingDate) {
+  require(/^\d{4}-\d{2}-\d{2}$/.test(openingDate),'OPENING_DATE_INVALID');
+  const date=new Date(`${openingDate}T00:00:00Z`);
+  require(Number.isFinite(date.getTime())&&date.toISOString().slice(0,10)===openingDate,'OPENING_DATE_INVALID');
+  require(date.getUTCDay()!==0&&date.getUTCDay()!==6,'OPENING_WEEKDAY_REQUIRED');
+  do {date.setUTCDate(date.getUTCDate()-1);} while(date.getUTCDay()===0||date.getUTCDay()===6);
+  return date.toISOString().slice(0,10);
+}
+
+export function buildOpeningState({openingDate,reportDate,accountRows,positionSnapshot,acquiredAtUtc}) {
+  require(previousReportDay(openingDate)===reportDate,'OPENING_REPORT_DAY_MISMATCH');
+  require(accountRows.length===1&&accountRows.every(r=>r['Account Id']==='1754288005'),'OPENING_ACCOUNT_SUMMARY_REQUIRED');
+  require(positionSnapshot.records.every(r=>r.AccountId==='1754288005'),'OPENING_POSITION_ACCOUNT_MISMATCH');
+  const number=s=>{require(typeof s==='string'&&/^[+-]?\d+(\.\d+)?$/.test(s)&&Number.isFinite(Number(s)),'OPENING_MARGIN_INVALID');return Number(s);};
+  const margin=accountRows.reduce((sum,row)=>sum+number(row['Margin on Open Positions']),0);
+  const flat=positionSnapshot.records.every(r=>r.Quantity==='0');
+  require(!flat||margin===0,'OPENING_EMPTY_POSITIONS_MARGIN_CONFLICT');
+  require(Number.isFinite(Date.parse(acquiredAtUtc))&&acquiredAtUtc.slice(0,10)>reportDate,'OPENING_REPORT_ACQUIRED_BEFORE_DAY_CLOSED');
+  return {schema:'lmax_demo_opening_position_report_v1',account_id:'1754288005',opening_date:openingDate,
+    source_report_date:reportDate,acquired_at_utc:acquiredAtUtc,position_count:positionSnapshot.position_count,
+    positions:positionSnapshot.records,flat_in_report:flat,source:'OFFICIAL_PREVIOUS_COMPLETED_REPORT_DAY',
+    report_timezone_status:'UNPROVEN',current_account_observation:false,working_orders_established:false,
+    trading_authorized:false,required_start_checks:['PREVIOUS_SESSION_RECONCILED','PREVIOUS_ORDERS_TERMINAL',
+      'EXCLUSIVE_ACCOUNT_ACTIVITY','NO_UNACCOUNTED_ACTIVITY_AFTER_REPORT_BOUNDARY']};
+}
+
+export async function readOpeningReports({openingDate,sourceReceipt}) {
+  assertOwner();verifyDownloader();
+  require(sha(fileURLToPath(new URL('./Run-LmaxDemoReports.mjs',import.meta.url)))==='4773b43e0b7726125b0a5bf90147f5cce47971786ce27bb8d46bcd37bb43673f','REPORT_LAUNCHER_PIN_MISMATCH');
+  const reportDate=previousReportDay(openingDate);
+  require(openingDate===new Date().toISOString().slice(0,10),'OPENING_DATE_MUST_BE_TODAY');
+  let r;
+  if(sourceReceipt) {
+    const relative=path.win32.relative(path.win32.join(REPORT_ROOT,'logs'),path.win32.resolve(sourceReceipt));
+    require(relative&&!relative.startsWith('..')&&!path.win32.isAbsolute(relative)&&path.win32.basename(sourceReceipt)==='command-result.json','OPENING_RECEIPT_PATH_INVALID');
+    r=json(sourceReceipt);
+  }else r=runReports({date:reportDate,execute:true});
+  require(r.schema==='lmax_demo_report_launcher_receipt_v2'&&r.success===true&&r.mode==='REPORT_DOWNLOAD'
+    &&r.account_id==='1754288005'&&r.report_date===reportDate&&r.source_commit===SOURCE_COMMIT
+    &&/^demo-reports-[a-zA-Z0-9-]+$/.test(r.run_id),'OPENING_SUCCESSFUL_ACQUISITION_REQUIRED');
+  const manifestPath=path.win32.join(REPORT_ROOT,'logs',r.run_id,'acquisition-manifest.json');
+  require(r.manifest_path===manifestPath&&sha(manifestPath)===r.manifest_sha256,'OPENING_MANIFEST_CHANGED');
+  const files=validateAcquisition(json(manifestPath),{reportDate,startedUtc:r.started_utc,bootstrap:false,
+    stagingRoot:path.win32.join(REPORT_ROOT,'captures',r.run_id,'inbox')});
+  const positions=files.find(f=>f.report_type==='open-positions'),summary=files.find(f=>f.report_type==='account-summary');
+  const {createPositionSnapshot,parseCsv}=await import(pathToFileURL(path.win32.join(DOWNLOADER_ROOT,'src','bracketed-snapshot.mjs')).href);
+  const result=buildOpeningState({openingDate,reportDate,accountRows:parseCsv(fs.readFileSync(summary.path,'utf8')),
+    positionSnapshot:createPositionSnapshot(fs.readFileSync(positions.path),{expectedAccountId:'1754288005'}),acquiredAtUtc:r.completed_utc});
+  const out=path.win32.join(REPORT_ROOT,'opening-runs',`${openingDate}-${crypto.randomUUID()}`);
+  fs.mkdirSync(out,{recursive:true});
+  Object.assign(result,{built_at_utc:new Date().toISOString(),acquisition_run_id:r.run_id,manifest_path:manifestPath,
+    manifest_sha256:r.manifest_sha256,position_report_sha256:positions.sha256,account_summary_sha256:summary.sha256,
+    retained_acquisition_used:Boolean(sourceReceipt),reader_sha256:sha(fileURLToPath(import.meta.url)),
+    receipt_path:path.win32.join(out,'opening-position-receipt.json'),database_writes:0,trading_started:false,email_sent:false});
+  write(result.receipt_path,result);return result;
+}
 
 // Calls the already installed report-only application's documented bracket mode.
 // It never opens a trading page, asks an account API, or declares no working orders.
@@ -104,8 +161,10 @@ export async function readPositions() {
 
 if(process.argv[1]&&path.resolve(process.argv[1])===fileURLToPath(import.meta.url)) {
   try {
-    const {values}=parseArgs({options:{execute:{type:'boolean'}},strict:true});
+    const {values}=parseArgs({options:{execute:{type:'boolean'},'opening-date':{type:'string'},'source-receipt':{type:'string'}},strict:true});
     require(values.execute===true,'POSITION_REPORT_READER_REQUIRES_EXECUTE');
-    const r=await readPositions();console.log(JSON.stringify(r));process.exitCode=r.success?0:2;
+    require(!values['source-receipt']||values['opening-date'],'OPENING_DATE_REQUIRED_WITH_RECEIPT');
+    const r=values['opening-date']?await readOpeningReports({openingDate:values['opening-date'],sourceReceipt:values['source-receipt']}):await readPositions();
+    console.log(JSON.stringify(r));process.exitCode=values['opening-date']?0:(r.success?0:2);
   }catch(e){console.error(e.message);process.exitCode=1;}
 }

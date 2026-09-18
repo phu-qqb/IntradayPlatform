@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
-import {validatePositionCapture} from './Read-LmaxDemoPositionReports.mjs';
+import {validatePositionCapture,previousReportDay,buildOpeningState} from './Read-LmaxDemoPositionReports.mjs';
 
 // Synthetic contract tests only. These objects are never operational evidence.
 function fixture() {
@@ -52,5 +52,22 @@ test('unstable reports, non-report routes and unsafe source authority are reject
   for(const mutate of [x=>x.c.StablePositionSet=false,x=>x.c.Attempts[0].Stable=false,x=>x.c.NoOrder=false,
     x=>x.m.safety.lmax_accountapi_used=true,x=>x.m.raw_endpoint_fallback_used=true,x=>x.m.portal_origin='https://web-order.london-demo.lmax.com']) {
     const f=fixture();mutate(f);assert.throws(()=>validatePositionCapture(f.m,f.i,f.options));
+  }
+});
+
+test('opening report selects the preceding weekday and preserves its historical date',()=>{
+  assert.equal(previousReportDay('2026-09-18'),'2026-09-17');assert.equal(previousReportDay('2026-09-21'),'2026-09-18');
+  assert.throws(()=>previousReportDay('2026-09-19'),/WEEKDAY/);assert.throws(()=>previousReportDay('2026-02-30'),/DATE_INVALID/);
+  const result=buildOpeningState({openingDate:'2026-09-18',reportDate:'2026-09-17',acquiredAtUtc:'2026-09-18T08:52:55Z',
+    accountRows:[{'Account Id':'1754288005','Margin on Open Positions':'0.00'}],positionSnapshot:{position_count:0,records:[]}});
+  assert.equal(result.flat_in_report,true);assert.equal(result.source_report_date,'2026-09-17');
+  assert.equal(result.current_account_observation,false);assert.equal(result.working_orders_established,false);assert.equal(result.trading_authorized,false);
+});
+test('opening report rejects empty account identity, mismatched day and zero-position/nonzero-margin conflict',()=>{
+  const base={openingDate:'2026-09-18',reportDate:'2026-09-17',acquiredAtUtc:'2026-09-18T08:52:55Z',
+    accountRows:[{'Account Id':'1754288005','Margin on Open Positions':'0.00'}],positionSnapshot:{position_count:0,records:[]}};
+  for(const mutate of [x=>x.accountRows=[],x=>x.reportDate='2026-09-16',x=>x.accountRows[0]['Account Id']='other',
+    x=>x.accountRows[0]['Margin on Open Positions']='100.00',x=>x.acquiredAtUtc='2026-09-17T20:00:00Z']) {
+    const f=structuredClone(base);mutate(f);assert.throws(()=>buildOpeningState(f));
   }
 });

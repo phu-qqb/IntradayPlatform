@@ -2,18 +2,30 @@
 
 ## Autonomous position-report reader
 
-`node Read-LmaxDemoPositionReports.mjs --execute` reuses the installed, pinned
+For morning opening positions, run
+`node Read-LmaxDemoPositionReports.mjs --execute --opening-date YYYY-MM-DD`.
+It acquires the six reports for the preceding weekday, validates the complete
+acquisition, reads the strict position schema and requires one matching account
+summary row. A report showing no positions must also show zero position margin.
+An optional `--source-receipt PATH` reuses a previously qualified acquisition for
+the same required report date. Its original account, hashes and acquisition date
+are preserved. The result is retained under `D:\data\lmax-eod\opening-runs` and
+is explicitly a previous-report-day position source, never a fresh UI observation.
+Missing final reports (including holidays) stop preparation; no guessed zero or
+silent older-date substitution is allowed. The preceding Friday is used on Monday.
+
+The separate `node Read-LmaxDemoPositionReports.mjs --execute` diagnostic reuses the installed, pinned
 Core PR61 downloader and the same approved EC2/profile/secret. Its existing
 bracket mode reads trades/positions/trades/positions/trades, followed by the
 complementary account reports. This requires no interactive trading-screen reader.
 The command keeps the existing portal lease, owner/role checks, one acquisition
 invocation and terminal security-denial behavior. No alternative host or account
-API is used. Five focused contract tests cover empty reports, account/date scope,
+API is used. Seven focused contract tests cover empty reports, account/date scope,
 staleness, tampering, source safety and the separate working-order authority.
 
 Every result is retained in `D:\data\lmax-eod\logs\<run-id>\position-reader-receipt.json`;
 the original CSVs and broker timestamp interval are retained under `position-snapshots`.
-A successful receipt means the official position reports were read automatically.
+A successful diagnostic receipt means the official position reports were read automatically.
 It does not attest absence of unfilled orders or start trading. The existing report
 contract's unproven explicit timezone is preserved; a historical report is never
 retimestamped as a current observation.
@@ -25,6 +37,10 @@ activity between the report boundary and startup. A failed/incomplete report is
 never interpreted as zero positions. This reader introduces no new trading gate
 override: replacing the launcher's UI-only observation with report provenance must
 be wired and qualified explicitly. Runtime qualification is recorded in #84.
+The single 18 September current-date diagnostic downloaded successfully but was
+rejected as `POSITION_REPORT_COMPLETENESS_UNPROVEN`: its complementary account
+summary had zero rows. The Core snapshot label alone is insufficient. Do not retry
+that diagnostic blindly or reinterpret its empty reports as current flatness.
 
 The standalone `Build-LmaxDemoDailyRecap.mjs` produces a recap even when report acquisition
 fails. It does not start the downloader, the Worker, an API or a database. It
