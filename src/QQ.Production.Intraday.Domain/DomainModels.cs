@@ -217,7 +217,7 @@ public sealed record InstrumentAlias(
     bool IsEnabled,
     DateTimeOffset CreatedAtUtc);
 
-public enum ModelRunStatus { Received, Processing, Processed, Blocked, Failed }
+public enum ModelRunStatus { Received, Processing, Processed, Blocked, Failed, RecoveredFromOfficialReport }
 public enum TargetQuantityMode { PortfolioBaseCurrencyNotional, FxBaseCurrencyQuantity }
 
 public sealed record ModelRun(
@@ -654,7 +654,8 @@ public enum OperatorAuditEventType
     LmaxShadowObservationResolved,
     LmaxShadowObservationIgnored,
     LmaxShadowReaderRunBlocked,
-    Unknown
+    Unknown,
+    OfficialExecutionRecovered
 }
 
 public enum OperatorAuditSeverity { Info, Warning, Critical }
@@ -1001,7 +1002,7 @@ public sealed record ReconciliationBreak(Guid Id, Guid ReconciliationRunId, Reco
 
 public sealed record DriftSnapshot(ModelRunId ModelRunId, InstrumentId InstrumentId, decimal TargetBaseQuantity, decimal CurrentBaseQuantity, decimal DriftBaseQuantity, decimal TargetVenueQuantity, decimal CurrentVenueQuantity, decimal DriftVenueQuantity);
 
-public enum TradeIntentStatus { Created, RiskApproved, RiskRejected, Ordered, Cancelled, ShadowOnly }
+public enum TradeIntentStatus { Created, RiskApproved, RiskRejected, Ordered, Cancelled, ShadowOnly, ExternalExecutionBooked }
 public enum TradeSide { Buy, Sell }
 public sealed record TradeIntent(TradeIntentId Id, ModelRunId ModelRunId, FundId FundId, InstrumentId InstrumentId, TradeSide Side, decimal RequestedBaseQuantity, decimal RequestedVenueQuantity, string Reason, TradeIntentStatus Status, DateTimeOffset CreatedAtUtc);
 
@@ -1070,8 +1071,8 @@ public sealed record RiskDecisionDetail(Guid Id, Guid RiskDecisionId, string Che
 public enum OrderStatus { Created, RiskRejected, PendingNew, Acked, PartiallyFilled, Filled, PendingCancel, Cancelled, Rejected, Expired, Unknown, ShadowPlanned, ShadowOnly }
 public enum OrderSide { Buy, Sell }
 public enum OrderType { Market, Limit }
-public enum TimeInForce { IOC, FOK, GFD, GTC }
-public enum ExecutionAlgo { MarketImmediate, CloseSeeking15m }
+public enum TimeInForce { IOC, FOK, GFD, GTC, Unknown }
+public enum ExecutionAlgo { MarketImmediate, CloseSeeking15m, ExternalManual }
 
 public sealed record ParentOrder(ParentOrderId Id, TradeIntentId TradeIntentId, ClientOrderId ClientOrderId, OrderSide Side, decimal BaseQuantity, ExecutionAlgo Algo, OrderStatus Status, DateTimeOffset CreatedAtUtc);
 public sealed record ChildOrder(ChildOrderId Id, ParentOrderId ParentOrderId, VenueId VenueId, ClientOrderId ClientOrderId, OrderSide Side, OrderType OrderType, TimeInForce TimeInForce, decimal BaseQuantity, decimal VenueQuantity, OrderStatus Status, DateTimeOffset CreatedAtUtc);

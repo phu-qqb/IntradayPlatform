@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { buildRecap, writeBundle } from './Build-LmaxDemoDailyRecap.mjs';
+import { buildRecap, writeBundle, renderRecap } from './Build-LmaxDemoDailyRecap.mjs';
 
 const header = 'Execution ID,Account Id,Trade Date,Order ID,Symbol,Units Bought/Sold,Trade Price,Total Commission\n';
 const config = { environment: 'LMAX_DEMO', date: '2026-09-17', account_id: '1754288005', expected_order_ids: ['buy', 'sell'] };
@@ -64,4 +64,21 @@ test('rejects duplicate executions and corrupted cache; no false success', t => 
   assert.equal(r.acquisition_attempts[1].code,'SOURCE_HASH_MISMATCH');
   assert.throws(()=>buildRecap({...config,environment:'PRODUCTION'}),/DEMO_ONLY/);
   assert.throws(()=>buildRecap({...config,simulated_tca:{owner_authorized:false}}),/SIMULATION_OPT_IN_REQUIRED/);
+});
+
+test('recovered accounting is explicitly distinct from independent FIX confirmation', t => {
+  const f=fixture(t), trade_candidates=[{path:f.file('official',f.good)}];
+  const source=buildRecap({...config,trade_candidates}).selected_source;
+  const eod_result={schema:'lmax_demo_daily_eod_v1',date:config.date,account_id:config.account_id,
+    individual_sha256:source.sha256,import_performed:true,report_set_imported:true,blocking_breaks:0,
+    official_report_recovered_fills:2,recovered_fill_source:'AUTHENTIC_OFFICIAL_REPORT_NOT_FIX',recovery_ids:['TEST-RECOVERY']};
+  const r=buildRecap({...config,trade_candidates,eod_result});
+  assert.equal(r.reconciliation.status,'EXECUTIONS_RECOVERED_FROM_OFFICIAL_REPORT');
+  assert.equal(r.reconciliation.independent_fix_confirmation,false);
+  assert.equal(r.status,'PROVISIONAL');
+  assert.equal(r.portal_observation,null);
+  assert.match(renderRecap(r),/ne constitue pas une confirmation FIX indépendante/);
+  assert.doesNotMatch(renderRecap(r),/réconciliation ouverte/);
+  assert.throws(()=>buildRecap({...config,trade_candidates,eod_result:{...eod_result,recovery_ids:[]}}),/RECOVERY_PROVENANCE_INVALID/);
+  assert.throws(()=>buildRecap({...config,trade_candidates,eod_result:{...eod_result,official_report_recovered_fills:3}}),/RECOVERY_PROVENANCE_INVALID/);
 });

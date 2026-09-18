@@ -70,11 +70,20 @@ if(imported.BlockingIssueCount>0) throw new Exception("IMPORT_REJECTED");
 var reconciled=await new EodReconciliationService(repo,eod,clock).RunAsync(date,"LMAX","LMAX_DEMO_LOCAL",default);
 var after=await repo.LoadStateAsync(default);
 if(after.Fills.Count!=state.Fills.Count || after.ExecutionReports.Count!=state.ExecutionReports.Count) throw new Exception("CONCURRENT_TRADING_ACTIVITY_RETRY_AFTER_CLOSE");
+var recoveries=after.OperatorAuditEvents.Where(x=>x.Source==LmaxDemoOfficialRecoveryPlan.Source && x.Result==OperatorAuditResult.Succeeded)
+    .Select(x=>JsonSerializer.Deserialize<LmaxDemoOfficialRecoveryPlan>(x.AfterJson ?? throw new Exception("RECOVERY_PROVENANCE_MISSING"))
+        ?? throw new Exception("RECOVERY_PROVENANCE_INVALID"))
+    .Where(x=>x.Request.ReportDate==date && x.Request.AccountId==account.ExternalAccountId).ToArray();
+foreach(var recovery in recoveries) LmaxDemoOfficialExecutionRecovery.VerifyApplied(after,recovery);
+var recoveredExecutions=recoveries.SelectMany(x=>x.Fills.Select(f=>f.BrokerExecutionId)).ToHashSet(StringComparer.Ordinal);
+var recoveredCount=after.Fills.Count(x=>x.VenueId==venue.Id && DateOnly.FromDateTime(x.TradeDateUtc.UtcDateTime)==date && recoveredExecutions.Contains(x.BrokerExecutionId));
 await tx.CommitAsync();
 var receipt=new { schema="lmax_demo_daily_eod_v1", date=input.date, account_id="1754288005", at_utc=clock.UtcNow,
     individual_sha256=input.files["individual"].sha256, import_run_id=imported.ImportRunId.Value, import_performed=true,
     report_set_imported=full, reconciliation_run_id=reconciled.RunId, blocking_breaks=reconciled.BlockingBreakCount,
     official_rows=incoming.Count, internal_fills=after.Fills.Count, internal_execution_reports=after.ExecutionReports.Count,
+    official_report_recovered_fills=recoveredCount, recovery_ids=recoveries.Select(x=>x.RecoveryId),
+    recovered_fill_source=recoveredCount>0?"AUTHENTIC_OFFICIAL_REPORT_NOT_FIX":null,
     ledger_mutation_performed=false, trading_started=false };
 using(var f=new FileStream(output,FileMode.CreateNew,FileAccess.Write,FileShare.Read)) { JsonSerializer.Serialize(f,receipt,new JsonSerializerOptions{WriteIndented=true});f.Flush(true); }
 Console.WriteLine(JsonSerializer.Serialize(receipt));

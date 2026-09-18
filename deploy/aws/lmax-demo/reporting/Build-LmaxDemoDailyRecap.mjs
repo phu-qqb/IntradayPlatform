@@ -99,8 +99,12 @@ export function buildRecap(config) {
     required(e.schema === 'lmax_demo_daily_eod_v1' && e.date === config.date && e.account_id === config.account_id
       && e.individual_sha256 === selected?.sha256 && e.import_performed === true
       && Number.isInteger(e.blocking_breaks) && e.blocking_breaks >= 0, 'EOD_RECEIPT_SCOPE_MISMATCH');
-    recap.reconciliation = { status: e.blocking_breaks ? 'BREAKS_OPEN' : 'EXECUTIONS_MATCHED_SCOPE_LIMITED',
-      official_report_import_performed: true, ledger_mutation_performed: false, receipt: e };
+    const recovered=e.official_report_recovered_fills??null;
+    if(recovered!==null) required(Number.isInteger(recovered)&&recovered>=0&&recovered<=trades.length
+      &&(recovered===0||(e.recovered_fill_source==='AUTHENTIC_OFFICIAL_REPORT_NOT_FIX'&&Array.isArray(e.recovery_ids)&&e.recovery_ids.length>0)), 'RECOVERY_PROVENANCE_INVALID');
+    recap.reconciliation = { status: e.blocking_breaks ? 'BREAKS_OPEN' : recovered>0 ? 'EXECUTIONS_RECOVERED_FROM_OFFICIAL_REPORT' : 'EXECUTIONS_MATCHED_SCOPE_LIMITED',
+      official_report_import_performed: true, ledger_mutation_performed: false,
+      official_report_recovered_fills:recovered, independent_fix_confirmation:recovered>0?false:null, receipt: e };
     if (e.blocking_breaks) recap.breaks.push('BROKER_EXECUTIONS_MISSING_OR_DIFFERENT_INTERNALLY');
     if (e.report_set_imported && e.blocking_breaks === 0) recap.breaks = recap.breaks.filter(x => x !== 'REPORT_SET_RECONCILIATION_PENDING');
   }
@@ -128,12 +132,13 @@ export function buildRecap(config) {
 
 export function renderRecap(r) {
   const o = r.portal_observation;
-  let body = `# LMAX Demo — récapitulatif du ${r.date}\n\n**PROVISOIRE — réconciliation ouverte.**\n\n`;
+  let body = `# LMAX Demo — récapitulatif du ${r.date}\n\n**PROVISOIRE — contrôles de clôture incomplets.**\n\n`;
   body += `## Résultat constaté\n\n`;
   body += o ? `Position observée : **${o.position_units} EUR**, ordres actifs : **${o.working_orders}** (${o.observed_at_utc}).\n\nPnL brut : **${money(o.gross_pnl_usd)} USD**. Net après commissions : **≈ ${money(r.observed_round_trip_net_usd)} USD** (sortie arrondie au centime).\n\nSource : ${o.source_reference}.\n\n` : 'État du compte et PnL : indisponibles. Absence de preuve ≠ activité nulle.\n\n';
   body += `CSV validé pour le compte et la date : ${r.selected_source ? r.selected_source.path : 'aucun'}. ${r.official_trades.length} exécution(s). La complétude de la journée et l'état actuel du compte ne sont pas déduits du CSV.\n\n`;
   if (r.selected_rows_reported_gross_usd !== null) body += `PnL renseigné dans les lignes sélectionnées : **${r.selected_rows_reported_gross_usd} USD** ; commissions : **${r.official_commissions_usd} USD** ; net après ces commissions : **${r.selected_rows_net_after_commissions_usd} USD**. Périmètre des lignes du rapport, hors autres flux éventuels.\n\n`;
   body += `Acquisition : ${r.acquisition_status}. Import EOD effectué : ${r.reconciliation.official_report_import_performed ? 'oui' : 'non'}. Réconciliation : ${r.reconciliation.status}.\n\n`;
+  if(r.reconciliation.official_report_recovered_fills>0) body += `${r.reconciliation.official_report_recovered_fills} exécution(s) interne(s) récupérée(s) depuis le rapport officiel, dont la clôture manuelle. Ce rapprochement vérifie la reprise comptable ; il ne constitue pas une confirmation FIX indépendante.\n\n`;
   if (o?.orders?.length) {
     body += '## Ordres constatés dans le portail\n\n| Ordre LMAX | Sens | EUR | Prix moyen | Statut |\n|---|---|---:|---:|---|\n';
     for (const t of o.orders) body += `| ${t.order_id} | ${t.side} | ${t.units} | ${t.average_price} | ${t.status} |\n`;
