@@ -20,6 +20,7 @@ internal static class Program
             var mode = args.FirstOrDefault() ?? "inspect";
             if (mode == "retire-bbo-no-send") return await BboNoSendRetirementCommand.Run(args);
             if (mode == "retire-unsent-parent") return await UnsentParentRetirementCommand.Run(args);
+            if (mode == "retire-duplicate-id") return await DuplicateOrderRetirementCommand.Run(args);
             if (mode is not ("inspect" or "retire")) throw new InvalidOperationException("UNKNOWN_MODE");
             string Arg(string key)
             {

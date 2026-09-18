@@ -2466,8 +2466,13 @@ public sealed class ProcessModelRunService(IIntradayRepository repository, IVenu
                 return BuildResult(state, run.Id, false, ProcessModelRunStatus.Blocked, MapBlockedReason(decision.RejectReason), BuildRiskMessage(decision.RejectReason), false, now);
             }
 
-            var parent = new ParentOrder(ParentOrderId.New(), intent.Id, new ClientOrderId($"P-{run.Id.Value:N}-{state.ParentOrders.Count + 1}"), intent.Side == TradeSide.Buy ? OrderSide.Buy : OrderSide.Sell, intent.RequestedBaseQuantity, ExecutionAlgo.MarketImmediate, OrderStatus.Created, now);
-            var child = new ChildOrder(ChildOrderId.New(), parent.Id, venue.Id, new ClientOrderId($"C-{run.Id.Value:N}-{state.ChildOrders.Count + 1}"), parent.Side, OrderType.Market, TimeInForce.IOC, intent.RequestedBaseQuantity, intent.RequestedVenueQuantity, OrderStatus.PendingNew, now);
+            // SQL state is a detached snapshot: persisting the first prepared leg
+            // does not increment these lists. Bind each Demo order to its durable
+            // unique intent instead of reusing a snapshot count for every pair.
+            var parentClientId = demoBatch is null ? $"P-{run.Id.Value:N}-{state.ParentOrders.Count + 1}" : $"P-{intent.Id.Value:N}";
+            var childClientId = demoBatch is null ? $"C-{run.Id.Value:N}-{state.ChildOrders.Count + 1}" : $"C-{intent.Id.Value:N}";
+            var parent = new ParentOrder(ParentOrderId.New(), intent.Id, new ClientOrderId(parentClientId), intent.Side == TradeSide.Buy ? OrderSide.Buy : OrderSide.Sell, intent.RequestedBaseQuantity, ExecutionAlgo.MarketImmediate, OrderStatus.Created, now);
+            var child = new ChildOrder(ChildOrderId.New(), parent.Id, venue.Id, new ClientOrderId(childClientId), parent.Side, OrderType.Market, TimeInForce.IOC, intent.RequestedBaseQuantity, intent.RequestedVenueQuantity, OrderStatus.PendingNew, now);
             await repository.AddOrdersAsync(parent, child, cancellationToken);
 
             var request = new VenueOrderRequest(child.Id, venue.Id, instrument.Id, child.ClientOrderId, child.Side, child.OrderType, child.TimeInForce, child.BaseQuantity, child.VenueQuantity);

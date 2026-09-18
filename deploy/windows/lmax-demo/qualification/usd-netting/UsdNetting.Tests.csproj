@@ -9,6 +9,7 @@
     <Compile Include="../../../../../tests/QQ.Production.Intraday.Tests.Unit/LmaxDemoUsdNettingTests.cs" />
     <Compile Include="../../../../../tests/QQ.Production.Intraday.Tests.Unit/LmaxDemoGmvRiskTests.cs" />
     <Compile Include="../../../../../tests/QQ.Production.Intraday.Tests.Unit/LmaxDemoRiskRejectedRetirementTests.cs" />
+    <Compile Include="../../../../../tests/QQ.Production.Intraday.Tests.Unit/LmaxDemoDuplicateOrderRetirementTests.cs" />
     <Compile Include="../../../../../tests/QQ.Production.Intraday.Tests.Unit/LegacyAnubisPortfolioWeightIngestionTests.cs" />
     <Compile Include="../../../../../tests/QQ.Production.Intraday.Tests.Unit/LmaxDemoBatchExecutionTests.cs" />
     <Compile Include="../../../../../tests/QQ.Production.Intraday.Tests.Unit/LmaxDemoContinuingSessionTests.cs" />

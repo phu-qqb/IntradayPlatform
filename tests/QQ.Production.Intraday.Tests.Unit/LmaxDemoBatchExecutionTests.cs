@@ -5,6 +5,38 @@ namespace QQ.Production.Intraday.Tests.Unit;
 
 public sealed class LmaxDemoBatchExecutionTests
 {
+    [Theory]
+    [InlineData(2)]
+    [InlineData(14)]
+    public async Task DetachedRepositorySnapshotProducesDistinctPersistedOrdersForEveryPair(int pairCount)
+    {
+        var f = Fixture(detachedSnapshots: true);
+        var symbols = LmaxDemoUsdExecutionUniverse.Symbols.Except(f.State.Instruments.Select(x => x.Symbol)).Take(pairCount - 2);
+        foreach (var symbol in symbols)
+        {
+            var instrument = f.State.Instruments[0] with { Id = new InstrumentId(Guid.NewGuid()), Symbol = symbol,
+                BaseCurrency = new Currency(symbol[..3]), QuoteCurrency = new Currency(symbol[3..]) };
+            f.State.Instruments.Add(instrument);
+            f.State.VenueInstrumentMappings.Add(f.State.VenueInstrumentMappings[0] with { Id = new VenueInstrumentId(Guid.NewGuid()), InstrumentId = instrument.Id, VenueSymbol = symbol, VenueInstrumentCode = symbol });
+            f.State.InstrumentAliases.Add(f.State.InstrumentAliases[0] with { Id = new InstrumentAliasId(Guid.NewGuid()), InstrumentId = instrument.Id, ExternalSymbol = symbol, ExternalInstrumentId = symbol });
+            f.State.InstrumentRiskLimits.Add(f.State.InstrumentRiskLimits[0] with { Id = Guid.NewGuid(), InstrumentId = instrument.Id });
+            f.State.MarketData.Add(f.State.MarketData[0] with { Id = MarketDataSnapshotId.New(), InstrumentId = instrument.Id });
+            f.State.TargetWeights.Add(f.State.TargetWeights[0] with { InstrumentId = instrument.Id });
+        }
+        f.Gateway.ExecutionScope = f.State.Instruments.Select(x => x.Id).ToArray();
+
+        var result = await f.Service.ProcessAsync(f.State.ModelRuns.Single().Id);
+
+        Assert.True(result.Processed, result.Message);
+        Assert.Equal(1, f.Gateway.BatchCalls);
+        Assert.Equal(pairCount, f.State.ParentOrders.Count);
+        Assert.Equal(pairCount, f.State.ChildOrders.Count);
+        Assert.Equal(pairCount, f.State.ParentOrders.Select(x => x.ClientOrderId).Distinct().Count());
+        Assert.Equal(pairCount, f.State.ChildOrders.Select(x => x.ClientOrderId).Distinct().Count());
+        Assert.Equal(pairCount, f.State.Fills.Count);
+        Assert.DoesNotContain(f.State.ReconciliationRuns, x => x.HasBlockingBreaks);
+    }
+
     [Fact]
     public async Task BatchPreparesAllRiskDecisionsAndReconcilesFillsReceivedAfterCycleStart()
     {
@@ -144,7 +176,7 @@ public sealed class LmaxDemoBatchExecutionTests
         Assert.DoesNotContain(f.State.ReconciliationRuns, x => x.HasBlockingBreaks);
     }
 
-    private static (PlatformState State, BatchGateway Gateway, ProcessModelRunService Service, DateTimeOffset Start) Fixture()
+    private static (PlatformState State, BatchGateway Gateway, ProcessModelRunService Service, DateTimeOffset Start) Fixture(bool detachedSnapshots = false)
     {
         var at = new DateTimeOffset(2026, 9, 16, 13, 0, 0, TimeSpan.Zero);
         var clock = new MovingClock(at);
@@ -157,13 +189,54 @@ public sealed class LmaxDemoBatchExecutionTests
         state.InstrumentRiskLimits.Add(state.InstrumentRiskLimits[0] with { Id = Guid.NewGuid(), InstrumentId = instrument.Id });
         state.MarketData.Add(state.MarketData[0] with { Id = MarketDataSnapshotId.New(), InstrumentId = instrument.Id });
         state.TargetWeights.Add(state.TargetWeights[0] with { InstrumentId = instrument.Id });
-        var repository = new InMemoryIntradayRepository(state);
+        IIntradayRepository repository = detachedSnapshots ? new DetachedSnapshotRepository(state) : new InMemoryIntradayRepository(state);
         var gateway = new BatchGateway(state, clock);
         return (state, gateway, new ProcessModelRunService(repository, gateway, gateway, clock, new ReferenceDataIntegrityService(repository, clock)), at);
     }
     private sealed class MovingClock(DateTimeOffset now) : IClock
     {
         public DateTimeOffset UtcNow { get; set; } = now;
+    }
+
+    // SQL loads detached lists and enforces unique client IDs. The usual in-memory
+    // fixture shares its live lists, which hid the multi-pair collision on 18 Sep.
+    private sealed class DetachedSnapshotRepository(PlatformState state) : IIntradayRepository, ILmaxDemoExecutionRepository
+    {
+        private readonly InMemoryIntradayRepository inner = new(state);
+        public Task<PlatformState> LoadStateAsync(CancellationToken token)
+        {
+            var snapshot = new PlatformState { KillSwitch = state.KillSwitch };
+            foreach (var property in typeof(PlatformState).GetProperties())
+                if (property.GetValue(state) is System.Collections.IList source && property.GetValue(snapshot) is System.Collections.IList target)
+                    foreach (var item in source) target.Add(item);
+            return Task.FromResult(snapshot);
+        }
+        public Task AddOrdersAsync(ParentOrder parent, ChildOrder child, CancellationToken token)
+        {
+            if (state.ParentOrders.Any(x => x.ClientOrderId == parent.ClientOrderId) || state.ChildOrders.Any(x => x.ClientOrderId == child.ClientOrderId))
+                throw new InvalidOperationException("TEST_SQL_UNIQUE_CLIENT_ORDER_ID_VIOLATION");
+            return inner.AddOrdersAsync(parent, child, token);
+        }
+        public Task<ModelRun?> GetNextUnprocessedModelRunAsync(CancellationToken t) => inner.GetNextUnprocessedModelRunAsync(t);
+        public Task<ModelRun?> GetModelRunAsync(ModelRunId id, CancellationToken t) => inner.GetModelRunAsync(id, t);
+        public Task AddModelRunAsync(ModelRun r, IReadOnlyList<TargetWeight> w, CancellationToken t) => inner.AddModelRunAsync(r, w, t);
+        public Task MarkModelRunProcessedAsync(ModelRunId id, ModelRunStatus s, CancellationToken t) => inner.MarkModelRunProcessedAsync(id, s, t);
+        public Task SaveReconciliationAsync(ReconciliationRun r, IReadOnlyList<ReconciliationBreak> b, CancellationToken t) => inner.SaveReconciliationAsync(r, b, t);
+        public Task SaveTargetAndDriftAsync(TargetPosition p, DriftSnapshot d, CancellationToken t) => inner.SaveTargetAndDriftAsync(p, d, t);
+        public Task AddTradeIntentAsync(TradeIntent i, CancellationToken t) => inner.AddTradeIntentAsync(i, t);
+        public Task AddRiskDecisionAsync(RiskDecision d, IReadOnlyList<RiskDecisionDetail>? a, CancellationToken t) => inner.AddRiskDecisionAsync(d, a, t);
+        public Task AddExecutionReportAsync(ExecutionReport r, CancellationToken t) => inner.AddExecutionReportAsync(r, t);
+        public Task<bool> TryAddFillAsync(Fill f, CancellationToken t) => inner.TryAddFillAsync(f, t);
+        public Task AddPositionLedgerEventAsync(PositionLedgerEvent e, CancellationToken t) => inner.AddPositionLedgerEventAsync(e, t);
+        public Task PersistDemoParentAsync(LmaxDemoExecutionPersistence e, CancellationToken t) => inner.PersistDemoParentAsync(e, t);
+        public Task SetKillSwitchAsync(bool a, string? r, CancellationToken t) => inner.SetKillSwitchAsync(a, r, t);
+        public Task UpsertRiskLimitSetAsync(RiskLimitSet s, CancellationToken t) => inner.UpsertRiskLimitSetAsync(s, t);
+        public Task UpsertRiskLimitAsync(RiskLimit l, CancellationToken t) => inner.UpsertRiskLimitAsync(l, t);
+        public Task UpsertInstrumentRiskLimitAsync(InstrumentRiskLimit l, CancellationToken t) => inner.UpsertInstrumentRiskLimitAsync(l, t);
+        public Task UpsertVenueRiskLimitAsync(VenueRiskLimit l, CancellationToken t) => inner.UpsertVenueRiskLimitAsync(l, t);
+        public Task UpsertTradingWindowAsync(TradingWindow w, CancellationToken t) => inner.UpsertTradingWindowAsync(w, t);
+        public Task UpsertInstrumentAsync(Instrument i, CancellationToken t) => inner.UpsertInstrumentAsync(i, t);
+        public Task UpsertVenueAsync(Venue v, CancellationToken t) => inner.UpsertVenueAsync(v, t);
     }
     private sealed class BatchGateway(PlatformState state, MovingClock clock) : ILmaxDemoBatchExecutionGateway, IBrokerPositionProvider
     {
