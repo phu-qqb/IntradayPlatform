@@ -19,7 +19,13 @@ public static class LmaxDemoOwnerConfirmedOpening
     public const string ResumeQuestion = "confirmes-tu que le compte Demo est toujours à plat, sans ordre actif ?";
     public const string ResumeResponse = "oui. Tu peux y aller";
     public const string StopReceiptHash = "3cd5dc6960ca93a0a3779f0478e9e9bf3d40e67dc40abf349378b3f11903301d";
-    public static bool IsApprovedReference(string value) => value is Approval or ResumeApproval;
+    // Current post-duplicate-ID recovery declaration. Historical v2/v3 evidence remains valid and immutable.
+    public const string CurrentApproval = "https://github.com/phu-qqb/IntradayPlatform/issues/84#issuecomment-5733078786";
+    public static readonly DateTimeOffset CurrentRecordedAt = DateTimeOffset.Parse("2026-09-18T16:37:58.7544526Z");
+    public const string CurrentQuestion = "Stop 8512 and confirm current LMAX Demo account state";
+    public const string CurrentResponse = "Stop 8512. Le compte LMAX Demo est flat et il n'y a aucun ordre actif.";
+    public const string CurrentStopReceiptHash = "cbf39456d661aac10ad6814fb5f185a18e59dfac6c2fb735c26fede233b9fb85";
+    public static bool IsApprovedReference(string value) => value is Approval or ResumeApproval or CurrentApproval;
 
     public static void ValidateResumeDeclaration(JsonElement proof, DateTimeOffset observedAt)
     {
@@ -31,6 +37,18 @@ public static class LmaxDemoOwnerConfirmedOpening
             && proof.GetProperty("flat").GetBoolean() && proof.GetProperty("noWorkingOrders").GetBoolean()
             && proof.GetProperty("exclusiveOrderActivityDeclared").GetBoolean() && !proof.GetProperty("automatedBrokerObservation").GetBoolean()
             && proof.GetProperty("stopReceiptSha256").GetString()==StopReceiptHash, "EXACT_DATED_RESUMPTION_DECLARATION_REQUIRED");
+    }
+
+    public static void ValidateCurrentDeclaration(JsonElement proof, DateTimeOffset observedAt)
+    {
+        Require(proof.GetProperty("schema").GetString()=="lmax_demo_owner_confirmation_v4"
+            && proof.GetProperty("source").GetString()==Source && proof.GetProperty("accountId").GetString()=="1754288005"
+            && proof.GetProperty("owner").GetString()=="Philippe" && proof.GetProperty("ownerApprovalReference").GetString()==CurrentApproval
+            && proof.GetProperty("approvalQuestion").GetString()==CurrentQuestion && proof.GetProperty("approvalResponse").GetString()==CurrentResponse
+            && proof.GetProperty("recordedAtUtc").GetDateTimeOffset()==CurrentRecordedAt && observedAt==CurrentRecordedAt
+            && proof.GetProperty("flat").GetBoolean() && proof.GetProperty("noWorkingOrders").GetBoolean()
+            && proof.GetProperty("exclusiveOrderActivityDeclared").GetBoolean() && !proof.GetProperty("automatedBrokerObservation").GetBoolean()
+            && proof.GetProperty("stopReceiptSha256").GetString()==CurrentStopReceiptHash, "EXACT_CURRENT_POST_RECOVERY_DECLARATION_REQUIRED");
     }
 
     public static void ValidateDeclaration(JsonElement proof, DateTimeOffset observedAt)
@@ -58,6 +76,14 @@ public static class LmaxDemoOwnerConfirmedOpening
             && new FileInfo(path).Length is > 0 and <= 16384 && LmaxDemoRecoveredSendRetirement.HashFile(path) == hash,
             "OWNER_DECLARATION_CHANGED");
         using var document = JsonDocument.Parse(File.ReadAllBytes(path));
+        if (document.RootElement.GetProperty("schema").GetString()=="lmax_demo_owner_confirmation_v4")
+        {
+            ValidateCurrentDeclaration(document.RootElement, observedAt);
+            var stopPath=document.RootElement.GetProperty("stopReceiptPath").GetString()!;
+            Require(File.Exists(stopPath) && (File.GetAttributes(stopPath)&FileAttributes.ReparsePoint)==0
+                && LmaxDemoRecoveredSendRetirement.HashFile(stopPath)==CurrentStopReceiptHash,"CURRENT_AUTHORIZED_STOP_RECEIPT_REQUIRED");
+            return;
+        }
         if (document.RootElement.GetProperty("schema").GetString()=="lmax_demo_owner_confirmation_v3")
         {
             ValidateResumeDeclaration(document.RootElement, observedAt);
