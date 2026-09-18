@@ -1109,7 +1109,8 @@ namespace QQ.Production.Intraday.Infrastructure.SqlServer.Migrations
                         .IsUnique();
 
                     b.HasIndex("VenueId", "AccountId", "TradeUti")
-                        .IsUnique();
+                        .IsUnique()
+                        .HasFilter("[TradeUti] <> N''");
 
                     b.ToTable("LmaxIndividualTrades");
                 });

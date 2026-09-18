@@ -188,7 +188,7 @@ public sealed class IntradayDbContext(DbContextOptions<IntradayDbContext> option
         modelBuilder.Entity<QubesNormalizedWeightAuditRow>().HasIndex(x => new { x.AuditBatchId, x.Symbol }).IsUnique();
         modelBuilder.Entity<LmaxReportImportRun>().HasIndex(x => new { x.ReportDate, x.ReportType, x.VenueId, x.BrokerAccountId });
         modelBuilder.Entity<LmaxIndividualTrade>().HasIndex(x => new { x.VenueId, x.AccountId, x.ExecutionId }).IsUnique();
-        modelBuilder.Entity<LmaxIndividualTrade>().HasIndex(x => new { x.VenueId, x.AccountId, x.TradeUti }).IsUnique();
+        modelBuilder.Entity<LmaxIndividualTrade>().HasIndex(x => new { x.VenueId, x.AccountId, x.TradeUti }).IsUnique().HasFilter("[TradeUti] <> N''");
         modelBuilder.Entity<LmaxIndividualTrade>().HasIndex(x => x.OrderId);
         modelBuilder.Entity<LmaxIndividualTrade>().HasIndex(x => x.InstructionId);
         modelBuilder.Entity<LmaxIndividualTrade>().HasIndex(x => new { x.InstrumentId, x.ReportDate });
@@ -1133,7 +1133,7 @@ public sealed class SqlServerLmaxEodReportRepository(IntradayDbContext dbContext
     {
         foreach (var trade in trades)
         {
-            if (!await dbContext.LmaxIndividualTrades.AnyAsync(x => x.VenueId == trade.VenueId && x.AccountId == trade.AccountId && (x.ExecutionId == trade.ExecutionId || x.TradeUti == trade.TradeUti), cancellationToken))
+            if (!await dbContext.LmaxIndividualTrades.AnyAsync(x => x.VenueId == trade.VenueId && x.AccountId == trade.AccountId && (x.ExecutionId == trade.ExecutionId || (trade.TradeUti != "" && x.TradeUti == trade.TradeUti)), cancellationToken))
             {
                 dbContext.LmaxIndividualTrades.Add(trade);
             }
