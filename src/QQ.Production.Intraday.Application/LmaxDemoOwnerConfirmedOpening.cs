@@ -13,9 +13,11 @@ public static class LmaxDemoOwnerConfirmedOpening
     public static readonly DateTimeOffset OriginalRecordedAt = DateTimeOffset.Parse("2026-09-18T12:52:03.0232487Z");
     public const string OriginalReference = "https://github.com/phu-qqb/IntradayPlatform/issues/84#issuecomment-5730268654";
     public const string OpeningReceiptHash = "65fa6c3c2b4a7eb2a136fd7a2f90c83678e074fe6ddc989feeabd9bc524b5a7e";
-    public const string ResumeApproval = "https://github.com/phu-qqb/IntradayPlatform/issues/84#issuecomment-5731948618";
-    public static readonly DateTimeOffset ResumeRecordedAt = DateTimeOffset.Parse("2026-09-18T15:05:09.1458831Z");
-    public const string ResumeQuestion = "Autorises-tu l’arrêt de 11736 et confirmes-tu que le compte est actuellement à plat, sans ordre actif, ta confirmation servant de constat pour la reprise auditée ?";
+    // New response event; the expired 15:05 proof and its stop authority are retained unchanged.
+    public const string ResumeApproval = "https://github.com/phu-qqb/IntradayPlatform/issues/84#issuecomment-5732189009";
+    public static readonly DateTimeOffset ResumeRecordedAt = DateTimeOffset.Parse("2026-09-18T15:24:37.2308012Z");
+    public const string ResumeQuestion = "confirmes-tu que le compte Demo est toujours à plat, sans ordre actif ?";
+    public const string ResumeResponse = "oui. Tu peux y aller";
     public const string StopReceiptHash = "3cd5dc6960ca93a0a3779f0478e9e9bf3d40e67dc40abf349378b3f11903301d";
     public static bool IsApprovedReference(string value) => value is Approval or ResumeApproval;
 
@@ -24,7 +26,7 @@ public static class LmaxDemoOwnerConfirmedOpening
         Require(proof.GetProperty("schema").GetString()=="lmax_demo_owner_confirmation_v3"
             && proof.GetProperty("source").GetString()==Source && proof.GetProperty("accountId").GetString()=="1754288005"
             && proof.GetProperty("owner").GetString()=="Philippe" && proof.GetProperty("ownerApprovalReference").GetString()==ResumeApproval
-            && proof.GetProperty("approvalQuestion").GetString()==ResumeQuestion && proof.GetProperty("approvalResponse").GetString()=="oui"
+            && proof.GetProperty("approvalQuestion").GetString()==ResumeQuestion && proof.GetProperty("approvalResponse").GetString()==ResumeResponse
             && proof.GetProperty("recordedAtUtc").GetDateTimeOffset()==ResumeRecordedAt && observedAt==ResumeRecordedAt
             && proof.GetProperty("flat").GetBoolean() && proof.GetProperty("noWorkingOrders").GetBoolean()
             && proof.GetProperty("exclusiveOrderActivityDeclared").GetBoolean() && !proof.GetProperty("automatedBrokerObservation").GetBoolean()

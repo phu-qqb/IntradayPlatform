@@ -8,10 +8,10 @@ namespace QQ.Production.Intraday.Tools.LmaxDemoDayLauncher;
 
 internal static class SessionBindings
 {
-    internal const string Worker = @"C:\deploy\IntradayPlatform\operator\lmax-demo-orchestration\gmv-resume-20260918\worker\QQ.Production.Intraday.Worker.dll";
-    internal const string WorkerHash = "83396ce71e70cd06b32cb438445fbb4cec35f2a412927a09b6673647eedf141c";
-    internal const string WorkerManifest = @"C:\deploy\IntradayPlatform\operator\lmax-demo-orchestration\gmv-resume-20260918\worker-manifest.json";
-    internal const string WorkerManifestHash = "9389ba693c7a3ed12ec673406f27a319d1bd48d84b53fdd4df34c831a9d3564f";
+    internal const string Worker = @"C:\deploy\IntradayPlatform\operator\lmax-demo-orchestration\gmv-confirmed-20260918-152437\worker\QQ.Production.Intraday.Worker.dll";
+    internal const string WorkerHash = "c26f6ddc00fc9cb13a397026cf6fb4c7e57754a87b0dc5cb115305b8753eabd4";
+    internal const string WorkerManifest = @"C:\deploy\IntradayPlatform\operator\lmax-demo-orchestration\gmv-confirmed-20260918-152437\worker-manifest.json";
+    internal const string WorkerManifestHash = "4ddd7cb9f843de76352b3b375d99ed73b77c679cff5656398c9f2132835a1e35";
 
     internal static void VerifyWorkerClosure()
     {

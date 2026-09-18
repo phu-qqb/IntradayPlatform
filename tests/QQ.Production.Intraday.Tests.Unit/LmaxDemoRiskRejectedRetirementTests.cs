@@ -57,7 +57,7 @@ public sealed class LmaxDemoRiskRejectedRetirementTests
     {
         var d=new Dictionary<string,object>{["schema"]="lmax_demo_owner_confirmation_v3",["source"]=LmaxDemoOwnerConfirmedOpening.Source,
             ["accountId"]="1754288005",["owner"]="Philippe",["ownerApprovalReference"]=LmaxDemoOwnerConfirmedOpening.ResumeApproval,
-            ["approvalQuestion"]=LmaxDemoOwnerConfirmedOpening.ResumeQuestion,["approvalResponse"]="oui",
+            ["approvalQuestion"]=LmaxDemoOwnerConfirmedOpening.ResumeQuestion,["approvalResponse"]=LmaxDemoOwnerConfirmedOpening.ResumeResponse,
             ["recordedAtUtc"]=LmaxDemoOwnerConfirmedOpening.ResumeRecordedAt,["flat"]=true,["noWorkingOrders"]=true,
             ["exclusiveOrderActivityDeclared"]=true,["automatedBrokerObservation"]=false,["stopReceiptSha256"]=LmaxDemoOwnerConfirmedOpening.StopReceiptHash};
         if(defect=="refresh")d["recordedAtUtc"]=LmaxDemoOwnerConfirmedOpening.ResumeRecordedAt.AddSeconds(1);
