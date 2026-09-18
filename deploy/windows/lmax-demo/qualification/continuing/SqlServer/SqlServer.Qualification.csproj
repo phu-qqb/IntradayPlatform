@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+<PropertyGroup><TargetFramework>net10.0</TargetFramework><ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable><LangVersion>latest</LangVersion><EnableDefaultCompileItems>false</EnableDefaultCompileItems><DemoBaselineRoot>C:\deploy\IntradayPlatform\operator\qq84-demo-cycle-coordinator-f1692d8e-20260915T000000Z</DemoBaselineRoot><DemoReleaseRoot>C:\deploy\IntradayPlatform\releases\lmax-demo-cycle-c81b739c</DemoReleaseRoot><DemoOverlayRoot>C:\deploy\IntradayPlatform\staging\lmax-continuing-qualification-20260916</DemoOverlayRoot></PropertyGroup>
+<PropertyGroup><AssemblyName>QQ.Production.Intraday.Infrastructure.SqlServer</AssemblyName></PropertyGroup>
+<ItemGroup>
+<Compile Include="$(DemoBaselineRoot)/src/QQ.Production.Intraday.Infrastructure.SqlServer/**/*.cs" Exclude="$(DemoBaselineRoot)/src/QQ.Production.Intraday.Infrastructure.SqlServer/IntradayDbContext.cs;$(DemoBaselineRoot)/src/QQ.Production.Intraday.Infrastructure.SqlServer/obj/**;$(DemoBaselineRoot)/src/QQ.Production.Intraday.Infrastructure.SqlServer/bin/**" />
+<Compile Include="$(DemoOverlayRoot)/src/QQ.Production.Intraday.Infrastructure.SqlServer/IntradayDbContext.cs" />
+<ProjectReference Include="../Application/Application.Qualification.csproj" />
+<Reference Include="QQ.Production.Intraday.Domain"><HintPath>$(DemoReleaseRoot)/QQ.Production.Intraday.Domain.dll</HintPath></Reference>
+<PackageReference Include="Microsoft.EntityFrameworkCore.SqlServer" Version="10.0.0" />
+<PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="10.0.0"><PrivateAssets>all</PrivateAssets></PackageReference>
+</ItemGroup>
+</Project>

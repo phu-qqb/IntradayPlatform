@@ -1150,6 +1150,7 @@ public sealed partial class RawLmaxFixSessionClient(
             MarketDataSymbolEncodingMode = source.MarketDataSymbolEncodingMode,
             ShowFixMessages = source.ShowFixMessages,
             RequestTimeoutSeconds = source.RequestTimeoutSeconds,
+            DemoOrderCapsEnabled = source.DemoOrderCapsEnabled,
             MaxDemoOrderQuantity = source.MaxDemoOrderQuantity,
             MaxDemoOrderNotionalUsd = source.MaxDemoOrderNotionalUsd
         };
@@ -1500,7 +1501,7 @@ public sealed partial class RawLmaxFixSessionClient(
             cleanup);
     }
 
-    private static string BuildLogonMessage(LmaxConnectivityLabOptions options, int sequenceNumber, string targetCompId)
+    internal static string BuildLogonMessage(LmaxConnectivityLabOptions options, int sequenceNumber, string targetCompId)
         => LmaxFixMarketDataCodec.BuildMessage("A", sequenceNumber, options.FixUsername!, targetCompId,
         [
             ("98", "0"),
@@ -1708,3 +1709,4 @@ public sealed partial class RawLmaxFixSessionClient(
         if (string.IsNullOrWhiteSpace(options.FixUsername)) yield return nameof(options.FixUsername);
     }
 }
+

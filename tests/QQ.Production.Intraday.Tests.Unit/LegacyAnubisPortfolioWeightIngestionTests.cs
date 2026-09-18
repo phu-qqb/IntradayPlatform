@@ -131,6 +131,41 @@ public sealed class LegacyAnubisPortfolioWeightIngestionTests
     }
 
     private static readonly DateTimeOffset Decision = new(2026, 9, 2, 12, 0, 0, TimeSpan.Zero);
+    [Fact]
+    public async Task ContinuingDemoReusesNettingBeforeAnyEnabledInstrumentFilter()
+    {
+        using var files = new ProgrammeFiles();
+        files.Add("INFX9", "EURGBP Curncy;0.25\nGBPUSD Curncy;0.10\n");
+        var (service, state) = Services();
+        state.Instruments.Add(state.Instruments[0] with { Id = InstrumentId.New(), Symbol = "GBPUSD", BaseCurrency = new("GBP") });
+        var request = Request([Absent("INFX7", "Not eligible."), Absent("INFX8", "Not eligible."),
+            Present("INFX9", files), Absent("INFX10", "Not eligible.")]) with { DemoUsdNettedExecutionScope = ["EURUSD", "GBPUSD"] };
+
+        var result = await service.IngestAsync(request, CancellationToken.None);
+
+        Assert.Equal(.25m, state.ModelWeightRows.Single(x => x.Symbol == "EURUSD").Weight);
+        Assert.Equal(-.15m, state.ModelWeightRows.Single(x => x.Symbol == "GBPUSD").Weight);
+        Assert.StartsWith(LmaxDemoUsdNetting.BatchPrefix, result.Batch.ExternalBatchId);
+        Assert.Equal(2, result.SourceRowCount);
+        var repeated = await service.IngestAsync(request, CancellationToken.None);
+        Assert.True(repeated.AlreadyExisted);
+        Assert.Equal(result.Batch.Id, repeated.Batch.Id);
+        Assert.Equal(2, state.ModelWeightRows.Count);
+    }
+
+    [Fact]
+    public async Task InsufficientNettedScopeBlocksBeforeWritingABatch()
+    {
+        using var files = new ProgrammeFiles();
+        files.Add("INFX9", "EURGBP Curncy;0.25\nEURUSD Curncy;0.10\n");
+        var (service, state) = Services();
+        var request = Request([Absent("INFX7", "Not eligible."), Absent("INFX8", "Not eligible."),
+            Present("INFX9", files), Absent("INFX10", "Not eligible.")]) with { DemoUsdNettedExecutionScope = ["EURUSD"] };
+        var error = await Assert.ThrowsAsync<DomainRuleViolationException>(() => service.IngestAsync(request, CancellationToken.None));
+        Assert.Contains("GBP", error.Message);
+        Assert.Empty(state.ModelWeightBatches);
+    }
+
     private static readonly string[] ProgrammeNames = ["INFX7", "INFX8", "INFX9", "INFX10"];
 
     private static (LegacyAnubisPortfolioWeightIngestionService Service, PlatformState State) Services()

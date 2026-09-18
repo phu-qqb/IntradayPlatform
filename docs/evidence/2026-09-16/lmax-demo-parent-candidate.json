@@ -1,0 +1,42 @@
+{
+  "schema_version": "lmax-demo-parent-candidate-v1",
+  "base_commit": "717364a5ead468bfc60134f5319b974ec9c3b843",
+  "host": "EC2AMAZ-1QPHTD8",
+  "windows_identity": "EC2AMAZ-1QPHTD8\\Administrator",
+  "identity_verified_at_utc": "2026-09-16T15:14:29.1690809Z",
+  "source_diff_check": "PASS",
+  "compilation": "NOT_RUN",
+  "tests": "NOT_RUN",
+  "ec2_transfer": "REJECTED_BY_AUTOMATIC_REVIEW",
+  "ec2_candidate_activated": false,
+  "broker_orders_sent": 0,
+  "databento_requests": 0,
+  "localdb_diagnostic_rerun": false,
+  "aws_calls_suspended": true,
+  "files": [
+    {
+      "path": "tools/QQ.Production.Intraday.Lmax.ConnectivityLab/LmaxDemoParentLifecycle.cs",
+      "sha256": "1b45a9c53fd2b98bc1fd136d50d242bc93c60ad6d055ce6f718cff81825b8863"
+    },
+    {
+      "path": "tools/QQ.Production.Intraday.Lmax.ConnectivityLab/DemoStrategyExecutionBridge.cs",
+      "sha256": "f9c08bfdd57c92f8a28a663dcff137a41ad539a08c1089f0ed59100edb411108"
+    },
+    {
+      "path": "src/QQ.Production.Intraday.Infrastructure.Simulator/LmaxDemoStrategyBridge.cs",
+      "sha256": "9608999a588a8454ba147ef7cc1f15655a60b9cf86331966ac5f8d46b24cb2ef"
+    },
+    {
+      "path": "tests/QQ.Production.Intraday.Tests.Unit/LmaxDemoParentLifecycleTests.cs",
+      "sha256": "6007ea8a8eb5873cae11dc221c94a7dda5789d9fdd261c583e9f3278476698cb"
+    },
+    {
+      "path": "tests/QQ.Production.Intraday.Tests.Unit/LmaxDemoStrategyBridgeTests.cs",
+      "sha256": "8b1fcfda309b89cf760a1567e7099b1e7226fdf8a365447802f8297b2053e840"
+    },
+    {
+      "path": "deploy/windows/lmax-demo/qualification/DemoParent.Qualification.csproj",
+      "sha256": "f44de0b8249d073dfde3d684cd930642974aa362f2284da1f09e4d2d7909d74e"
+    }
+  ]
+}

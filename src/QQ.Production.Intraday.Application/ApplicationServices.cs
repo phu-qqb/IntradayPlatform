@@ -9,7 +9,10 @@ namespace QQ.Production.Intraday.Application;
 public sealed record VenueOrderRequest(ChildOrderId ChildOrderId, VenueId VenueId, InstrumentId InstrumentId, ClientOrderId ClientOrderId, OrderSide Side, OrderType OrderType, TimeInForce TimeInForce, decimal BaseQuantity, decimal VenueQuantity);
 public sealed record VenueCancelRequest(ChildOrderId ChildOrderId, VenueId VenueId, ClientOrderId ClientOrderId);
 public sealed record VenueOpenOrder(ChildOrderId ChildOrderId, VenueId VenueId, string BrokerOrderId, decimal LeavesQuantity);
-public sealed record VenueExecutionResult(IReadOnlyList<ExecutionReport> Reports);
+public sealed record VenueExecutionResult(IReadOnlyList<ExecutionReport> Reports)
+{
+    public LmaxDemoExecutionPersistence? DemoPersistence { get; init; }
+}
 
 public interface IVenueExecutionGateway
 {
@@ -1125,7 +1128,7 @@ public sealed class ExceptionCaseService(IExceptionCaseRepository repository, IO
         => exceptionCase.Severity is ExceptionCaseSeverity.Critical or ExceptionCaseSeverity.Blocking ? OperatorAuditSeverity.Warning : OperatorAuditSeverity.Info;
 }
 
-public sealed class InMemoryIntradayRepository(PlatformState state) : IIntradayRepository
+public sealed class InMemoryIntradayRepository(PlatformState state) : IIntradayRepository, ILmaxDemoExecutionRepository
 {
     private readonly object _sync = new();
 
@@ -1257,6 +1260,30 @@ public sealed class InMemoryIntradayRepository(PlatformState state) : IIntradayR
             state.ChildOrders.Add(childOrder);
         }
 
+        return Task.CompletedTask;
+    }
+
+    public Task PersistDemoParentAsync(LmaxDemoExecutionPersistence execution, CancellationToken cancellationToken)
+    {
+        lock (_sync)
+        {
+            execution.Validate(state);
+            foreach (var child in execution.PhysicalChildren)
+            {
+                var index = state.ChildOrders.FindIndex(x => x.Id == child.Id);
+                if (index >= 0) state.ChildOrders[index] = child; else state.ChildOrders.Add(child);
+            }
+            foreach (var report in execution.Reports)
+                if (!state.ExecutionReports.Any(x => x.Id == report.Id)) state.ExecutionReports.Add(report);
+            foreach (var fill in execution.Fills)
+                if (!state.Fills.Any(x => x.VenueId == fill.VenueId && x.BrokerExecutionId == fill.BrokerExecutionId))
+                {
+                    state.Fills.Add(fill);
+                    state.PositionLedger.Add(execution.Ledger.Single(x => x.ReferenceId == fill.BrokerExecutionId));
+                }
+            var parentIndex = state.ParentOrders.FindIndex(x => x.Id == execution.ParentId);
+            state.ParentOrders[parentIndex] = state.ParentOrders[parentIndex] with { Status = execution.ParentStatus };
+        }
         return Task.CompletedTask;
     }
 
@@ -2085,7 +2112,7 @@ public static class ModelWeightHash
     }
 }
 
-public sealed record RiskContext(Fund Fund, Venue Venue, Instrument Instrument, ModelRun ModelRun, MarketDataSnapshot MarketData, decimal CurrentBaseQuantity, bool PositionsMatch, decimal ExistingGrossExposureUsd, DateTimeOffset Now);
+public sealed record RiskContext(Fund Fund, Venue Venue, Instrument Instrument, ModelRun ModelRun, MarketDataSnapshot MarketData, decimal CurrentBaseQuantity, bool PositionsMatch, decimal ExistingGrossExposureUsd, DateTimeOffset Now, bool DemoScheduledReduction = false, bool DemoUsdNetting = false);
 
 public sealed class RiskEngine
 {
@@ -2096,7 +2123,26 @@ public sealed class RiskEngine
     {
         var reject = RiskRejectReason.None;
         var status = RiskDecisionStatus.Approved;
-        var notional = Math.Abs(intent.RequestedBaseQuantity * context.MarketData.Mid);
+        if (context.DemoUsdNetting && !LmaxDemoUsdNetting.IsNettedRun(context.ModelRun))
+            throw new DomainRuleViolationException("Netted USD risk valuation requires netted model provenance.");
+        var unitValueUsd = context.DemoUsdNetting
+            ? LmaxDemoUsdNetting.BaseUnitValueUsd(context.Instrument, context.MarketData) : context.MarketData.Mid;
+        var notional = Math.Abs(intent.RequestedBaseQuantity * unitValueUsd);
+        var signedQuantity = intent.Side == TradeSide.Buy ? intent.RequestedBaseQuantity : -intent.RequestedBaseQuantity;
+        var scheduledReduction = context.DemoScheduledReduction && LmaxDemoDaySchedule.IsFinalExit(context.ModelRun.AsOfUtc)
+            && context.CurrentBaseQuantity != 0m && Math.Sign(signedQuantity) != Math.Sign(context.CurrentBaseQuantity)
+            && Math.Abs(signedQuantity) <= Math.Abs(context.CurrentBaseQuantity);
+        var currentInstrumentExposure = Math.Abs(context.CurrentBaseQuantity * unitValueUsd);
+        var instrumentExposure = context.DemoUsdNetting || scheduledReduction
+            ? Math.Abs((context.CurrentBaseQuantity + signedQuantity) * unitValueUsd)
+            : currentInstrumentExposure + notional;
+        // Pending increases in other instruments are included by the batch caller.
+        // Never finance an increase with an unfilled reduction in another leg.
+        var grossExposure = scheduledReduction ? Math.Max(0m, context.ExistingGrossExposureUsd - notional)
+            : context.DemoUsdNetting
+                ? context.ExistingGrossExposureUsd + Math.Max(0m, instrumentExposure - currentInstrumentExposure)
+                : context.ExistingGrossExposureUsd + notional;
+        var windowOpen = IsTradingWindowOpen(tradingWindow, context.Now, scheduledReduction);
         var details = new List<RiskDecisionDetail>();
 
         if (!limitSet.GlobalTradingEnabled) reject = RiskRejectReason.GlobalTradingDisabled;
@@ -2110,9 +2156,9 @@ public sealed class RiskEngine
         else if (intent.RequestedBaseQuantity <= 0 || intent.RequestedVenueQuantity <= 0) reject = RiskRejectReason.InvalidQuantity;
         else if (intent.RequestedBaseQuantity < instrumentLimit.MinTradeQuantity) reject = RiskRejectReason.InvalidQuantity;
         else if (notional > instrumentLimit.MaxTradeNotionalUsd || notional > venueLimit.MaxTradeNotionalUsd) reject = RiskRejectReason.MaxTradeNotionalExceeded;
-        else if (Math.Abs(context.CurrentBaseQuantity * context.MarketData.Mid) + notional > instrumentLimit.MaxExposureUsd) reject = RiskRejectReason.MaxInstrumentExposureExceeded;
-        else if (context.ExistingGrossExposureUsd + notional > limitSet.MaxGrossExposureUsd) reject = RiskRejectReason.MaxGrossExposureExceeded;
-        else if (!IsTradingWindowOpen(tradingWindow, context.Now)) reject = RiskRejectReason.TradingWindowClosed;
+        else if (instrumentExposure > instrumentLimit.MaxExposureUsd) reject = RiskRejectReason.MaxInstrumentExposureExceeded;
+        else if (grossExposure > limitSet.MaxGrossExposureUsd) reject = RiskRejectReason.MaxGrossExposureExceeded;
+        else if (!windowOpen) reject = RiskRejectReason.TradingWindowClosed;
 
         if (reject != RiskRejectReason.None)
         {
@@ -2129,9 +2175,9 @@ public sealed class RiskEngine
         details.Add(Compare(decision.Id, "MarketDataStalenessSeconds", (decimal)(context.Now - context.MarketData.ReceivedAtUtc).TotalSeconds, (decimal)limitSet.MaxMarketDataAge.TotalSeconds, "seconds", RiskRejectReason.StaleMarketData, context.Now));
         details.Add(Compare(decision.Id, "MinInstrumentTradeQuantity", intent.RequestedBaseQuantity, instrumentLimit.MinTradeQuantity, "baseQuantity", RiskRejectReason.InvalidQuantity, context.Now, greaterThanOrEqual: true));
         details.Add(Compare(decision.Id, "MaxTradeNotionalUsd", notional, Math.Min(instrumentLimit.MaxTradeNotionalUsd, venueLimit.MaxTradeNotionalUsd), "USD", RiskRejectReason.MaxTradeNotionalExceeded, context.Now));
-        details.Add(Compare(decision.Id, "MaxInstrumentExposureUsd", Math.Abs(context.CurrentBaseQuantity * context.MarketData.Mid) + notional, instrumentLimit.MaxExposureUsd, "USD", RiskRejectReason.MaxInstrumentExposureExceeded, context.Now));
-        details.Add(Compare(decision.Id, "MaxGrossExposureUsd", context.ExistingGrossExposureUsd + notional, limitSet.MaxGrossExposureUsd, "USD", RiskRejectReason.MaxGrossExposureExceeded, context.Now));
-        details.Add(Detail(decision.Id, "TradingWindow", IsTradingWindowOpen(tradingWindow, context.Now), "Trading window and no-new-orders cutoff checked.", context.Now));
+        details.Add(Compare(decision.Id, "MaxInstrumentExposureUsd", instrumentExposure, instrumentLimit.MaxExposureUsd, "USD", RiskRejectReason.MaxInstrumentExposureExceeded, context.Now));
+        details.Add(Compare(decision.Id, "MaxGrossExposureUsd", grossExposure, limitSet.MaxGrossExposureUsd, "USD", RiskRejectReason.MaxGrossExposureExceeded, context.Now));
+        details.Add(Detail(decision.Id, "TradingWindow", windowOpen, scheduledReduction ? "Scheduled Demo reduction inside the session close window." : "Trading window and no-new-orders cutoff checked.", context.Now));
         return (decision, details);
     }
 
@@ -2148,7 +2194,7 @@ public sealed class RiskEngine
         return new RiskDecisionDetail(Guid.NewGuid(), decisionId, name, passed ? RiskDecisionCheckStatus.Passed : RiskDecisionCheckStatus.Failed, passed ? null : reason, observed, limit, unit, message, now);
     }
 
-    private static bool IsTradingWindowOpen(TradingWindow window, DateTimeOffset now)
+    private static bool IsTradingWindowOpen(TradingWindow window, DateTimeOffset now, bool scheduledReduction = false)
     {
         if (!window.IsEnabled || !window.TradingEnabled || now.DayOfWeek != window.DayOfWeek)
         {
@@ -2156,7 +2202,8 @@ public sealed class RiskEngine
         }
 
         var time = TimeOnly.FromTimeSpan(now.UtcDateTime.TimeOfDay);
-        return time >= window.OpensAtUtc && time <= window.ClosesAtUtc && time <= window.NoNewOrdersAfterUtc;
+        return time >= window.OpensAtUtc && time <= window.ClosesAtUtc
+            && (time <= window.NoNewOrdersAfterUtc || scheduledReduction && now < LmaxDemoDaySchedule.FinalClose(now));
     }
 }
 
@@ -2261,6 +2308,30 @@ public sealed class ProcessModelRunService(IIntradayRepository repository, IVenu
             ?? state.TradingWindows.FirstOrDefault(x => x.FundId == fund.Id)
             ?? new TradingWindow(Guid.Empty, fund.Id, run.ModelName, "UTC", now.DayOfWeek, TimeOnly.MaxValue, TimeOnly.MinValue, TimeOnly.MinValue, null, false, false);
         var targetWeights = state.TargetWeights.Where(x => x.ModelRunId == run.Id).ToList();
+        var demoBatch = venueGateway as ILmaxDemoBatchExecutionGateway;
+        var nettedUsd = LmaxDemoUsdNetting.IsNettedRun(run);
+        if (nettedUsd && demoBatch is null)
+            return BuildResult(state, run.Id, false, ProcessModelRunStatus.Blocked, ProcessModelRunBlockedReason.ReferenceDataInvalid,
+                "Netted Demo targets require the explicit continuing Demo gateway.", false, now);
+        HashSet<InstrumentId>? demoScope = null;
+        if (demoBatch is not null)
+        {
+            var scope = await demoBatch.GetExecutionScopeAsync(cancellationToken);
+            demoScope = scope.ToHashSet();
+            if (scope.Count == 0 || demoScope.Count != scope.Count
+                || demoScope.Any(id => !state.Instruments.Any(x => x.Id == id && x.IsEnabled && x.IsTradingEnabled)))
+                return BuildResult(state, run.Id, false, ProcessModelRunStatus.Blocked, ProcessModelRunBlockedReason.ReferenceDataInvalid,
+                    "The observed Demo execution scope is empty, duplicated or invalid.", false, now);
+            // Retain the full model portfolio. Only the continuing session's explicit
+            // observed instruments may create targets, risk decisions and orders.
+            if (nettedUsd && targetWeights.Any(x => !demoScope.Contains(x.InstrumentId)))
+                return BuildResult(state, run.Id, false, ProcessModelRunStatus.Blocked, ProcessModelRunBlockedReason.ReferenceDataInvalid,
+                    "Netted currency exposure cannot be discarded by an execution mask.", false, now);
+            targetWeights = targetWeights.Where(x => demoScope.Contains(x.InstrumentId)).ToList();
+            if (!demoScope.SetEquals(targetWeights.Select(x => x.InstrumentId)))
+                return BuildResult(state, run.Id, false, ProcessModelRunStatus.Blocked, ProcessModelRunBlockedReason.NoTargetWeights,
+                    "The model portfolio omits an observed Demo execution instrument.", false, now);
+        }
         if (targetWeights.Count == 0)
         {
             return BuildResult(state, run.Id, false, ProcessModelRunStatus.Blocked, ProcessModelRunBlockedReason.NoTargetWeights, "No target weights exist for the model run.", false, now);
@@ -2268,6 +2339,10 @@ public sealed class ProcessModelRunService(IIntradayRepository repository, IVenu
 
         var brokerPositions = await brokerPositionProvider.GetPositionsAsync(brokerAccount.Id, cancellationToken);
         var internalPositions = BuildInternalPositions(state, fund.Id, now);
+        if (demoScope is not null && (internalPositions.Any(x => x.Value != 0m && !demoScope.Contains(x.Key))
+            || brokerPositions.Any(x => x.BaseQuantity != 0m && !demoScope.Contains(x.InstrumentId))))
+            return BuildResult(state, run.Id, false, ProcessModelRunStatus.Blocked, ProcessModelRunBlockedReason.PositionMismatch,
+                "An existing position lies outside the observed Demo execution scope.", false, now);
         var reconciliation = Reconcile(run.Id, ReconciliationPhase.PreTrade, targetWeights.Select(x => x.InstrumentId).ToList(), internalPositions, brokerPositions, riskLimitSet.PositionToleranceBaseQuantity, now);
         await repository.SaveReconciliationAsync(reconciliation.Run, reconciliation.Breaks, cancellationToken);
         await CreateExceptionCasesAsync(reconciliation.Run, reconciliation.Breaks, cancellationToken);
@@ -2279,6 +2354,43 @@ public sealed class ProcessModelRunService(IIntradayRepository repository, IVenu
 
         var calculator = new TargetPositionCalculator();
         var riskEngine = new RiskEngine();
+        var prepared = new List<(VenueOrderRequest Request, ChildOrder Child, Instrument Instrument, VenueInstrumentMapping Mapping)>();
+        var preparedTargets = new List<TargetPosition>();
+        decimal reservedGross = 0m;
+        if (demoBatch is not null && (await venueGateway.GetOpenOrdersAsync(venue.Id, cancellationToken)).Count != 0)
+            return BuildResult(state, run.Id, false, ProcessModelRunStatus.Blocked, ProcessModelRunBlockedReason.Other,
+                "Known Demo orders must reconcile before a new target is submitted.", false, now);
+
+        async Task PersistResultAsync(VenueExecutionResult result, ChildOrder child, Instrument instrument, VenueInstrumentMapping mapping)
+        {
+            if (result.DemoPersistence is { } demo)
+            {
+                if (demoBatch is null || repository is not ILmaxDemoExecutionRepository demoRepository)
+                    throw new InvalidOperationException("DEMO_PHYSICAL_ORDER_PERSISTENCE_REQUIRED");
+                var fills = result.Reports.Where(x => x.ExecutionReportType is ExecutionReportType.Fill or ExecutionReportType.PartialFill)
+                    .Select(x => new Fill(FillId.New(), x.BrokerExecutionId!, x.ChildOrderId, instrument.Id, venue.Id,
+                        child.Side == OrderSide.Buy ? TradeSide.Buy : TradeSide.Sell, x.LastQuantity * mapping.ContractSize,
+                        x.LastQuantity, x.LastPrice, x.ReceivedAtUtc, x.ReceivedAtUtc)).ToArray();
+                await demoRepository.PersistDemoParentAsync(demo with { Fills = fills,
+                    Ledger = fills.Select(x => new PositionLedgerEvent(Guid.NewGuid(), fund.Id, instrument.Id, PositionLedgerEventType.Fill,
+                        x.Side == TradeSide.Buy ? x.BaseQuantity : -x.BaseQuantity, x.BrokerExecutionId, x.ReceivedAtUtc)).ToArray() }, cancellationToken);
+                return;
+            }
+            foreach (var report in result.Reports)
+            {
+                await repository.AddExecutionReportAsync(report, cancellationToken);
+                if (report.ExecutionReportType is ExecutionReportType.Fill or ExecutionReportType.PartialFill && report.BrokerExecutionId is not null && report.LastQuantity > 0)
+                {
+                    var side = child.Side == OrderSide.Buy ? TradeSide.Buy : TradeSide.Sell;
+                    var fill = new Fill(FillId.New(), report.BrokerExecutionId, child.Id, instrument.Id, venue.Id, side, report.LastQuantity * mapping.ContractSize, report.LastQuantity, report.LastPrice, report.ReceivedAtUtc, report.ReceivedAtUtc);
+                    if (await repository.TryAddFillAsync(fill, cancellationToken))
+                    {
+                        var signed = side == TradeSide.Buy ? fill.BaseQuantity : -fill.BaseQuantity;
+                        await repository.AddPositionLedgerEventAsync(new PositionLedgerEvent(Guid.NewGuid(), fund.Id, instrument.Id, PositionLedgerEventType.Fill, signed, fill.BrokerExecutionId, demoBatch is null ? now : report.ReceivedAtUtc), cancellationToken);
+                    }
+                }
+            }
+        }
 
         foreach (var weight in targetWeights)
         {
@@ -2298,7 +2410,9 @@ public sealed class ProcessModelRunService(IIntradayRepository repository, IVenu
                 return BuildResult(state, run.Id, false, ProcessModelRunStatus.Blocked, ProcessModelRunBlockedReason.NoMarketData, $"No market data exists for {instrument.Symbol}.", false, now);
             }
 
-            var target = calculator.Calculate(run, weight, marketData, mapping);
+            var target = nettedUsd ? LmaxDemoUsdNetting.Size(run, weight, instrument, marketData, mapping)
+                : calculator.Calculate(run, weight, marketData, mapping);
+            preparedTargets.Add(target);
             var currentBase = internalPositions.GetValueOrDefault(instrument.Id, 0m);
             var currentVenue = currentBase / mapping.ContractSize;
             var driftBase = target.TargetBaseQuantity - currentBase;
@@ -2338,7 +2452,12 @@ public sealed class ProcessModelRunService(IIntradayRepository repository, IVenu
                 return BuildResult(state, run.Id, false, ProcessModelRunStatus.Blocked, ProcessModelRunBlockedReason.ReferenceDataInvalid, "Risk configuration is missing for the requested instrument or venue.", false, now);
             }
 
-            var riskContext = new RiskContext(fund, venue, instrument, run, marketData, currentBase, true, CalculateGrossExposure(state, fund.Id, marketData.Mid), now);
+            var scheduledReduction = demoBatch is not null && LmaxDemoDaySchedule.IsFinalExit(run.AsOfUtc) && targetWeights.All(x => x.Weight == 0m);
+            var riskNow = demoBatch is null ? now : clock.UtcNow;
+            var existingGross = nettedUsd ? LmaxDemoUsdNetting.GrossExposure(state, fund.Id, venue.Id, riskNow, riskLimitSet.MaxMarketDataAge)
+                : CalculateGrossExposure(state, fund.Id, marketData.Mid);
+            var riskContext = new RiskContext(fund, venue, instrument, run, marketData, currentBase, true,
+                existingGross + reservedGross, riskNow, scheduledReduction, nettedUsd);
             var (decision, details) = riskEngine.EvaluateDetailed(intent, riskContext, riskLimitSet, instrumentLimit, venueLimit, tradingWindow, state.KillSwitch);
             await repository.AddRiskDecisionAsync(decision, details, cancellationToken);
             if (decision.Status != RiskDecisionStatus.Approved)
@@ -2347,31 +2466,43 @@ public sealed class ProcessModelRunService(IIntradayRepository repository, IVenu
                 return BuildResult(state, run.Id, false, ProcessModelRunStatus.Blocked, MapBlockedReason(decision.RejectReason), BuildRiskMessage(decision.RejectReason), false, now);
             }
 
-            var parent = new ParentOrder(ParentOrderId.New(), intent.Id, new ClientOrderId($"P-{run.Id.Value:N}-{state.ParentOrders.Count + 1}"), intent.Side == TradeSide.Buy ? OrderSide.Buy : OrderSide.Sell, intent.RequestedBaseQuantity, ExecutionAlgo.MarketImmediate, OrderStatus.Created, now);
-            var child = new ChildOrder(ChildOrderId.New(), parent.Id, venue.Id, new ClientOrderId($"C-{run.Id.Value:N}-{state.ChildOrders.Count + 1}"), parent.Side, OrderType.Market, TimeInForce.IOC, intent.RequestedBaseQuantity, intent.RequestedVenueQuantity, OrderStatus.PendingNew, now);
+            // SQL state is a detached snapshot: persisting the first prepared leg
+            // does not increment these lists. Bind each Demo order to its durable
+            // unique intent instead of reusing a snapshot count for every pair.
+            var parentClientId = demoBatch is null ? $"P-{run.Id.Value:N}-{state.ParentOrders.Count + 1}" : $"P-{intent.Id.Value:N}";
+            var childClientId = demoBatch is null ? $"C-{run.Id.Value:N}-{state.ChildOrders.Count + 1}" : $"C-{intent.Id.Value:N}";
+            var parent = new ParentOrder(ParentOrderId.New(), intent.Id, new ClientOrderId(parentClientId), intent.Side == TradeSide.Buy ? OrderSide.Buy : OrderSide.Sell, intent.RequestedBaseQuantity, ExecutionAlgo.MarketImmediate, OrderStatus.Created, now);
+            var child = new ChildOrder(ChildOrderId.New(), parent.Id, venue.Id, new ClientOrderId(childClientId), parent.Side, OrderType.Market, TimeInForce.IOC, intent.RequestedBaseQuantity, intent.RequestedVenueQuantity, OrderStatus.PendingNew, now);
             await repository.AddOrdersAsync(parent, child, cancellationToken);
 
-            var result = await venueGateway.SendOrderAsync(new VenueOrderRequest(child.Id, venue.Id, instrument.Id, child.ClientOrderId, child.Side, child.OrderType, child.TimeInForce, child.BaseQuantity, child.VenueQuantity), cancellationToken);
-            foreach (var report in result.Reports)
+            var request = new VenueOrderRequest(child.Id, venue.Id, instrument.Id, child.ClientOrderId, child.Side, child.OrderType, child.TimeInForce, child.BaseQuantity, child.VenueQuantity);
+            if (demoBatch is null)
+                await PersistResultAsync(await venueGateway.SendOrderAsync(request, cancellationToken), child, instrument, mapping);
+            else
             {
-                await repository.AddExecutionReportAsync(report, cancellationToken);
-                if (report.ExecutionReportType is ExecutionReportType.Fill or ExecutionReportType.PartialFill && report.BrokerExecutionId is not null && report.LastQuantity > 0)
-                {
-                    var side = child.Side == OrderSide.Buy ? TradeSide.Buy : TradeSide.Sell;
-                    var fill = new Fill(FillId.New(), report.BrokerExecutionId, child.Id, instrument.Id, venue.Id, side, report.LastQuantity * mapping.ContractSize, report.LastQuantity, report.LastPrice, report.ReceivedAtUtc, report.ReceivedAtUtc);
-                    if (await repository.TryAddFillAsync(fill, cancellationToken))
-                    {
-                        var signed = side == TradeSide.Buy ? fill.BaseQuantity : -fill.BaseQuantity;
-                        await repository.AddPositionLedgerEventAsync(new PositionLedgerEvent(Guid.NewGuid(), fund.Id, instrument.Id, PositionLedgerEventType.Fill, signed, fill.BrokerExecutionId, now), cancellationToken);
-                    }
-                }
+                prepared.Add((request, child, instrument, mapping));
+                // Do not assume a reducing order fills before a different instrument opens.
+                reservedGross += Math.Max(0m, Math.Abs(target.TargetBaseQuantity) - Math.Abs(currentBase))
+                    * (nettedUsd ? LmaxDemoUsdNetting.BaseUnitValueUsd(instrument, marketData) : marketData.Mid);
+            }
+        }
+
+        if (demoBatch is not null)
+        {
+            var results = await demoBatch.SendModelRunAsync(run, preparedTargets, prepared.Select(x => x.Request).ToArray(), cancellationToken);
+            if (results.Count != prepared.Count) throw new InvalidOperationException("DEMO_BATCH_RESULT_COUNT_MISMATCH");
+            for (var index = 0; index < prepared.Count; index++)
+            {
+                var item = prepared[index];
+                await PersistResultAsync(results[index], item.Child, item.Instrument, item.Mapping);
             }
         }
 
         state = await repository.LoadStateAsync(cancellationToken);
-        internalPositions = BuildInternalPositions(state, fund.Id, now);
+        var reconciliationTime = demoBatch is null ? now : clock.UtcNow;
+        internalPositions = BuildInternalPositions(state, fund.Id, reconciliationTime);
         brokerPositions = await brokerPositionProvider.GetPositionsAsync(brokerAccount.Id, cancellationToken);
-        var postTrade = Reconcile(run.Id, ReconciliationPhase.PostTrade, targetWeights.Select(x => x.InstrumentId).ToList(), internalPositions, brokerPositions, riskLimitSet.PositionToleranceBaseQuantity, now);
+        var postTrade = Reconcile(run.Id, ReconciliationPhase.PostTrade, targetWeights.Select(x => x.InstrumentId).ToList(), internalPositions, brokerPositions, riskLimitSet.PositionToleranceBaseQuantity, reconciliationTime);
         await repository.SaveReconciliationAsync(postTrade.Run, postTrade.Breaks, cancellationToken);
         await CreateExceptionCasesAsync(postTrade.Run, postTrade.Breaks, cancellationToken);
 

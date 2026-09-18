@@ -18,6 +18,11 @@ public sealed class LmaxDemoStrategyVenueExecutionGateway(
     IClock clock) : IVenueExecutionGateway
 {
     public async Task<VenueExecutionResult> SendOrderAsync(VenueOrderRequest request, CancellationToken cancellationToken)
+        => await ExecutePreparedAsync(await PrepareAsync(request, cancellationToken), cancellationToken);
+
+    internal sealed record PreparedParent(VenueOrderRequest Order, LmaxConnectivityLabOptions Options, LmaxDemoStrategyExecutionRequest Execution, ChildOrder InitialChild, decimal ContractSize, string InternalAccountCode);
+
+    internal async Task<PreparedParent> PrepareAsync(VenueOrderRequest request, CancellationToken cancellationToken)
     {
         EnsureDemoOnly(options);
         var now = clock.UtcNow;
@@ -36,7 +41,10 @@ public sealed class LmaxDemoStrategyVenueExecutionGateway(
             ?? throw new InvalidOperationException("DEMO_STRATEGY_MAPPING_NOT_VALID");
         var instrument = state.Instruments.SingleOrDefault(x => x.Id == request.InstrumentId && x.IsEnabled && x.IsTradingEnabled)
             ?? throw new InvalidOperationException("DEMO_STRATEGY_INSTRUMENT_NOT_ENABLED");
-        LmaxDemoOperatorBrokerStateAttestationProvider.Validate(options, now, instrument.Symbol);
+        if (session is LmaxDemoContinuingSession continuing)
+            continuing.ValidateContinuity(instrument.Symbol);
+        else
+            LmaxDemoOperatorBrokerStateAttestationProvider.Validate(options, now, instrument.Symbol);
         var preTrade = state.ReconciliationRuns
             .Where(x => x.ModelRunId == run.Id && x.Phase == ReconciliationPhase.PreTrade)
             .OrderByDescending(x => x.CreatedAtUtc)
@@ -92,9 +100,10 @@ public sealed class LmaxDemoStrategyVenueExecutionGateway(
         requestOptions.LmaxInstrumentId = securityId;
         requestOptions.LmaxSlashSymbol = mapping.VenueInstrumentCode;
 
-        var rootClOrdId = $"DS{run.Id.Value:N}"[..18];
-        var execution = await session.ExecuteStrategyParentAsync(
-            requestOptions,
+        // A ModelRun contains several instruments. Bind the FIX identity to the
+        // persisted child, not a run prefix shared by every instrument.
+        var rootClOrdId = $"DS{child.Id.Value:N}"[..18];
+        return new PreparedParent(request, requestOptions,
             new LmaxDemoStrategyExecutionRequest(
                 instrument.Symbol,
                 securityId,
@@ -108,13 +117,25 @@ public sealed class LmaxDemoStrategyVenueExecutionGateway(
                 run.EffectiveAtUtc,
                 limitSet.MaxMarketDataAge,
                 Math.Max(1, options.RequestTimeoutSeconds),
-                options.ShowFixMessages),
-            cancellationToken);
+                options.ShowFixMessages,
+                child.Id.Value.ToString("N")), child, mapping.ContractSize,
+                state.BrokerAccounts.Single(x => x.FundId == run.FundId && x.IsEnabled).AccountCode);
+    }
+
+    internal async Task<VenueExecutionResult> ExecutePreparedAsync(PreparedParent prepared, CancellationToken cancellationToken)
+    {
+        var execution = await session.ExecuteStrategyParentAsync(prepared.Options, prepared.Execution, cancellationToken);
 
         if (!execution.Terminal)
             throw new InvalidOperationException("DEMO_STRATEGY_PARENT_NOT_TERMINAL");
 
-        return new VenueExecutionResult(execution.ExecutionReports.Select(x => ToDomainReport(x, request)).ToList());
+        if (session is LmaxDemoContinuingSession continuing)
+        {
+            var persisted = LmaxDemoPhysicalExecutionMapper.Map(prepared.InitialChild, prepared.ContractSize, prepared.InternalAccountCode,
+                continuing.StartingObservation, continuing.OrdersForCompletedParent(prepared.Execution.PersistedChildOrderId!), execution);
+            return new VenueExecutionResult(persisted.Reports) { DemoPersistence = persisted };
+        }
+        return new VenueExecutionResult(execution.ExecutionReports.Select(x => ToDomainReport(x, prepared.Order)).ToList());
     }
 
     public Task<VenueExecutionResult> CancelOrderAsync(VenueCancelRequest request, CancellationToken cancellationToken)

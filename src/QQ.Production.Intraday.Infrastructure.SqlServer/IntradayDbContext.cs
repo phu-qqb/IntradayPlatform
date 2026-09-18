@@ -188,7 +188,7 @@ public sealed class IntradayDbContext(DbContextOptions<IntradayDbContext> option
         modelBuilder.Entity<QubesNormalizedWeightAuditRow>().HasIndex(x => new { x.AuditBatchId, x.Symbol }).IsUnique();
         modelBuilder.Entity<LmaxReportImportRun>().HasIndex(x => new { x.ReportDate, x.ReportType, x.VenueId, x.BrokerAccountId });
         modelBuilder.Entity<LmaxIndividualTrade>().HasIndex(x => new { x.VenueId, x.AccountId, x.ExecutionId }).IsUnique();
-        modelBuilder.Entity<LmaxIndividualTrade>().HasIndex(x => new { x.VenueId, x.AccountId, x.TradeUti }).IsUnique();
+        modelBuilder.Entity<LmaxIndividualTrade>().HasIndex(x => new { x.VenueId, x.AccountId, x.TradeUti }).IsUnique().HasFilter("[TradeUti] <> N''");
         modelBuilder.Entity<LmaxIndividualTrade>().HasIndex(x => x.OrderId);
         modelBuilder.Entity<LmaxIndividualTrade>().HasIndex(x => x.InstructionId);
         modelBuilder.Entity<LmaxIndividualTrade>().HasIndex(x => new { x.InstrumentId, x.ReportDate });
@@ -651,7 +651,7 @@ public sealed class SqlServerExceptionCaseRepository(IntradayDbContext dbContext
         => await dbContext.ExceptionCaseNotes.AsNoTracking().Where(x => x.CaseId == id).OrderBy(x => x.CreatedAtUtc).ToListAsync(cancellationToken);
 }
 
-public sealed class SqlServerIntradayRepository(IntradayDbContext dbContext) : IIntradayRepository
+public sealed class SqlServerIntradayRepository(IntradayDbContext dbContext) : IIntradayRepository, ILmaxDemoExecutionRepository
 {
     public async Task<PlatformState> LoadStateAsync(CancellationToken cancellationToken)
     {
@@ -796,6 +796,30 @@ public sealed class SqlServerIntradayRepository(IntradayDbContext dbContext) : I
         dbContext.ParentOrders.Add(parentOrder);
         dbContext.ChildOrders.Add(childOrder);
         await dbContext.SaveChangesAsync(cancellationToken);
+    }
+
+    public async Task PersistDemoParentAsync(LmaxDemoExecutionPersistence execution, CancellationToken cancellationToken)
+    {
+        await using var transaction = await dbContext.Database.BeginTransactionAsync(cancellationToken);
+        execution.Validate(await LoadStateAsync(cancellationToken));
+        foreach (var child in execution.PhysicalChildren)
+        {
+            var existing = await dbContext.ChildOrders.SingleOrDefaultAsync(x => x.Id == child.Id, cancellationToken);
+            if (existing is null) dbContext.ChildOrders.Add(child);
+            else dbContext.Entry(existing).CurrentValues.SetValues(child);
+        }
+        foreach (var report in execution.Reports)
+            if (!await dbContext.ExecutionReports.AnyAsync(x => x.Id == report.Id, cancellationToken)) dbContext.ExecutionReports.Add(report);
+        foreach (var fill in execution.Fills)
+            if (!await dbContext.Fills.AnyAsync(x => x.VenueId == fill.VenueId && x.BrokerExecutionId == fill.BrokerExecutionId, cancellationToken))
+            {
+                dbContext.Fills.Add(fill);
+                dbContext.PositionLedgerEvents.Add(execution.Ledger.Single(x => x.ReferenceId == fill.BrokerExecutionId));
+            }
+        var parent = await dbContext.ParentOrders.SingleAsync(x => x.Id == execution.ParentId, cancellationToken);
+        dbContext.Entry(parent).CurrentValues.SetValues(parent with { Status = execution.ParentStatus });
+        await dbContext.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
     }
 
     public async Task AddExecutionReportAsync(ExecutionReport report, CancellationToken cancellationToken)
@@ -1109,7 +1133,7 @@ public sealed class SqlServerLmaxEodReportRepository(IntradayDbContext dbContext
     {
         foreach (var trade in trades)
         {
-            if (!await dbContext.LmaxIndividualTrades.AnyAsync(x => x.VenueId == trade.VenueId && x.AccountId == trade.AccountId && (x.ExecutionId == trade.ExecutionId || x.TradeUti == trade.TradeUti), cancellationToken))
+            if (!await dbContext.LmaxIndividualTrades.AnyAsync(x => x.VenueId == trade.VenueId && x.AccountId == trade.AccountId && (x.ExecutionId == trade.ExecutionId || (trade.TradeUti != "" && x.TradeUti == trade.TradeUti)), cancellationToken))
             {
                 dbContext.LmaxIndividualTrades.Add(trade);
             }

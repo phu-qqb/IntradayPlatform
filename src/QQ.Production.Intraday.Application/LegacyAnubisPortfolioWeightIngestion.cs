@@ -34,7 +34,10 @@ public sealed record LegacyAnubisPortfolioWeightIngestionRequest(
     DateTimeOffset DecisionAtUtc,
     DateTimeOffset EffectiveAtUtc,
     decimal NavUsd,
-    TargetQuantityMode TargetQuantityMode);
+    TargetQuantityMode TargetQuantityMode,
+    IReadOnlyList<string>? DemoScheduledExitScope = null,
+    string? DemoScheduledExitInternalAccountCode = null,
+    IReadOnlyList<string>? DemoUsdNettedExecutionScope = null);
 
 public sealed record LegacyAnubisPortfolioWeightIngestionResult(
     ModelWeightBatch Batch,
@@ -116,6 +119,28 @@ public sealed class LegacyAnubisPortfolioWeightIngestionService(
             .SelectMany(x => x)
             .Where(x => enabledBySymbol.ContainsKey(x.Symbol))
             .ToList();
+        if (request.DemoUsdNettedExecutionScope is { } nettedScope)
+        {
+            LmaxDemoUsdNetting.ValidateScope(nettedScope);
+            if (request.TargetQuantityMode != TargetQuantityMode.PortfolioBaseCurrencyNotional
+                || nettedScope.Any(x => !enabledBySymbol.ContainsKey(x)))
+                throw new DomainRuleViolationException("Full native USD execution scope and USD-notional sizing are required.");
+            if (request.DemoScheduledExitScope is null)
+                executableContributions = LmaxDemoUsdNetting.Net(
+                    parsedByProgramme.Values.SelectMany(x => x).Select(x => (x.Symbol, x.Weight)),
+                    nettedScope, request.DecisionAtUtc, request.EffectiveAtUtc, request.NavUsd)
+                    .Select(x => new ParsedWeight(x.Key + " Curncy", x.Key, x.Value)).ToList();
+            else if (!request.DemoScheduledExitScope.Order(StringComparer.Ordinal).SequenceEqual(nettedScope.Order(StringComparer.Ordinal)))
+                throw new DomainRuleViolationException("Scheduled exit must cover the full netted USD scope.");
+        }
+        if (request.DemoScheduledExitScope is { } exitScope)
+        {
+            var fund = state.Funds.Single(x => x.Name == request.FundCode && x.IsEnabled);
+            if (!state.BrokerAccounts.Any(x => x.FundId == fund.Id && x.IsEnabled && x.AccountCode == (request.DemoScheduledExitInternalAccountCode ?? LmaxDemoControlledSession.DemoAccountId))
+                || exitScope.Any(x => !enabledBySymbol.ContainsKey(x)))
+                throw new DomainRuleViolationException("Scheduled session exit requires the observed Demo account and mapped scope.");
+            executableContributions = exitScope.Select(x => new ParsedWeight(x + " Curncy", x, 0m)).ToList();
+        }
         if (executableContributions.Count == 0)
             throw new DomainRuleViolationException("The four-programme manager portfolio has no rows for enabled execution instruments.");
 
@@ -130,7 +155,8 @@ public sealed class LegacyAnubisPortfolioWeightIngestionService(
             .ToList();
 
         var portfolioLineageSha256 = PortfolioLineageSha256(request, lineage);
-        var externalBatchId = $"legacy_anubis_portfolio_{portfolioLineageSha256[..16]}";
+        var externalBatchId = (request.DemoUsdNettedExecutionScope is null ? "legacy_anubis_portfolio_" : LmaxDemoUsdNetting.BatchPrefix)
+            + portfolioLineageSha256[..16];
         var existing = await repository.GetBatchByExternalIdAsync(
             ModelWeightSourceSystem.LegacyAnubis,
             externalBatchId,
@@ -190,7 +216,16 @@ public sealed class LegacyAnubisPortfolioWeightIngestionService(
             throw new DomainRuleViolationException("Portfolio decision/effective timestamps must be ordered UTC values.");
         if (request.NavUsd <= 0)
             throw new DomainRuleViolationException("Legacy Anubis portfolio NAV must be positive.");
-        if (request.Programmes.All(x => x.State == LegacyAnubisProgrammeContributionState.Absent))
+        if (request.DemoScheduledExitScope is { } exitScope)
+        {
+            if (!LmaxDemoDaySchedule.IsFinalExit(request.DecisionAtUtc)
+                || request.EffectiveAtUtc != request.DecisionAtUtc.AddMinutes(15)
+                || exitScope.Count == 0 || exitScope.Distinct(StringComparer.Ordinal).Count() != exitScope.Count
+                || request.Programmes.Any(x => x.State != LegacyAnubisProgrammeContributionState.Absent
+                    || x.Reason != "SCHEDULED_DEMO_SESSION_EXIT"))
+                throw new DomainRuleViolationException("Scheduled Demo exit requires the exact final session boundary and four explicit closed contributions.");
+        }
+        else if (request.Programmes.All(x => x.State == LegacyAnubisProgrammeContributionState.Absent))
             throw new DomainRuleViolationException("A portfolio decision cannot contain four absent programme contributions.");
 
         foreach (var contribution in request.Programmes)
@@ -287,6 +322,10 @@ public sealed class LegacyAnubisPortfolioWeightIngestionService(
             .Append("EffectiveAtUtc=").Append(request.EffectiveAtUtc.ToString("O", CultureInfo.InvariantCulture)).Append('\n')
             .Append("NavUsd=").Append(request.NavUsd.ToString(CultureInfo.InvariantCulture)).Append('\n')
             .Append("TargetQuantityMode=").Append(request.TargetQuantityMode).Append('\n');
+        if (request.DemoScheduledExitScope is { } exitScope)
+            canonical.Append("ScheduledDemoExitScope=").AppendJoin(',', exitScope.Order(StringComparer.Ordinal)).Append('\n');
+        if (request.DemoUsdNettedExecutionScope is { } nettedScope)
+            canonical.Append("ExistingQubesUsdNetting=v1|").AppendJoin(',', nettedScope.Order(StringComparer.Ordinal)).Append('\n');
         foreach (var item in lineage)
         {
             var contract = Contracts[item.ProgramName];
@@ -311,9 +350,10 @@ public sealed class LegacyAnubisPortfolioWeightIngestionService(
             var contract = Contracts[x.ProgramName];
             return $"{x.ProgramName}=U{contract.UniverseId}/M{contract.ModelId}/{contract.Session}/{contract.FrequencyMinutes}m/c{contract.Coefficient.ToString(CultureInfo.InvariantCulture)}/{x.State}";
         }));
-        return $"Genuine four-programme legacy Anubis portfolio import; Decision={request.DecisionAtUtc:O}; {contributions}; " +
+        var source = request.DemoScheduledExitScope is null ? "Genuine four-programme legacy Anubis portfolio import" : "Scheduled Demo session exit under the four-programme zero-if-absent policy; no Anubis output manufactured";
+        return $"{source}; Decision={request.DecisionAtUtc:O}; {contributions}; " +
                $"ZeroIfAbsent=true; CarryForward=false; AdditionalNormalization=false; SourceRows={parsed.Values.Sum(x => x.Count)}; " +
-               $"ExecutableRows={executableRows}; PortfolioLineageSha256={lineageSha256}.";
+               $"ExecutableRows={executableRows}; ExistingQubesUsdNetting={request.DemoUsdNettedExecutionScope is not null}; PortfolioLineageSha256={lineageSha256}.";
     }
 
     private static IEnumerable<LegacyAnubisProgrammeContribution> Order(
