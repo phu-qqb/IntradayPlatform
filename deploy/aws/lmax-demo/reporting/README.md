@@ -1,5 +1,31 @@
 # LMAX Demo daily acquisition and recap
 
+## Autonomous position-report reader
+
+`node Read-LmaxDemoPositionReports.mjs --execute` reuses the installed, pinned
+Core PR61 downloader and the same approved EC2/profile/secret. Its existing
+bracket mode reads trades/positions/trades/positions/trades, followed by the
+complementary account reports. This requires no interactive trading-screen reader.
+The command keeps the existing portal lease, owner/role checks, one acquisition
+invocation and terminal security-denial behavior. No alternative host or account
+API is used. Five focused contract tests cover empty reports, account/date scope,
+staleness, tampering, source safety and the separate working-order authority.
+
+Every result is retained in `D:\data\lmax-eod\logs\<run-id>\position-reader-receipt.json`;
+the original CSVs and broker timestamp interval are retained under `position-snapshots`.
+A successful receipt means the official position reports were read automatically.
+It does not attest absence of unfilled orders or start trading. The existing report
+contract's unproven explicit timezone is preserved; a historical report is never
+retimestamped as a current observation.
+
+For morning preparation, use official positions as the opening-position source,
+then reconcile with the previous close and executions. Separately require terminal
+status for every previous order, exclusive account activity and no unaccounted-for
+activity between the report boundary and startup. A failed/incomplete report is
+never interpreted as zero positions. This reader introduces no new trading gate
+override: replacing the launcher's UI-only observation with report provenance must
+be wired and qualified explicitly. Runtime qualification is recorded in #84.
+
 The standalone `Build-LmaxDemoDailyRecap.mjs` produces a recap even when report acquisition
 fails. It does not start the downloader, the Worker, an API or a database. It
 never sends email. It validates the 14 native USD execution pairs described in
