@@ -43,7 +43,44 @@ status; their historical runs and original evidence remain intact.
 **Provenance limitation:** a successful reconciliation after this recovery proves
 that internal accounting now matches the official report it was recovered from.
 It is not independent FIX confirmation. Keep this distinction in downstream
-reports. Journal and owner-lock bytes remain unchanged. This tool neither retires
-the faulted actual-send session nor proves the account currently flat/no-orders;
-session resolution, qualified FIX and a genuine fresh official account observation
-remain mandatory before a new trading session.
+reports. Journal and owner-lock bytes remain unchanged. The recovery commands alone neither retire the faulted actual-send session nor
+prove the account currently flat/no-orders. The separate retirement command below,
+qualified FIX and a genuine fresh official account observation remain mandatory
+before a new trading session.
+
+## Exact recovered-send retirement
+
+`inspect-retirement PLAN_JSON PLAN_SHA256` verifies the exact durable recovery,
+its before/after audit and current internal flat/no-open-child/no-break state under
+an exclusive owner lease and read transaction. It does not retire the session.
+
+`retire-session PLAN_JSON PLAN_SHA256 OBSERVATION_JSON` requires that same evidence
+plus a retained authentic official UI inspection of Demo account 1754288005, less
+than 900 seconds old, explicitly showing flat/no working orders. The JSON bundle
+contains `Observation` (the existing `LmaxDemoRetirementObservation` record),
+`CapturePath`, `CaptureSha256` and `SourceUrl`. Capture paths stay under
+`D:\data\lmax-demo-ui`; origin is `https://web-order.london-demo.lmax.com`.
+The capture timestamp must equal the observation timestamp. Never create a positive
+capture by copying, changing or retimestamping an old inspection.
+
+The command writes one immutable `.recovered-send-retirement.json` sidecar for the
+exact 17 September journal. Journal bytes, owner.lock, economic facts and FIX
+reports remain untouched. The sidecar is verified during subsequent ownership
+checks; it retires the old incident, not future account-state checks.
+
+## Full native USD reference configuration
+
+`verify-reference OFFICIAL_CSV NEW_RECEIPT_JSON` applies and checks the candidate
+inside a serializable transaction, then rolls back. `apply-reference` uses the same
+arguments and commits only for the pinned genuine LD4 CSV, exact Demo owner/account,
+reconciled internal state and existing unchanged QQ risk policy. It creates missing
+native instruments/mappings/report aliases and binds the existing conservative
+EURUSD risk template to the other native legs. It never increases risk ceilings.
+
+Published minimum order is 0.1 contracts and contract size is 10,000 for all 14 legs.
+QQ deliberately uses one published minimum lot as its conservative order quantum;
+the source CSV does not independently publish a quantity-increment column.
+USDJPY and USDHUF tick size is 0.001; the others are 0.00001. Source URL/hash and
+before/after changes are retained in the audit and immutable operator receipt.
+These commands cannot start trading, obtain broker-account observations or change
+commercial fee terms.

@@ -9,6 +9,33 @@ const required = (ok, code) => { if (!ok) throw new Error(code); };
 const numeric = value => { required(value !== '' && value != null && Number.isFinite(Number(value)), 'INVALID_NUMBER'); return Number(value); };
 const round = value => Math.round(value * 1e8) / 1e8;
 const money = value => value == null ? 'indisponible' : value.toFixed(2);
+const instruments = Object.freeze({'EUR/USD':'4001','GBP/USD':'4002','AUD/USD':'4007','NZD/USD':'100613',
+  'USD/JPY':'4004','USD/CHF':'4010','USD/CAD':'4013','USD/HUF':'100501','USD/MXN':'100507',
+  'USD/NOK':'100513','USD/PLN':'100523','USD/RON':'100931','USD/SEK':'100529','USD/ZAR':'100547'});
+
+function reportCurrencies(candidate, config, rows) {
+  const summaryPath = path.join(path.dirname(candidate.path), 'trades.csv');
+  if (!fs.existsSync(summaryPath)) return {currencies:new Map(), evidence:null};
+  const bytes = fs.readFileSync(summaryPath), summary = parseCsv(bytes.toString('utf8'));
+  for (const key of ['Date & Time','LMAX Symbol','Currency','Contracts','Commission (full precision)','Account Id'])
+    required(summary.headers.includes(key), 'SUMMARY_CURRENCY_SCHEMA');
+  required(summary.rows.length > 0 && summary.rows.every(r => r['Account Id'] === config.account_id
+    && r['Date & Time'].startsWith(config.date + ' ') && /^[A-Z]{3}$/.test(r.Currency)), 'SUMMARY_CURRENCY_SCOPE');
+  const currencies = new Map();
+  for (const symbol of new Set(rows.map(r => r.Symbol))) {
+    const matching = summary.rows.filter(r => r['LMAX Symbol'] === symbol), trades = rows.filter(r => r.Symbol === symbol);
+    if (!matching.length) continue;
+    const ccys = new Set(matching.map(r => r.Currency));
+    required(ccys.size === 1, 'SUMMARY_AMBIGUOUS_CURRENCY');
+    const sum = (xs, f) => xs.reduce((a, r) => a + f(r), 0);
+    required(Math.abs(sum(matching,r=>numeric(r.Contracts)*10000)-sum(trades,r=>numeric(r['Units Bought/Sold']))) < 1e-6
+      && Math.abs(sum(matching,r=>Math.abs(numeric(r.Contracts))*10000)-sum(trades,r=>Math.abs(numeric(r['Units Bought/Sold'])))) < 1e-6
+      && Math.abs(sum(matching,r=>Math.abs(numeric(r['Commission (full precision)'])))-sum(trades,r=>Math.abs(numeric(r['Total Commission'])))) < 1e-5,
+      'SUMMARY_TRADE_CURRENCY_BINDING_MISMATCH');
+    currencies.set(symbol, matching[0].Currency);
+  }
+  return {currencies, evidence:{path:summaryPath,sha256:hash(bytes)}};
+}
 
 export function parseCsv(text) {
   const rows = []; let row = [], cell = '', quoted = false;
@@ -40,21 +67,29 @@ function readTrades(candidate, config) {
     'Units Bought/Sold', 'Trade Price', 'Total Commission']) required(csv.headers.includes(key), 'CSV_SCHEMA');
   required(csv.rows.length > 0, 'HEADER_ONLY_NOT_ZERO_ACTIVITY');
   const date = config.date.split('-').reverse().join('-'), ids = new Set();
+  const currencyProof = reportCurrencies(candidate, config, csv.rows);
   const trades = csv.rows.map(r => {
     required(r['Account Id'] === config.account_id, 'ACCOUNT_MISMATCH');
     required(r['Trade Date'] === date, 'DATE_MISMATCH');
     required(r['Execution ID'] && !ids.has(r['Execution ID']), 'DUPLICATE_OR_EMPTY_EXECUTION_ID');
-    required(r['Order ID'] && r.Symbol === 'EUR/USD', 'UNSUPPORTED_OR_EMPTY_INSTRUMENT_ORDER');
+    required(r['Order ID'] && Object.hasOwn(instruments, r.Symbol), 'UNSUPPORTED_OR_EMPTY_INSTRUMENT_ORDER');
+    if (csv.headers.includes('Instrument ID')) required(r['Instrument ID'] === instruments[r.Symbol], 'INSTRUMENT_ID_MISMATCH');
     ids.add(r['Execution ID']);
     const units = numeric(r['Units Bought/Sold']), price = numeric(r['Trade Price']);
     required(units !== 0 && price > 0, 'INVALID_TRADE');
+    // Retain the qualified historical EURUSD binding. Other currencies require the
+    // matching official summary, never an inferred USD label or an invented FX rate.
+    const currency = currencyProof.currencies.get(r.Symbol) ?? (r.Symbol === 'EUR/USD' ? 'USD' : null);
+    const commission = numeric(r['Total Commission']), pnl = r['Total Profit Loss'] ? numeric(r['Total Profit Loss']) : null;
     return { execution_id: r['Execution ID'], order_id: r['Order ID'], symbol: r.Symbol,
-      timestamp: r.Timestamp, units, price, commission_usd: numeric(r['Total Commission']),
-      reported_profit_loss_usd: r['Total Profit Loss'] ? numeric(r['Total Profit Loss']) : null, source: 'OFFICIAL_CSV' };
+      instrument_id: instruments[r.Symbol], base_currency:r.Symbol.slice(0,3), quote_currency:r.Symbol.slice(4),
+      timestamp: r.Timestamp, units, price, report_currency:currency, commission_reported:commission,
+      reported_profit_loss:pnl, commission_usd:currency==='USD'?commission:null,
+      reported_profit_loss_usd:currency==='USD'?pnl:null, source: 'OFFICIAL_CSV' };
   });
   for (const order of config.expected_order_ids ?? [])
     required(trades.some(t => t.order_id === order), 'EXPECTED_ORDER_MISSING');
-  return { source: candidate.path, sha256: hash(bytes), trades };
+  return { source: candidate.path, sha256: hash(bytes), trades, currencyEvidence:currencyProof.evidence };
 }
 
 export function buildRecap(config) {
@@ -76,13 +111,27 @@ export function buildRecap(config) {
       required(typeof observation[k] === 'number' && Number.isFinite(observation[k]), 'OBSERVATION_NUMERIC_TYPE');
   }
   const trades = selected?.trades ?? [];
-  const csvNetUnits = trades.length ? round(trades.reduce((a,t) => a + t.units, 0)) : null;
-  const commissions = trades.length ? round(trades.reduce((a,t) => a + t.commission_usd, 0)) : null;
+  const groups = [...new Set(trades.map(t=>t.symbol))].sort().map(symbol=>{
+    const rows=trades.filter(t=>t.symbol===symbol);
+    return {symbol,base_currency:rows[0].base_currency,executions:rows.length,
+      units_sum:round(rows.reduce((a,t)=>a+t.units,0)),gross_units:round(rows.reduce((a,t)=>a+Math.abs(t.units),0))};
+  });
+  const csvNetUnits = groups.length===1 ? groups[0].units_sum : null;
+  const allUsd = trades.length>0 && trades.every(t=>t.report_currency==='USD');
+  const commissions = allUsd ? round(trades.reduce((a,t) => a + t.commission_usd, 0)) : null;
+  const monetary = [...new Set(trades.map(t=>t.report_currency).filter(Boolean))].sort().map(currency=>{
+    const rows=trades.filter(t=>t.report_currency===currency), pnl=rows.filter(t=>t.reported_profit_loss!==null);
+    const fee=round(rows.reduce((a,t)=>a+t.commission_reported,0));
+    const gross=pnl.length===rows.length?round(pnl.reduce((a,t)=>a+t.reported_profit_loss,0)):null;
+    return {currency,executions:rows.length,commission:fee,reported_gross:gross,net_after_commissions:gross===null?null:round(gross+fee)};
+  });
   // Flat trade sum is not proof of flat account: initial inventory/other activity may exist.
   const recap = { schema: 'lmax_demo_daily_recap_v1', date: config.date, account_id: config.account_id,
     generated_at_utc: new Date().toISOString(), environment: config.environment,
     status: 'PROVISIONAL', acquisition_attempts: attempts, selected_source: selected && { path: selected.source, sha256: selected.sha256 },
     official_trades: trades, official_trade_units_sum: csvNetUnits, official_commissions_usd: commissions,
+    official_trade_units_by_symbol:groups, selected_rows_amounts_by_currency:monetary,
+    currency_evidence:selected?.currencyEvidence??null,
     portal_observation: observation,
     observed_round_trip_net_usd: observation ? round(observation.gross_pnl_usd + observation.entry_commission_usd + observation.exit_commission_usd) : null,
     observed_net_precision: observation ? 'APPROXIMATE_EXIT_FEE_ROUNDED' : 'UNAVAILABLE',
@@ -92,6 +141,7 @@ export function buildRecap(config) {
     breaks: [...(selected ? [] : ['NO_COMPLETE_OFFICIAL_TRADES_EXPORT']), 'REPORT_SET_RECONCILIATION_PENDING', 'M15_BENCHMARK_MISSING'],
     email: { status: 'DRAFT_ONLY', sent: false } };
   if (config.internal_evidence?.status === 'FIX_CONTINUITY_LOST') recap.breaks.push('FIX_CONTINUITY_LOST');
+  if(trades.some(t=>t.report_currency===null))recap.breaks.push('REPORT_MONETARY_CURRENCY_UNVERIFIED');
   recap.acquisition_status = config.acquisition_status ?? 'NOT_AUTOMATED';
   if (config.pipeline_error) recap.breaks.push(config.pipeline_error);
   if (config.eod_result) {
@@ -109,13 +159,14 @@ export function buildRecap(config) {
     if (e.report_set_imported && e.blocking_breaks === 0) recap.breaks = recap.breaks.filter(x => x !== 'REPORT_SET_RECONCILIATION_PENDING');
   }
   const reported = trades.filter(t => t.reported_profit_loss_usd !== null);
-  recap.selected_rows_reported_gross_usd = reported.length ? round(reported.reduce((a,t)=>a+t.reported_profit_loss_usd,0)) : null;
-  recap.selected_rows_net_after_commissions_usd = reported.length ? round(recap.selected_rows_reported_gross_usd + commissions) : null;
+  recap.selected_rows_reported_gross_usd = allUsd && reported.length===trades.length ? round(reported.reduce((a,t)=>a+t.reported_profit_loss_usd,0)) : null;
+  recap.selected_rows_net_after_commissions_usd = recap.selected_rows_reported_gross_usd===null ? null : round(recap.selected_rows_reported_gross_usd + commissions);
   if (config.simulated_tca) {
     const s = config.simulated_tca;
     required(s.label === 'SIMULATED_NOT_FOR_ECONOMIC_VALIDATION' && s.owner_authorized === true, 'SIMULATION_OPT_IN_REQUIRED');
     required(Array.isArray(s.orders) && s.orders.length > 0, 'SIMULATED_ORDERS_REQUIRED');
     const orders = s.orders.map(o => {
+      required(!o.symbol || o.symbol==='EUR/USD', 'SIMULATED_TCA_USD_QUOTE_FIXTURE_ONLY');
       const qty = numeric(o.units), price = numeric(o.execution_price), benchmark = numeric(o.benchmark_price), fee = numeric(o.fee_usd);
       required(qty !== 0 && price > 0 && benchmark > 0 && fee >= 0, 'INVALID_SIMULATED_ORDER');
       const shortfall = qty * (price - benchmark), notional = Math.abs(qty) * benchmark;
@@ -136,6 +187,16 @@ export function renderRecap(r) {
   body += `## Résultat constaté\n\n`;
   body += o ? `Position observée : **${o.position_units} EUR**, ordres actifs : **${o.working_orders}** (${o.observed_at_utc}).\n\nPnL brut : **${money(o.gross_pnl_usd)} USD**. Net après commissions : **≈ ${money(r.observed_round_trip_net_usd)} USD** (sortie arrondie au centime).\n\nSource : ${o.source_reference}.\n\n` : 'État du compte et PnL : indisponibles. Absence de preuve ≠ activité nulle.\n\n';
   body += `CSV validé pour le compte et la date : ${r.selected_source ? r.selected_source.path : 'aucun'}. ${r.official_trades.length} exécution(s). La complétude de la journée et l'état actuel du compte ne sont pas déduits du CSV.\n\n`;
+  if(r.official_trade_units_by_symbol.length){
+    body+='| Paire | Exécutions | Solde des quantités du rapport | Devise de base |\n|---|---:|---:|---|\n';
+    for(const g of r.official_trade_units_by_symbol)body+=`| ${g.symbol} | ${g.executions} | ${g.units_sum} | ${g.base_currency} |\n`;
+    body+='\nLes soldes par paire ne sont pas des positions de compte. Aucun total entre devises de base différentes.\n\n';
+  }
+  if(r.selected_rows_amounts_by_currency.length){
+    body+='| Devise du rapport | PnL brut renseigné | Commissions | Net des lignes |\n|---|---:|---:|---:|\n';
+    for(const g of r.selected_rows_amounts_by_currency)body+=`| ${g.currency} | ${money(g.reported_gross)} | ${money(g.commission)} | ${money(g.net_after_commissions)} |\n`;
+    body+='\nMontants par devise ; aucune conversion USD déduite des prix des trades.\n\n';
+  }
   if (r.selected_rows_reported_gross_usd !== null) body += `PnL renseigné dans les lignes sélectionnées : **${r.selected_rows_reported_gross_usd} USD** ; commissions : **${r.official_commissions_usd} USD** ; net après ces commissions : **${r.selected_rows_net_after_commissions_usd} USD**. Périmètre des lignes du rapport, hors autres flux éventuels.\n\n`;
   body += `Acquisition : ${r.acquisition_status}. Import EOD effectué : ${r.reconciliation.official_report_import_performed ? 'oui' : 'non'}. Réconciliation : ${r.reconciliation.status}.\n\n`;
   if(r.reconciliation.official_report_recovered_fills>0) body += `${r.reconciliation.official_report_recovered_fills} exécution(s) interne(s) récupérée(s) depuis le rapport officiel, dont la clôture manuelle. Ce rapprochement vérifie la reprise comptable ; il ne constitue pas une confirmation FIX indépendante.\n\n`;

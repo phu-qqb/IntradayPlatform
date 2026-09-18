@@ -8,6 +8,7 @@ NAV, execution masks, quantity conventions or risk limits. Default command: `pla
 
 | Command | Effects |
 |---|---|
+| `inspect-reference` | Read-only verification of all 14 native execution contracts, report aliases and instrument risk bindings. |
 | `plan` | Prints the next eligible same-day cutoff; no external calls. |
 | `self-test` | Simulated contract and boundary checks; local temporary files only. |
 | `normalize --capture-root ROOT --cutoff UTC --output DIR` | Validates retained canonical capture and writes normalized files locally. |
@@ -31,8 +32,14 @@ establish successful end-to-end execution; retain actual stage receipts.
 - Document `QQ-LMAX-Demo-Anubis-Cycle-v1`, version 1, pinned content hash.
 - S3 transport uses only the established per-cycle input and result paths.
 - Existing collector, catalog, template, ExecDesk binary and mapping are hashed.
-- EURUSD is the current execution mask; venue contract size 10000, quantity cap
-  0.1 and notional cap USD 5000. NAV USD 1000000, PortfolioBaseCurrencyNotional.
+- All programme signals enter the existing currency netting before selecting the
+  14 native XXXUSD/USDXXX legs. EURUSD-only fallback and raw-cross execution are rejected.
+  Contract facts are bound in `LmaxDemoUsdExecutionUniverse` to the official LD4
+  reference CSV SHA-256. Quantity step is QQ's conservative one-minimum-lot quantum.
+  The owner removed the separate Demo caps; ordinary risk controls remain active.
+  NAV USD 1000000, PortfolioBaseCurrencyNotional, USD-base sizing uses USD units.
+- Full Worker dependency closure is hash-pinned, including corrected FIX parsing.
+  Preflight queries each native leg through the real market-data-only adapter.
 - Existing approved Demo TLS/revocation and post-logon sender continuity are
   retained. Credentials never enter source, files, logs or command arguments.
 - No IAM administration, generic SSM document, Production, PMS, Databento or
@@ -40,7 +47,7 @@ establish successful end-to-end execution; retain actual stage receipts.
 
 ## Start and recovery
 
-Build with the installed SDK 10.0.400. Run `self-test`, `verify-runtime`,
+Build with the installed SDK 10.0.400. Run `self-test`, `inspect-reference`, `verify-runtime`,
 `verify-capture-credentials` and `inspect-worker` before initial activation.
 The owner-approved regional status-read amendment was applied separately by the
 existing IAM operator on 2026-09-17; `verify-runtime` then passed. Runtime code
@@ -71,6 +78,12 @@ lost account owner, planning stops. Do not retry that cycle or delete its eviden
 The Worker and FIX receiver remain running for reconciliation. A genuine final
 UI observation is still required; a report download is not a flatness attestation.
 The existing report acquisition path is unchanged.
+
+The 17 September actual-send incident has a separate `retire-session` command in
+the recovery tool. It requires verified recovered accounting/audit, the exact
+unchanged journal and a retained authentic official UI observation under 900 seconds.
+`inspect-retirement` only checks the database; it cannot issue that certificate.
+The certificate preserves the failed journal and does not prove a later account state.
 
 ## Qualification limits
 

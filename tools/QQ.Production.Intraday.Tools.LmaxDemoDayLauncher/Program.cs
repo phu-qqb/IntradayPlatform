@@ -31,6 +31,7 @@ internal static class Program
                 return 0;
             }
             Runtime.VerifyLocal();
+            if (command == "inspect-reference") { await SessionBindings.InspectReference(); return 0; }
             if (command == "inspect-marketdata") { await SessionBindings.InspectMarketData(); return 0; }
             if (command == "inspect-worker") { await SessionBindings.Inspect(); return 0; }
             if (command == "start-worker") { await SessionBindings.Start(Arg("--observation")); return 0; }
@@ -82,7 +83,7 @@ internal static class Program
         Files.Require(!session.Start.Simulated && session.Start.SessionId == sessionId && session.Start.Environment == "Demo"
             && session.Start.AccountId == "1754288005" && session.Start.InternalBrokerAccountCode == "LMAX_DEMO_LOCAL"
             && session.Start.DeadlineUtc == LmaxDemoDaySchedule.FinalClose(now) && now < session.Start.DeadlineUtc
-            && session.Start.Instruments.Count == 1 && session.Start.Instruments[0] == new LmaxDemoSessionInstrument("EURUSD", "4001", 10000m)
+            && LmaxDemoUsdExecutionUniverse.Matches(session.Start.Instruments)
             && !session.IsClosed && session.BlockingReason is null, "CONTINUING_SESSION_NOT_ADMISSIBLE");
         var lastInbound = journal.Entries.LastOrDefault(x => x.Kind is "Inbound" or "Report" or "DuplicateReport");
         Files.Require(lastInbound is not null && now >= lastInbound.AtUtc && now - lastInbound.AtUtc <= TimeSpan.FromSeconds(90), "CONTINUING_FIX_RECEPTION_NOT_CURRENT");

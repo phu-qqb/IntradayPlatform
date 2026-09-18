@@ -1,13 +1,38 @@
 using System.Diagnostics;
 using System.Text.Json;
+using Microsoft.EntityFrameworkCore;
 using QQ.Production.Intraday.Application;
+using QQ.Production.Intraday.Infrastructure.SqlServer;
 
 namespace QQ.Production.Intraday.Tools.LmaxDemoDayLauncher;
 
 internal static class SessionBindings
 {
-    internal const string Worker = @"C:\deploy\IntradayPlatform\staging\lmax-demo-streaming-bbo-20260917\src\QQ.Production.Intraday.Worker\bin\Release\net10.0\QQ.Production.Intraday.Worker.dll";
-    internal const string WorkerHash = "2c50c3b57a800186ebe271206c8de06c5cd153ce4b118b8ba786aa36f999d0f8";
+    internal const string Worker = @"C:\deploy\IntradayPlatform\operator\lmax-demo-orchestration\usd-session-20260918\worker\QQ.Production.Intraday.Worker.dll";
+    internal const string WorkerHash = "794f3dc9abbf7843cfc3f269a572f50918d5b89c645b2e3837e8155a99948b78";
+    internal const string WorkerManifest = @"C:\deploy\IntradayPlatform\operator\lmax-demo-orchestration\usd-session-20260918\worker-manifest.json";
+    internal const string WorkerManifestHash = "8f1dad1c1a4e3cb391a5b29075e9acefd8be640be327c7f6e52d370f2d7f44fb";
+
+    internal static void VerifyWorkerClosure()
+    {
+        Files.Require(Files.Hash(WorkerManifest) == WorkerManifestHash, "WORKER_MANIFEST_PIN_MISMATCH");
+        using var document = JsonDocument.Parse(File.ReadAllBytes(WorkerManifest));
+        var manifest = document.RootElement;
+        Files.Require(manifest.GetProperty("schema").GetString() == "lmax_demo_worker_closure_v1", "WORKER_MANIFEST_SCHEMA");
+        var root = Path.GetDirectoryName(Worker)!;
+        var listed = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var file in manifest.GetProperty("files").EnumerateArray())
+        {
+            var relative = file.GetProperty("path").GetString()!;
+            Files.Require(!Path.IsPathRooted(relative) && !relative.Split('/', '\\').Contains(".."), "WORKER_MANIFEST_PATH");
+            var full = Path.GetFullPath(Path.Combine(root, relative));
+            Files.Require(full.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase) && listed.Add(full)
+                && (File.GetAttributes(full) & FileAttributes.ReparsePoint) == 0
+                && Files.Hash(full) == file.GetProperty("sha256").GetString(), "WORKER_DEPENDENCY_PIN_MISMATCH");
+        }
+        Files.Require(listed.Count > 0 && listed.SetEquals(Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories)), "WORKER_CLOSURE_CHANGED");
+        Files.Require(Files.Hash(Worker) == WorkerHash, "WORKER_PIN_MISMATCH");
+    }
 
     internal static Dictionary<string, string> Bind(JsonElement secret)
     {
@@ -54,11 +79,21 @@ internal static class SessionBindings
     }
     internal static async Task<Dictionary<string, string>> Load()
     {
-        Files.Require(Files.Hash(Worker) == WorkerHash, "WORKER_PIN_MISMATCH");
+        VerifyWorkerClosure();
         await Runtime.VerifyRole();
         using var response = JsonDocument.Parse(await Runtime.Aws(DateTimeOffset.UtcNow.AddSeconds(45), "ORDER_SECRET", "secretsmanager", "get-secret-value", "--secret-id", "qq/fund-platform/demo/lmax/fix-order-session"));
         using var secret = JsonDocument.Parse(response.RootElement.GetProperty("SecretString").GetString()!);
         return Bind(secret.RootElement);
+    }
+    internal static async Task InspectReference()
+    {
+        await using var db = new IntradayDbContext(new DbContextOptionsBuilder<IntradayDbContext>()
+            .UseSqlServer(@"Server=(localdb)\MSSQLLocalDB;Database=QQProductionIntraday;Integrated Security=true;TrustServerCertificate=true;Application Name=QQ84UsdScopePreflight").Options);
+        var state = await new SqlServerIntradayRepository(db).LoadStateAsync(default);
+        var issues = LmaxDemoUsdExecutionUniverse.ConfigurationIssues(state, DateTimeOffset.UtcNow);
+        Console.WriteLine(JsonSerializer.Serialize(new { marker = "DEMO_USD_REFERENCE_PREFLIGHT", instruments = LmaxDemoUsdExecutionUniverse.Symbols,
+            issues, passed = issues.Count == 0, databaseWrites = 0, brokerSends = 0 }));
+        Files.Require(issues.Count == 0, "FULL_USD_REFERENCE_AND_RISK_BINDINGS_REQUIRED");
     }
     internal static async Task Inspect()
     {
@@ -79,14 +114,18 @@ internal static class SessionBindings
 
     private static async Task VerifyMarketData(IReadOnlyDictionary<string, string> environment)
     {
+        foreach (var leg in LmaxDemoUsdExecutionUniverse.Legs)
+        {
         // Worker exits before DI/database setup. Its quote adapter opens only the market-data connection.
-        var result = await Runtime.Run(Runtime.Dotnet, [Worker, "--demo-marketdata-inspect=true"],
+        var result = await Runtime.Run(Runtime.Dotnet, [Worker, "--demo-marketdata-inspect=true", "--instrument=" + leg.Symbol,
+            "--lmax-instrument-id=" + leg.SecurityId, "--slash-symbol=" + leg.SlashSymbol],
             DateTimeOffset.UtcNow.AddSeconds(40), "DEMO_MARKET_DATA_PREFLIGHT", environment: environment);
         using var document = JsonDocument.Parse(result);
         var root = document.RootElement;
         var observedAt = root.GetProperty("ObservedAtUtc").GetDateTimeOffset();
         var now = DateTimeOffset.UtcNow;
         Files.Require(root.GetProperty("marker").GetString() == "DEMO_MARKET_DATA_PREFLIGHT_PASS"
+            && root.GetProperty("symbol").GetString() == leg.Symbol && root.GetProperty("securityId").GetString() == leg.SecurityId
             && root.GetProperty("BestBid").GetDecimal() > 0m
             && root.GetProperty("BestAsk").GetDecimal() > root.GetProperty("BestBid").GetDecimal()
             && observedAt <= now && now - observedAt <= TimeSpan.FromSeconds(60)
@@ -94,6 +133,7 @@ internal static class SessionBindings
             && root.GetProperty("orderSends").GetInt32() == 0 && !root.GetProperty("databaseAccessed").GetBoolean(),
             "DEMO_MARKET_DATA_PREFLIGHT_FAILED");
         Console.WriteLine(result);
+        }
     }
 
     internal static async Task InspectMarketData()
@@ -112,7 +152,7 @@ internal static class SessionBindings
             && now.Offset == TimeSpan.Zero && start.ObservedAtUtc.Offset == TimeSpan.Zero && start.DeadlineUtc.Offset == TimeSpan.Zero
             && start.ObservedAtUtc <= now && now - start.ObservedAtUtc <= TimeSpan.FromSeconds(start.InitialObservationMaxAgeSeconds)
             && start.DeadlineUtc == LmaxDemoDaySchedule.FinalClose(now) && start.DeadlineUtc > now && start.DeadlineUtc - now <= TimeSpan.FromHours(15)
-            && start.Instruments.Count == 1 && start.Instruments[0] == new LmaxDemoSessionInstrument("EURUSD", "4001", 10000m)
+            && LmaxDemoUsdExecutionUniverse.Matches(start.Instruments)
             && start.SessionId.Length is > 0 and <= 100 && start.SessionId.All(c => char.IsAsciiLetterOrDigit(c) || c is '-' or '_'), "GENUINE_CURRENT_STARTING_OBSERVATION_REQUIRED");
     }
 
@@ -122,6 +162,7 @@ internal static class SessionBindings
         var start = JsonSerializer.Deserialize<LmaxDemoSessionStart>(File.ReadAllText(observationPath), Files.Json)
             ?? throw new InvalidOperationException("STARTING_OBSERVATION_MISSING");
         ValidateObservation(start, DateTimeOffset.UtcNow);
+        await InspectReference();
         Files.Require(!Process.GetProcessesByName("QQ.Production.Intraday.Worker").Any(), "PRIOR_WORKER_MUST_BE_RECONCILED_AND_STOPPED");
         var environment = await Load();
         try

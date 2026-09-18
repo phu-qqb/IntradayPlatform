@@ -2,8 +2,11 @@
 
 The standalone `Build-LmaxDemoDailyRecap.mjs` produces a recap even when report acquisition
 fails. It does not start the downloader, the Worker, an API or a database. It
-never sends email. It currently validates **EUR/USD Individual Trades only**;
-the existing report-set importer remains responsible for trades/wallet matching.
+never sends email. It validates the 14 native USD execution pairs described in
+`LmaxDemoUsdExecutionUniverse`; the existing report-set importer remains responsible
+for trades/wallet matching. Quantities remain per pair/base currency. Mixed-pair
+quantities are never added into a fictitious aggregate position. Monetary values
+remain in their official report currency, without inferred FX conversion.
 
 Run after the existing report acquisition step, including when that step fails:
 
@@ -29,7 +32,7 @@ the machine must be running and Administrator must remain logged on. A
 disconnected RDP session may remain logged on; logging off prevents the task.
 No claim of unattended service operation while logged off is made.
 
-Runtime: `C:\deploy\IntradayPlatform\operator\lmax-demo-orchestration\daily-eod-portal-20260918`.
+Runtime: `C:\deploy\IntradayPlatform\operator\lmax-demo-orchestration\daily-eod-usd-20260918` (published candidate; consult the latest task-update receipt).
 Inputs: `D:\data\lmax-eod\inbox\1754288005\YYYY-MM-DD\individual-trades.csv`,
 or verified successful capture-run inboxes with the same exact account/date. Optional
 `trades.csv` and `currency-wallets.csv` must accompany the selected individual
@@ -53,6 +56,9 @@ pipeline. `--local-only` skips acquisition and keeps provisional reporting
 available. `Update-LmaxDemoDailyEod.ps1` upgrades the existing task only after
 a successful authenticated acquisition/import receipt for the exact script.
 It preserves principal, settings, triggers and the previous task XML.
+`Update-LmaxDemoUsdReporting.ps1` similarly promotes the qualified 14-pair runtime
+from the recovered-report runtime, requiring the exact published commit and retained
+historical replay receipt; it does not refresh any broker-account observation.
 
 Each invocation uses exclusive daily and portal reporting locks (never forcibly cleared),
 an immutable dated run directory and hashed source/runtime evidence. The EOD
@@ -107,6 +113,15 @@ For EUR/USD, cost-positive shortfall is signed EUR quantity ×
 (execution price − benchmark). All-in adds the positive commission charge.
 USD/M divides by absolute EUR quantity × benchmark USD/EUR price. Aggregate
 ratios use the sum of notionals, never the average of individual ratios.
+
+For non-EUR/USD executions, the recap requires a matching official sibling
+`trades.csv` to establish report currency: exact account/day/symbol, consistent
+signed/gross contract volumes and full-precision commission totals. Without this
+proof, raw amounts are retained but USD economics remain unavailable and a break
+is emitted. The previously qualified EUR/USD-to-USD convention is retained.
+No simulated TCA is enabled in scheduled runs; the test fixture remains EUR/USD only.
+The existing importer fails closed at its 500-row completeness boundary rather
+than claiming reconciliation of a truncated day.
 
 ## Recovery contract
 

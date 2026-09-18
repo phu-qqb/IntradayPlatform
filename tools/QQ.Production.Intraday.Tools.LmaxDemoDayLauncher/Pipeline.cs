@@ -170,7 +170,7 @@ internal static class Pipeline
             Files.Require(DateTimeOffset.UtcNow < effective, "PREPARED_CYCLE_EXPIRED");
             var manifest = new CycleManifest("lmax-demo-cycle-v1", cycleId, boundary.CaptureRunRoot, boundary.FinalManifestSha256,
                 cutoff, effective, 300, "QQ Intraday Fund", "IntradayFxModel", 1_000_000m, 0, contributions,
-                LmaxDemoDaySchedule.IsFinalExit(cutoff) ? ["EURUSD"] : null);
+                LmaxDemoDaySchedule.IsFinalExit(cutoff) ? LmaxDemoUsdExecutionUniverse.Symbols : null);
             Files.Atomic(Path.Combine(root, "prepared-cycle.json"), manifest);
             Files.Atomic(Path.Combine(root, "prepared-result.json"), new { cycleId, status = "Prepared", completedAtUtc = DateTimeOffset.UtcNow,
                 effectiveAtUtc = effective, symbolCount = boundary.SymbolCount, manifestSha256 = Files.Hash(Path.Combine(root, "prepared-cycle.json")), brokerHandoffPerformed = false });

@@ -1,5 +1,7 @@
 # LMAX Demo: full Anubis currency netting, 18 September 2026
 
+This is the initial dated inspection. See the later [full USD qualification](lmax-demo-full-usd-qualification.md) for completed configuration/deployment and the remaining account-observation gate.
+
 Philippe requested today's full FX session and clarified that the old PMS already
 nets pair signals into XXXUSD / USDXXX legs. Reuse that netting. Raw crosses are
 signal inputs, not independent execution orders. This supersedes the EURUSD-only

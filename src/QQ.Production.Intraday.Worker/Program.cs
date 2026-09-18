@@ -33,6 +33,7 @@ if (args.Contains("--demo-marketdata-inspect=true", StringComparer.Ordinal))
     var client = new RawLmaxFixSessionClient(new LmaxConnectivityLabSafetyValidator());
     var quote = await client.GetTopOfBookAsync(options, TimeSpan.FromSeconds(60), timeout.Token);
     Console.WriteLine(JsonSerializer.Serialize(new { marker = "DEMO_MARKET_DATA_PREFLIGHT_PASS",
+        symbol = options.InstrumentSymbol, securityId = options.LmaxInstrumentId,
         quote.BestBid, quote.BestAsk, quote.Mid, quote.ObservedAtUtc,
         orderConnectionOpened = false, orderSends = 0, databaseAccessed = false }));
     return;
@@ -89,6 +90,8 @@ if (demoStrategyBridgeEnabled)
             ?? throw new InvalidOperationException("DEMO_CONTINUING_START_OBSERVATION_INVALID");
         if (observation.Simulated || Environment.MachineName != "EC2AMAZ-1QPHTD8")
             throw new InvalidOperationException("DEMO_CONTINUING_REAL_HOST_REQUIRED");
+        if (!LmaxDemoUsdExecutionUniverse.Matches(observation.Instruments))
+            throw new InvalidOperationException("DEMO_FULL_NATIVE_USD_SCOPE_REQUIRED");
         builder.Services.AddSingleton(observation);
         builder.Services.AddSingleton<ILmaxDemoFixTransport, LmaxDemoTlsTransport>();
         builder.Services.AddSingleton(provider => new LmaxDemoContinuingSession(lmaxOptions, observation,
@@ -311,4 +314,3 @@ static async Task ValidateReferenceDataAsync(IHost host)
         throw new InvalidOperationException($"Reference data integrity check failed with {check.BlockingIssueCount} blocking issue(s). Run scripts/check-reference-data.ps1 for details or reset the local dev database if it contains old duplicate seed rows.");
     }
 }
-

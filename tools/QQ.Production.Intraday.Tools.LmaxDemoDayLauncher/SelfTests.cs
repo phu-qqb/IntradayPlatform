@@ -72,11 +72,14 @@ internal static class SelfTests
         secret["QQ_LMAX_FIX_MARKETDATA_USERNAME"] = "different-simulated-user";
         Reject(() => SessionBindings.Bind(JsonSerializer.SerializeToElement(secret)), "MISMATCHED_MD_CREDENTIALS");
         var observation = new LmaxDemoSessionStart("simulated-test", "1754288005", "Demo", "test-approval", t, LmaxDemoDaySchedule.FinalClose(t),
-            true, true, true, false, [new("EURUSD", "4001", 10000m)], 900, "LMAX_DEMO_LOCAL");
+            true, true, true, false, LmaxDemoUsdExecutionUniverse.SessionInstruments, 900, "LMAX_DEMO_LOCAL");
         SessionBindings.ValidateObservation(observation, t.AddSeconds(900)); checks++;
         Reject(() => SessionBindings.ValidateObservation(observation, t.AddSeconds(901)), "STALE_START_OBSERVATION");
         Reject(() => SessionBindings.ValidateObservation(observation with { Simulated = true }, t), "SIMULATED_START");
         Reject(() => SessionBindings.ValidateObservation(observation with { ObservedNoWorkingOrders = false }, t), "UNKNOWN_WORKING_ORDERS");
+        Reject(() => SessionBindings.ValidateObservation(observation with { Instruments = [new("EURUSD", "4001", 10000m)] }, t), "NO_EURUSD_ONLY_FALLBACK");
+        Reject(() => SessionBindings.ValidateObservation(observation with { Instruments = observation.Instruments.Skip(1).Append(observation.Instruments[1]).ToArray() }, t), "NO_DUPLICATE_LEG");
+        Check(LmaxDemoUsdExecutionUniverse.Legs.Single(x => x.Symbol == "USDHUF").TickSize == .001m, "OFFICIAL_HUF_TICK");
         var captureSecret = JsonSerializer.Serialize(new Dictionary<string, string>
         {
             ["LMAX_DEMO_SENDER_COMP_ID"] = "simulated-sender", ["LMAX_DEMO_TARGET_COMP_ID"] = "simulated-target",

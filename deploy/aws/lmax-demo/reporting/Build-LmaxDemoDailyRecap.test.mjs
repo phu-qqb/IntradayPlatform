@@ -82,3 +82,52 @@ test('recovered accounting is explicitly distinct from independent FIX confirmat
   assert.throws(()=>buildRecap({...config,trade_candidates,eod_result:{...eod_result,recovery_ids:[]}}),/RECOVERY_PROVENANCE_INVALID/);
   assert.throws(()=>buildRecap({...config,trade_candidates,eod_result:{...eod_result,official_report_recovered_fills:3}}),/RECOVERY_PROVENANCE_INVALID/);
 });
+
+test('native pairs retain separate quantities and currencies from matching official summaries', t => {
+  const f=fixture(t);
+  const csv=header.replace('Total Commission','Total Commission,Total Profit Loss,Instrument ID')
+    +'x1,1754288005,17-09-2026,buy,EUR/USD,1000,1.2,-0.03,0,4001\n'
+    +'x2,1754288005,17-09-2026,sell,USD/JPY,-1000,150,-4,-10,4004\n';
+  f.file('trades.csv','Date & Time,LMAX Symbol,Currency,Contracts,Commission (full precision),Account Id\n'
+    +'2026-09-17 10:00:00,EUR/USD,USD,0.1,0.03,1754288005\n'
+    +'2026-09-17 10:01:00,USD/JPY,JPY,-0.1,4,1754288005\n');
+  const r=buildRecap({...config,trade_candidates:[{path:f.file('individual-trades.csv',csv)}]});
+  assert.equal(r.official_trades.length,2);
+  assert.equal(r.official_trade_units_sum,null); // +1000 EUR and -1000 USD must never cancel.
+  assert.equal(r.official_commissions_usd,null);
+  assert.equal(r.selected_rows_reported_gross_usd,null);
+  assert.deepEqual(r.official_trade_units_by_symbol.map(x=>[x.symbol,x.units_sum]),[['EUR/USD',1000],['USD/JPY',-1000]]);
+  assert.deepEqual(r.selected_rows_amounts_by_currency.map(x=>[x.currency,x.net_after_commissions]),[['JPY',-14],['USD',-0.03]]);
+  assert.match(renderRecap(r),/USD\/JPY/);
+  assert.equal(r.currency_evidence.sha256.length,64);
+});
+
+test('missing currency evidence preserves new-pair trades but never labels amounts USD', t => {
+  const f=fixture(t), csv=f.good.replaceAll('EUR/USD','USD/CHF');
+  const r=buildRecap({...config,trade_candidates:[{path:f.file('individual',csv)}]});
+  assert.equal(r.official_trades.length,2);
+  assert.equal(r.official_commissions_usd,null);
+  assert.equal(r.official_trades[0].commission_reported,-0.86078);
+  assert.ok(r.breaks.includes('REPORT_MONETARY_CURRENCY_UNVERIFIED'));
+});
+
+test('foreign account or inconsistent summary cannot supply currency evidence', t => {
+  const f=fixture(t), p=f.file('individual',f.good.replaceAll('EUR/USD','USD/JPY'));
+  const hdr='Date & Time,LMAX Symbol,Currency,Contracts,Commission (full precision),Account Id\n';
+  f.file('trades.csv',hdr+'2026-09-17 10:00:00,USD/JPY,JPY,3,0.86,999\n');
+  let r=buildRecap({...config,trade_candidates:[{path:p}]});
+  assert.equal(r.selected_source,null);
+  assert.equal(r.acquisition_attempts[0].code,'SUMMARY_CURRENCY_SCOPE');
+  f.file('trades.csv',hdr+'2026-09-17 10:00:00,USD/JPY,JPY,3,0.86,1754288005\n');
+  r=buildRecap({...config,trade_candidates:[{path:p}]});
+  assert.equal(r.acquisition_attempts[0].code,'SUMMARY_TRADE_CURRENCY_BINDING_MISMATCH');
+});
+
+test('crosses and conflicting SecurityIDs remain rejected', t => {
+  const f=fixture(t);
+  for(const csv of [f.good.replaceAll('EUR/USD','EUR/JPY'),
+    f.good.replace('Total Commission\n','Total Commission,Instrument ID\n').replaceAll('-0.86078\n','-0.86078,4004\n').replaceAll('-0.86\n','-0.86,4004\n')]) {
+    const r=buildRecap({...config,trade_candidates:[{path:f.file('invalid',csv)}]});
+    assert.equal(r.selected_source,null);
+  }
+});
