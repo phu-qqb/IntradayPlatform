@@ -65,7 +65,7 @@ including an actual secret-based login and the reopen proof. `--verify-only`
 checks these references and runtime hashes without login, download or import.
 `--local-only` retains the independent provisional reporting fallback.
 
-Before upgrading the existing scheduled task, run the entire pinned daily
+For the initial portal-enabled upgrade, run the entire pinned daily
 pipeline against the historical 17 September reports. Require an authenticated
 acquisition and successful EOD import receipt; open reconciliation breaks must
 remain visible. `Update-LmaxDemoDailyEod.ps1 -QualificationReceiptPath <receipt>`
@@ -73,6 +73,34 @@ requires that evidence, checks the old task target, saves its XML, and changes
 only its action and description. It verifies unchanged principal, settings and
 triggers after the update. The prior runtime remains available for rollback.
 The deployment result and exact commit are recorded in issue #84 after readback.
+
+The subsequent recovered-accounting upgrade uses
+`Update-LmaxDemoRecoveredReporting.ps1`. It retains and verifies the same
+authenticated acquisition qualification, then requires a successful local
+historical pipeline receipt with four explicitly report-recovered fills, zero
+breaks and zero FIX ExecutionReports. It changes only the task action and
+description, preserving its principal, schedule and settings.
+
+## Historical accounting recovery — 18 September 2026
+
+At 09:59:06 UTC the separately authorized recovery tool committed the four
+authentic 17 September executions: three fills of the durably sent entry and
+one explicitly manual closing execution. The old model is marked recovered and
+processed to prevent replay. Four signed ledger events net to zero. A fresh
+reconciliation found zero breaks; twelve matching historical rows across three
+prior runs were retained with audited Resolved status. No FIX reports were
+invented and no journal or owner-lock bytes were changed.
+
+The second-pass check exposed an EF mutation of the audit's before-state
+projection. The immutable reviewed plan retained the original state. An exact,
+append-only correction now links the audit to that plan; the original audit and
+all economic rows were preserved. Repeating the operation subsequently returned
+`ALREADY_APPLIED_VERIFIED`, without new writes. The regression suite has 25 tests.
+
+The full daily pipeline succeeded at 10:10:21 UTC with zero breaks and explicit
+`AUTHENTIC_OFFICIAL_REPORT_NOT_FIX` provenance for all four recovered fills.
+This verifies the accounting recovery against its official source; it does not
+provide independent FIX confirmation or a current account-position observation.
 
 ## Remaining limits
 
@@ -85,8 +113,7 @@ The deployment result and exact commit are recorded in issue #84 after readback.
   Adding a seed alone would not qualify unattended MFA.
 - Core PR #61 and Intraday PR #103 remain reviewable candidates, not merged
   production releases. This deployment is the explicitly authorized Demo scope.
-- Reporting does not resolve the four official executions missing internally,
-  certify the old actual-send session, qualify/deploy the corrected FIX Worker,
+- Reporting does not certify the old actual-send session, qualify/deploy the corrected FIX Worker,
   or create a fresh official flat/no-orders observation. Trading stays blocked.
 - Email remains a draft only. Real M15 TCA remains unavailable. Synthetic TCA
   is reserved for explicitly labelled test reports and is off in daily runs.
