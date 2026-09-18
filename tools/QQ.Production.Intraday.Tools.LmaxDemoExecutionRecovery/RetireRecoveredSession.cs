@@ -55,8 +55,13 @@ internal static class RetireRecoveredSession
         Require(Path.GetFullPath(observationPath).StartsWith(@"D:\data\", StringComparison.OrdinalIgnoreCase), "OBSERVATION_PATH_INVALID");
         var observation = JsonSerializer.Deserialize<ObservationBundle>(File.ReadAllBytes(observationPath), new JsonSerializerOptions { PropertyNameCaseInsensitive = true })
             ?? throw new InvalidOperationException("OFFICIAL_OBSERVATION_REQUIRED");
+        if (observation.SourceUrl == LmaxDemoOwnerConfirmedOpening.Approval)
+            Require(Path.GetFullPath(observation.CapturePath).StartsWith(@"D:\data\lmax-demo-owner-observations\", StringComparison.OrdinalIgnoreCase), "OWNER_DECLARATION_PATH_REQUIRED");
+        else
+        {
         Require(new Uri(observation.SourceUrl).GetLeftPart(UriPartial.Authority) == "https://web-order.london-demo.lmax.com"
             && Path.GetFullPath(observation.CapturePath).StartsWith(@"D:\data\lmax-demo-ui\", StringComparison.OrdinalIgnoreCase), "OFFICIAL_DEMO_UI_CAPTURE_REQUIRED");
+        }
         var certificate = Retirement.Prepare(journalPath, plan.Request.OwnerAuthorizationReference, observation.Observation,
             observation.CapturePath, observation.CaptureSha256, evidence, DateTimeOffset.UtcNow);
         // No accounting mutation is needed. Keep the read transaction and owner lease

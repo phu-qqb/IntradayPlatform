@@ -19,7 +19,10 @@ public sealed record LmaxDemoSessionStart(
     bool Simulated,
     IReadOnlyList<LmaxDemoSessionInstrument> Instruments,
     int InitialObservationMaxAgeSeconds = 900,
-    string? InternalBrokerAccountCode = null);
+    string? InternalBrokerAccountCode = null,
+    string ObservationSource = "OFFICIAL_UI",
+    string? ObservationEvidencePath = null,
+    string? ObservationEvidenceSha256 = null);
 
 public sealed record LmaxDemoSessionSendIntent(
     string CycleId,
@@ -401,6 +404,12 @@ public sealed class LmaxDemoControlledSession
             || s.DeadlineUtc.Offset != TimeSpan.Zero || s.ObservedAtUtc > now || now - s.ObservedAtUtc > TimeSpan.FromSeconds(s.InitialObservationMaxAgeSeconds)
             || s.DeadlineUtc <= now || s.DeadlineUtc - now > TimeSpan.FromHours(15)
             || s.DeadlineUtc.UtcDateTime.Date != now.UtcDateTime.Date) throw Error("INITIAL_TIME_BOUNDARY_INVALID");
+        if (s.ObservationSource != "OFFICIAL_UI")
+        {
+            if (s.ObservationSource != LmaxDemoOwnerConfirmedOpening.Source || s.OwnerApprovalId != LmaxDemoOwnerConfirmedOpening.Approval)
+                throw Error("UNKNOWN_OBSERVATION_SOURCE");
+            LmaxDemoOwnerConfirmedOpening.ValidateFile(s.ObservationEvidencePath!, s.ObservationEvidenceSha256!, s.ObservedAtUtc, now);
+        }
         if (s.Instruments.Count == 0 || s.Instruments.Select(x => x.Symbol).Distinct(StringComparer.Ordinal).Count() != s.Instruments.Count
             || s.Instruments.Any(x => string.IsNullOrWhiteSpace(x.Symbol) || string.IsNullOrWhiteSpace(x.SecurityId) || x.ContractSize <= 0m)) throw Error("INSTRUMENT_SCOPE_INVALID");
     }

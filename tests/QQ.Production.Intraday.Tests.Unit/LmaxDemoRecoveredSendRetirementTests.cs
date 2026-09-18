@@ -68,6 +68,30 @@ public sealed class LmaxDemoRecoveredSendRetirementTests
         using var j = LmaxDemoSessionJournal.OpenForInspection(f.JournalPath);
         Assert.Throws<InvalidOperationException>(() => Retirement.IsValidated(f.JournalPath, j, f.Now.AddDays(1), true));
     }
+    [Theory]
+    [InlineData("valid")][InlineData("account")][InlineData("refresh")][InlineData("source")]
+    [InlineData("working")][InlineData("automated")][InlineData("approval")][InlineData("report")]
+    public void OwnerConfirmationIsExactDatedAndNeverMislabelledAsBrokerCapture(string defect)
+    {
+        var values = new Dictionary<string, object> {
+            ["schema"]="lmax_demo_owner_confirmation_v1", ["source"]=LmaxDemoOwnerConfirmedOpening.Source,
+            ["accountId"]="1754288005", ["owner"]="Philippe", ["ownerApprovalReference"]=LmaxDemoOwnerConfirmedOpening.Approval,
+            ["quote"]=LmaxDemoOwnerConfirmedOpening.Quote, ["recordedAtUtc"]=LmaxDemoOwnerConfirmedOpening.RecordedAt,
+            ["flat"]=true, ["noWorkingOrders"]=true, ["automatedBrokerObservation"]=false,
+            ["openingReceiptSha256"]=LmaxDemoOwnerConfirmedOpening.OpeningReceiptHash };
+        if (defect == "account") values["accountId"]="other";
+        if (defect == "refresh") values["recordedAtUtc"]=LmaxDemoOwnerConfirmedOpening.RecordedAt.AddSeconds(1);
+        if (defect == "source") values["source"]="OFFICIAL_UI";
+        if (defect == "working") values["noWorkingOrders"]=false;
+        if (defect == "automated") values["automatedBrokerObservation"]=true;
+        if (defect == "approval") values["ownerApprovalReference"]="unrelated";
+        if (defect == "report") values["openingReceiptSha256"]=new string('a',64);
+        using var proof = JsonDocument.Parse(JsonSerializer.Serialize(values));
+        if (defect == "valid") LmaxDemoOwnerConfirmedOpening.ValidateDeclaration(proof.RootElement, LmaxDemoOwnerConfirmedOpening.RecordedAt);
+        else Assert.Throws<InvalidOperationException>(() => LmaxDemoOwnerConfirmedOpening.ValidateDeclaration(proof.RootElement, LmaxDemoOwnerConfirmedOpening.RecordedAt));
+        Assert.Throws<InvalidOperationException>(() => LmaxDemoOwnerConfirmedOpening.ValidateFile("missing", "missing",
+            LmaxDemoOwnerConfirmedOpening.RecordedAt, LmaxDemoOwnerConfirmedOpening.RecordedAt.AddSeconds(901)));
+    }
     private sealed class Fixture : IDisposable
     {
         public const string Approval = "https://github.com/phu-qqb/IntradayPlatform/issues/84#issuecomment-12345";

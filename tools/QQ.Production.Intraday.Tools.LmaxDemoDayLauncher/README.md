@@ -90,3 +90,18 @@ The certificate preserves the failed journal and does not prove a later account 
 The checked-in receipt distinguishes source/build/simulated/historical checks
 from real external execution. Passing those checks does not establish S3/SSM
 round-trip operation, broker acceptance, fills, TCA or a completed Demo day.
+
+## Dated owner confirmation — 18 September 2026 only
+
+Philippe supplied current flat/no-working-orders confirmation and requested today's
+start in #84 comment 5730268654. The explicit `OWNER_CONFIRMED_ACCOUNT_STATE` source
+binds that exact quote, account, reference and fixed declaration recording time
+12:52:03.0232487Z to the authentic retained opening report receipt. It is not an
+automated UI/broker observation. Existing UI evidence remains a separate path.
+
+The recording time is never refreshed: the same 900-second age check applies at
+retirement and startup. Report dates stay unchanged. Fresh recovery/readback,
+exclusive ownership, exact journal hash, no internal orders/positions/breaks and
+all normal trading controls remain mandatory. This dated owner source is not a
+new daily unattended attestation or a generic way to manufacture broker evidence.
+The startup journal retains observation source, evidence path and SHA256.

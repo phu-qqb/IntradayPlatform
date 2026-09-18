@@ -8,10 +8,10 @@ namespace QQ.Production.Intraday.Tools.LmaxDemoDayLauncher;
 
 internal static class SessionBindings
 {
-    internal const string Worker = @"C:\deploy\IntradayPlatform\operator\lmax-demo-orchestration\usd-session-20260918\worker\QQ.Production.Intraday.Worker.dll";
-    internal const string WorkerHash = "794f3dc9abbf7843cfc3f269a572f50918d5b89c645b2e3837e8155a99948b78";
-    internal const string WorkerManifest = @"C:\deploy\IntradayPlatform\operator\lmax-demo-orchestration\usd-session-20260918\worker-manifest.json";
-    internal const string WorkerManifestHash = "8f1dad1c1a4e3cb391a5b29075e9acefd8be640be327c7f6e52d370f2d7f44fb";
+    internal const string Worker = @"C:\deploy\IntradayPlatform\operator\lmax-demo-orchestration\owner-start-20260918\worker\QQ.Production.Intraday.Worker.dll";
+    internal const string WorkerHash = "f804fe969668f4cd4aa3bfcf355cb8ffd7535a947d118edbbe1cbc501fa3242a";
+    internal const string WorkerManifest = @"C:\deploy\IntradayPlatform\operator\lmax-demo-orchestration\owner-start-20260918\worker-manifest.json";
+    internal const string WorkerManifestHash = "767a16964a107b52546d6586c957359240a690e047857ccb5b99af0f778343f9";
 
     internal static void VerifyWorkerClosure()
     {
@@ -145,6 +145,11 @@ internal static class SessionBindings
 
     internal static void ValidateObservation(LmaxDemoSessionStart start, DateTimeOffset now)
     {
+        if (start.ObservationSource != "OFFICIAL_UI")
+        {
+            Files.Require(start.ObservationSource == LmaxDemoOwnerConfirmedOpening.Source && start.OwnerApprovalId == LmaxDemoOwnerConfirmedOpening.Approval, "UNKNOWN_OBSERVATION_SOURCE");
+            LmaxDemoOwnerConfirmedOpening.ValidateFile(start.ObservationEvidencePath!, start.ObservationEvidenceSha256!, start.ObservedAtUtc, now);
+        }
         Files.Require(!start.Simulated && start.Environment == "Demo" && start.AccountId == "1754288005"
             && start.InternalBrokerAccountCode == "LMAX_DEMO_LOCAL" && start.ObservedFlat && start.ObservedNoWorkingOrders && start.ExclusiveOrderActivityDeclared
             && !string.IsNullOrWhiteSpace(start.OwnerApprovalId) && !new[] { "NONE", "N/A", "PLACEHOLDER", "TBD", "UNKNOWN" }.Contains(start.OwnerApprovalId.Trim().ToUpperInvariant())

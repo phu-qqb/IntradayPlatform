@@ -94,6 +94,13 @@ public static class LmaxDemoRecoveredSendRetirement
             "RETAINED_OBSERVATION_EVIDENCE_REQUIRED");
         using var capture = JsonDocument.Parse(File.ReadAllBytes(c.ObservationEvidencePath));
         var proof = capture.RootElement;
+        if (proof.GetProperty("schema").GetString() == "lmax_demo_owner_confirmation_v1")
+        {
+            Require(o.EvidenceReference == LmaxDemoOwnerConfirmedOpening.Approval, "OWNER_DECLARATION_REFERENCE_REQUIRED");
+            LmaxDemoOwnerConfirmedOpening.ValidateFile(c.ObservationEvidencePath, c.ObservationEvidenceSha256, o.ObservedAtUtc, c.RetiredAtUtc);
+        }
+        else
+        {
         Require(proof.GetProperty("schema").GetString() == "lmax-demo-ui-inspection-v1"
             && proof.GetProperty("origin").GetString() == "https://web-order.london-demo.lmax.com"
             && proof.GetProperty("inspectedAtUtc").GetDateTimeOffset() == o.ObservedAtUtc
@@ -101,6 +108,7 @@ public static class LmaxDemoRecoveredSendRetirement
             && proof.GetProperty("observationEstablished").GetBoolean() && proof.GetProperty("explicitNoOpenPositionsVisible").GetBoolean()
             && proof.GetProperty("explicitNoWorkingOrdersVisible").GetBoolean() && proof.GetProperty("ordersSubmitted").GetInt32() == 0
             && !proof.GetProperty("accountRestCalled").GetBoolean(), "AUTHENTIC_OFFICIAL_UI_OBSERVATION_NOT_ESTABLISHED");
+        }
         var d = c.Database;
         Require(d.AccountCode == "LMAX_DEMO_LOCAL" && d.ModelRunId == ModelRunId && d.RecoveryId == RecoveryId
             && d.RecoveryPlanSha256 == PlanSha256 && Regex.IsMatch(d.RecoveryAuditSha256 ?? "", "^[a-f0-9]{64}$")
